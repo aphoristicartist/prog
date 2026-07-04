@@ -287,6 +287,10 @@ pub struct CacheEntryMeta {
     pub expires_at: String,
     pub payload_bytes: u64,
     #[serde(default)]
+    pub cacheable: bool,
+    #[serde(default)]
+    pub sensitive: bool,
+    #[serde(default)]
     pub provenance: Option<CallProvenance>,
     #[serde(default, flatten)]
     pub extra: Extra,
@@ -353,6 +357,8 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<CacheEntryMeta>(&mut schemas, "CacheEntryMeta")?;
     insert_schema::<CallProvenance>(&mut schemas, "CallProvenance")?;
     insert_schema::<CacheInfo>(&mut schemas, "CacheInfo")?;
+    insert_schema::<crate::store::CacheList>(&mut schemas, "CacheList")?;
+    insert_schema::<crate::store::PurgeSummary>(&mut schemas, "PurgeSummary")?;
     Ok(schemas)
 }
 

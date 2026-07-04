@@ -194,6 +194,8 @@ fn schemas_generate_for_all_public_contracts() {
         "CacheEntryMeta",
         "CallProvenance",
         "CacheInfo",
+        "CacheList",
+        "PurgeSummary",
     ] {
         assert!(
             schemas.contains_key(expected),

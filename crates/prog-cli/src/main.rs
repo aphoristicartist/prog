@@ -1,7 +1,8 @@
 use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Args, Parser, Subcommand, ValueEnum, error::ErrorKind};
-use prog_core::{CoreError, Result};
+use prog_core::{CoreError, PreviewPolicy, Result, SliceRequest, Store, expand};
+use serde::Serialize;
 use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
 #[derive(Debug, Parser)]
@@ -202,14 +203,48 @@ async fn run(cli: &Cli) -> Result<()> {
             not_implemented("expand")
         }
         Command::Cache { command } => match command {
-            CacheCommand::List => not_implemented("cache list"),
+            CacheCommand::List => {
+                let store = Store::open(&cli.dir)?;
+                write_success(&store.list_entries(100)?, cli.pretty)
+            }
             CacheCommand::Get(args) => {
-                let _ = &args.key;
-                not_implemented("cache get")
+                let store = Store::open(&cli.dir)?;
+                let entry = store
+                    .get_entry(&args.key)?
+                    .ok_or_else(|| CoreError::CacheMiss(args.key.clone()))?;
+                let payload = store
+                    .get_payload(&entry.payload_hash)?
+                    .ok_or_else(|| CoreError::CacheMiss(args.key.clone()))?;
+                let projection = expand(
+                    &payload,
+                    "",
+                    &SliceRequest {
+                        path: None,
+                        limit: None,
+                        depth: None,
+                        fields: Vec::new(),
+                        omit: Vec::new(),
+                        extra: serde_json::Map::new(),
+                    },
+                    &PreviewPolicy::default(),
+                )?;
+                write_success(&CacheGetOutput { entry, projection }, cli.pretty)
             }
             CacheCommand::Purge(args) => {
-                let _ = (&args.source, args.expired, args.all);
-                not_implemented("cache purge")
+                let store = Store::open(&cli.dir)?;
+                let summary = if args.all {
+                    store.purge_all()?
+                } else if args.expired {
+                    store.purge_expired(chrono::Utc::now())?
+                } else if let Some(source) = &args.source {
+                    store.purge_source(source)?
+                } else {
+                    return Err(CoreError::BadArgs {
+                        operation: "cache purge".to_string(),
+                        reason: "pass --all, --expired, or --source <id>".to_string(),
+                    });
+                };
+                write_success(&summary, cli.pretty)
             }
         },
         Command::Meta(args) => {
@@ -219,8 +254,23 @@ async fn run(cli: &Cli) -> Result<()> {
     }
 }
 
+#[derive(Serialize)]
+struct CacheGetOutput {
+    entry: prog_core::CacheEntryMeta,
+    projection: prog_core::Projection,
+}
+
 fn not_implemented(command: &'static str) -> Result<()> {
     Err(CoreError::NotImplemented { command })
+}
+
+fn write_success<T: Serialize>(value: &T, pretty: bool) -> Result<()> {
+    if pretty {
+        println!("{}", serde_json::to_string_pretty(value)?);
+    } else {
+        println!("{}", serde_json::to_string(value)?);
+    }
+    Ok(())
 }
 
 fn write_error(error: &CoreError, pretty: bool) -> ExitCode {

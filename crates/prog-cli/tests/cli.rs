@@ -71,15 +71,48 @@ fn every_placeholder_command_returns_structured_json_on_stdout() {
         (&["hints", "local"], "hints"),
         (&["call", "local", "list", "--args", "{}"], "call"),
         (&["expand", "pc1_test", "--path", "/items/0"], "expand"),
-        (&["cache", "list"], "cache list"),
-        (&["cache", "get", "sha256:abc"], "cache get"),
-        (&["cache", "purge", "--expired"], "cache purge"),
         (&["meta"], "meta"),
     ];
 
     for (args, command) in cases {
         assert_placeholder(args, command);
     }
+}
+
+#[test]
+fn cache_list_and_purge_are_real_json_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+
+    let list = prog(&["--dir", dir_arg, "cache", "list"]);
+    assert!(list.status.success());
+    assert_eq!(stderr(&list), "");
+    let value: Value = serde_json::from_slice(&list.stdout).expect("stdout must be JSON");
+    assert_eq!(value["entries"], json_array());
+
+    let purge = prog(&["--dir", dir_arg, "cache", "purge", "--all"]);
+    assert!(purge.status.success());
+    assert_eq!(stderr(&purge), "");
+    let value: Value = serde_json::from_slice(&purge.stdout).expect("stdout must be JSON");
+    assert_eq!(value["purged_entries"], 0);
+    assert_eq!(value["purged_payloads"], 0);
+    assert_eq!(value["purged_cursors"], 0);
+}
+
+#[test]
+fn cache_get_missing_uses_structured_cache_miss_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let output = prog(&["--dir", dir_arg, "cache", "get", "sha256:missing"]);
+
+    assert!(!output.status.success());
+    assert_eq!(stderr(&output), "");
+    let value: Value = serde_json::from_slice(&output.stdout).expect("stdout must be JSON");
+    assert_eq!(value["error"]["kind"], "cache_miss");
+}
+
+fn json_array() -> Value {
+    Value::Array(Vec::new())
 }
 
 #[test]
