@@ -1,0 +1,8 @@
+# Changelog
+
+## Unreleased
+
+- Added progressive-disclosure docs, fixture walkthroughs, cache and safety notes, JSON contract documentation, and a token economics report.
+- Added local HTTP, CLI, and MCP fixtures for copy-pasteable acceptance examples.
+
+Release entries will use this file once versioned packages are cut.
