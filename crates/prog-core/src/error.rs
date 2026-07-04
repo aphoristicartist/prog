@@ -84,6 +84,19 @@ pub enum CoreError {
         body_preview: serde_json::Value,
     },
 
+    #[error("cli operation '{operation}' timed out after {timeout_ms} ms")]
+    CliTimeout { operation: String, timeout_ms: u64 },
+
+    #[error("cli transport error for '{operation}': {message}")]
+    CliTransport { operation: String, message: String },
+
+    #[error("cli operation '{operation}' exited with code {exit_code}: {stderr_preview}")]
+    CliExit {
+        operation: String,
+        exit_code: i32,
+        stderr_preview: serde_json::Value,
+    },
+
     #[error("storage error: {0}")]
     Storage(String),
 
@@ -120,6 +133,9 @@ impl CoreError {
             CoreError::HttpTimeout { .. } => "http_timeout",
             CoreError::HttpTransport { .. } => "http_transport",
             CoreError::HttpStatus { .. } => "http_status",
+            CoreError::CliTimeout { .. } => "cli_timeout",
+            CoreError::CliTransport { .. } => "cli_transport",
+            CoreError::CliExit { .. } => "cli_exit",
             CoreError::Storage(_) => "storage",
             CoreError::Json(_) => "json",
             CoreError::Io(_) => "io",
@@ -187,6 +203,15 @@ impl CoreError {
             CoreError::HttpStatus { .. } => {
                 "Inspect the bounded response preview and adjust the request or credentials."
                     .to_string()
+            }
+            CoreError::CliTimeout { .. } => {
+                "Increase the operation timeout or inspect the command for a hang.".to_string()
+            }
+            CoreError::CliTransport { .. } => {
+                "Check that the executable and working directory exist.".to_string()
+            }
+            CoreError::CliExit { .. } => {
+                "Inspect the bounded stderr preview and adjust the command arguments.".to_string()
             }
             CoreError::Storage(_) => {
                 "Check the local .prog store and filesystem permissions.".to_string()

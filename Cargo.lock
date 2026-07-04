@@ -1073,6 +1073,7 @@ name = "prog-adapters"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "libc",
  "prog-core",
  "reqwest",
  "rmcp",

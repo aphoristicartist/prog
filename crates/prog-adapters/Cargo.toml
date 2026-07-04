@@ -16,6 +16,7 @@ tracing.workspace = true
 chrono.workspace = true
 reqwest.workspace = true
 rmcp.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true
