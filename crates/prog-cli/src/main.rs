@@ -13,8 +13,9 @@ use prog_adapters::{
 use prog_core::{
     AuthRef, CachePolicy, CoreError, DISCLOSURE_VERSION, EffectSet, Extra, NextAction,
     OmittedRegion, OperationProfile, PreviewPolicy, RedactionPolicy, Result,
-    SOURCE_PROFILE_VERSION, SliceRequest, SourceProfile, Store, TrustSettings, expand, infer, join,
-    new_cache_entry, project, render_hints,
+    SOURCE_PROFILE_VERSION, SliceRequest, SourceProfile, Store, TrustSettings, check_discovery,
+    cli_adapter_effects, cli_hardening_effects, expand, http_adapter_effects,
+    http_hardening_effects, infer, join, new_cache_entry, project, render_hints, tighten_effects,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -480,9 +481,10 @@ fn prepare_http_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery>
             operation_value
                 .get("effect")
                 .or_else(|| operation_value.get("effects")),
-            true,
-            false,
-        );
+            http_adapter_effects(&method),
+            http_hardening_effects(&method),
+            "operations[].effects",
+        )?;
         if assumed {
             effects_assumed.push(format!("{id}: no effect metadata, assumed unsafe"));
         }
@@ -578,9 +580,10 @@ fn prepare_cli_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery> 
             operation_value
                 .get("effect")
                 .or_else(|| operation_value.get("effects")),
-            false,
-            shell,
-        );
+            cli_adapter_effects(shell),
+            cli_hardening_effects(shell),
+            "operations[].effects",
+        )?;
         if assumed {
             effects_assumed.push(format!("{id}: no effect metadata, assumed unsafe"));
         }
@@ -677,11 +680,8 @@ async fn probe_profile(
 ) {
     for index in 0..profile.operations.len() {
         let operation = &profile.operations[index];
-        if !operation.effects.read_only {
-            warnings.push(format!(
-                "I6: skipped probe for '{}' because effect.read_only is not explicitly true",
-                operation.id
-            ));
+        if let Err(error) = check_discovery(operation) {
+            warnings.push(format!("I6: skipped probe for '{}': {error}", operation.id));
             continue;
         }
         let args = example_args(&operation.input_schema);
@@ -947,6 +947,12 @@ fn risk_notes(effects: &EffectSet) -> Vec<String> {
     if !effects.read_only {
         notes.push("not explicitly read-only; mutation risk fails closed".to_string());
     }
+    if effects.mutating {
+        notes.push("mutating operation; --yes is required for calls".to_string());
+    }
+    if effects.network {
+        notes.push("network-backed operation may contact an upstream service".to_string());
+    }
     if effects.requires_confirmation {
         notes.push("requires confirmation before call execution".to_string());
     }
@@ -955,6 +961,9 @@ fn risk_notes(effects: &EffectSet) -> Vec<String> {
     }
     if effects.sensitive {
         notes.push("may handle sensitive data".to_string());
+    }
+    if !effects.cacheable {
+        notes.push("result is not cacheable under the effect policy".to_string());
     }
     notes
 }
@@ -1103,50 +1112,19 @@ fn string_vec(value: Option<&Value>, field: &str) -> Result<Vec<String>> {
 
 fn effects_from_seed(
     value: Option<&Value>,
-    network_default: bool,
-    shell_default: bool,
-) -> (EffectSet, bool) {
-    let mut effects = EffectSet {
-        read_only: false,
-        mutating: true,
-        network: network_default,
-        shell: shell_default,
-        sensitive: false,
-        cacheable: false,
-        requires_confirmation: true,
-        extra: Extra::new(),
+    adapter_default: EffectSet,
+    hardening: EffectSet,
+    field: &str,
+) -> Result<(EffectSet, bool)> {
+    let Some(value) = value else {
+        return Ok((adapter_default, true));
     };
-    let Some(value) = value.and_then(Value::as_object) else {
-        return (effects, true);
-    };
-    if let Some(read_only) = value.get("read_only").and_then(Value::as_bool) {
-        effects.read_only = read_only;
-        if read_only {
-            effects.mutating = false;
-            effects.requires_confirmation = false;
-            effects.cacheable = true;
-        }
-    }
-    if let Some(mutating) = value.get("mutating").and_then(Value::as_bool) {
-        effects.mutating = mutating;
-    }
-    if let Some(network) = value.get("network").and_then(Value::as_bool) {
-        effects.network = network;
-    }
-    if let Some(shell) = value.get("shell").and_then(Value::as_bool) {
-        effects.shell = shell;
-    }
-    if let Some(sensitive) = value.get("sensitive").and_then(Value::as_bool) {
-        effects.sensitive = sensitive;
-    }
-    if let Some(cacheable) = value.get("cacheable").and_then(Value::as_bool) {
-        effects.cacheable = cacheable;
-    }
-    if let Some(requires_confirmation) = value.get("requires_confirmation").and_then(Value::as_bool)
-    {
-        effects.requires_confirmation = requires_confirmation;
-    }
-    (effects, false)
+    let seed: EffectSet =
+        serde_json::from_value(value.clone()).map_err(|error| CoreError::BadArgs {
+            operation: "discover".to_string(),
+            reason: format!("seed.{field} must be an effect object: {error}"),
+        })?;
+    Ok((tighten_effects(&seed, &hardening), false))
 }
 
 fn example_args(schema: &Value) -> Value {

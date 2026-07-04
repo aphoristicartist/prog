@@ -7,7 +7,7 @@ use std::{
 
 use prog_core::{
     CachePolicy, CoreError, EffectSet, Extra, OperationProfile, Result, SOURCE_PROFILE_VERSION,
-    SourceKind, SourceProfile, TrustSettings,
+    SourceKind, SourceProfile, TrustSettings, mcp_read_effects, mcp_tool_annotation_effects,
 };
 use rmcp::{
     RoleClient, ServiceError,
@@ -539,31 +539,11 @@ struct SchemaImportFlags {
 fn tool_effects(annotations: Option<&ToolAnnotations>) -> EffectSet {
     let read_only_hint = annotations.and_then(|annotation| annotation.read_only_hint);
     let destructive_hint = annotations.and_then(|annotation| annotation.destructive_hint);
-    let read_only = read_only_hint.unwrap_or(false) && destructive_hint != Some(true);
-    let mutating = !read_only || destructive_hint == Some(true);
-    EffectSet {
-        read_only,
-        mutating,
-        network: false,
-        shell: false,
-        sensitive: false,
-        cacheable: read_only,
-        requires_confirmation: mutating,
-        extra: Extra::new(),
-    }
+    mcp_tool_annotation_effects(read_only_hint, destructive_hint)
 }
 
 fn read_effects() -> EffectSet {
-    EffectSet {
-        read_only: true,
-        mutating: false,
-        network: false,
-        shell: false,
-        sensitive: false,
-        cacheable: true,
-        requires_confirmation: false,
-        extra: Extra::new(),
-    }
+    mcp_read_effects()
 }
 
 fn resource_operation(resource: Resource) -> OperationProfile {
