@@ -97,6 +97,25 @@ pub enum CoreError {
         stderr_preview: serde_json::Value,
     },
 
+    #[error("mcp operation '{operation}' timed out after {timeout_ms} ms")]
+    McpTimeout { operation: String, timeout_ms: u64 },
+
+    #[error("mcp transport error for '{operation}': {message}")]
+    McpTransport { operation: String, message: String },
+
+    #[error("mcp protocol error for '{operation}': {message}: {preview}")]
+    McpProtocol {
+        operation: String,
+        message: String,
+        preview: serde_json::Value,
+    },
+
+    #[error("mcp tool '{operation}' returned isError: {content_preview}")]
+    McpToolError {
+        operation: String,
+        content_preview: serde_json::Value,
+    },
+
     #[error("storage error: {0}")]
     Storage(String),
 
@@ -136,6 +155,10 @@ impl CoreError {
             CoreError::CliTimeout { .. } => "cli_timeout",
             CoreError::CliTransport { .. } => "cli_transport",
             CoreError::CliExit { .. } => "cli_exit",
+            CoreError::McpTimeout { .. } => "mcp_timeout",
+            CoreError::McpTransport { .. } => "mcp_transport",
+            CoreError::McpProtocol { .. } => "mcp_protocol",
+            CoreError::McpToolError { .. } => "mcp_tool_error",
             CoreError::Storage(_) => "storage",
             CoreError::Json(_) => "json",
             CoreError::Io(_) => "io",
@@ -212,6 +235,20 @@ impl CoreError {
             }
             CoreError::CliExit { .. } => {
                 "Inspect the bounded stderr preview and adjust the command arguments.".to_string()
+            }
+            CoreError::McpTimeout { .. } => {
+                "Increase the MCP timeout or inspect the stdio server for a hang.".to_string()
+            }
+            CoreError::McpTransport { .. } => {
+                "Check the MCP server command, arguments, environment, and stderr diagnostics."
+                    .to_string()
+            }
+            CoreError::McpProtocol { .. } => {
+                "Inspect the bounded MCP preview and verify the server follows the negotiated protocol."
+                    .to_string()
+            }
+            CoreError::McpToolError { .. } => {
+                "Inspect the bounded tool error content and adjust the call arguments.".to_string()
             }
             CoreError::Storage(_) => {
                 "Check the local .prog store and filesystem permissions.".to_string()

@@ -5,5 +5,6 @@
 
 pub mod cli;
 pub mod http;
+pub mod mcp;
 
 pub const ADAPTERS_PLACEHOLDER: &str = "prog-adapters";
