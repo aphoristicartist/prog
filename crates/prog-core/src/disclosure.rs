@@ -91,6 +91,16 @@ pub fn expand(
     slice: &SliceRequest,
     policy: &PreviewPolicy,
 ) -> Result<Projection> {
+    let (target_path, selected) = slice_value(payload, root_path, slice)?;
+    let effective_policy = policy.with_limit_and_depth(slice.limit, slice.depth);
+    Ok(project(&selected, &effective_policy, &target_path))
+}
+
+pub fn slice_value(
+    payload: &Value,
+    root_path: &str,
+    slice: &SliceRequest,
+) -> Result<(String, Value)> {
     let target_path = slice.path.as_deref().unwrap_or(root_path);
     if !is_within(root_path, target_path)? {
         return Err(CoreError::PathOutsideBoundary {
@@ -104,8 +114,7 @@ pub fn expand(
         hint: siblings_hint(payload, target_path),
     })?;
     let selected = select_fields(target, &slice.fields, &slice.omit);
-    let effective_policy = policy.with_limit_and_depth(slice.limit, slice.depth);
-    Ok(project(&selected, &effective_policy, target_path))
+    Ok((target_path.to_string(), selected))
 }
 
 fn project_once(value: &Value, policy: &PreviewPolicy, base_path: &str) -> Projection {

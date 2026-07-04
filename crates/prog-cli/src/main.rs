@@ -1,9 +1,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitCode,
 };
 
+use chrono::{SecondsFormat, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use prog_adapters::{
     cli::{CliOperation, CliSource},
@@ -11,14 +12,17 @@ use prog_adapters::{
     mcp::McpSource,
 };
 use prog_core::{
-    AuthRef, CachePolicy, CoreError, DISCLOSURE_VERSION, EffectSet, Extra, NextAction,
-    OmittedRegion, OperationProfile, PreviewPolicy, RedactionPolicy, Result,
-    SOURCE_PROFILE_VERSION, SliceRequest, SourceProfile, Store, TrustSettings, check_discovery,
-    cli_adapter_effects, cli_hardening_effects, expand, http_adapter_effects,
-    http_hardening_effects, infer, join, new_cache_entry, project, render_hints, tighten_effects,
+    AuthRef, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance, CoreError,
+    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, Extra, NextAction, OmittedRegion,
+    OperationProfile, PreviewPolicy, Projection, RedactionPolicy, Result, SOURCE_PROFILE_VERSION,
+    SliceRequest, SourceProfile, Store, Summary, TrustSettings, cache_allowed,
+    call_effect_warnings, check_call, check_discovery, cli_adapter_effects, cli_hardening_effects,
+    expand, http_adapter_effects, http_hardening_effects, infer, join, new_cache_entry, project,
+    public_contract_schemas, render_hints, slice_value, tighten_effects,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
 #[derive(Debug, Parser)]
@@ -196,27 +200,14 @@ async fn run(cli: &Cli) -> Result<()> {
             write_success(&response, cli.pretty)
         }
         Command::Call(args) => {
-            let _ = (
-                &args.source_id,
-                &args.operation,
-                &args.args,
-                &args.view,
-                args.yes,
-                args.no_cache,
-                args.refresh,
-            );
-            not_implemented("call")
+            let store = Store::open(&cli.dir)?;
+            let envelope = call_source(&store, args).await?;
+            write_success(&envelope, cli.pretty)
         }
         Command::Expand(args) => {
-            let _ = (
-                &args.cursor,
-                &args.path,
-                &args.limit,
-                &args.depth,
-                &args.fields,
-                &args.out,
-            );
-            not_implemented("expand")
+            let store = Store::open(&cli.dir)?;
+            let envelope = expand_cursor(&store, args)?;
+            write_success(&envelope, cli.pretty)
         }
         Command::Cache { command } => match command {
             CacheCommand::List => {
@@ -264,8 +255,9 @@ async fn run(cli: &Cli) -> Result<()> {
             }
         },
         Command::Meta(args) => {
-            let _ = &args.contract;
-            not_implemented("meta")
+            let store = Store::open(&cli.dir)?;
+            let envelope = meta_contracts(&store, args)?;
+            write_success(&envelope, cli.pretty)
         }
     }
 }
@@ -313,6 +305,48 @@ enum ProbeSource {
 struct GenericSeed {
     #[serde(default)]
     kind: Option<String>,
+}
+
+#[derive(Debug)]
+enum CallableSource {
+    Http(HttpSource),
+    Cli(CliSource),
+    Mcp(McpSource),
+}
+
+#[derive(Debug)]
+struct AdapterCall {
+    data: Value,
+    provenance: Value,
+    status: Option<String>,
+    duration_ms: Option<u64>,
+    pagination: Option<Value>,
+    warnings: Vec<String>,
+}
+
+struct EnvelopeInput {
+    source_id: String,
+    operation: String,
+    payload: Value,
+    root_path: String,
+    slice: SliceRequest,
+    payload_bytes: u64,
+    provenance: Option<CallProvenance>,
+    cache: Option<CacheInfo>,
+    warnings: Vec<String>,
+    schema_hints: BTreeMap<String, String>,
+    next_action_operation: Option<String>,
+}
+
+struct CursorInput<'a> {
+    cache_key: &'a str,
+    source_id: &'a str,
+    operation: &'a str,
+    root_path: &'a str,
+    payload: &'a Value,
+    slice: &'a SliceRequest,
+    cache: &'a CachePolicy,
+    may_cache: bool,
 }
 
 async fn discover_source(store: &Store, args: &DiscoverArgs) -> Result<DiscoverReport> {
@@ -398,6 +432,311 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         cursor,
         warnings: Vec::new(),
     })
+}
+
+async fn call_source(store: &Store, args: &CallArgs) -> Result<DisclosureEnvelope> {
+    let profile = store
+        .read_profile(&args.source_id)?
+        .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
+    let operation = profile_operation(&profile, &args.operation)?.clone();
+    let call_args = parse_json_argument(&args.args, "call --args")?;
+    validate_call_args(&operation, &call_args)?;
+    check_call(&operation, CallFlags { yes: args.yes }, &profile.trust)?;
+    let view = parse_view(args.view.as_deref())?;
+    let root_path = view.path.clone().unwrap_or_default();
+    let effective_cache = effective_cache_policy(&profile, &operation);
+    let may_cache = !args.no_cache && cache_allowed(&operation, &effective_cache);
+    let cache_key = Store::cache_key(&args.source_id, &args.operation, &call_args)?;
+
+    if may_cache
+        && !args.refresh
+        && let Some(entry) = store.get_entry(&cache_key)?
+    {
+        let payload = store
+            .get_payload(&entry.payload_hash)?
+            .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?;
+        let cache_info = cache_info(
+            CacheStatus::Hit,
+            &entry,
+            Some(age_seconds(&entry.created_at)?),
+        );
+        let cursor = cursor_for_projection(
+            store,
+            CursorInput {
+                cache_key: &cache_key,
+                source_id: &args.source_id,
+                operation: &args.operation,
+                root_path: &root_path,
+                payload: &payload,
+                slice: &view,
+                cache: &effective_cache,
+                may_cache,
+            },
+        )?;
+        return envelope_for_payload(
+            store,
+            EnvelopeInput {
+                source_id: args.source_id.clone(),
+                operation: args.operation.clone(),
+                payload,
+                root_path: root_path.clone(),
+                slice: view,
+                payload_bytes: entry.payload_bytes,
+                provenance: entry.provenance.clone(),
+                cache: Some(cache_info),
+                warnings: Vec::new(),
+                schema_hints: operation
+                    .output_shape
+                    .as_ref()
+                    .map(|shape| render_hints(shape, ""))
+                    .unwrap_or_default(),
+                next_action_operation: Some(args.operation.clone()),
+            },
+            cursor,
+        );
+    }
+
+    let source = callable_source_from_profile(&profile)?;
+    let adapter_call = execute_callable(&source, &operation, &call_args).await?;
+    let redaction = RedactionPolicy::default();
+    let (redacted, redacted_paths) = redaction.apply_persistence(&adapter_call.data);
+    let payload_bytes = json_len_u64(&redacted)?;
+    let observed = infer(&redacted);
+    update_profile_from_call(
+        store,
+        &profile,
+        &operation.id,
+        &call_args,
+        &redacted,
+        &observed,
+    )?;
+
+    let mut provenance = call_provenance(
+        &cache_key,
+        adapter_call.status,
+        adapter_call.duration_ms,
+        adapter_call.provenance,
+    );
+    let mut warnings = adapter_call.warnings;
+    warnings.extend(call_effect_warnings(&operation));
+    if !redacted_paths.is_empty() {
+        warnings.push(format!(
+            "redacted {} sensitive path(s) before inference and persistence",
+            redacted_paths.len()
+        ));
+    }
+    if let Some(pagination) = adapter_call.pagination {
+        warnings.push(format!(
+            "pagination hints available: {}",
+            compact_json(&pagination)?
+        ));
+    }
+
+    let cache_status = if may_cache {
+        let payload_hash = store.put_payload(&redacted)?;
+        let ttl = ttl_seconds(&effective_cache);
+        let mut entry = new_cache_entry(
+            cache_key.clone(),
+            payload_hash,
+            args.source_id.clone(),
+            args.operation.clone(),
+            payload_bytes,
+            ttl,
+        );
+        provenance.cache_key = Some(cache_key.clone());
+        entry.provenance = Some(provenance.clone());
+        store.put_entry(&cache_key, &entry)?;
+        Some(cache_info(CacheStatus::Stored, &entry, Some(0)))
+    } else {
+        provenance.cache_key = None;
+        warnings.push(cache_skip_warning(args.no_cache, &operation));
+        Some(CacheInfo {
+            status: CacheStatus::Skipped,
+            ttl_seconds: None,
+            expires_at: None,
+            age_seconds: None,
+            extra: Extra::new(),
+        })
+    };
+
+    let cursor = cursor_for_projection(
+        store,
+        CursorInput {
+            cache_key: &cache_key,
+            source_id: &args.source_id,
+            operation: &args.operation,
+            root_path: &root_path,
+            payload: &redacted,
+            slice: &view,
+            cache: &effective_cache,
+            may_cache,
+        },
+    )?;
+    envelope_for_payload(
+        store,
+        EnvelopeInput {
+            source_id: args.source_id.clone(),
+            operation: args.operation.clone(),
+            payload: redacted,
+            root_path,
+            slice: view,
+            payload_bytes,
+            provenance: Some(provenance),
+            cache: cache_status,
+            warnings,
+            schema_hints: render_hints(&observed, ""),
+            next_action_operation: Some(args.operation.clone()),
+        },
+        cursor,
+    )
+}
+
+fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope> {
+    let redaction_version = RedactionPolicy::default().version;
+    let record = store.get_cursor(&args.cursor, redaction_version)?;
+    let entry = store
+        .get_entry(&record.cache_key)?
+        .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
+    let payload = store
+        .get_payload(&entry.payload_hash)?
+        .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
+    let slice = SliceRequest {
+        path: if args.path.is_empty() {
+            None
+        } else {
+            Some(args.path.clone())
+        },
+        limit: args.limit,
+        depth: args.depth,
+        fields: args.fields.clone(),
+        omit: Vec::new(),
+        extra: Extra::new(),
+    };
+    let age = age_seconds(&entry.created_at)?;
+    let mut warnings = Vec::new();
+    if age > 0 {
+        warnings.push(format!(
+            "cached payload age_seconds={age}; re-run `prog call {} {} --refresh` to refresh",
+            record.source_id, record.operation
+        ));
+    }
+
+    if let Some(path) = &args.out {
+        let (target_path, selected) = slice_value(&payload, &record.root_path, &slice)?;
+        let bytes = serde_json::to_vec_pretty(&selected)?;
+        write_private_file(path, &bytes)?;
+        let receipt = json!({
+            "path": path,
+            "json_pointer": target_path,
+            "bytes": bytes.len(),
+            "sha256": hex_sha256(&bytes)
+        });
+        return envelope_for_payload(
+            store,
+            EnvelopeInput {
+                source_id: record.source_id,
+                operation: record.operation,
+                payload: receipt,
+                root_path: "".to_string(),
+                slice: SliceRequest {
+                    path: None,
+                    limit: Some(5),
+                    depth: Some(2),
+                    fields: Vec::new(),
+                    omit: Vec::new(),
+                    extra: Extra::new(),
+                },
+                payload_bytes: bytes.len().try_into().unwrap_or(u64::MAX),
+                provenance: entry.provenance.clone(),
+                cache: Some(cache_info(CacheStatus::Hit, &entry, Some(age))),
+                warnings,
+                schema_hints: BTreeMap::new(),
+                next_action_operation: None,
+            },
+            None,
+        );
+    }
+
+    envelope_for_payload(
+        store,
+        EnvelopeInput {
+            source_id: record.source_id,
+            operation: record.operation,
+            payload,
+            root_path: record.root_path,
+            slice,
+            payload_bytes: entry.payload_bytes,
+            provenance: entry.provenance.clone(),
+            cache: Some(cache_info(CacheStatus::Hit, &entry, Some(age))),
+            warnings,
+            schema_hints: BTreeMap::new(),
+            next_action_operation: None,
+        },
+        Some(args.cursor.clone()),
+    )
+}
+
+fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> {
+    let schemas = public_contract_schemas()?;
+    let payload = match &args.contract {
+        Some(contract) => schemas
+            .get(contract)
+            .cloned()
+            .ok_or_else(|| CoreError::BadArgs {
+                operation: "meta".to_string(),
+                reason: format!(
+                    "unknown contract '{contract}'; expected one of {}",
+                    schemas.keys().cloned().collect::<Vec<_>>().join(", ")
+                ),
+            })?,
+        None => json!({
+            "contracts": schemas.keys().cloned().collect::<Vec<_>>()
+        }),
+    };
+    let operation = args.contract.as_deref().unwrap_or("contracts").to_string();
+    let cache_key = Store::cache_key("prog", "meta", &json!({"contract": args.contract}))?;
+    let payload_hash = store.put_payload(&payload)?;
+    let payload_bytes = json_len_u64(&payload)?;
+    let entry = new_cache_entry(
+        cache_key.clone(),
+        payload_hash,
+        "prog".to_string(),
+        operation.clone(),
+        payload_bytes,
+        86_400,
+    );
+    store.put_entry(&cache_key, &entry)?;
+    let slice = SliceRequest {
+        path: None,
+        limit: None,
+        depth: None,
+        fields: Vec::new(),
+        omit: Vec::new(),
+        extra: Extra::new(),
+    };
+    let projection = expand(&payload, "", &slice, &PreviewPolicy::default())?;
+    let cursor = if projection.omitted.is_empty() {
+        None
+    } else {
+        Some(store.create_cursor(&cache_key, "prog", &operation, "", 1, 86_400)?)
+    };
+    envelope_for_payload(
+        store,
+        EnvelopeInput {
+            source_id: "prog".to_string(),
+            operation,
+            payload,
+            root_path: "".to_string(),
+            slice,
+            payload_bytes,
+            provenance: entry.provenance.clone(),
+            cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
+            warnings: Vec::new(),
+            schema_hints: BTreeMap::new(),
+            next_action_operation: None,
+        },
+        cursor,
+    )
 }
 
 fn read_seed(seed: &str) -> Result<Value> {
@@ -494,10 +833,21 @@ fn prepare_http_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery>
             .get("json_body")
             .or_else(|| operation_value.get("body"))
             .cloned();
+        let sensitive_args = string_vec(
+            operation_value.get("sensitive_args"),
+            "operations[].sensitive_args",
+        )?;
         let mut extra = Extra::new();
         extra.insert(
             "invocation".to_string(),
-            json!({"http": {"method": method, "path": path, "query": query}}),
+            json!({"http": {
+                "method": method.clone(),
+                "path": path.clone(),
+                "query": query.clone(),
+                "headers": headers.clone(),
+                "json_body": json_body.clone(),
+                "sensitive_args": sensitive_args.clone()
+            }}),
         );
         operations.push(OperationProfile {
             id: id.clone(),
@@ -519,10 +869,7 @@ fn prepare_http_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery>
             json_body,
             timeout_ms: None,
             max_response_bytes: None,
-            sensitive_args: string_vec(
-                operation_value.get("sensitive_args"),
-                "operations[].sensitive_args",
-            )?,
+            sensitive_args,
         });
     }
 
@@ -541,7 +888,17 @@ fn prepare_http_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery>
                 ..TrustSettings::default()
             },
             effect_defaults: EffectSet::default(),
-            extra: seed_extra("http", seed),
+            extra: adapter_seed_extra(
+                "http",
+                seed,
+                json!({"http": {
+                    "base_url": base_url.clone(),
+                    "timeout_ms": 30_000,
+                    "max_response_bytes": 1024 * 1024,
+                    "default_headers": {},
+                    "response_header_allowlist": []
+                }}),
+            ),
         },
         probe: Some(ProbeSource::Http(HttpSource {
             id: source_id.to_string(),
@@ -588,10 +945,25 @@ fn prepare_cli_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery> 
             effects_assumed.push(format!("{id}: no effect metadata, assumed unsafe"));
         }
         let env = string_map(operation_value.get("env"), "operations[].env")?;
+        let working_dir = operation_value
+            .get("working_dir")
+            .and_then(Value::as_str)
+            .map(PathBuf::from);
+        let sensitive_args = string_vec(
+            operation_value.get("sensitive_args"),
+            "operations[].sensitive_args",
+        )?;
         let mut extra = Extra::new();
         extra.insert(
             "invocation".to_string(),
-            json!({"cli": {"command": command, "args": args, "env": env.keys().cloned().collect::<Vec<_>>()}}),
+            json!({"cli": {
+                "command": command.clone(),
+                "args": args.clone(),
+                "env": env.clone(),
+                "working_dir": working_dir.clone(),
+                "shell": shell,
+                "sensitive_args": sensitive_args.clone()
+            }}),
         );
         operations.push(OperationProfile {
             id: id.clone(),
@@ -610,18 +982,12 @@ fn prepare_cli_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery> 
             command,
             args,
             env,
-            working_dir: operation_value
-                .get("working_dir")
-                .and_then(Value::as_str)
-                .map(PathBuf::from),
+            working_dir,
             shell,
             timeout_ms: None,
             max_stdout_bytes: None,
             max_stderr_bytes: None,
-            sensitive_args: string_vec(
-                operation_value.get("sensitive_args"),
-                "operations[].sensitive_args",
-            )?,
+            sensitive_args,
         });
     }
 
@@ -637,7 +1003,15 @@ fn prepare_cli_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery> 
             cache: CachePolicy::default(),
             trust: trust.clone(),
             effect_defaults: EffectSet::default(),
-            extra: seed_extra("cli", seed),
+            extra: adapter_seed_extra(
+                "cli",
+                seed,
+                json!({"cli": {
+                    "timeout_ms": 30_000,
+                    "max_stdout_bytes": 1024 * 1024,
+                    "max_stderr_bytes": 1024 * 1024
+                }}),
+            ),
         },
         probe: Some(ProbeSource::Cli(CliSource {
             id: source_id.to_string(),
@@ -663,12 +1037,785 @@ async fn prepare_mcp_seed(source_id: &str, mut seed: Value) -> Result<PreparedDi
         reason: format!("MCP seed is malformed: {error}"),
     })?;
     let discovery = source.discover().await?;
+    let mut profile = discovery.profile;
+    profile.extra.insert(
+        "adapter".to_string(),
+        json!({"mcp": {
+            "command": source.command.clone(),
+            "args": source.args.clone(),
+            "env": source.env.clone(),
+            "timeout_ms": source.timeout_ms,
+            "max_content_bytes": source.max_content_bytes,
+            "max_stderr_bytes": source.max_stderr_bytes,
+            "max_schema_depth": source.max_schema_depth
+        }}),
+    );
     Ok(PreparedDiscovery {
-        profile: discovery.profile,
+        profile,
         probe: Some(ProbeSource::Mcp(source)),
         warnings: discovery.warnings,
         effects_assumed: Vec::new(),
     })
+}
+
+fn profile_operation<'a>(
+    profile: &'a SourceProfile,
+    operation: &str,
+) -> Result<&'a OperationProfile> {
+    profile
+        .operations
+        .iter()
+        .find(|candidate| candidate.id == operation)
+        .ok_or_else(|| CoreError::UnknownOperation {
+            source_id: profile.id.clone(),
+            operation: operation.to_string(),
+        })
+}
+
+fn parse_json_argument(raw: &str, operation: &str) -> Result<Value> {
+    serde_json::from_str(raw).map_err(|error| CoreError::BadArgs {
+        operation: operation.to_string(),
+        reason: format!("must be valid JSON: {error}"),
+    })
+}
+
+fn parse_view(raw: Option<&str>) -> Result<SliceRequest> {
+    match raw {
+        Some(raw) => serde_json::from_str(raw).map_err(|error| CoreError::BadArgs {
+            operation: "call --view".to_string(),
+            reason: format!("must be a SliceRequest JSON object: {error}"),
+        }),
+        None => Ok(SliceRequest {
+            path: None,
+            limit: None,
+            depth: None,
+            fields: Vec::new(),
+            omit: Vec::new(),
+            extra: Extra::new(),
+        }),
+    }
+}
+
+fn validate_call_args(operation: &OperationProfile, args: &Value) -> Result<()> {
+    let args = args.as_object().ok_or_else(|| CoreError::BadArgs {
+        operation: operation.id.clone(),
+        reason: "args must be a JSON object".to_string(),
+    })?;
+    let Some(schema) = operation.input_schema.as_object() else {
+        if args.is_empty() || operation.input_schema.is_null() {
+            return Ok(());
+        }
+        return Err(CoreError::BadArgs {
+            operation: operation.id.clone(),
+            reason: "input_schema must be an object when args are supplied".to_string(),
+        });
+    };
+    if let Some(schema_type) = schema.get("type").and_then(Value::as_str)
+        && schema_type != "object"
+    {
+        return Err(CoreError::BadArgs {
+            operation: operation.id.clone(),
+            reason: "input_schema.type must be 'object'".to_string(),
+        });
+    }
+
+    let required = schema_string_set(
+        schema.get("required"),
+        &operation.id,
+        "input_schema.required",
+    )?;
+    let properties = schema
+        .get("properties")
+        .map(|value| {
+            value
+                .as_object()
+                .map(|properties| properties.keys().cloned().collect::<BTreeSet<_>>())
+                .ok_or_else(|| CoreError::BadArgs {
+                    operation: operation.id.clone(),
+                    reason: "input_schema.properties must be an object".to_string(),
+                })
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let mut allowed = properties;
+    allowed.extend(required.iter().cloned());
+    let allow_unknown = schema
+        .get("additional_properties")
+        .or_else(|| schema.get("additionalProperties"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let missing = required
+        .iter()
+        .filter(|name| !args.contains_key(*name))
+        .cloned()
+        .collect::<Vec<_>>();
+    let unknown = if allow_unknown {
+        Vec::new()
+    } else {
+        args.keys()
+            .filter(|name| !allowed.contains(*name))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    if missing.is_empty() && unknown.is_empty() {
+        return Ok(());
+    }
+
+    let mut parts = Vec::new();
+    if !missing.is_empty() {
+        parts.push(format!("missing parameters: {}", missing.join(", ")));
+    }
+    if !unknown.is_empty() {
+        parts.push(format!("unknown parameters: {}", unknown.join(", ")));
+    }
+    Err(CoreError::BadArgs {
+        operation: operation.id.clone(),
+        reason: parts.join("; "),
+    })
+}
+
+fn schema_string_set(
+    value: Option<&Value>,
+    operation: &str,
+    field: &str,
+) -> Result<BTreeSet<String>> {
+    let Some(value) = value else {
+        return Ok(BTreeSet::new());
+    };
+    let values = value.as_array().ok_or_else(|| CoreError::BadArgs {
+        operation: operation.to_string(),
+        reason: format!("{field} must be an array"),
+    })?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| CoreError::BadArgs {
+                    operation: operation.to_string(),
+                    reason: format!("{field} entries must be strings"),
+                })
+        })
+        .collect()
+}
+
+fn callable_source_from_profile(profile: &SourceProfile) -> Result<CallableSource> {
+    match profile.kind {
+        prog_core::SourceKind::Http => Ok(CallableSource::Http(http_source_from_profile(profile)?)),
+        prog_core::SourceKind::Cli => Ok(CallableSource::Cli(cli_source_from_profile(profile)?)),
+        prog_core::SourceKind::Mcp => Ok(CallableSource::Mcp(mcp_source_from_profile(profile)?)),
+    }
+}
+
+fn http_source_from_profile(profile: &SourceProfile) -> Result<HttpSource> {
+    let adapter = adapter_config(profile, "http");
+    let base_url = adapter
+        .and_then(|config| config.get("base_url"))
+        .or_else(|| profile.extra.get("seed_origin"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| profile_adapter_error(profile, "http.base_url"))?;
+    let mut operations = Vec::new();
+    for operation in &profile.operations {
+        let invocation = invocation_config(operation, "http")?;
+        operations.push(HttpOperation {
+            id: operation.id.clone(),
+            method: optional_profile_string(invocation, "method")?
+                .unwrap_or_else(|| "GET".to_string()),
+            path: required_profile_string(invocation, "path")?,
+            query: profile_string_map(invocation.get("query"), "http.query")?,
+            headers: profile_string_map(invocation.get("headers"), "http.headers")?,
+            json_body: invocation
+                .get("json_body")
+                .cloned()
+                .filter(|value| !value.is_null()),
+            timeout_ms: None,
+            max_response_bytes: None,
+            sensitive_args: profile_string_vec(
+                invocation.get("sensitive_args"),
+                "http.sensitive_args",
+            )?,
+        });
+    }
+    Ok(HttpSource {
+        id: profile.id.clone(),
+        base_url,
+        timeout_ms: adapter_u64(adapter, "timeout_ms", 30_000),
+        max_response_bytes: adapter_usize(adapter, "max_response_bytes", 1024 * 1024),
+        default_headers: profile_string_map(
+            adapter.and_then(|config| config.get("default_headers")),
+            "http.default_headers",
+        )?,
+        response_header_allowlist: profile_string_vec(
+            adapter.and_then(|config| config.get("response_header_allowlist")),
+            "http.response_header_allowlist",
+        )?,
+        auth: profile.auth.clone(),
+        operations,
+    })
+}
+
+fn cli_source_from_profile(profile: &SourceProfile) -> Result<CliSource> {
+    let adapter = adapter_config(profile, "cli");
+    let mut operations = Vec::new();
+    for operation in &profile.operations {
+        let invocation = invocation_config(operation, "cli")?;
+        operations.push(CliOperation {
+            id: operation.id.clone(),
+            input_schema: operation.input_schema.clone(),
+            command: required_profile_string(invocation, "command")?,
+            args: profile_string_vec(invocation.get("args"), "cli.args")?,
+            env: profile_string_map(invocation.get("env"), "cli.env")?,
+            working_dir: invocation
+                .get("working_dir")
+                .and_then(Value::as_str)
+                .map(PathBuf::from),
+            shell: invocation
+                .get("shell")
+                .and_then(Value::as_bool)
+                .unwrap_or(operation.effects.shell),
+            timeout_ms: None,
+            max_stdout_bytes: None,
+            max_stderr_bytes: None,
+            sensitive_args: profile_string_vec(
+                invocation.get("sensitive_args"),
+                "cli.sensitive_args",
+            )?,
+        });
+    }
+    Ok(CliSource {
+        id: profile.id.clone(),
+        timeout_ms: adapter_u64(adapter, "timeout_ms", 30_000),
+        max_stdout_bytes: adapter_usize(adapter, "max_stdout_bytes", 1024 * 1024),
+        max_stderr_bytes: adapter_usize(adapter, "max_stderr_bytes", 1024 * 1024),
+        trust: profile.trust.clone(),
+        operations,
+    })
+}
+
+fn mcp_source_from_profile(profile: &SourceProfile) -> Result<McpSource> {
+    let adapter =
+        adapter_config(profile, "mcp").ok_or_else(|| profile_adapter_error(profile, "mcp"))?;
+    Ok(McpSource {
+        id: profile.id.clone(),
+        command: required_profile_string(adapter, "command")?,
+        args: profile_string_vec(adapter.get("args"), "mcp.args")?,
+        env: profile_string_map(adapter.get("env"), "mcp.env")?,
+        timeout_ms: adapter_u64(Some(adapter), "timeout_ms", 30_000),
+        max_content_bytes: adapter_usize(Some(adapter), "max_content_bytes", 1024 * 1024),
+        max_stderr_bytes: adapter_usize(Some(adapter), "max_stderr_bytes", 64 * 1024),
+        max_schema_depth: adapter_usize(Some(adapter), "max_schema_depth", 32),
+    })
+}
+
+async fn execute_callable(
+    source: &CallableSource,
+    operation: &OperationProfile,
+    args: &Value,
+) -> Result<AdapterCall> {
+    match source {
+        CallableSource::Http(source) => {
+            let result = source
+                .execute_with_env(&operation.id, args, &|name| std::env::var(name).ok())
+                .await?;
+            Ok(AdapterCall {
+                data: result.data,
+                provenance: serde_json::to_value(result.provenance.clone())?,
+                status: Some(result.provenance.status.to_string()),
+                duration_ms: Some(result.provenance.duration_ms),
+                pagination: result.pagination,
+                warnings: result.warnings,
+            })
+        }
+        CallableSource::Cli(source) => {
+            let result = source.execute(&operation.id, args).await?;
+            let mut provenance = serde_json::to_value(result.provenance.clone())?;
+            if let Value::Object(map) = &mut provenance {
+                map.insert(
+                    "diagnostics".to_string(),
+                    serde_json::to_value(result.diagnostics)?,
+                );
+            }
+            Ok(AdapterCall {
+                data: result.data,
+                provenance,
+                status: result.provenance.exit_code.map(|code| code.to_string()),
+                duration_ms: Some(result.provenance.duration_ms),
+                pagination: None,
+                warnings: result.warnings,
+            })
+        }
+        CallableSource::Mcp(source) => {
+            let invocation = invocation_config(operation, "mcp")?;
+            let kind = required_profile_string(invocation, "kind")?;
+            let result = match kind.as_str() {
+                "tool" => {
+                    let name = required_profile_string(invocation, "name")?;
+                    source.call_tool(&name, args).await?
+                }
+                "resource" => {
+                    let uri = args
+                        .get("uri")
+                        .and_then(Value::as_str)
+                        .or_else(|| invocation.get("uri").and_then(Value::as_str))
+                        .ok_or_else(|| CoreError::BadArgs {
+                            operation: operation.id.clone(),
+                            reason: "resource calls require args.uri".to_string(),
+                        })?;
+                    source.read_resource(uri).await?
+                }
+                _ => {
+                    return Err(CoreError::BadArgs {
+                        operation: operation.id.clone(),
+                        reason: format!("MCP invocation kind '{kind}' is not callable in V1"),
+                    });
+                }
+            };
+            let mut provenance = serde_json::to_value(result.provenance.clone())?;
+            if let Value::Object(map) = &mut provenance {
+                map.insert(
+                    "diagnostics".to_string(),
+                    serde_json::to_value(result.diagnostics)?,
+                );
+            }
+            Ok(AdapterCall {
+                data: result.data,
+                provenance,
+                status: None,
+                duration_ms: Some(result.provenance.duration_ms),
+                pagination: None,
+                warnings: result.warnings,
+            })
+        }
+    }
+}
+
+fn adapter_config<'a>(profile: &'a SourceProfile, kind: &str) -> Option<&'a Map<String, Value>> {
+    profile
+        .extra
+        .get("adapter")
+        .and_then(|value| value.get(kind))
+        .and_then(Value::as_object)
+}
+
+fn invocation_config<'a>(
+    operation: &'a OperationProfile,
+    kind: &str,
+) -> Result<&'a Map<String, Value>> {
+    operation
+        .extra
+        .get("invocation")
+        .and_then(|value| value.get(kind))
+        .and_then(Value::as_object)
+        .ok_or_else(|| CoreError::BadArgs {
+            operation: operation.id.clone(),
+            reason: format!(
+                "profile is missing invocation.{kind}; re-run `prog discover` for this source"
+            ),
+        })
+}
+
+fn profile_adapter_error(profile: &SourceProfile, field: &str) -> CoreError {
+    CoreError::BadArgs {
+        operation: "call".to_string(),
+        reason: format!(
+            "profile '{}' is missing adapter.{field}; re-run `prog discover` for this source",
+            profile.id
+        ),
+    }
+}
+
+fn required_profile_string(map: &Map<String, Value>, field: &str) -> Result<String> {
+    map.get(field)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| CoreError::BadArgs {
+            operation: "call".to_string(),
+            reason: format!("profile field '{field}' must be a string"),
+        })
+}
+
+fn optional_profile_string(map: &Map<String, Value>, field: &str) -> Result<Option<String>> {
+    map.get(field)
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| CoreError::BadArgs {
+                    operation: "call".to_string(),
+                    reason: format!("profile field '{field}' must be a string"),
+                })
+        })
+        .transpose()
+}
+
+fn profile_string_map(value: Option<&Value>, field: &str) -> Result<BTreeMap<String, String>> {
+    let Some(value) = value else {
+        return Ok(BTreeMap::new());
+    };
+    serde_json::from_value(value.clone()).map_err(|error| CoreError::BadArgs {
+        operation: "call".to_string(),
+        reason: format!("profile field '{field}' must be an object of strings: {error}"),
+    })
+}
+
+fn profile_string_vec(value: Option<&Value>, field: &str) -> Result<Vec<String>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_value(value.clone()).map_err(|error| CoreError::BadArgs {
+        operation: "call".to_string(),
+        reason: format!("profile field '{field}' must be an array of strings: {error}"),
+    })
+}
+
+fn adapter_u64(adapter: Option<&Map<String, Value>>, field: &str, default: u64) -> u64 {
+    adapter
+        .and_then(|config| config.get(field))
+        .and_then(Value::as_u64)
+        .unwrap_or(default)
+}
+
+fn adapter_usize(adapter: Option<&Map<String, Value>>, field: &str, default: usize) -> usize {
+    adapter_u64(adapter, field, default.try_into().unwrap_or(u64::MAX))
+        .try_into()
+        .unwrap_or(default)
+}
+
+fn effective_cache_policy(profile: &SourceProfile, operation: &OperationProfile) -> CachePolicy {
+    let mut policy = if operation.cache.enabled {
+        operation.cache.clone()
+    } else if profile.cache.enabled {
+        profile.cache.clone()
+    } else {
+        CachePolicy::default()
+    };
+    if !policy.enabled && operation.effects.cacheable && !operation.effects.sensitive {
+        policy.enabled = true;
+        policy.ttl_seconds = Some(86_400);
+    }
+    policy
+}
+
+fn ttl_seconds(policy: &CachePolicy) -> i64 {
+    policy
+        .ttl_seconds
+        .unwrap_or(86_400)
+        .try_into()
+        .unwrap_or(i64::MAX)
+}
+
+fn cache_skip_warning(no_cache: bool, operation: &OperationProfile) -> String {
+    if no_cache {
+        "cache persistence skipped by --no-cache".to_string()
+    } else if operation.effects.sensitive {
+        "cache persistence skipped because the operation may handle sensitive data".to_string()
+    } else if !operation.effects.cacheable {
+        "cache persistence skipped because the operation is not cacheable".to_string()
+    } else {
+        "cache persistence skipped by cache policy".to_string()
+    }
+}
+
+fn cache_info(
+    status: CacheStatus,
+    entry: &prog_core::CacheEntryMeta,
+    age_seconds: Option<u64>,
+) -> CacheInfo {
+    CacheInfo {
+        status,
+        ttl_seconds: ttl_between(&entry.created_at, &entry.expires_at).ok(),
+        expires_at: Some(entry.expires_at.clone()),
+        age_seconds,
+        extra: Extra::new(),
+    }
+}
+
+fn call_provenance(
+    cache_key: &str,
+    status: Option<String>,
+    duration_ms: Option<u64>,
+    adapter_provenance: Value,
+) -> CallProvenance {
+    let mut extra = Extra::new();
+    extra.insert("adapter".to_string(), adapter_provenance);
+    CallProvenance {
+        source_call_id: format!(
+            "call_{}",
+            Utc::now()
+                .timestamp_nanos_opt()
+                .unwrap_or_else(|| Utc::now().timestamp_micros())
+        ),
+        cache_key: Some(cache_key.to_string()),
+        captured_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        status,
+        duration_ms,
+        extra,
+    }
+}
+
+fn cursor_for_projection(store: &Store, input: CursorInput<'_>) -> Result<Option<String>> {
+    if !input.may_cache {
+        return Ok(None);
+    }
+    let projection = expand(
+        input.payload,
+        input.root_path,
+        input.slice,
+        &PreviewPolicy::default(),
+    )?;
+    if projection.omitted.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(store.create_cursor(
+        input.cache_key,
+        input.source_id,
+        input.operation,
+        input.root_path,
+        RedactionPolicy::default().version,
+        ttl_seconds(input.cache),
+    )?))
+}
+
+fn envelope_for_payload(
+    _store: &Store,
+    input: EnvelopeInput,
+    cursor: Option<String>,
+) -> Result<DisclosureEnvelope> {
+    let mut policy = PreviewPolicy::default();
+    let mut last = None;
+    for _ in 0..16 {
+        let projection = expand(&input.payload, &input.root_path, &input.slice, &policy)?;
+        let mut envelope = make_envelope(&input, projection, cursor.clone());
+        let bytes = finalize_envelope_bytes(&mut envelope)?;
+        if bytes <= policy.max_envelope_bytes {
+            return Ok(envelope);
+        }
+        last = Some(envelope);
+        let next = shrink_policy(&policy);
+        if next == policy {
+            break;
+        }
+        policy = next;
+    }
+    let mut envelope = last.expect("envelope loop always builds at least once");
+    if serde_json::to_vec(&envelope)?.len() > PreviewPolicy::default().max_envelope_bytes {
+        envelope.schema_hints.clear();
+        envelope.provenance = None;
+        envelope.next_actions.truncate(4);
+        envelope.omitted.truncate(8);
+        envelope.warnings.truncate(4);
+        envelope
+            .warnings
+            .push("envelope metadata compacted to enforce max_envelope_bytes".to_string());
+        finalize_envelope_bytes(&mut envelope)?;
+    }
+    if serde_json::to_vec(&envelope)?.len() > PreviewPolicy::default().max_envelope_bytes {
+        envelope.data_preview =
+            Value::String("«preview omitted to enforce envelope budget»".to_string());
+        envelope.omitted.clear();
+        envelope.next_actions.clear();
+        envelope.warnings.truncate(1);
+        finalize_envelope_bytes(&mut envelope)?;
+    }
+    Ok(envelope)
+}
+
+fn make_envelope(
+    input: &EnvelopeInput,
+    projection: Projection,
+    cursor: Option<String>,
+) -> DisclosureEnvelope {
+    let next_actions = cursor
+        .as_ref()
+        .map(|_| {
+            projection
+                .omitted
+                .iter()
+                .take(10)
+                .map(|omitted| NextAction {
+                    kind: "expand".to_string(),
+                    operation: input.next_action_operation.clone(),
+                    path: Some(omitted.path.clone()),
+                    reason: Some(format!("omitted: {:?}", omitted.reason)),
+                    extra: Extra::new(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    DisclosureEnvelope {
+        schema_version: DISCLOSURE_VERSION.to_string(),
+        source_id: Some(input.source_id.clone()),
+        operation: Some(input.operation.clone()),
+        summary: Summary {
+            kind: value_kind(&input.payload).to_string(),
+            item_count: item_count(&input.payload),
+            preview_count: item_count(&projection.preview),
+            payload_bytes: input.payload_bytes,
+            approx_tokens: input.payload_bytes.saturating_add(3) / 4,
+            envelope_bytes: None,
+            extra: Extra::new(),
+        },
+        data_preview: projection.preview,
+        schema_hints: input.schema_hints.clone(),
+        omitted: projection.omitted,
+        cursor,
+        next_actions,
+        provenance: input.provenance.clone(),
+        cache: input.cache.clone(),
+        warnings: input.warnings.clone(),
+        extra: Extra::new(),
+    }
+}
+
+fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Result<usize> {
+    envelope.summary.envelope_bytes = None;
+    let first = serde_json::to_vec(envelope)?.len();
+    envelope.summary.envelope_bytes = Some(first.try_into().unwrap_or(u64::MAX));
+    let second = serde_json::to_vec(envelope)?.len();
+    envelope.summary.envelope_bytes = Some(second.try_into().unwrap_or(u64::MAX));
+    Ok(second)
+}
+
+fn shrink_policy(policy: &PreviewPolicy) -> PreviewPolicy {
+    PreviewPolicy {
+        array_items: halve_to_zero(policy.array_items),
+        object_fields: halve_to_zero(policy.object_fields),
+        string_chars: halve_to_zero(policy.string_chars).max(16),
+        depth: policy.depth.saturating_sub(1),
+        node_budget: halve_to_zero(policy.node_budget).max(1),
+        max_envelope_bytes: policy.max_envelope_bytes,
+    }
+}
+
+fn update_profile_from_call(
+    store: &Store,
+    profile: &SourceProfile,
+    operation_id: &str,
+    args: &Value,
+    redacted: &Value,
+    observed: &prog_core::Shape,
+) -> Result<()> {
+    let profile_seed = profile.clone();
+    let operation_id = operation_id.to_string();
+    let args = args.clone();
+    let redacted = redacted.clone();
+    let observed = observed.clone();
+    store.update_profile(&profile.id, |current| {
+        let mut next = current.unwrap_or_else(|| profile_seed.clone());
+        if let Some(operation) = next
+            .operations
+            .iter_mut()
+            .find(|operation| operation.id == operation_id)
+        {
+            operation.output_shape = Some(match &operation.output_shape {
+                Some(current) => join(current, &observed),
+                None => observed.clone(),
+            });
+            push_bounded_example(operation, &args, &redacted);
+        }
+        next
+    })?;
+    Ok(())
+}
+
+fn push_bounded_example(operation: &mut OperationProfile, args: &Value, redacted: &Value) {
+    let projection = project(redacted, &PreviewPolicy::default(), "");
+    let example = json!({
+        "args": args,
+        "projection": projection
+    });
+    let examples = operation
+        .extra
+        .entry("examples".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if let Value::Array(examples) = examples {
+        examples.push(example);
+        while examples.len() > 5 {
+            examples.remove(0);
+        }
+    }
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    std::fs::write(path, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+fn age_seconds(created_at: &str) -> Result<u64> {
+    let created = chrono::DateTime::parse_from_rfc3339(created_at)
+        .map_err(CoreError::storage)?
+        .with_timezone(&Utc);
+    Ok((Utc::now() - created)
+        .num_seconds()
+        .max(0)
+        .try_into()
+        .unwrap_or(u64::MAX))
+}
+
+fn ttl_between(created_at: &str, expires_at: &str) -> Result<u64> {
+    let created = chrono::DateTime::parse_from_rfc3339(created_at)
+        .map_err(CoreError::storage)?
+        .with_timezone(&Utc);
+    let expires = chrono::DateTime::parse_from_rfc3339(expires_at)
+        .map_err(CoreError::storage)?
+        .with_timezone(&Utc);
+    Ok((expires - created)
+        .num_seconds()
+        .max(0)
+        .try_into()
+        .unwrap_or(u64::MAX))
+}
+
+fn json_len_u64(value: &Value) -> Result<u64> {
+    Ok(serde_json::to_vec(value)?
+        .len()
+        .try_into()
+        .unwrap_or(u64::MAX))
+}
+
+fn compact_json(value: &Value) -> Result<String> {
+    Ok(serde_json::to_string(value)?)
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
+}
+
+fn value_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn item_count(value: &Value) -> Option<u64> {
+    match value {
+        Value::Array(items) => Some(items.len().try_into().unwrap_or(u64::MAX)),
+        Value::Object(map) => Some(map.len().try_into().unwrap_or(u64::MAX)),
+        _ => None,
+    }
+}
+
+fn halve_to_zero(value: usize) -> usize {
+    if value <= 1 { 0 } else { value / 2 }
 }
 
 async fn probe_profile(
@@ -1162,12 +2309,13 @@ fn example_value(schema: &Value) -> Value {
     }
 }
 
-fn seed_extra(kind: &str, seed: &Value) -> Extra {
+fn adapter_seed_extra(kind: &str, seed: &Value, adapter: Value) -> Extra {
     let mut extra = Extra::new();
     extra.insert("seed_kind".to_string(), json!(kind));
     if let Some(value) = seed.get("base_url").or_else(|| seed.get("command")) {
         extra.insert("seed_origin".to_string(), value.clone());
     }
+    extra.insert("adapter".to_string(), adapter);
     extra
 }
 
@@ -1183,10 +2331,6 @@ fn core_kind(kind: SourceKind) -> prog_core::SourceKind {
 struct CacheGetOutput {
     entry: prog_core::CacheEntryMeta,
     projection: prog_core::Projection,
-}
-
-fn not_implemented(command: &'static str) -> Result<()> {
-    Err(CoreError::NotImplemented { command })
 }
 
 fn write_success<T: Serialize>(value: &T, pretty: bool) -> Result<()> {
