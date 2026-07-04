@@ -4,7 +4,11 @@ use std::{
     process::{Command, Output},
 };
 
-use serde_json::Value;
+use serde_json::{Value, json};
+use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
+};
 
 fn prog(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_prog"))
@@ -19,36 +23,6 @@ fn stdout(output: &Output) -> String {
 
 fn stderr(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).expect("stderr should be utf8")
-}
-
-fn assert_placeholder(args: &[&str], command: &str) {
-    let output = prog(args);
-    assert!(
-        !output.status.success(),
-        "{args:?} should fail until implemented"
-    );
-    assert_eq!(
-        stderr(&output),
-        "",
-        "{args:?} must not write diagnostics to stderr"
-    );
-
-    let value: Value = serde_json::from_slice(&output.stdout).expect("stdout must be JSON");
-    assert_eq!(value["error"]["kind"], "not_implemented");
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .expect("message should be a string")
-            .contains(command),
-        "message should name {command}"
-    );
-    assert!(
-        value["error"]["hint"]
-            .as_str()
-            .expect("hint should be a string")
-            .contains("issue #1"),
-        "hint should point to the scaffold state"
-    );
 }
 
 #[test]
@@ -66,16 +40,35 @@ fn help_shows_complete_command_tree() {
 }
 
 #[test]
-fn every_placeholder_command_returns_structured_json_on_stdout() {
-    let cases: &[(&[&str], &str)] = &[
-        (&["call", "local", "list", "--args", "{}"], "call"),
-        (&["expand", "pc1_test", "--path", "/items/0"], "expand"),
-        (&["meta"], "meta"),
-    ];
+fn missing_call_and_expand_inputs_return_structured_errors() {
+    let dir = tempfile::tempdir().unwrap();
 
-    for (args, command) in cases {
-        assert_placeholder(args, command);
-    }
+    let call = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "call",
+        "local",
+        "list",
+        "--args",
+        "{}",
+    ]);
+    assert!(!call.status.success());
+    assert_eq!(stderr(&call), "");
+    let value: Value = serde_json::from_slice(&call.stdout).expect("stdout must be JSON");
+    assert_eq!(value["error"]["kind"], "unknown_source");
+
+    let expand = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "expand",
+        "pc1_missing",
+        "--path",
+        "/items/0",
+    ]);
+    assert!(!expand.status.success());
+    assert_eq!(stderr(&expand), "");
+    let value: Value = serde_json::from_slice(&expand.stdout).expect("stdout must be JSON");
+    assert_eq!(value["error"]["kind"], "cursor_not_found");
 }
 
 #[test]
@@ -408,6 +401,268 @@ fn cache_get_missing_uses_structured_cache_miss_error() {
     assert_eq!(value["error"]["kind"], "cache_miss");
 }
 
+#[tokio::test]
+async fn call_http_then_expand_offline_and_write_out_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    let items = (0..40)
+        .map(|id| json!({"id": id, "body": "x".repeat(64)}))
+        .collect::<Vec<_>>();
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "items": items,
+            "next": "page-2"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let seed = write_seed(
+        dir.path(),
+        "http-call.json",
+        &format!(
+            r#"{{
+              "kind": "http",
+              "base_url": "{}",
+              "operations": [{{
+                "name": "list",
+                "method": "GET",
+                "path": "/items"
+              }}]
+            }}"#,
+            server.uri()
+        ),
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+
+    let call = prog(&["--dir", dir_arg, "call", "api", "list", "--args", "{}"]);
+    assert!(call.status.success(), "{}", stdout(&call));
+    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    assert_eq!(envelope["cache"]["status"], "stored");
+    assert_eq!(envelope["summary"]["kind"], "object");
+    assert!(envelope["summary"]["envelope_bytes"].as_u64().unwrap() <= 16 * 1024);
+    let cursor = envelope["cursor"].as_str().unwrap().to_string();
+    assert!(cursor.starts_with("pc1_"));
+    assert!(
+        envelope["omitted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|omitted| omitted["path"] == "/items")
+    );
+
+    drop(server);
+
+    let expand = prog(&[
+        "--dir", dir_arg, "expand", &cursor, "--path", "/items", "--limit", "2",
+    ]);
+    assert!(expand.status.success(), "{}", stdout(&expand));
+    let expanded: Value = serde_json::from_slice(&expand.stdout).unwrap();
+    assert_eq!(expanded["cache"]["status"], "hit");
+    assert_eq!(expanded["data_preview"].as_array().unwrap().len(), 2);
+    assert!(expanded["summary"]["envelope_bytes"].as_u64().unwrap() <= 16 * 1024);
+
+    let out = dir.path().join("items.json");
+    let receipt = prog(&[
+        "--dir",
+        dir_arg,
+        "expand",
+        &cursor,
+        "--path",
+        "/items",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(receipt.status.success(), "{}", stdout(&receipt));
+    let receipt_value: Value = serde_json::from_slice(&receipt.stdout).unwrap();
+    assert_eq!(receipt_value["data_preview"]["path"], out.to_str().unwrap());
+    assert_eq!(receipt_value["data_preview"]["json_pointer"], "/items");
+    assert!(
+        receipt_value["data_preview"]["sha256"]
+            .as_str()
+            .unwrap()
+            .len()
+            == 64
+    );
+    let file_value: Value = serde_json::from_slice(&fs::read(out).unwrap()).unwrap();
+    assert_eq!(file_value.as_array().unwrap().len(), 40);
+}
+
+#[test]
+fn call_validates_args_and_enforces_effect_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli_seed = write_seed(
+        dir.path(),
+        "safe-cli.json",
+        r#"{
+          "kind": "cli",
+          "operations": [{
+            "name": "hello",
+            "command": "python3",
+            "args": ["-c", "import json; print(json.dumps({'hello':'{name}'}))"],
+            "input_schema": {
+              "type": "object",
+              "required": ["name"],
+              "properties": {"name": {"type": "string"}}
+            },
+            "effect": {
+              "read_only": true,
+              "mutating": false,
+              "network": false,
+              "shell": false,
+              "sensitive": false,
+              "cacheable": true,
+              "requires_confirmation": false
+            }
+          }]
+        }"#,
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "local",
+        "--kind",
+        "cli",
+        "--seed",
+        cli_seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+
+    let bad_args = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "local",
+        "hello",
+        "--args",
+        r#"{"extra":true}"#,
+    ]);
+    assert!(!bad_args.status.success());
+    let value: Value = serde_json::from_slice(&bad_args.stdout).unwrap();
+    assert_eq!(value["error"]["kind"], "bad_args");
+    assert!(value["error"]["message"].as_str().unwrap().contains("name"));
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("extra")
+    );
+
+    let post_seed = write_seed(
+        dir.path(),
+        "mutating-http.json",
+        r#"{
+          "kind": "http",
+          "base_url": "http://127.0.0.1:9",
+          "operations": [{
+            "name": "create",
+            "method": "POST",
+            "path": "/items"
+          }]
+        }"#,
+    );
+    let discover_post = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        post_seed.to_str().unwrap(),
+    ]);
+    assert!(discover_post.status.success(), "{}", stdout(&discover_post));
+    let mutating = prog(&["--dir", dir_arg, "call", "api", "create", "--args", "{}"]);
+    assert!(!mutating.status.success());
+    let value: Value = serde_json::from_slice(&mutating.stdout).unwrap();
+    assert_eq!(value["error"]["kind"], "requires_confirmation");
+
+    let shell_seed = write_seed(
+        dir.path(),
+        "shell-cli.json",
+        r#"{
+          "kind": "cli",
+          "operations": [{
+            "name": "shell",
+            "command": "python3",
+            "args": ["-c", "print('no trust')"],
+            "shell": true,
+            "effect": {
+              "read_only": true,
+              "mutating": false,
+              "network": false,
+              "shell": false,
+              "sensitive": false,
+              "cacheable": true,
+              "requires_confirmation": false
+            }
+          }]
+        }"#,
+    );
+    let discover_shell = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "shells",
+        "--kind",
+        "cli",
+        "--seed",
+        shell_seed.to_str().unwrap(),
+    ]);
+    assert!(
+        discover_shell.status.success(),
+        "{}",
+        stdout(&discover_shell)
+    );
+    let shell = prog(&[
+        "--dir", dir_arg, "call", "shells", "shell", "--args", "{}", "--yes",
+    ]);
+    assert!(!shell.status.success());
+    let value: Value = serde_json::from_slice(&shell.stdout).unwrap();
+    assert_eq!(value["error"]["kind"], "shell_not_trusted");
+}
+
+#[test]
+fn meta_lists_and_discloses_contract_schemas() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+
+    let list = prog(&["--dir", dir_arg, "meta"]);
+    assert!(list.status.success(), "{}", stdout(&list));
+    let value: Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(value["source_id"], "prog");
+    assert!(
+        value["data_preview"]["contracts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|contract| contract == "SourceProfile")
+    );
+
+    let schema = prog(&["--dir", dir_arg, "--pretty", "meta", "SourceProfile"]);
+    assert!(schema.status.success(), "{}", stdout(&schema));
+    let text = stdout(&schema);
+    assert!(text.starts_with("{\n"));
+    let value: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(value["operation"], "SourceProfile");
+    assert_eq!(value["summary"]["kind"], "object");
+    assert!(value["data_preview"].is_object());
+}
+
 fn json_array() -> Value {
     Value::Array(Vec::new())
 }
@@ -445,14 +700,24 @@ fn cli_probe_seed(with_effect: bool) -> String {
 
 #[test]
 fn pretty_errors_are_still_machine_readable() {
-    let output = prog(&["--pretty", "meta"]);
+    let dir = tempfile::tempdir().unwrap();
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--pretty",
+        "call",
+        "missing",
+        "list",
+        "--args",
+        "{}",
+    ]);
     assert!(!output.status.success());
     assert_eq!(stderr(&output), "");
 
     let text = stdout(&output);
     assert!(text.starts_with("{\n"));
     let value: Value = serde_json::from_str(&text).expect("pretty stdout must still be JSON");
-    assert_eq!(value["error"]["kind"], "not_implemented");
+    assert_eq!(value["error"]["kind"], "unknown_source");
 }
 
 #[test]
