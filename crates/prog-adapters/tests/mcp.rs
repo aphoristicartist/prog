@@ -44,6 +44,12 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "conflicting_hints",
+        "description": "Destructive hint tightens a read-only hint",
+        "inputSchema": {"type": "object", "properties": {}},
+        "annotations": {"readOnlyHint": True, "destructiveHint": True},
+    },
+    {
         "name": "external_ref",
         "description": "Schema containing an external ref",
         "inputSchema": {"type": "object", "properties": {}},
@@ -196,6 +202,11 @@ async fn discovers_tools_resources_prompts_and_declared_output_schema() {
     assert!(!danger.effects.read_only);
     assert!(danger.effects.mutating);
     assert!(danger.effects.requires_confirmation);
+
+    let conflicting = operation(&discovery.profile, "conflicting_hints");
+    assert!(!conflicting.effects.read_only);
+    assert!(conflicting.effects.mutating);
+    assert!(conflicting.effects.requires_confirmation);
 
     assert!(discovery.profile.operations.iter().any(|operation| {
         operation.id == "resource:fixture_doc"

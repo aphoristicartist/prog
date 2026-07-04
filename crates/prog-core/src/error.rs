@@ -62,8 +62,20 @@ pub enum CoreError {
     )]
     ShellNotTrusted { operation: String },
 
-    #[error("discovery may only invoke read-only operations; '{0}' is not marked read-only")]
-    DiscoveryNotReadOnly(String),
+    #[error(
+        "discovery may only invoke read-only operations; '{operation}' is not marked read-only (effects: {effects})"
+    )]
+    DiscoveryNotReadOnly { operation: String, effects: String },
+
+    #[error(
+        "discovery may not invoke mutating operations; '{operation}' is mutating (effects: {effects})"
+    )]
+    DiscoveryMutating { operation: String, effects: String },
+
+    #[error(
+        "discovery may not invoke confirmation-gated operations; '{operation}' requires confirmation (effects: {effects})"
+    )]
+    DiscoveryRequiresConfirmation { operation: String, effects: String },
 
     #[error("invalid JSON pointer '{0}': must be empty or start with '/'")]
     BadPointer(String),
@@ -146,7 +158,9 @@ impl CoreError {
             CoreError::CacheMiss(_) => "cache_miss",
             CoreError::RequiresConfirmation { .. } => "requires_confirmation",
             CoreError::ShellNotTrusted { .. } => "shell_not_trusted",
-            CoreError::DiscoveryNotReadOnly(_) => "discovery_not_read_only",
+            CoreError::DiscoveryNotReadOnly { .. } => "discovery_not_read_only",
+            CoreError::DiscoveryMutating { .. } => "discovery_mutating",
+            CoreError::DiscoveryRequiresConfirmation { .. } => "discovery_requires_confirmation",
             CoreError::BadPointer(_) => "bad_pointer",
             CoreError::BadArgs { .. } => "bad_args",
             CoreError::HttpTimeout { .. } => "http_timeout",
@@ -209,8 +223,16 @@ impl CoreError {
                 "Set trust.allow_shell in the source profile only if this command is trusted."
                     .to_string()
             }
-            CoreError::DiscoveryNotReadOnly(_) => {
+            CoreError::DiscoveryNotReadOnly { .. } => {
                 "Mark the operation read_only only when probing it cannot mutate upstream state."
+                    .to_string()
+            }
+            CoreError::DiscoveryMutating { .. } => {
+                "Set effects.mutating=false only when probing cannot mutate upstream state."
+                    .to_string()
+            }
+            CoreError::DiscoveryRequiresConfirmation { .. } => {
+                "Set effects.requires_confirmation=false only for operations safe to invoke automatically."
                     .to_string()
             }
             CoreError::BadPointer(_) => {
