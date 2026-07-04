@@ -1,0 +1,20 @@
+{
+  "kind": "http",
+  "base_url": "http://127.0.0.1:8765",
+  "operations": [
+    {
+      "name": "list",
+      "method": "GET",
+      "path": "/items.json",
+      "effect": {
+        "read_only": true,
+        "mutating": false,
+        "network": true,
+        "shell": false,
+        "sensitive": false,
+        "cacheable": true,
+        "requires_confirmation": false
+      }
+    }
+  ]
+}
