@@ -1,0 +1,25 @@
+[package]
+name = "prog-adapters"
+description = "HTTP, CLI, and MCP upstream source adapters for prog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+prog-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
+rmcp.workspace = true
+
+[dev-dependencies]
+wiremock.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

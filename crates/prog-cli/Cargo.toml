@@ -1,0 +1,29 @@
+[package]
+name = "prog-cli"
+description = "prog: a universal progressive-disclosure gateway for HTTP APIs, CLIs, and MCP servers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "prog"
+path = "src/main.rs"
+
+[dependencies]
+prog-core.workspace = true
+prog-adapters.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
