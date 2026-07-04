@@ -1,0 +1,31 @@
+{
+  "schema_version": "prog.source_profile.v1",
+  "id": "local_fixture",
+  "kind": "cli",
+  "version": 1,
+  "description": "Local JSON-producing CLI fixture",
+  "trust": {
+    "allow_shell": false
+  },
+  "operations": [
+    {
+      "id": "emit_json",
+      "description": "Emit a bounded JSON fixture",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "count": { "type": "integer" }
+        }
+      },
+      "effects": {
+        "read_only": true,
+        "mutating": false,
+        "network": false,
+        "shell": false,
+        "sensitive": false,
+        "cacheable": true,
+        "requires_confirmation": false
+      }
+    }
+  ]
+}
