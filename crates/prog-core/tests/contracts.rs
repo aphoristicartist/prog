@@ -180,6 +180,7 @@ fn schemas_generate_for_all_public_contracts() {
     for expected in [
         "SourceProfile",
         "OperationProfile",
+        "Shape",
         "EffectSet",
         "CachePolicy",
         "TrustSettings",
