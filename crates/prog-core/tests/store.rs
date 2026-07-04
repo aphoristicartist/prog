@@ -2,8 +2,9 @@ use std::{sync::Arc, thread};
 
 use chrono::{Duration, SecondsFormat, Utc};
 use prog_core::{
-    CacheEntryMeta, CachePolicy, CursorRecord, EffectSet, OperationProfile, RedactionPolicy,
-    SourceKind, SourceProfile, Store, TrustSettings, new_cache_entry,
+    CacheEntryMeta, CachePolicy, CursorRecord, EffectSet, OperationProfile, PreviewPolicy,
+    RedactionPolicy, SliceRequest, SourceKind, SourceProfile, Store, TrustSettings, expand,
+    new_cache_entry,
 };
 use proptest::prelude::*;
 use serde_json::{Value, json};
@@ -194,6 +195,44 @@ proptest! {
         prop_assert_eq!(paths.len(), 3);
         prop_assert!(!serde_json::to_string(&once).unwrap().contains(&raw_secret));
         prop_assert_eq!(once["nested"][0]["safe"].clone(), json!("visible"));
+    }
+
+    #[test]
+    fn redacted_payload_stays_redacted_through_store_and_expansion(secret in "[A-Z0-9]{8,32}") {
+        let raw_secret = format!("SECRET-{secret}");
+        let payload = json!({
+            "items": [
+                {
+                    "id": 1,
+                    "token": raw_secret,
+                    "nested": {"password": raw_secret},
+                    "safe": "visible"
+                }
+            ]
+        });
+        let redacted = RedactionPolicy::default().apply_persistence(&payload).0;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let hash = store.put_payload(&redacted).unwrap();
+        let stored = store.get_payload(&hash).unwrap().unwrap();
+        let projection = expand(
+            &stored,
+            "/items",
+            &SliceRequest {
+                path: Some("/items/0".to_string()),
+                limit: None,
+                depth: None,
+                fields: Vec::new(),
+                omit: Vec::new(),
+                extra: serde_json::Map::new(),
+            },
+            &PreviewPolicy::default(),
+        )
+        .unwrap();
+
+        prop_assert!(!serde_json::to_string(&stored).unwrap().contains(&raw_secret));
+        prop_assert!(!serde_json::to_string(&projection).unwrap().contains(&raw_secret));
+        prop_assert_eq!(projection.preview["safe"].clone(), json!("visible"));
     }
 }
 
