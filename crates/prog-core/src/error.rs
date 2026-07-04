@@ -71,6 +71,19 @@ pub enum CoreError {
     #[error("invalid arguments for '{operation}': {reason}")]
     BadArgs { operation: String, reason: String },
 
+    #[error("http operation '{operation}' timed out after {timeout_ms} ms")]
+    HttpTimeout { operation: String, timeout_ms: u64 },
+
+    #[error("http transport error for '{operation}': {message}")]
+    HttpTransport { operation: String, message: String },
+
+    #[error("http operation '{operation}' returned status {status}: {body_preview}")]
+    HttpStatus {
+        operation: String,
+        status: u16,
+        body_preview: serde_json::Value,
+    },
+
     #[error("storage error: {0}")]
     Storage(String),
 
@@ -104,6 +117,9 @@ impl CoreError {
             CoreError::DiscoveryNotReadOnly(_) => "discovery_not_read_only",
             CoreError::BadPointer(_) => "bad_pointer",
             CoreError::BadArgs { .. } => "bad_args",
+            CoreError::HttpTimeout { .. } => "http_timeout",
+            CoreError::HttpTransport { .. } => "http_transport",
+            CoreError::HttpStatus { .. } => "http_status",
             CoreError::Storage(_) => "storage",
             CoreError::Json(_) => "json",
             CoreError::Io(_) => "io",
@@ -162,6 +178,16 @@ impl CoreError {
                 "Use an RFC 6901 JSON Pointer such as /items/0/body.".to_string()
             }
             CoreError::BadArgs { .. } => "Fix the named missing or unknown arguments.".to_string(),
+            CoreError::HttpTimeout { .. } => {
+                "Increase the operation timeout or retry when the upstream is healthy.".to_string()
+            }
+            CoreError::HttpTransport { .. } => {
+                "Check the upstream URL, network access, and TLS settings.".to_string()
+            }
+            CoreError::HttpStatus { .. } => {
+                "Inspect the bounded response preview and adjust the request or credentials."
+                    .to_string()
+            }
             CoreError::Storage(_) => {
                 "Check the local .prog store and filesystem permissions.".to_string()
             }
