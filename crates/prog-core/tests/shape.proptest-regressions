@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 230ea0246d141542d562110ad6724c2dee476e75dd3a23e863bed557c0eccd23 # shrinks to a = Object { fields: {"a": FieldShape { shape: Unknown, optional: false, seen: 1 }}, rest: Unknown }
+cc 69735b0920397b54adb38355a6e12aa4d76f41f2af0a94fac4b296c3e343e2cf # shrinks to a = Object { fields: {"a": FieldShape { shape: Unknown, optional: false, seen: 1 }}, rest: Unknown }, b = Unknown
+cc e7994e104195ddc5a40d53fdd0277d60143a620d8eab3fc9447096a3a9a99a51 # shrinks to a = Union { variants: [Null, Array { items: Unknown }] }, b = Null, c = Boolean
+cc 5fd010d2505e563aad1696dbb0542b423d066eabff85f4d3ad80e9544b62576f # shrinks to a = Sensitive { inner: Union { variants: [Null, Timestamp] } }, b = Sensitive { inner: Union { variants: [Null, Boolean] } }

@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::shape::Shape;
+
 pub const SOURCE_PROFILE_VERSION: &str = "prog.source_profile.v1";
 pub const DISCLOSURE_VERSION: &str = "prog.disclosure.v1";
 
@@ -49,7 +51,7 @@ pub struct OperationProfile {
     #[serde(default)]
     pub input_schema: Value,
     #[serde(default)]
-    pub output_shape: Option<Value>,
+    pub output_shape: Option<Shape>,
     #[serde(default)]
     pub declared_output_schema: Option<Value>,
     #[serde(default)]
@@ -337,6 +339,7 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     let mut schemas = Map::new();
     insert_schema::<SourceProfile>(&mut schemas, "SourceProfile")?;
     insert_schema::<OperationProfile>(&mut schemas, "OperationProfile")?;
+    insert_schema::<Shape>(&mut schemas, "Shape")?;
     insert_schema::<EffectSet>(&mut schemas, "EffectSet")?;
     insert_schema::<CachePolicy>(&mut schemas, "CachePolicy")?;
     insert_schema::<TrustSettings>(&mut schemas, "TrustSettings")?;
