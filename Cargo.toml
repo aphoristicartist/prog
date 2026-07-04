@@ -25,6 +25,7 @@ uuid = { version = "1", features = ["v4"] }
 redb = "4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip"] }
 rmcp = { version = "2", features = ["client", "transport-child-process"] }
+libc = "0.2"
 clap = { version = "4", features = ["derive", "env"] }
 proptest = "1"
 tempfile = "3"
