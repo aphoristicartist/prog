@@ -1,4 +1,4 @@
-use prog_core::{FieldShape, Shape, infer, join, render_hints};
+use prog_core::{FieldShape, STRING_ENUM_MAX_VALUES, Shape, infer, join, render_hints};
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -182,7 +182,11 @@ fn enum_string_shape() -> impl Strategy<Value = Shape> {
 }
 
 fn enum_cap_shape() -> impl Strategy<Value = Shape> {
-    prop::collection::btree_set("[a-l]{1,3}", 1..=8).prop_map(|values| Shape::String {
+    prop::collection::btree_set(
+        "[a-l]{1,3}",
+        STRING_ENUM_MAX_VALUES..=STRING_ENUM_MAX_VALUES,
+    )
+    .prop_map(|values| Shape::String {
         values: Some(values),
     })
 }

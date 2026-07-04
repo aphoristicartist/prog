@@ -160,16 +160,38 @@ fn arbitrary_json() -> impl Strategy<Value = Value> {
         Just(Value::Null),
         any::<bool>().prop_map(Value::Bool),
         any::<i32>().prop_map(|n| json!(n)),
-        "[a-zA-Z0-9]{0,256}".prop_map(Value::String),
+        arbitrary_string().prop_map(Value::String),
     ];
 
     leaf.prop_recursive(4, 64, 8, |inner| {
         prop_oneof![
             prop::collection::vec(inner.clone(), 0..8).prop_map(Value::Array),
-            prop::collection::btree_map("[a-z/~]{0,8}", inner, 0..8)
+            prop::collection::btree_map(arbitrary_key(), inner, 0..8)
                 .prop_map(|map| Value::Object(map.into_iter().collect())),
         ]
     })
+}
+
+fn arbitrary_string() -> impl Strategy<Value = String> {
+    prop_oneof![
+        "[a-zA-Z0-9]{0,256}".prop_map(|value| value),
+        Just("x".repeat(512)),
+        Just("[REDACTED:token]".to_string()),
+        Just("unicode snowman ☃ and emoji 🙂".to_string()),
+        Just("line1\nline2\twith tab".to_string()),
+    ]
+}
+
+fn arbitrary_key() -> impl Strategy<Value = String> {
+    prop_oneof![
+        "[a-z/~]{0,8}".prop_map(|value| value),
+        Just("token".to_string()),
+        Just("api_key".to_string()),
+        Just("password".to_string()),
+        Just("slash/key".to_string()),
+        Just("tilde~key".to_string()),
+        Just("unicode🙂".to_string()),
+    ]
 }
 
 proptest! {
@@ -204,6 +226,21 @@ proptest! {
                 prop_assert!(!is_within(&boundary, &sibling_path).unwrap());
             }
         }
+    }
+
+    #[test]
+    fn expansion_rejects_generated_segment_siblings(prefix in pointer_segments()) {
+        prop_assume!(!prefix.is_empty());
+        let boundary = pointer_from_segments(&prefix);
+        let mut sibling = prefix.clone();
+        let last = sibling.last_mut().expect("prefix is non-empty");
+        last.push('x');
+        let sibling_path = pointer_from_segments(&sibling);
+        prop_assume!(parse(&boundary).unwrap() != parse(&sibling_path).unwrap());
+
+        let error = expand(&json!({}), &boundary, &slice(&sibling_path), &PreviewPolicy::default())
+            .unwrap_err();
+        prop_assert_eq!(error.kind(), "path_outside_boundary");
     }
 }
 
