@@ -1,0 +1,45 @@
+{
+  "schema_version": "prog.source_profile.v1",
+  "id": "github",
+  "kind": "http",
+  "version": 1,
+  "description": "GitHub issues API fixture",
+  "auth": [
+    {
+      "name": "github_token",
+      "env": "GITHUB_TOKEN",
+      "header": "authorization",
+      "format": "Bearer {value}"
+    }
+  ],
+  "cache": {
+    "enabled": true,
+    "ttl_seconds": 86400
+  },
+  "trust": {
+    "allow_network": true
+  },
+  "operations": [
+    {
+      "id": "list_issues",
+      "description": "List repository issues",
+      "input_schema": {
+        "type": "object",
+        "required": ["owner", "repo"],
+        "properties": {
+          "owner": { "type": "string" },
+          "repo": { "type": "string" }
+        }
+      },
+      "effects": {
+        "read_only": true,
+        "mutating": false,
+        "network": true,
+        "shell": false,
+        "sensitive": false,
+        "cacheable": true,
+        "requires_confirmation": false
+      }
+    }
+  ]
+}

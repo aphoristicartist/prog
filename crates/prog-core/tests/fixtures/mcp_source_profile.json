@@ -1,0 +1,44 @@
+{
+  "schema_version": "prog.source_profile.v1",
+  "id": "fixture_mcp",
+  "kind": "mcp",
+  "version": 1,
+  "description": "MCP fixture with a declared output schema",
+  "operations": [
+    {
+      "id": "search_docs",
+      "description": "Search fixture documentation",
+      "input_schema": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string" }
+        }
+      },
+      "declared_output_schema": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": { "type": "string" },
+                "body": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "effects": {
+        "read_only": true,
+        "mutating": false,
+        "network": false,
+        "shell": false,
+        "sensitive": false,
+        "cacheable": true,
+        "requires_confirmation": false
+      }
+    }
+  ]
+}
