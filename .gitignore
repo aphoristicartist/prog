@@ -1,0 +1,6 @@
+/target
+# Local runtime store. Source profiles are designed to be committable when
+# intentionally copied out of the local .prog/ store.
+.prog/
+*.redb
+.DS_Store
