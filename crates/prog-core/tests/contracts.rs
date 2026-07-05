@@ -1,7 +1,8 @@
 use prog_core::{
     AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CallProvenance, CursorRecord,
-    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, NextAction, OmittedRegion, SliceRequest,
-    SourceProfile, Summary, TrustSettings, canonical_json, public_contract_schemas,
+    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, LENS_MANIFEST_VERSION, LensManifest,
+    NextAction, OmittedRegion, SliceRequest, SourceProfile, Summary, TrustSettings, canonical_json,
+    public_contract_schemas,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -52,6 +53,15 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
     );
     assert_extra_roundtrips::<NextAction>(
         json!({"kind": "expand", "x_future": "kept"}),
+        "x_future",
+    );
+    assert_extra_roundtrips::<LensManifest>(
+        json!({
+            "schema_version": LENS_MANIFEST_VERSION,
+            "id": "local.items",
+            "version": 1,
+            "x_future": "kept"
+        }),
         "x_future",
     );
     assert_extra_roundtrips::<SliceRequest>(json!({"x_future": "kept"}), "x_future");
@@ -189,6 +199,11 @@ fn schemas_generate_for_all_public_contracts() {
         "Summary",
         "OmittedRegion",
         "NextAction",
+        "LensManifest",
+        "LensMatch",
+        "LensView",
+        "LensOmission",
+        "LensFixtures",
         "SliceRequest",
         "CursorRecord",
         "CacheEntryMeta",

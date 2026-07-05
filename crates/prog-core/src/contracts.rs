@@ -7,6 +7,7 @@ use crate::shape::Shape;
 
 pub const SOURCE_PROFILE_VERSION: &str = "prog.source_profile.v1";
 pub const DISCLOSURE_VERSION: &str = "prog.disclosure.v1";
+pub const LENS_MANIFEST_VERSION: &str = "prog.lens_manifest.v1";
 
 pub type Extra = Map<String, Value>;
 
@@ -220,7 +221,9 @@ pub struct OmittedRegion {
     pub extra: Extra,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OmissionReason {
     LargeString,
@@ -241,6 +244,85 @@ pub struct NextAction {
     pub path: Option<String>,
     #[serde(default)]
     pub reason: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct LensManifest {
+    pub schema_version: String,
+    pub id: String,
+    #[serde(default)]
+    pub version: u64,
+    #[serde(default, rename = "match")]
+    pub match_rules: LensMatch,
+    #[serde(default)]
+    pub view: LensView,
+    #[serde(default)]
+    pub omit: Vec<LensOmission>,
+    #[serde(default)]
+    pub next_actions: Vec<NextAction>,
+    #[serde(default)]
+    pub invariants: Vec<String>,
+    #[serde(default)]
+    pub fixtures: LensFixtures,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct LensMatch {
+    #[serde(default)]
+    pub source_kind: Option<SourceKind>,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub operation: Option<String>,
+    #[serde(default)]
+    pub mime: Option<String>,
+    #[serde(default)]
+    pub artifact_kind: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct LensView {
+    #[serde(default)]
+    pub root: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub depth: Option<usize>,
+    #[serde(default)]
+    pub fields: BTreeMap<String, String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct LensOmission {
+    pub path: String,
+    pub reason: OmissionReason,
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub expandable: bool,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct LensFixtures {
+    #[serde(default)]
+    pub positive: Vec<String>,
+    #[serde(default)]
+    pub negative: Vec<String>,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
@@ -352,6 +434,11 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<Summary>(&mut schemas, "Summary")?;
     insert_schema::<OmittedRegion>(&mut schemas, "OmittedRegion")?;
     insert_schema::<NextAction>(&mut schemas, "NextAction")?;
+    insert_schema::<LensManifest>(&mut schemas, "LensManifest")?;
+    insert_schema::<LensMatch>(&mut schemas, "LensMatch")?;
+    insert_schema::<LensView>(&mut schemas, "LensView")?;
+    insert_schema::<LensOmission>(&mut schemas, "LensOmission")?;
+    insert_schema::<LensFixtures>(&mut schemas, "LensFixtures")?;
     insert_schema::<SliceRequest>(&mut schemas, "SliceRequest")?;
     insert_schema::<CursorRecord>(&mut schemas, "CursorRecord")?;
     insert_schema::<CacheEntryMeta>(&mut schemas, "CacheEntryMeta")?;

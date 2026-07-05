@@ -33,7 +33,15 @@ fn help_shows_complete_command_tree() {
 
     let help = stdout(&output);
     for expected in [
-        "discover", "hints", "call", "expand", "cache", "meta", "--dir", "--pretty",
+        "discover",
+        "hints",
+        "call",
+        "expand",
+        "cache",
+        "meta",
+        "--dir",
+        "--lens-dir",
+        "--pretty",
     ] {
         assert!(help.contains(expected), "help should include {expected}");
     }
@@ -652,7 +660,6 @@ fn meta_lists_and_discloses_contract_schemas() {
             .iter()
             .any(|contract| contract == "SourceProfile")
     );
-
     let schema = prog(&["--dir", dir_arg, "--pretty", "meta", "SourceProfile"]);
     assert!(schema.status.success(), "{}", stdout(&schema));
     let text = stdout(&schema);
@@ -661,6 +668,243 @@ fn meta_lists_and_discloses_contract_schemas() {
     assert_eq!(value["operation"], "SourceProfile");
     assert_eq!(value["summary"]["kind"], "object");
     assert!(value["data_preview"].is_object());
+
+    let lens_schema = prog(&["--dir", dir_arg, "meta", "LensManifest"]);
+    assert!(lens_schema.status.success(), "{}", stdout(&lens_schema));
+    let value: Value = serde_json::from_slice(&lens_schema.stdout).unwrap();
+    assert_eq!(value["operation"], "LensManifest");
+    assert_eq!(value["data_preview"]["title"], "LensManifest");
+}
+
+#[test]
+fn call_can_apply_repo_local_lens_manifest_and_expand_original_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let lens_dir = dir.path().join("lenses");
+    fs::create_dir(&lens_dir).unwrap();
+    let script = dir.path().join("emit_items.py");
+    fs::write(
+        &script,
+        r#"import json
+items = [
+    {
+        "id": index,
+        "state": "open" if index % 2 == 0 else "closed",
+        "title": f"Lens item {index}",
+        "body": "body " + ("x" * 700),
+        "token": f"secret-token-{index}",
+    }
+    for index in range(4)
+]
+print(json.dumps({"items": items, "meta": {"count": len(items)}}))
+"#,
+    )
+    .unwrap();
+    let seed_json = json!({
+        "kind": "cli",
+        "operations": [{
+            "name": "list",
+            "command": "python3",
+            "args": [script.to_str().unwrap()],
+            "effect": {
+                "read_only": true,
+                "mutating": false,
+                "network": false,
+                "shell": false,
+                "sensitive": false,
+                "cacheable": true,
+                "requires_confirmation": false
+            }
+        }]
+    });
+    let seed = write_seed(dir.path(), "cli.json", &seed_json.to_string());
+    fs::write(
+        lens_dir.join("cli-items.json"),
+        r#"{
+          "schema_version": "prog.lens_manifest.v1",
+          "id": "cli.items",
+          "version": 1,
+          "match": {
+            "source_kind": "cli",
+            "operation": "list"
+          },
+          "view": {
+            "root": "/items",
+            "limit": 2,
+            "fields": {
+              "id": "/id",
+              "state": "/state",
+              "title": "/title",
+              "token": "/token"
+            }
+          },
+          "omit": [{
+            "path": "/items/*/body",
+            "reason": "large_string",
+            "detail": "body is expandable on demand",
+            "expandable": true
+          }],
+          "next_actions": [{
+            "kind": "expand",
+            "path": "/items/{index}/body",
+            "reason": "inspect body only when the row matters"
+          }]
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        lens_dir.join("unused.yaml"),
+        r#"schema_version: prog.lens_manifest.v1
+id: unused.yaml
+version: 1
+view:
+  root: /items
+"#,
+    )
+    .unwrap();
+
+    let dir_arg = dir.path().to_str().unwrap();
+    let lens_dir_arg = lens_dir.to_str().unwrap();
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "local",
+        "--kind",
+        "cli",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+
+    let call = prog(&[
+        "--dir",
+        dir_arg,
+        "--lens-dir",
+        lens_dir_arg,
+        "call",
+        "local",
+        "list",
+        "--args",
+        "{}",
+        "--lens",
+        "cli.items",
+    ]);
+    assert!(call.status.success(), "{}", stdout(&call));
+    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    assert_eq!(envelope["lens"]["id"], "cli.items");
+    assert_eq!(envelope["data_preview"].as_array().unwrap().len(), 2);
+    assert!(envelope["data_preview"][0].get("body").is_none());
+    assert_eq!(envelope["data_preview"][0]["token"], "«redacted»");
+    assert!(
+        envelope["omitted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|omitted| omitted["path"] == "/items/*/body" && omitted["expandable"] == true)
+    );
+    assert!(
+        envelope["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action["path"] == "/items/{index}/body")
+    );
+    assert!(envelope["summary"]["envelope_bytes"].as_u64().unwrap() <= 16 * 1024);
+    let cursor = envelope["cursor"].as_str().unwrap();
+
+    let expand = prog(&[
+        "--dir",
+        dir_arg,
+        "expand",
+        cursor,
+        "--path",
+        "/items/0/body",
+        "--depth",
+        "1",
+    ]);
+    assert!(expand.status.success(), "{}", stdout(&expand));
+    let expanded: Value = serde_json::from_slice(&expand.stdout).unwrap();
+    assert_eq!(expanded["cache"]["status"], "hit");
+    assert!(
+        expanded["data_preview"]
+            .as_str()
+            .unwrap()
+            .starts_with("body ")
+    );
+}
+
+#[test]
+fn call_rejects_lens_manifest_that_escapes_its_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let lens_dir = dir.path().join("lenses");
+    fs::create_dir(&lens_dir).unwrap();
+    let seed = write_seed(
+        dir.path(),
+        "cli.json",
+        r#"{
+          "kind": "cli",
+          "operations": [{
+            "name": "list",
+            "command": "python3",
+            "args": ["-c", "import json; print(json.dumps({'items':[{'id':1}], 'meta': {'count': 1}}))"],
+            "effect": {
+              "read_only": true,
+              "mutating": false,
+              "network": false,
+              "shell": false,
+              "sensitive": false,
+              "cacheable": true,
+              "requires_confirmation": false
+            }
+          }]
+        }"#,
+    );
+    fs::write(
+        lens_dir.join("bad.json"),
+        r#"{
+          "schema_version": "prog.lens_manifest.v1",
+          "id": "bad",
+          "version": 1,
+          "view": {"root": "/items"},
+          "omit": [{"path": "/meta", "reason": "deep_object"}]
+        }"#,
+    )
+    .unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "local",
+        "--kind",
+        "cli",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+
+    let call = prog(&[
+        "--dir",
+        dir_arg,
+        "--lens-dir",
+        lens_dir.to_str().unwrap(),
+        "call",
+        "local",
+        "list",
+        "--args",
+        "{}",
+        "--lens",
+        "bad",
+    ]);
+    assert!(!call.status.success());
+    let error: Value = serde_json::from_slice(&call.stdout).unwrap();
+    assert_eq!(error["error"]["kind"], "bad_args");
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("outside view.root")
+    );
 }
 
 fn json_array() -> Value {
