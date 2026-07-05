@@ -4,6 +4,7 @@
 - Date: 2026-07-04
 - Owner: aphoristicartist
 - Repository: https://github.com/aphoristicartist/prog
+- Follow-up: [RFC 0003: Observation Lenses and Agent Optics](0003-observation-lenses.md)
 
 ## Summary
 
@@ -22,6 +23,10 @@ discover -> hints -> call -> expand -> refine
 ```
 
 The result should feel like every API, CLI, and MCP server has become a carefully designed, agent-native schema with pagination, field discovery, provenance, and safety metadata, even when the upstream source does not provide those properties.
+
+RFC 0003 generalizes this source-response loop into an observation-lens model
+for arbitrary artifacts such as command output, logs, diffs, reports, files,
+browser-derived documents, and expensive-model evidence workflows.
 
 ## Goals
 
