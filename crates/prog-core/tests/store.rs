@@ -125,6 +125,47 @@ fn purge_expired_cascades_to_cursors() {
 }
 
 #[test]
+fn purge_keeps_payload_blob_shared_with_a_surviving_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    // `put_payload` dedupes by sha256, so two cache entries can share one blob.
+    let hash = store.put_payload(&redacted(json!({"items": []}))).unwrap();
+
+    let entry_a = new_cache_entry(
+        "key-a".to_string(),
+        hash.clone(),
+        "a".to_string(),
+        "op".to_string(),
+        8,
+        60,
+    );
+    let entry_b = new_cache_entry(
+        "key-b".to_string(),
+        hash.clone(),
+        "b".to_string(),
+        "op".to_string(),
+        8,
+        60,
+    );
+    store.put_entry("key-a", &entry_a).unwrap();
+    store.put_entry("key-b", &entry_b).unwrap();
+
+    // Purging source "a" must NOT orphan the blob that "b" still references.
+    let summary = store.purge_source("a").unwrap();
+    assert_eq!(summary.purged_entries, 1);
+    assert_eq!(summary.purged_payloads, 0);
+    assert!(store.get_payload(&hash).unwrap().is_some());
+    assert!(store.get_entry("key-b").unwrap().is_some());
+    assert!(store.get_entry("key-a").unwrap().is_none());
+
+    // Purging the last surviving reference reclaims the blob.
+    let summary = store.purge_source("b").unwrap();
+    assert_eq!(summary.purged_entries, 1);
+    assert_eq!(summary.purged_payloads, 1);
+    assert!(store.get_payload(&hash).unwrap().is_none());
+}
+
+#[test]
 fn profile_updates_converge_under_locking() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(Store::open(dir.path()).unwrap());

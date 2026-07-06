@@ -2349,50 +2349,41 @@ fn redact_run_argv(argv: &[String]) -> Vec<String> {
                 redact_next = false;
                 return "[REDACTED:run_arg_secret]".to_string();
             }
+            // Inline form first: `--access-token=JWT` or `--access-token:JWT`.
+            // Checking this before the bare-flag path ensures the secret value
+            // embedded in the same element is redacted rather than leaked.
+            if let Some(redacted) = redact_inline_secret(arg) {
+                return redacted;
+            }
+            // Bare flag form: `--access-token` marks the *next* element as the
+            // value to redact.
             if is_sensitive_flag(arg) {
                 redact_next = true;
                 return arg.clone();
             }
-            redact_inline_secret(arg)
+            redact_observed_text(arg)
         })
         .collect()
 }
 
 fn is_sensitive_flag(arg: &str) -> bool {
     let trimmed = arg.trim_start_matches('-');
-    is_sensitive_name(trimmed)
+    prog_core::is_sensitive_name(trimmed)
 }
 
-fn redact_inline_secret(arg: &str) -> String {
-    for separator in ["=", ":"] {
-        if let Some((name, _)) = arg.split_once(separator)
-            && is_sensitive_name(name.trim_start_matches('-'))
+/// If `arg` is an inline `name<sep>value` whose name is sensitive, return the
+/// redacted form; otherwise `None`. Catches compound flag names like
+/// `--access-token=...` and `--passwd=...` that the bare-flag path would miss.
+fn redact_inline_secret(arg: &str) -> Option<String> {
+    for separator in ['=', ':'] {
+        if let Some((name, value)) = arg.split_once(separator)
+            && !value.is_empty()
+            && prog_core::is_sensitive_name(name.trim_start_matches('-'))
         {
-            return format!("{name}{separator}[REDACTED:run_arg_secret]");
+            return Some(format!("{name}{separator}[REDACTED:run_arg_secret]"));
         }
     }
-    redact_observed_text(arg)
-}
-
-fn is_sensitive_name(name: &str) -> bool {
-    let normalized = name
-        .chars()
-        .filter(|ch| *ch != '-' && *ch != '_')
-        .flat_map(char::to_lowercase)
-        .collect::<String>();
-    matches!(
-        normalized.as_str(),
-        "authorization"
-            | "apikey"
-            | "bearer"
-            | "cookie"
-            | "credential"
-            | "password"
-            | "privatekey"
-            | "secret"
-            | "session"
-            | "token"
-    )
+    None
 }
 
 fn init_integration(args: &InitArgs) -> Result<InitReport> {

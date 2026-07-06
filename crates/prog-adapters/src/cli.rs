@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use prog_core::{CoreError, RedactionPolicy, Result, TrustSettings};
+use prog_core::{CoreError, RedactionPolicy, Result, TrustSettings, is_sensitive_name};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tokio::{
@@ -205,7 +205,7 @@ impl CliSource {
             stderr_bytes: stderr.total_bytes,
             stdout_truncated: stdout.truncated,
             stderr_truncated: stderr.truncated,
-            args: redacted_args(args_object),
+            args: redacted_args(args_object, &operation.sensitive_args),
         };
         let diagnostics = CliDiagnostics {
             stderr: stderr_preview.clone(),
@@ -522,8 +522,8 @@ fn normalize_text(bytes: &[u8], truncated: bool) -> Value {
     })
 }
 
-fn redacted_args(args: &Map<String, Value>) -> Value {
-    RedactionPolicy::default()
+fn redacted_args(args: &Map<String, Value>, sensitive: &[String]) -> Value {
+    RedactionPolicy::with_extra_persistence_names(sensitive)
         .apply_persistence(&Value::Object(args.clone()))
         .0
 }
@@ -548,28 +548,6 @@ fn redact_argv(
             })
         })
         .collect()
-}
-
-fn is_sensitive_name(name: &str) -> bool {
-    let normalized = name
-        .chars()
-        .filter(|ch| *ch != '-' && *ch != '_')
-        .flat_map(char::to_lowercase)
-        .collect::<String>();
-    matches!(
-        normalized.as_str(),
-        "password"
-            | "passwd"
-            | "secret"
-            | "token"
-            | "apikey"
-            | "authorization"
-            | "credential"
-            | "privatekey"
-            | "session"
-            | "cookie"
-            | "bearer"
-    )
 }
 
 fn default_timeout_ms() -> u64 {

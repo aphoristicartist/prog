@@ -1,157 +1,183 @@
 # prog
 
-`prog` is a Rust progressive-disclosure gateway for noisy HTTP APIs, local CLIs, and MCP servers. It keeps model context small by returning bounded envelopes first, then letting you expand only the parts you need from a local cache.
+**A progressive-disclosure gateway for noisy HTTP APIs, local CLIs, and MCP servers — bounded envelopes first, expand only what you need, from a local cache. Keeps model context small.**
 
-On the current fixture evals, `prog` reduces context by 34.5x-162.8x while keeping envelopes under the 16 KiB invariant.
+prog wraps high-volume, hard-to-predict tooling and returns a single bounded `DisclosureEnvelope` per call. Each envelope carries a short summary, a schema hint, and a cursor; anything large or uncertain is omitted behind a JSON Pointer you can expand later **without re-contacting the upstream**. The result: agents and humans see the shape of a response first, and pay tokens only for the slice they actually need.
+
+Measured against raw payloads, prog shrinks the context an agent must hold by **34.5x-162.8x** while keeping every envelope under a 16 KiB invariant.
+
+---
 
 ## Install
 
-Run from the repository root:
-
-```bash
+```sh
 cargo install --path crates/prog-cli
 prog --help
 ```
 
-For development without installing, replace `prog` with `cargo run --`.
+For development, substitute `cargo run --` for `prog` in any command below.
 
-## Mental Model
+---
 
-```mermaid
-flowchart LR
-    A["Problem: upstream returns too much"] --> B["prog call: bounded envelope"]
-    B --> C["summary, schema_hints, omitted, cursor"]
-    C --> D["prog expand: reveal one path from cache"]
-    D --> B
-    C --> E["prog meta: inspect prog's own contracts"]
-```
+## Quickstart
 
-Layer 1, source intelligence: `prog source add-*` creates simple profiles without hand-written seeds, while `prog discover` turns explicit seeds or imported OpenAPI, JSON Schema, and CLI help descriptors into a `SourceProfile`; `prog hints` summarizes operations, inputs, effects, and suggested next calls.
+These commands are copy-pasteable and exact — they are exercised by the test suite.
 
-Layer 2, response intelligence: `prog call` executes one operation and returns a bounded `DisclosureEnvelope`; `prog expand` uses the cursor to reveal a JSON Pointer path from the stored payload without contacting the upstream again.
-
-Layer n+1, reflexivity: `prog meta` exposes `prog`'s own JSON contracts through the same envelope/expand loop.
-
-```bash
-prog meta
-prog --pretty meta SourceProfile
-```
-
-## 5-Minute CLI Quickstart
-
-These commands use the local fixture in `fixtures/cli`. They are copy-pasteable from the repository root after `cargo install --path crates/prog-cli`.
-
-```bash
+```sh
 rm -rf /tmp/prog-demo
 prog --dir /tmp/prog-demo --pretty source add-cli demo_cli --operation list --read-only -- python3 fixtures/cli/list_items.py
 prog --dir /tmp/prog-demo --pretty call demo_cli list --args '{}'
-```
-
-The call returns a bounded envelope. Important fields look like this:
-
-```json
-{
-  "schema_version": "prog.disclosure.v1",
-  "source_id": "demo_cli",
-  "operation": "list",
-  "summary": {
-    "kind": "object",
-    "payload_bytes": 17612,
-    "approx_tokens": 4403,
-    "envelope_bytes": 3437
-  },
-  "omitted": [
-    {
-      "path": "/items",
-      "reason": "long_array",
-      "detail": "30 items, showing 5"
-    }
-  ],
-  "cursor": "pc1_...",
-  "cache": {
-    "status": "stored",
-    "ttl_seconds": 86400
-  }
-}
-```
-
-Copy the cursor automatically and expand only the first three items:
-
-```bash
 CURSOR=$(prog --dir /tmp/prog-demo call demo_cli list --args '{}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["cursor"])')
 prog --dir /tmp/prog-demo --pretty expand "$CURSOR" --path /items --limit 3 --depth 3
-```
-
-Expansion reads the local cache and returns `cache.status: "hit"`. A stale-cache warning tells you to rerun `prog call demo_cli list --refresh` when freshness matters.
-
-Inspect source hints and `prog`'s own source-profile schema:
-
-```bash
 prog --dir /tmp/prog-demo --pretty hints demo_cli list
 prog --dir /tmp/prog-demo --pretty meta SourceProfile
 ```
 
-## Token Economics
+What just happened: you registered a read-only CLI source, called it once into a bounded envelope, pulled a cursor, expanded one JSON Pointer (`/items`) from the local cache, asked for human-readable operation hints, then introspected prog's own `SourceProfile` contract through the same envelope loop.
 
-Token counts use the project heuristic `bytes / 4`, rounded up. Raw cost is the full fixture payload entering context. `prog` cost is the sum of every bounded envelope or expansion stdout consumed for the task.
+---
 
-| Fixture | Task | Raw tokens | prog tokens | Ratio |
-|---|---:|---:|---:|---:|
-| HTTP | Discover shape | 137883 | 847 | 162.8x |
-| HTTP | Count states | 137883 | 3820 | 36.1x |
-| HTTP | Target body | 137883 | 1156 | 119.3x |
-| CLI | Discover shape | 137753 | 895 | 153.9x |
-| CLI | Count states | 137753 | 3917 | 35.2x |
-| CLI | Target body | 137753 | 1254 | 109.9x |
-| MCP | Discover shape | 137753 | 925 | 148.9x |
-| MCP | Count states | 137753 | 3994 | 34.5x |
-| MCP | Target body | 137753 | 1319 | 104.4x |
+## Mental model
 
-Regenerate the table with:
+prog is three layers of intelligence stacked on one envelope/expand primitive.
 
-```bash
+### Layer 1 — source intelligence
+
+Understand a tool before you call it. `prog source add-http` / `prog source add-cli` build a `SourceProfile` from a single command line — no hand-written seeds. `prog discover` turns seeds, or imported OpenAPI / JSON Schema / CLI help, into a `SourceProfile`. `prog hints` summarizes each operation's inputs, effects, and likely next calls.
+
+### Layer 2 — response intelligence
+
+Call once, get a bounded view, expand on demand. `prog call` runs one operation and returns a `DisclosureEnvelope`. `prog expand` reveals a JSON Pointer path from the cached payload — no upstream re-contact.
+
+Every envelope carries:
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | `prog.disclosure.v1` |
+| `source_id`, `operation` | what was called |
+| `summary` | `{kind, payload_bytes, approx_tokens, envelope_bytes}` |
+| `schema_hints` | shape of the full payload |
+| `omitted` | `[{path, reason, detail}]` — what was held back and why |
+| `cursor` | e.g. `pc1_…` — the handle for expansion |
+| `cache` | `{status, ttl_seconds}` |
+
+### Layer n+1 — reflexivity
+
+prog exposes its own JSON contracts through the same envelope/expand loop. `prog meta` returns prog's schemas (for example `prog --dir /tmp/prog-demo --pretty meta SourceProfile`), so an agent can learn prog the same way it learns any other source.
+
+---
+
+## AI-native integration (how prog is meant to be driven)
+
+prog is designed to be **driven by agents**, not configured around them. The intended integration is a CLI plus a first-party agent skill plus hooks — prog is a tool the agent picks up and runs, never a server it connects to.
+
+```sh
+prog init --agent codex --project
+```
+
+`--project` installs a project-local, agent-scoped skill (for codex that lands at `.codex/skills/prog/SKILL.md`; `--agent` also accepts `claude-code`, `cursor`, and `gemini-cli`, each writing under its own agent directory) plus the run hook, manifest, and uninstall script. Use `--dry-run` to preview the plan before anything is written. The canonical skill source lives at [`skills/prog/SKILL.md`](skills/prog/SKILL.md) in the repo.
+
+MCP has a role, but a narrow one: an **upstream adapter only**. prog can consume an MCP server as a source like any other; it does not become one. For the full integration model, see [`docs/integrations.md`](docs/integrations.md).
+
+> **No MCP server mode.** This is a deliberate, permanent non-goal. A CLI + skill + hooks is the sharper, more composable, more natively agent-fit surface; exposing prog itself as an MCP server would add ceremony without adding capability. (Issue #71 was closed as not planned for this reason.)
+
+---
+
+## Capabilities and commands
+
+```
+prog [GLOBAL OPTIONS] <command> [OPTIONS]
+```
+
+**Global options:** `--dir <DIR>` (env `PROG_DIR`, default `./.prog`) · `--lens-dir <LENS_DIR>` (env `PROG_LENS_DIR`, default `./lenses`) · `--pretty` · `-h, --help` · `-V, --version`.
+
+| Command | Purpose | Notable flags |
+| --- | --- | --- |
+| `discover` | Turn seeds or imported descriptors into a `SourceProfile` | `--kind` (http\|cli\|mcp), `--seed`, `--import` (auto\|openapi\|json-schema\|cli-help), `--command-base`, `--max-schema-depth`, `--probe` |
+| `source add-http` | Register an HTTP operation | `--operation`, `--url`, `--method` (default GET), `--probe` |
+| `source add-cli` | Register a local CLI operation | `--operation`, `--read-only`, `--probe` |
+| `hints` | Summarize an operation's inputs, effects, next calls | — |
+| `call` | Run one operation into a bounded envelope | `--args`, `--view`, `--lens`, `--yes`, `--no-cache`, `--refresh` |
+| `expand` | Reveal a JSON Pointer from the cached payload | `--path`, `--limit`, `--depth`, `--fields`, `--out` |
+| `paths` | Enumerate expandable pointers in a cached payload | `--prefix`, `--reason`, `--field`, `--omitted-only`, `--expandable-only`, `--limit`, `--depth` |
+| `observe` | Ingest a file/stdin as a bounded observation | `--file`, `--stdin`, `--mime`, `--name`, `--lens`, `--ttl-seconds` |
+| `run` | Run a one-shot command as a bounded observation | `--timeout-ms`, `--max-stdout-bytes`, `--max-stderr-bytes`, `--ttl-seconds`, `--preserve-exit-code`, `--out`, `--lens` |
+| `cost` | Estimate token economics of a workflow | `--model-profile`, `--raw-file`, `--mime`, `--expand-path`, `--estimated-output-tokens`, `--repeated-inspections` |
+| `cache list` / `cache get` / `cache purge` | Inspect and manage the local cache | `purge`: `--source`, `--expired`, `--all` |
+| `meta` | Introspect prog's own contracts | — |
+| `init` | Install agent skill + hooks | `--agent`, `--project`, `--dry-run`, `--root` |
+
+**Token heuristic:** bytes / 4, rounded up. **Raw cost** = the full payload entering context; **prog cost** = the sum of every bounded envelope and expansion stdout consumed for a task.
+
+---
+
+## Token economics
+
+Across HTTP, CLI, and MCP sources, prog reduces the tokens an agent must hold versus consuming the raw payload:
+
+| Source type | Discover | Count | Target |
+| --- | --- | --- | --- |
+| HTTP | **162.8x** | 36.1x | 119.3x |
+| CLI  | 153.9x | 35.2x | 109.9x |
+| MCP  | 148.9x | 34.5x | 104.4x |
+
+Aggregate range: **34.5x-162.8x**, with every envelope held under the 16 KiB invariant. Methodology and reproduction steps live in [`docs/token-economics.md`](docs/token-economics.md) and [`docs/evidence.md`](docs/evidence.md); regenerate with:
+
+```sh
 PROG_TOKEN_EVAL_UPDATE=1 cargo test -p prog-cli --test eval -- --nocapture
 ```
 
-See [docs/token-economics.md](docs/token-economics.md) for the checked-in report.
+---
 
-## More Examples
+## Documentation
 
-- [End-to-end walkthroughs](docs/walkthroughs.md) for HTTP, CLI, and MCP fixtures.
-- [Source setup](docs/source-setup.md), including `prog source add-http`, `prog source add-cli`, and `prog discover --import`.
-- [Cache behavior](docs/cache.md), including TTLs, `--refresh`, `--no-cache`, purge behavior, cursor invalidation, staleness warnings, and offline expansion.
-- [Safety model](docs/safety.md), including effect flags, fail-closed rules, `--yes`, `trust.allow_shell`, and redaction classes.
-- [JSON contracts](docs/contracts.md), generated by `prog meta`.
-- [Observation metadata](docs/metadata.md), including completeness, freshness, trust, safety, and payload status.
-- [Observation lenses](docs/lenses.md), including `LensManifest`, repo-local lens loading, and lens-driven first views.
-- [First-party lens packs](docs/lens-packs.md), including `run`, `observe`, and GitHub issue triage lenses with fixtures.
-- [Path discovery](docs/paths.md), including filtered `prog paths` output and planner-grade `next_actions`.
-- [Profile-free observations](docs/observe.md), including stdin, file, JSON, NDJSON, text capture, path discovery, and cursor expansion.
-- [Command wrapper](docs/run.md), including `prog run`, preserved exit codes, failure sections, and redacted output captures.
-- [Agent integrations](docs/integrations.md), including project-local Codex skill/hooks and MCP-optional workflows.
-- [Evidence references](docs/evidence.md), including compact cursor/path-backed citations for expanded observations.
-- [Cost planner](docs/cost.md), including profile-driven raw-vs-prog estimates for expensive long-context models.
-- [Task-success eval](docs/task-success-eval.md), including deterministic raw/truncation/prog correctness and token metrics.
-- [Competitive baselines](docs/competitive-baselines.md), including measured wins and losses against native filters, RTK-style grep, Caveman-style terse output, and raw context.
-- [Real-world demos](docs/real-world-demos.md), including GitHub review, kubectl, CloudWatch, Jira, and MCP incident workflows.
-- [Positioning](docs/positioning.md), including honest tradeoffs against native filters, truncation, hooks, MCP gateways, and large context.
-- [Invariants](INVARIANTS.md) and [RFC 0001](docs/rfcs/0001-progressive-disclosure-gateway.md), [RFC 0002](docs/rfcs/0002-type-theory-formal-methods-and-reflexivity.md), [RFC 0003](docs/rfcs/0003-observation-lenses.md).
-- [CHANGELOG](CHANGELOG.md).
+| Topic | Document |
+| --- | --- |
+| First-time walkthroughs | [`docs/walkthroughs.md`](docs/walkthroughs.md) |
+| Adding HTTP / CLI sources | [`docs/source-setup.md`](docs/source-setup.md) |
+| Cache lifecycle | [`docs/cache.md`](docs/cache.md) |
+| Safety and trust model | [`docs/safety.md`](docs/safety.md) |
+| Envelope and schema contracts | [`docs/contracts.md`](docs/contracts.md) |
+| Reflexivity via `meta` | [`docs/metadata.md`](docs/metadata.md) |
+| Observation lenses | [`docs/lenses.md`](docs/lenses.md) · [`docs/lens-packs.md`](docs/lens-packs.md) |
+| `observe` reference | [`docs/observe.md`](docs/observe.md) |
+| `run` reference | [`docs/run.md`](docs/run.md) |
+| Expandable pointers | [`docs/paths.md`](docs/paths.md) |
+| Cost modeling | [`docs/cost.md`](docs/cost.md) |
+| Agent integration model | [`docs/integrations.md`](docs/integrations.md) |
+| Real-world demos | [`docs/real-world-demos.md`](docs/real-world-demos.md) |
+| Positioning & baselines | [`docs/positioning.md`](docs/positioning.md) · [`docs/competitive-baselines.md`](docs/competitive-baselines.md) |
+| Task-success evaluation | [`docs/task-success-eval.md`](docs/task-success-eval.md) |
+| RFCs | [`0001`](docs/rfcs/0001-progressive-disclosure-gateway.md) · [`0002`](docs/rfcs/0002-type-theory-formal-methods-and-reflexivity.md) · [`0003`](docs/rfcs/0003-observation-lenses.md) |
+| Invariants & changelog | [`INVARIANTS.md`](INVARIANTS.md) · [`CHANGELOG.md`](CHANGELOG.md) |
 
-## V1 Non-Goals
+---
 
-- No upstream auto-pagination. `prog` can report pagination hints, but it does not fetch additional pages for you.
-- No table inference. Output shape inference is JSON-structural, not semantic table detection.
-- No MCP server mode. V1 can call MCP servers as an adapter; it does not expose `prog` itself as an MCP server.
-- No automatic trust upgrade from imported descriptors. Ambiguous CLI and MCP effects stay confirmation-gated until a profile explicitly proves otherwise.
+## Roadmap
 
-## Development Checks
+These are tracked as goals and are **not implemented today**:
 
-Run these before opening implementation PRs:
+- **[#69](https://github.com/aphoristicartist/prog/issues/69) — upstream auto-pagination.** Let `expand` follow `next`-style links across paged APIs without the caller orchestrating each fetch.
+- **[#70](https://github.com/aphoristicartist/prog/issues/70) — table inference.** Infer tabular structure from list/array payloads so expansions can return rows instead of nested JSON.
+- **[#72](https://github.com/aphoristicartist/prog/issues/72) — automatic trust upgrade from imported descriptors.** Promote trust level for operations whose imported OpenAPI / JSON Schema fully specifies inputs and effects.
 
-```bash
+## Non-goals
+
+- **No MCP server mode.** prog is driven via CLI + skill + hooks; becoming an MCP server would add ceremony without capability. Permanent — see [#71](https://github.com/aphoristicartist/prog/issues/71).
+- **Not a general-purpose HTTP cache or proxy.** prog bounds and shapes tool output for agent context; it is not a transparent traffic cache.
+- **No bespoke UI.** prog is a CLI surface intended for agents and scripting; richer views come from whatever consumes the envelopes.
+
+---
+
+## Development
+
+```sh
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 cargo run -- --help
 ```
+
+---
+
+prog keeps the first view small, makes the rest reachable, and never asks you to re-fetch what you already have.
