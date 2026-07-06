@@ -330,9 +330,11 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/integrations.md",
         "docs/evidence.md",
         "docs/cost.md",
+        "docs/task-success-eval.md",
         "docs/positioning.md",
         "docs/paths.md",
         "docs/token-economics.md",
+        "fixtures/evals/task-success-metrics.json",
         "models/fable-class-2026-07.json",
         "skills/prog/SKILL.md",
         "INVARIANTS.md",
@@ -386,4 +388,27 @@ fn docs_keep_acceptance_topics_visible() {
             "source setup doc should mention {expected}"
         );
     }
+
+    let task_success = std::fs::read_to_string(root.join("docs/task-success-eval.md")).unwrap();
+    for expected in [
+        "Task-success eval",
+        "simple_truncation",
+        "prog_call_only",
+        "prog_expand",
+        "tiny-payload-counterexample",
+    ] {
+        assert!(
+            task_success.contains(expected),
+            "task success doc should mention {expected}"
+        );
+    }
+
+    let task_metrics: Value = serde_json::from_slice(
+        &std::fs::read(root.join("fixtures/evals/task-success-metrics.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        task_metrics.as_array().unwrap().len() >= 40,
+        "task success metrics should include strategy rows for at least 10 scenarios"
+    );
 }

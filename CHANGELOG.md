@@ -12,6 +12,7 @@
 - Added positioning docs comparing `prog` with native filters, truncation, RTK-style hooks, MCP gateways, and large-context models.
 - Added first-party lens packs for command captures, text logs, NDJSON events, JSON item collections, and GitHub issue triage.
 - Added `prog source add-http` and `prog source add-cli` to create simple source profiles without hand-authored seed JSON.
+- Added deterministic task-success evals comparing raw, simple truncation, call-only, and targeted expansion strategies.
 - Added RFC 0003, defining observation lenses as the general progressive-disclosure model for agent artifacts.
 - Added LensManifest v1 contracts, repo-local lens loading, and lens-driven call previews.
 - Added progressive-disclosure docs, fixture walkthroughs, cache and safety notes, JSON contract documentation, and a token economics report.
