@@ -60,6 +60,10 @@ Consumers should branch on stable required fields first:
 
 For expansions, use JSON Pointer paths from `omitted` or `next_actions` instead of guessing positions from a preview. Previews are bounded and may omit long arrays, large strings, deep objects, or high-cardinality fields.
 
+`next_actions` may include forward-compatible planner metadata such as
+`priority`, `omitted_reason`, `detail`, `argv`, and `offline`. Consumers should
+use known fields and ignore unknown extras.
+
 For lens-driven calls, inspect the flattened `lens` metadata on the returned
 envelope before assuming the preview shape is the source's native shape. Lens
 previews may select or rename fields, but expansion still addresses the
