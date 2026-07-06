@@ -4,13 +4,44 @@
 uses the same redaction, cache, cursor, envelope, and expansion contracts as
 profile-backed `prog call`.
 
-Use `observe` for one-off artifacts such as JSON payloads, NDJSON logs, plain
-text logs, test output saved to a file, or pasted command output.
+Use `observe` for one-off artifacts such as JSON payloads, SARIF reports,
+NDJSON logs, JUnit XML, HTML pages, unified diffs, plain text logs, test output
+saved to a file, or pasted command output.
 
 See [Path discovery](paths.md) for filtering omitted regions and using ranked
 `next_actions`.
 
-## JSON
+## Parser/Indexer Pipeline
+
+`prog observe` selects one parser from a deterministic parser/indexer registry.
+The current registry recognizes JSON, SARIF, NDJSON, JUnit XML, basic HTML,
+unified diff, and bounded text fallback artifacts.
+
+The selected parser is reported under `observation.parser`:
+
+```json
+{
+  "id": "json",
+  "label": "JSON",
+  "confidence": 1.0,
+  "lossy": false,
+  "fallback": false,
+  "reason": "mime type and JSON syntax matched",
+  "path_semantics": "JSON Pointer",
+  "range_semantics": "JSON value ranges"
+}
+```
+
+`confidence` explains how strong the parser match was. `lossy` is true when the
+preview is a bounded or extracted representation instead of the complete source
+structure. `fallback` is true when no structured parser accepted the artifact
+and the text fallback was used instead.
+
+Malformed structured inputs, unknown text MIME types, mixed encodings, long
+lines, and repeated stack traces fall back to bounded text observations when the
+content is text-like. Binary-looking input is rejected with a structured error.
+
+## JSON and SARIF
 
 ```bash
 prog observe --file ./large.json --mime application/json --name large-json
@@ -24,9 +55,9 @@ or workflow needs shorter-lived evidence:
 prog observe --file ./large.json --ttl-seconds 300
 ```
 
-JSON observations keep the original JSON shape, so expansion uses normal JSON
-Pointer paths. A typical agent loop is observe, list candidate paths, then
-expand the specific evidence needed:
+JSON and SARIF observations keep the original JSON shape, so expansion uses
+normal JSON Pointer paths. A typical agent loop is observe, list candidate paths,
+then expand the specific evidence needed:
 
 ```bash
 prog paths pc1_... --prefix /items
@@ -58,6 +89,19 @@ List and expand records with paths such as `/records/10`:
 prog paths pc1_... --prefix /records
 prog expand pc1_... --path /records/10
 ```
+
+## JUnit XML, HTML, and Unified Diff
+
+```bash
+prog observe --file ./junit.xml --mime application/junit+xml --name tests
+prog observe --file ./page.html --mime text/html --name page
+prog observe --file ./change.diff --mime text/x-diff --name patch
+```
+
+These formats are indexed into bounded structured previews while preserving
+cursor-backed source lines. Exact expansion is available through text line paths
+such as `/lines/5/text`. The parser metadata marks these extracted previews as
+lossy and describes their range semantics.
 
 ## Text
 
