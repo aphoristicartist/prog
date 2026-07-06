@@ -547,9 +547,11 @@ pub fn refine_with_examples(
                 errors.push(format!("unknown operation '{}'", example.operation));
                 continue;
             };
-            let (redacted, redacted_paths) =
-                RedactionPolicy::default().apply_persistence(&example.output);
-            let observed = infer(&redacted);
+            let redacted =
+                crate::RawPayload::new(example.output.clone()).redact(&RedactionPolicy::default());
+            let redacted_paths = redacted.redacted_paths;
+            let redacted = redacted.payload;
+            let observed = infer(redacted.as_value());
             operation.output_shape = Some(match &operation.output_shape {
                 Some(current) => join(current, &observed),
                 None => observed,

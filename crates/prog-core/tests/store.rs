@@ -2,9 +2,9 @@ use std::{sync::Arc, thread};
 
 use chrono::{Duration, SecondsFormat, Utc};
 use prog_core::{
-    CacheEntryMeta, CachePolicy, CursorRecord, EffectSet, OperationProfile, PreviewPolicy,
-    RedactionPolicy, SliceRequest, SourceKind, SourceProfile, Store, TrustSettings, expand,
-    new_cache_entry,
+    CacheEntryMeta, CachePolicy, CursorRecord, EffectSet, ExpansionScope, OperationProfile,
+    PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, ScopedSlice, SliceRequest,
+    SourceKind, SourceProfile, Store, TrustSettings, expand, new_cache_entry,
 };
 use proptest::prelude::*;
 use serde_json::{Value, json};
@@ -15,18 +15,21 @@ fn payloads_survive_across_store_process_boundaries() {
     let payload = json!({"items": [{"id": 1, "body": "large"}]});
     let hash = {
         let store = Store::open(dir.path()).unwrap();
-        store.put_payload(&payload).unwrap()
+        store.put_payload(&redacted(payload.clone())).unwrap()
     };
 
     let reopened = Store::open(dir.path()).unwrap();
-    assert_eq!(reopened.get_payload(&hash).unwrap(), Some(payload));
+    assert_eq!(
+        reopened.get_payload(&hash).unwrap().unwrap().as_value(),
+        &payload
+    );
 }
 
 #[test]
 fn entries_respect_ttl_and_non_cacheable_sensitive_results_are_not_persisted() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
-    let payload_hash = store.put_payload(&json!({"ok": true})).unwrap();
+    let payload_hash = store.put_payload(&redacted(json!({"ok": true}))).unwrap();
 
     let mut entry = entry("fresh", &payload_hash, 60);
     store.put_entry(&entry.key.clone(), &entry).unwrap();
@@ -94,7 +97,7 @@ fn cursors_fail_closed_for_missing_expired_and_redaction_mismatch() {
 fn purge_expired_cascades_to_cursors() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
-    let payload_hash = store.put_payload(&json!({"ok": true})).unwrap();
+    let payload_hash = store.put_payload(&redacted(json!({"ok": true}))).unwrap();
     let mut entry = entry("expired", &payload_hash, 60);
     entry.expires_at = format_time(Utc::now() - Duration::seconds(1));
     store.put_entry(&entry.key.clone(), &entry).unwrap();
@@ -210,15 +213,14 @@ proptest! {
                 }
             ]
         });
-        let redacted = RedactionPolicy::default().apply_persistence(&payload).0;
+        let redacted = RawPayload::new(payload).redact(&RedactionPolicy::default()).payload;
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).unwrap();
         let hash = store.put_payload(&redacted).unwrap();
         let stored = store.get_payload(&hash).unwrap().unwrap();
-        let projection = expand(
-            &stored,
-            "/items",
-            &SliceRequest {
+        let scoped = ScopedSlice::new(
+            ExpansionScope::new("/items").unwrap(),
+            SliceRequest {
                 path: Some("/items/0".to_string()),
                 limit: None,
                 depth: None,
@@ -226,14 +228,25 @@ proptest! {
                 omit: Vec::new(),
                 extra: serde_json::Map::new(),
             },
+        )
+        .unwrap();
+        let projection = expand(
+            &stored,
+            &scoped,
             &PreviewPolicy::default(),
         )
         .unwrap();
 
-        prop_assert!(!serde_json::to_string(&stored).unwrap().contains(&raw_secret));
+        prop_assert!(!serde_json::to_string(stored.as_value()).unwrap().contains(&raw_secret));
         prop_assert!(!serde_json::to_string(&projection).unwrap().contains(&raw_secret));
         prop_assert_eq!(projection.preview["safe"].clone(), json!("visible"));
     }
+}
+
+fn redacted(value: Value) -> RedactedPayload {
+    RawPayload::new(value)
+        .redact(&RedactionPolicy::default())
+        .payload
 }
 
 fn entry(key: &str, payload_hash: &str, ttl_seconds: i64) -> CacheEntryMeta {

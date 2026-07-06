@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use prog_adapters::http::{HttpOperation, HttpSource};
-use prog_core::{AuthRef, RedactionPolicy, Store, new_cache_entry};
+use prog_core::{AuthRef, RawPayload, RedactionPolicy, Store, new_cache_entry};
 use serde_json::json;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
@@ -312,7 +312,9 @@ async fn auth_header_is_injected_but_never_lands_in_provenance_or_store() {
         "42"
     );
 
-    let redacted = RedactionPolicy::default().apply_persistence(&result.data).0;
+    let redacted = RawPayload::new(result.data)
+        .redact(&RedactionPolicy::default())
+        .payload;
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
     let payload_hash = store.put_payload(&redacted).unwrap();
@@ -321,7 +323,7 @@ async fn auth_header_is_injected_but_never_lands_in_provenance_or_store() {
         payload_hash,
         "http".to_string(),
         "secure".to_string(),
-        serde_json::to_vec(&redacted).unwrap().len() as u64,
+        serde_json::to_vec(redacted.as_value()).unwrap().len() as u64,
         60,
     );
     store.put_entry("auth-call", &entry).unwrap();

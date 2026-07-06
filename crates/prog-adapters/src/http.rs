@@ -4,7 +4,8 @@ use std::{
 };
 
 use prog_core::{
-    AuthRef, CoreError, PreviewPolicy, Projection, RedactionPolicy, Result, SliceRequest, expand,
+    AuthRef, CoreError, PreviewPolicy, Projection, RawPayload, RedactionPolicy, Result,
+    ScopedSlice, SliceRequest, expand,
 };
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
@@ -533,19 +534,18 @@ fn selected_headers(
 }
 
 fn bounded_preview(data: &Value) -> Result<Projection> {
-    expand(
-        data,
-        "",
-        &SliceRequest {
-            path: None,
-            limit: None,
-            depth: Some(2),
-            fields: Vec::new(),
-            omit: Vec::new(),
-            extra: Map::new(),
-        },
-        &PreviewPolicy::default(),
-    )
+    let payload = RawPayload::new(data.clone())
+        .redact(&RedactionPolicy::default())
+        .payload;
+    let slice = ScopedSlice::root(SliceRequest {
+        path: None,
+        limit: None,
+        depth: Some(2),
+        fields: Vec::new(),
+        omit: Vec::new(),
+        extra: Map::new(),
+    })?;
+    expand(&payload, &slice, &PreviewPolicy::default())
 }
 
 fn redacted_args(args: &Map<String, Value>) -> Value {

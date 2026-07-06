@@ -1,5 +1,6 @@
 use prog_core::{
-    OmissionReason, PreviewPolicy, SliceRequest, expand,
+    ExpansionScope, OmissionReason, PreviewPolicy, RawPayload, RedactionPolicy, ScopedSlice,
+    SliceRequest, expand,
     pointer::{is_within, parse},
     project,
 };
@@ -75,23 +76,24 @@ fn projection_marks_strings_arrays_objects_and_redaction() {
 #[test]
 fn expand_rejects_paths_outside_cursor_boundary_segment_wise() {
     let payload = json!({"a": {"child": 1}, "ab": 2, "a/b": 3});
+    let payload = redacted(payload);
     let policy = PreviewPolicy::default();
 
-    assert!(expand(&payload, "/a", &slice("/a/child"), &policy).is_ok());
-    let outside = expand(&payload, "/a", &slice("/ab"), &policy).unwrap_err();
+    assert!(expand(&payload, &scoped("/a", slice("/a/child")), &policy).is_ok());
+    let outside = ScopedSlice::new(ExpansionScope::new("/a").unwrap(), slice("/ab")).unwrap_err();
     assert_eq!(outside.kind(), "path_outside_boundary");
 
-    let escaped = expand(&payload, "/a", &slice("/a~1b"), &policy).unwrap_err();
+    let escaped = ScopedSlice::new(ExpansionScope::new("/a").unwrap(), slice("/a~1b")).unwrap_err();
     assert_eq!(escaped.kind(), "path_outside_boundary");
 }
 
 #[test]
 fn expand_reports_actionable_path_not_found() {
     let payload = json!({"items": [{"id": 1}]});
+    let payload = redacted(payload);
     let error = expand(
         &payload,
-        "",
-        &slice("/items/0/missing"),
+        &scoped("", slice("/items/0/missing")),
         &PreviewPolicy::default(),
     )
     .unwrap_err();
@@ -109,6 +111,7 @@ fn expand_applies_fields_and_omit_to_objects_and_arrays_of_objects() {
             {"id": 2, "body": "b", "secret": "[REDACTED:token]"}
         ]
     });
+    let payload = redacted(payload);
     let request = SliceRequest {
         path: Some("/items".to_string()),
         limit: Some(10),
@@ -118,7 +121,7 @@ fn expand_applies_fields_and_omit_to_objects_and_arrays_of_objects() {
         extra: serde_json::Map::new(),
     };
 
-    let projection = expand(&payload, "", &request, &PreviewPolicy::default()).unwrap();
+    let projection = expand(&payload, &scoped("", request), &PreviewPolicy::default()).unwrap();
     assert_eq!(projection.preview, json!([{"id": 1}, {"id": 2}]));
     assert!(projection.omitted.is_empty());
 }
@@ -126,6 +129,7 @@ fn expand_applies_fields_and_omit_to_objects_and_arrays_of_objects() {
 #[test]
 fn redaction_sentinel_never_reappears_through_projection_or_expansion() {
     let payload = json!({"outer": {"secret": "[REDACTED:api_key]"}});
+    let redacted_payload = redacted(payload.clone());
     let policy = PreviewPolicy::default();
 
     let projection = project(&payload, &policy, "");
@@ -135,7 +139,12 @@ fn redaction_sentinel_never_reappears_through_projection_or_expansion() {
             .contains("[REDACTED:api_key]")
     );
 
-    let expanded = expand(&payload, "", &slice("/outer/secret"), &policy).unwrap();
+    let expanded = expand(
+        &redacted_payload,
+        &scoped("", slice("/outer/secret")),
+        &policy,
+    )
+    .unwrap();
     assert_eq!(expanded.preview, json!("«redacted»"));
     assert!(
         !serde_json::to_string(&expanded)
@@ -153,6 +162,16 @@ fn slice(path: &str) -> SliceRequest {
         omit: Vec::new(),
         extra: serde_json::Map::new(),
     }
+}
+
+fn scoped(root_path: &str, request: SliceRequest) -> ScopedSlice {
+    ScopedSlice::new(ExpansionScope::new(root_path).unwrap(), request).unwrap()
+}
+
+fn redacted(value: Value) -> prog_core::RedactedPayload {
+    RawPayload::new(value)
+        .redact(&RedactionPolicy::default())
+        .payload
 }
 
 fn arbitrary_json() -> impl Strategy<Value = Value> {
@@ -238,8 +257,9 @@ proptest! {
         let sibling_path = pointer_from_segments(&sibling);
         prop_assume!(parse(&boundary).unwrap() != parse(&sibling_path).unwrap());
 
-        let error = expand(&json!({}), &boundary, &slice(&sibling_path), &PreviewPolicy::default())
-            .unwrap_err();
+        let error =
+            ScopedSlice::new(ExpansionScope::new(&boundary).unwrap(), slice(&sibling_path))
+                .unwrap_err();
         prop_assert_eq!(error.kind(), "path_outside_boundary");
     }
 }

@@ -5,8 +5,8 @@ This table maps the RFC 0002 invariant set to executable tests. Property tests r
 | # | Invariant | Harness |
 |---|---|---|
 | I1 | Projection never invents values. Preview leaves must equal the source leaf at that path, be a marker, or be an explicit truncated prefix. | `crates/prog-core/tests/disclosure.rs::projection_never_fabricates_values` |
-| I2 | Persistence-redacted data never reaches disk. | `crates/prog-core/tests/store.rs::persistence_redaction_is_idempotent_and_removes_secret_values`; composed with expansion in `redacted_payload_stays_redacted_through_store_and_expansion` |
-| I3 | Expansion never escapes the cursor provenance boundary, segment-wise and escaping-aware. | `crates/prog-core/tests/disclosure.rs::pointer_containment_is_segment_based`; `expansion_rejects_generated_segment_siblings`; unit cases in `expand_rejects_paths_outside_cursor_boundary_segment_wise` |
+| I2 | Persistence-redacted data never reaches disk. | `crates/prog-core/tests/store.rs::persistence_redaction_is_idempotent_and_removes_secret_values`; composed with expansion in `redacted_payload_stays_redacted_through_store_and_expansion`; API boundary in `crates/prog-core/tests/lifecycle.rs::payload_typestate_requires_redaction_before_persistence` |
+| I3 | Expansion never escapes the cursor provenance boundary, segment-wise and escaping-aware. | `crates/prog-core/tests/disclosure.rs::pointer_containment_is_segment_based`; `expansion_rejects_generated_segment_siblings`; unit cases in `expand_rejects_paths_outside_cursor_boundary_segment_wise`; scoped cursor capability tests in `crates/prog-core/tests/lifecycle.rs::{scoped_slice_validates_json_pointer_syntax_and_scope,validated_cursor_creates_expansion_scope_capability}` |
 | I4 | Redaction is idempotent. | `crates/prog-core/tests/store.rs::persistence_redaction_is_idempotent_and_removes_secret_values` |
 | I5 | Shape join is commutative, associative, idempotent, monotone; `Unknown` is identity; enum-cap absorption is order-independent. | `crates/prog-core/tests/shape.rs::{join_is_commutative,join_is_associative,join_is_idempotent,unknown_is_join_identity,join_is_monotone_by_absorption,string_enum_absorption_is_associative_at_cap_boundary}` |
 | I6 | Discovery never invokes non-read-only operations. | `crates/prog-cli/tests/cli.rs::probe_skips_effectless_operations_with_i6_warning`; policy refusal units in `crates/prog-core/tests/policy.rs::discovery_refuses_each_unsafe_effect_independently` |
@@ -17,6 +17,10 @@ This table maps the RFC 0002 invariant set to executable tests. Property tests r
 ## Property strategy
 
 The arbitrary JSON strategy in `crates/prog-core/tests/disclosure.rs` is bounded by depth and width and includes long strings, redaction sentinels, unicode text, escaped pointer keys, and sensitive-looking field names. The arbitrary shape strategy in `crates/prog-core/tests/shape.rs` generates nested shapes and exact enum-cap value sets to keep the known string-enum absorption boundary under test.
+
+## Typestate boundaries
+
+Payloads that come from APIs, CLIs, MCP servers, imported examples, or observed artifacts enter core code as `RawPayload` and must be converted to `RedactedPayload` before they can be stored. `Store::put_payload` does not accept plain `serde_json::Value`. Stored payloads come back as `PersistedPayload`, and cursor-backed expansion requires a `ValidatedCursor` plus `ScopedSlice`, so raw cursor strings and unvalidated JSON Pointer strings cannot reach the expansion function directly.
 
 ## CI
 

@@ -472,4 +472,19 @@ fn docs_keep_acceptance_topics_visible() {
             "metadata doc should mention {expected}"
         );
     }
+
+    let invariants = std::fs::read_to_string(root.join("INVARIANTS.md")).unwrap();
+    for expected in [
+        "Typestate boundaries",
+        "RawPayload",
+        "RedactedPayload",
+        "PersistedPayload",
+        "ValidatedCursor",
+        "ScopedSlice",
+    ] {
+        assert!(
+            invariants.contains(expected),
+            "invariants doc should mention {expected}"
+        );
+    }
 }
