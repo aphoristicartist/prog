@@ -1,0 +1,70 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "run.streams",
+  "version": 1,
+  "match": {
+    "source_kind": "cli",
+    "source_id": "run",
+    "artifact_kind": "run"
+  },
+  "view": {
+    "limit": 10,
+    "depth": 3,
+    "fields": {
+      "argv": "/command/argv",
+      "success": "/command/success",
+      "exit_code": "/command/exit_code",
+      "stdout_head": "/stdout/head",
+      "stdout_tail": "/stdout/tail",
+      "stdout_line_count": "/stdout/line_count",
+      "stderr_head": "/stderr/head",
+      "stderr_tail": "/stderr/tail",
+      "stderr_line_count": "/stderr/line_count"
+    }
+  },
+  "omit": [
+    {
+      "path": "/stdout/text",
+      "reason": "large_string",
+      "detail": "full stdout is available through expansion",
+      "expandable": true
+    },
+    {
+      "path": "/stderr/text",
+      "reason": "large_string",
+      "detail": "full stderr is available through expansion",
+      "expandable": true
+    },
+    {
+      "path": "/combined",
+      "reason": "long_array",
+      "detail": "combined chunk ordering is available through expansion",
+      "expandable": true
+    }
+  ],
+  "next_actions": [
+    {
+      "kind": "expand",
+      "path": "/stdout/text",
+      "reason": "inspect full stdout only when the head and tail are insufficient"
+    },
+    {
+      "kind": "expand",
+      "path": "/stderr/text",
+      "reason": "inspect full stderr only when the head and tail are insufficient"
+    }
+  ],
+  "invariants": [
+    "stream_heads_and_tails_remain_bounded",
+    "full_streams_are_expandable",
+    "redaction_dominates_projection"
+  ],
+  "fixtures": {
+    "positive": [
+      "fixtures/run-success.json"
+    ],
+    "negative": [
+      "fixtures/counterexamples/json-items.json"
+    ]
+  }
+}

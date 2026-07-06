@@ -282,6 +282,7 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/contracts.md",
         "docs/metadata.md",
         "docs/lenses.md",
+        "docs/lens-packs.md",
         "docs/observe.md",
         "docs/run.md",
         "docs/integrations.md",
@@ -312,6 +313,21 @@ fn docs_keep_acceptance_topics_visible() {
         assert!(
             positioning.contains(expected),
             "positioning doc should mention {expected}"
+        );
+    }
+
+    let lens_packs = std::fs::read_to_string(root.join("docs/lens-packs.md")).unwrap();
+    for expected in [
+        "run.failures",
+        "observe.text.logs",
+        "observe.ndjson.records",
+        "json.items.triage",
+        "github.issues.triage",
+        "2 KiB truncation baseline",
+    ] {
+        assert!(
+            lens_packs.contains(expected),
+            "lens pack doc should mention {expected}"
         );
     }
 }

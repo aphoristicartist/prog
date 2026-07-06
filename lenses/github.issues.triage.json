@@ -1,0 +1,62 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "github.issues.triage",
+  "version": 1,
+  "match": {
+    "operation": "list_issues"
+  },
+  "view": {
+    "root": "/items",
+    "limit": 20,
+    "depth": 3,
+    "fields": {
+      "number": "/number",
+      "title": "/title",
+      "state": "/state",
+      "author": "/user/login",
+      "labels": "/labels/*/name",
+      "comments": "/comments",
+      "updated_at": "/updated_at",
+      "url": "/html_url"
+    }
+  },
+  "omit": [
+    {
+      "path": "/items/*/body",
+      "reason": "large_string",
+      "detail": "issue body is expandable after selecting a candidate issue",
+      "expandable": true
+    },
+    {
+      "path": "/items/*/pull_request",
+      "reason": "deep_object",
+      "detail": "pull request metadata is expandable when needed",
+      "expandable": true
+    }
+  ],
+  "next_actions": [
+    {
+      "kind": "expand",
+      "path": "/items/{index}/body",
+      "reason": "read the full issue body only after the triage row is relevant"
+    },
+    {
+      "kind": "expand",
+      "path": "/items/{index}/pull_request",
+      "reason": "check PR metadata only for issue rows that are actually pull requests"
+    }
+  ],
+  "invariants": [
+    "issue_bodies_are_omitted_until_selected",
+    "labels_are_selected_without_fabricating_missing_labels",
+    "triage_preview_is_bounded"
+  ],
+  "fixtures": {
+    "positive": [
+      "fixtures/github-issues.json"
+    ],
+    "negative": [
+      "fixtures/counterexamples/text-log-normalized.json"
+    ]
+  }
+}

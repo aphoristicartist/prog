@@ -350,7 +350,9 @@ prog expand pc1_... --path /stderr/failures/0 --depth 3
 ```
 
 ```bash
-gh api repos/OWNER/REPO/issues | prog observe --stdin --mime application/json --lens github.issues.triage
+gh api repos/OWNER/REPO/issues \
+  | jq '{items: .}' \
+  | prog observe --stdin --mime application/json --name list_issues --lens github.issues.triage
 prog paths pc1_... --field body
 prog expand pc1_... --path /items/7/body
 ```

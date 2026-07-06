@@ -10,11 +10,14 @@ command when the exact query is already known.
 
 ## Layout
 
-By default, `prog call --lens <id>` loads manifests from `./lenses`. Override
-that with `--lens-dir` or `PROG_LENS_DIR`.
+By default, `prog call --lens <id>`, `prog observe --lens <id>`, and
+`prog run --lens <id>` load manifests from `./lenses`. Override that with
+`--lens-dir` or `PROG_LENS_DIR`.
 
 ```bash
 prog --lens-dir ./lenses call github list_issues --args '{}' --lens github.issues.triage
+prog --lens-dir ./lenses observe --file service.log --mime text/plain --lens observe.text.logs
+prog --lens-dir ./lenses run --lens run.failures -- cargo test
 ```
 
 Manifest files may be JSON, YAML, or YML. They are loaded from the top level of
@@ -69,8 +72,8 @@ The public contract is exposed through `prog meta LensManifest`.
 
 ## Semantics
 
-- `match` is enforced when fields are present. A lens can pin source kind,
-  source id, and operation.
+- `match` is enforced whenever a lens is selected. A lens can pin source kind,
+  source id, operation, MIME type, and artifact kind.
 - `view.root` selects the cursor root and first-view root.
 - `view.limit` and `view.depth` override default preview policy for the lens.
 - `view.fields` maps output field names to JSON Pointer selectors relative to
@@ -80,6 +83,8 @@ The public contract is exposed through `prog meta LensManifest`.
 - `next_actions` adds planner-facing actions before generated omission actions.
 - Expansion still uses the original redacted cached payload, not the synthetic
   preview.
+- The first-party pack lives in `lenses/`; see [First-party lens
+  packs](lens-packs.md).
 
 ## Safety Rules
 

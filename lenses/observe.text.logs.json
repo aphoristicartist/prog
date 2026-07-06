@@ -1,0 +1,48 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "observe.text.logs",
+  "version": 1,
+  "match": {
+    "source_id": "observe",
+    "artifact_kind": "text"
+  },
+  "view": {
+    "limit": 20,
+    "depth": 3,
+    "fields": {
+      "head": "/head",
+      "tail": "/tail",
+      "line_count": "/line_count",
+      "byte_count": "/byte_count",
+      "utf8_valid": "/utf8_valid"
+    }
+  },
+  "omit": [
+    {
+      "path": "/lines",
+      "reason": "long_array",
+      "detail": "individual log lines are expandable by line index",
+      "expandable": true
+    }
+  ],
+  "next_actions": [
+    {
+      "kind": "expand",
+      "path": "/lines/0",
+      "reason": "inspect a specific log line when the bounded head or tail identifies it"
+    }
+  ],
+  "invariants": [
+    "line_text_is_redacted_before_projection",
+    "all_lines_remain_expandable",
+    "head_and_tail_are_bounded"
+  ],
+  "fixtures": {
+    "positive": [
+      "fixtures/text-log-normalized.json"
+    ],
+    "negative": [
+      "fixtures/counterexamples/json-items.json"
+    ]
+  }
+}

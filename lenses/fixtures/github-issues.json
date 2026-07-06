@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "number": 44,
+      "title": "Add first-party lens packs",
+      "state": "open",
+      "user": {"login": "alice"},
+      "labels": [{"name": "enhancement"}, {"name": "agent"}],
+      "comments": 5,
+      "updated_at": "2026-07-06T12:00:00Z",
+      "html_url": "https://github.com/example/prog/issues/44",
+      "body": "Issue body aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "number": 45,
+      "title": "Install project hooks",
+      "state": "open",
+      "user": {"login": "bob"},
+      "labels": [{"name": "integration"}],
+      "comments": 2,
+      "updated_at": "2026-07-06T12:05:00Z",
+      "html_url": "https://github.com/example/prog/issues/45",
+      "pull_request": {
+        "url": "https://api.github.com/repos/example/prog/pulls/45",
+        "merged_at": null,
+        "diff_url": "https://github.com/example/prog/pull/45.diff"
+      },
+      "body": "Issue body bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "total_count": 2
+}
