@@ -187,7 +187,92 @@ pub struct DisclosureEnvelope {
     #[serde(default)]
     pub cache: Option<CacheInfo>,
     #[serde(default)]
+    pub observation: Option<ObservationMetadata>,
+    #[serde(default)]
     pub warnings: Vec<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObservationMetadata {
+    pub completeness: ObservationCompleteness,
+    pub freshness: ObservationFreshness,
+    pub trust: ObservationTrust,
+    pub safety: ObservationSafety,
+    pub payload: ObservationPayloadStatus,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObservationCompleteness {
+    pub status: String,
+    pub preview_complete: bool,
+    pub path_scoped: bool,
+    pub truncated: bool,
+    pub redacted: bool,
+    pub omitted_count: u64,
+    pub redacted_count: u64,
+    pub root_path: String,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObservationFreshness {
+    #[serde(default)]
+    pub captured_at: Option<String>,
+    #[serde(default)]
+    pub age_seconds: Option<u64>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub stale_after_seconds: Option<u64>,
+    pub stale: bool,
+    pub refresh_recommended: bool,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObservationTrust {
+    pub profile_backed: bool,
+    #[serde(default)]
+    pub source_kind: Option<String>,
+    pub adapter_provenance: bool,
+    #[serde(default)]
+    pub provenance_status: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObservationSafety {
+    pub redacted_before_persistence: bool,
+    pub redacted_paths: u64,
+    pub sensitive_cache_disabled: bool,
+    #[serde(default)]
+    pub cache_disabled_reason: Option<String>,
+    #[serde(default)]
+    pub effects: Option<EffectSet>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObservationPayloadStatus {
+    #[serde(default)]
+    pub cache_status: Option<CacheStatus>,
+    pub cached: bool,
+    pub expandable: bool,
+    pub payload_bytes: u64,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
@@ -427,6 +512,7 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<OperationProfile>(&mut schemas, "OperationProfile")?;
     insert_schema::<Shape>(&mut schemas, "Shape")?;
     insert_schema::<EffectSet>(&mut schemas, "EffectSet")?;
+    insert_schema::<ObservationMetadata>(&mut schemas, "ObservationMetadata")?;
     insert_schema::<CachePolicy>(&mut schemas, "CachePolicy")?;
     insert_schema::<TrustSettings>(&mut schemas, "TrustSettings")?;
     insert_schema::<AuthRef>(&mut schemas, "AuthRef")?;

@@ -64,6 +64,10 @@ For expansions, use JSON Pointer paths from `omitted` or `next_actions` instead 
 `priority`, `omitted_reason`, `detail`, `argv`, and `offline`. Consumers should
 use known fields and ignore unknown extras.
 
+`observation` describes how to interpret the preview: completeness, freshness,
+trust, safety, and cache-backed payload availability. This metadata is additive;
+consumers should ignore unknown fields inside its subobjects.
+
 For lens-driven calls, inspect the flattened `lens` metadata on the returned
 envelope before assuming the preview shape is the source's native shape. Lens
 previews may select or rename fields, but expansion still addresses the
