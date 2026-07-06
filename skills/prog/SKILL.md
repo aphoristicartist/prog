@@ -1,117 +1,88 @@
 ---
 name: prog
-description: Use prog for progressive disclosure over noisy API, CLI, or MCP sources. Trigger when the user mentions large JSON responses, pagination-less APIs, context blowups from tool output, arbitrary HTTP/CLI/MCP data sources, or needing bounded inspection with expandable cached results instead of raw dumps.
+description: Use prog to turn large API, CLI, MCP, log, and artifact results into bounded, cursor-backed observations before reasoning over them.
 ---
 
-# prog
+# prog Observation Workflow
 
-Use `prog` as a progressive-disclosure gateway. Teach the agent loop; let `prog meta` disclose detailed contracts.
+Use `prog` when tool output, files, command logs, API responses, or MCP results
+are too large, noisy, expensive to rerun, or need exact evidence.
 
-## Loop
+Prefer this loop:
 
-1. Run `prog hints <source>` before calling a known source.
-2. For a new source, run `prog discover <source> --kind http|cli|mcp --seed <path-or-json>`. Do not add `--probe` by default; probing is an explicit read-only decision.
-3. Run `prog call <source> <operation> --args '<json>'` to get a bounded envelope.
-4. Read `summary.approx_tokens`, `warnings`, `omitted`, `cursor`, and `next_actions` before asking for more.
-5. Run `prog expand <cursor> --path <json-pointer> --limit N --depth N` for omitted regions. Use concrete paths and bounded limits.
-6. Run `prog expand <cursor> --path <json-pointer> --out <file>` for bulk data you will grep or process with code. Bulk goes to files, never to context.
-7. Use `--refresh` when staleness warnings appear and freshness matters.
-8. Use `--yes` only after telling the user a mutation is about to happen.
-9. Never ask for raw dumps into context; that is the failure mode `prog` exists to prevent.
-10. Run `prog meta` or `prog meta <ContractName>` for prog's own contracts.
-
-Respect warnings about mutation, shell trust, secrets/redaction, stale cache, and non-cacheable results.
-
-## HTTP Example
-
-Seed:
-
-```json
-{
-  "kind": "http",
-  "base_url": "http://127.0.0.1:8000",
-  "operations": [
-    {
-      "name": "list",
-      "method": "GET",
-      "path": "/items"
-    }
-  ]
-}
+```text
+observe/call/run -> inspect envelope -> paths -> expand exact evidence -> answer with EvidenceRefs
 ```
 
-Commands:
+## Commands
+
+- Use `prog run -- <command...>` for noisy commands such as test suites, build
+  logs, package managers, and `gh api` calls.
+- Use `prog observe --file <path>` or `prog observe --stdin` for raw JSON,
+  NDJSON, text, logs, and saved tool output.
+- Use `prog call <source> <operation> --args <json>` only when a source profile
+  exists and the operation passes safety gates.
+- Use `prog paths <cursor>` before guessing what to expand.
+- Use `prog expand <cursor> --path <json-pointer>` to fetch exact evidence.
+
+## Source Profiles
+
+- Run `prog hints <source>` before calling a known source.
+- For a new source, run
+  `prog discover <source> --kind http|cli|mcp --seed <path-or-json>`.
+- Do not add `--probe` by default; probing is an explicit read-only decision.
+- Use `--refresh` when staleness warnings appear and freshness matters.
+- Use `--yes` only after telling the user a mutation is about to happen.
+- Run `prog meta` or `prog meta <ContractName>` for contract details instead
+  of guessing envelope fields.
+
+Shell-backed operations require explicit profile trust. Respect warnings about
+mutation, shell execution, secrets, stale cache, and non-cacheable results.
+
+## EvidenceRefs
+
+When a conclusion depends on a specific expansion, cite it with the cursor and
+JSON pointer:
+
+```text
+EvidenceRef: prog://pc1_...#/failure_sections/0
+EvidenceRef: prog://pc1_...#/stderr/text
+```
+
+Do not cite the bounded preview as if it were the whole artifact when omissions
+are present. Expand the exact path first.
+
+## Safety
+
+- Do not paste raw large payloads into model context by default.
+- Do not bypass `prog` safety gates for mutating or shell-backed profile calls.
+- Treat redacted fields as unavailable evidence.
+- Prefer `--out <file>` when bulk post-processing is needed outside model
+  context.
+- Rerun the original command or call only when freshness matters or the cursor
+  expired.
+
+## Hook Usage
+
+Project-local hooks installed by `prog init --agent codex --project` are explicit
+wrappers, not hidden command rewrites:
 
 ```bash
-prog discover api --kind http --seed http.json
-prog hints api
-prog call api list --args '{}'
-prog expand pc1_example --path /items --limit 5 --depth 3
-prog expand pc1_example --path /items --out /tmp/items.json
+.codex/prog-hooks/prog-run.sh cargo test
 ```
 
-Replace `pc1_example` with the cursor returned by `call`.
+The wrapper returns a normal `DisclosureEnvelope`. Inspect `cursor`, then use
+`prog paths` and `prog expand`.
 
-## CLI Example
+## MCP Stance
 
-Seed:
+MCP is optional compatibility. Prefer the CLI, this skill, and explicit hooks as
+the durable contract. Use MCP only when the host agent already speaks MCP well
+and it preserves the same safety gates, cache semantics, cursor expansion, and
+redaction behavior as the CLI.
 
-```json
-{
-  "kind": "cli",
-  "operations": [
-    {
-      "name": "hello",
-      "command": "python3",
-      "args": ["-c", "import json; print(json.dumps({'hello':'{name}'}))"],
-      "input_schema": {
-        "type": "object",
-        "required": ["name"],
-        "properties": {"name": {"type": "string"}}
-      },
-      "effect": {
-        "read_only": true,
-        "mutating": false,
-        "network": false,
-        "shell": false,
-        "sensitive": false,
-        "cacheable": true,
-        "requires_confirmation": false
-      }
-    }
-  ]
-}
-```
+## Counterexamples
 
-Commands:
-
-```bash
-prog discover local --kind cli --seed cli.json
-prog hints local hello
-prog call local hello --args '{"name":"Ada"}'
-```
-
-Shell-backed operations require `trust.allow_shell` in the source profile.
-
-## MCP Example
-
-Seed:
-
-```json
-{
-  "kind": "mcp",
-  "command": "python3",
-  "args": ["fixture_mcp.py", "normal"]
-}
-```
-
-Commands:
-
-```bash
-prog discover docs --kind mcp --seed mcp.json
-prog hints docs
-prog call docs search_docs --args '{"query":"rust"}'
-prog expand pc1_example --path /results --limit 5 --depth 3
-```
-
-MCP catalog discovery is allowed, but tool calls still obey effect policy.
+Do not use `prog` when the payload is tiny, a known `jq` query is enough, the
+user needs live interactive streaming, the command requires a TTY, or the
+upstream API already returns exactly the needed fields.

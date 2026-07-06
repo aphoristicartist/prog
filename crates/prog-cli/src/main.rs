@@ -37,6 +37,7 @@ use tokio::{
 use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
 static RUN_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const PROG_AGENT_SKILL: &str = include_str!("../../../skills/prog/SKILL.md");
 
 #[derive(Debug, Parser)]
 #[command(
@@ -65,6 +66,7 @@ enum Command {
     Call(CallArgs),
     Observe(ObserveArgs),
     Run(RunArgs),
+    Init(InitArgs),
     Paths(PathsArgs),
     Expand(ExpandArgs),
     Cache {
@@ -79,6 +81,25 @@ enum SourceKind {
     Http,
     Cli,
     Mcp,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum AgentKind {
+    Codex,
+    ClaudeCode,
+    Cursor,
+    GeminiCli,
+}
+
+impl AgentKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            AgentKind::Codex => "codex",
+            AgentKind::ClaudeCode => "claude-code",
+            AgentKind::Cursor => "cursor",
+            AgentKind::GeminiCli => "gemini-cli",
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -165,6 +186,21 @@ struct RunArgs {
 
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
     command: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct InitArgs {
+    #[arg(long, value_enum)]
+    agent: AgentKind,
+
+    #[arg(long)]
+    project: bool,
+
+    #[arg(long)]
+    dry_run: bool,
+
+    #[arg(long, default_value = ".")]
+    root: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -312,6 +348,11 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             } else {
                 ExitCode::SUCCESS
             })
+        }
+        Command::Init(args) => {
+            let report = init_integration(args)?;
+            write_success(&report, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
         }
         Command::Paths(args) => {
             let store = Store::open(&cli.dir)?;
@@ -552,6 +593,34 @@ struct RunPayloadInput<'a> {
     combined: Vec<Value>,
     failure_sections: &'a [RunFailureSection],
     out: Option<&'a PathBuf>,
+}
+
+struct InitFileSpec {
+    relative_path: &'static str,
+    content: String,
+    executable: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct InitReport {
+    schema_version: &'static str,
+    agent: &'static str,
+    scope: &'static str,
+    root: String,
+    dry_run: bool,
+    files: Vec<InitFileReport>,
+    next_steps: Vec<String>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct InitFileReport {
+    path: String,
+    full_path: String,
+    action: &'static str,
+    executable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1738,6 +1807,228 @@ fn is_sensitive_name(name: &str) -> bool {
             | "session"
             | "token"
     )
+}
+
+fn init_integration(args: &InitArgs) -> Result<InitReport> {
+    if !args.project {
+        return Err(CoreError::BadArgs {
+            operation: "init".to_string(),
+            reason: "pass --project; global shell installation is not implemented in V1"
+                .to_string(),
+        });
+    }
+    if args.agent != AgentKind::Codex {
+        return Err(CoreError::BadArgs {
+            operation: "init".to_string(),
+            reason: format!(
+                "agent '{}' is documented in the integration matrix but not implemented yet; supported project agent: codex",
+                args.agent.as_str()
+            ),
+        });
+    }
+
+    let root = project_root(&args.root)?;
+    let specs = codex_project_init_files();
+    let mut files = Vec::new();
+    let mut skipped = 0usize;
+    for spec in specs {
+        let full_path = root.join(spec.relative_path);
+        let exists = full_path.exists();
+        let (action, reason) = if exists {
+            skipped = skipped.saturating_add(1);
+            (
+                "exists",
+                Some("left existing file unchanged; remove it first to regenerate".to_string()),
+            )
+        } else if args.dry_run {
+            ("would_create", None)
+        } else {
+            write_init_file(&full_path, &spec.content, spec.executable)?;
+            ("created", None)
+        };
+        files.push(InitFileReport {
+            path: spec.relative_path.to_string(),
+            full_path: full_path.to_string_lossy().to_string(),
+            action,
+            executable: spec.executable,
+            reason,
+        });
+    }
+
+    let mut warnings = Vec::new();
+    if skipped > 0 {
+        warnings.push(format!(
+            "{skipped} existing integration file(s) were left unchanged"
+        ));
+    }
+    if args.dry_run {
+        warnings.push("dry-run only; no files were written".to_string());
+    }
+
+    Ok(InitReport {
+        schema_version: "prog.init.v1",
+        agent: args.agent.as_str(),
+        scope: "project",
+        root: root.to_string_lossy().to_string(),
+        dry_run: args.dry_run,
+        files,
+        next_steps: vec![
+            "Review .codex/skills/prog/SKILL.md before relying on the generated skill".to_string(),
+            "Route noisy commands through .codex/prog-hooks/prog-run.sh <command...>".to_string(),
+            "After a run/observe/call envelope returns a cursor, inspect with prog paths before expanding exact evidence".to_string(),
+        ],
+        warnings,
+    })
+}
+
+fn project_root(root: &Path) -> Result<PathBuf> {
+    let root = if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(root)
+    };
+    if !root.exists() {
+        return Err(CoreError::BadArgs {
+            operation: "init".to_string(),
+            reason: format!("project root '{}' does not exist", root.display()),
+        });
+    }
+    if !root.is_dir() {
+        return Err(CoreError::BadArgs {
+            operation: "init".to_string(),
+            reason: format!("project root '{}' is not a directory", root.display()),
+        });
+    }
+    Ok(root)
+}
+
+fn codex_project_init_files() -> Vec<InitFileSpec> {
+    let manifest_files = [
+        ".codex/skills/prog/SKILL.md",
+        ".codex/prog-hooks/prog-run.sh",
+        ".codex/prog-hooks/README.md",
+        ".codex/prog-hooks/manifest.json",
+        ".codex/prog-hooks/uninstall.sh",
+    ];
+    let manifest = json!({
+        "schema_version": "prog.integration.v1",
+        "agent": "codex",
+        "scope": "project",
+        "mcp": {
+            "status": "optional",
+            "reason": "CLI, skill, and hooks are the durable V1 contract"
+        },
+        "files": manifest_files,
+        "commands": {
+            "wrap_command": ".codex/prog-hooks/prog-run.sh <command...>",
+            "observe_file": "prog observe --file <path>",
+            "inspect_paths": "prog paths <cursor>",
+            "expand_evidence": "prog expand <cursor> --path <json-pointer>"
+        },
+        "uninstall": "sh .codex/prog-hooks/uninstall.sh"
+    });
+    vec![
+        InitFileSpec {
+            relative_path: ".codex/skills/prog/SKILL.md",
+            content: PROG_AGENT_SKILL.to_string(),
+            executable: false,
+        },
+        InitFileSpec {
+            relative_path: ".codex/prog-hooks/prog-run.sh",
+            content: codex_prog_run_hook(),
+            executable: true,
+        },
+        InitFileSpec {
+            relative_path: ".codex/prog-hooks/README.md",
+            content: codex_hook_readme(),
+            executable: false,
+        },
+        InitFileSpec {
+            relative_path: ".codex/prog-hooks/manifest.json",
+            content: format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap()),
+            executable: false,
+        },
+        InitFileSpec {
+            relative_path: ".codex/prog-hooks/uninstall.sh",
+            content: codex_uninstall_hook(),
+            executable: true,
+        },
+    ]
+}
+
+fn codex_prog_run_hook() -> String {
+    r#"#!/usr/bin/env sh
+set -eu
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: .codex/prog-hooks/prog-run.sh <command...>" >&2
+  exit 64
+fi
+
+exec prog run -- "$@"
+"#
+    .to_string()
+}
+
+fn codex_hook_readme() -> String {
+    r#"# prog Codex hooks
+
+This project-local integration keeps `prog` usable without MCP server mode.
+
+Use the wrapper for noisy commands:
+
+```bash
+.codex/prog-hooks/prog-run.sh cargo test
+```
+
+The wrapper returns a bounded `DisclosureEnvelope`. Inspect the returned
+`cursor` with `prog paths <cursor>` before expanding exact evidence with
+`prog expand <cursor> --path <json-pointer>`.
+
+For shell aliases or editor tasks, wire the command directly rather than
+rewriting user commands globally:
+
+```sh
+prog_run() {
+  .codex/prog-hooks/prog-run.sh "$@"
+}
+```
+
+MCP is optional compatibility. Prefer the CLI, this skill, and explicit hooks
+unless the host agent already has a reliable MCP client.
+"#
+    .to_string()
+}
+
+fn codex_uninstall_hook() -> String {
+    r#"#!/usr/bin/env sh
+set -eu
+
+rm -f .codex/skills/prog/SKILL.md
+rm -f .codex/prog-hooks/prog-run.sh
+rm -f .codex/prog-hooks/README.md
+rm -f .codex/prog-hooks/manifest.json
+rm -f .codex/prog-hooks/uninstall.sh
+rmdir .codex/skills/prog 2>/dev/null || true
+rmdir .codex/skills 2>/dev/null || true
+rmdir .codex/prog-hooks 2>/dev/null || true
+rmdir .codex 2>/dev/null || true
+"#
+    .to_string()
+}
+
+fn write_init_file(path: &Path, content: &str, executable: bool) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if executable { 0o755 } else { 0o644 };
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+    }
+    Ok(())
 }
 
 fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
