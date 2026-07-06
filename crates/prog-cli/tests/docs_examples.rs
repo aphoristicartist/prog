@@ -145,6 +145,7 @@ fn documented_command_help_surface_stays_real() {
         &["call", "--help"],
         &["observe", "--help"],
         &["run", "--help"],
+        &["init", "--help"],
         &["paths", "--help"],
         &["expand", "--help"],
         &["cache", "--help"],
@@ -205,6 +206,14 @@ fn documented_command_help_surface_stays_real() {
         );
     }
 
+    let init_help = stdout(&prog(&root, &["init", "--help"]));
+    for expected in ["--agent", "--project", "--dry-run", "--root"] {
+        assert!(
+            init_help.contains(expected),
+            "init help should contain {expected}"
+        );
+    }
+
     let paths_help = stdout(&prog(&root, &["paths", "--help"]));
     for expected in [
         "--prefix",
@@ -260,8 +269,10 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/lenses.md",
         "docs/observe.md",
         "docs/run.md",
+        "docs/integrations.md",
         "docs/paths.md",
         "docs/token-economics.md",
+        "skills/prog/SKILL.md",
         "INVARIANTS.md",
         "CHANGELOG.md",
     ] {
