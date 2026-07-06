@@ -133,6 +133,7 @@ See [docs/token-economics.md](docs/token-economics.md) for the checked-in report
 - [Cost planner](docs/cost.md), including profile-driven raw-vs-prog estimates for expensive long-context models.
 - [Task-success eval](docs/task-success-eval.md), including deterministic raw/truncation/prog correctness and token metrics.
 - [Competitive baselines](docs/competitive-baselines.md), including measured wins and losses against native filters, RTK-style grep, Caveman-style terse output, and raw context.
+- [Real-world demos](docs/real-world-demos.md), including GitHub review, kubectl, CloudWatch, Jira, and MCP incident workflows.
 - [Positioning](docs/positioning.md), including honest tradeoffs against native filters, truncation, hooks, MCP gateways, and large context.
 - [Invariants](INVARIANTS.md) and [RFC 0001](docs/rfcs/0001-progressive-disclosure-gateway.md), [RFC 0002](docs/rfcs/0002-type-theory-formal-methods-and-reflexivity.md), [RFC 0003](docs/rfcs/0003-observation-lenses.md).
 - [CHANGELOG](CHANGELOG.md).

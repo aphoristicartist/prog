@@ -1,0 +1,5 @@
+{
+  "kind": "mcp",
+  "command": "python3",
+  "args": ["demos/real-world/demo_mcp_server.py"]
+}

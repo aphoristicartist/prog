@@ -15,6 +15,7 @@
 - Added bounded source-profile importers for OpenAPI, JSON Schema, MCP schemas, CLI help, and checked-in examples.
 - Added deterministic task-success evals comparing raw, simple truncation, call-only, and targeted expansion strategies.
 - Added competitive baseline evals against raw context, truncation, native field selection, RTK-style grep filtering, Caveman-style terse output, and repeated cache-backed expansion.
+- Added a real-world demo suite for GitHub review, kubectl, CloudWatch, Jira, and MCP incident workflows with checked-in metrics.
 - Added a deterministic observation parser/indexer pipeline with parser metadata for JSON, NDJSON, SARIF, JUnit XML, HTML, unified diffs, and text fallback.
 - Added internal typestate boundaries for redacted payload persistence and scoped cursor-backed expansion.
 - Added RFC 0003, defining observation lenses as the general progressive-disclosure model for agent artifacts.

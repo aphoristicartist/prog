@@ -1,0 +1,19 @@
+{
+  "kind": "cli",
+  "operations": [
+    {
+      "name": "issues",
+      "command": "python3",
+      "args": ["demos/real-world/generate_payload.py", "jira_triage"],
+      "effect": {
+        "read_only": true,
+        "mutating": false,
+        "network": false,
+        "shell": false,
+        "sensitive": false,
+        "cacheable": true,
+        "requires_confirmation": false
+      }
+    }
+  ]
+}

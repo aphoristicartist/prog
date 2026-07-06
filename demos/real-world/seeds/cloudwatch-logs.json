@@ -1,0 +1,19 @@
+{
+  "kind": "cli",
+  "operations": [
+    {
+      "name": "logs",
+      "command": "python3",
+      "args": ["demos/real-world/generate_payload.py", "cloudwatch_logs"],
+      "effect": {
+        "read_only": true,
+        "mutating": false,
+        "network": false,
+        "shell": false,
+        "sensitive": false,
+        "cacheable": true,
+        "requires_confirmation": false
+      }
+    }
+  ]
+}
