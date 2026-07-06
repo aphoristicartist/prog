@@ -85,3 +85,9 @@ prog cost --model-profile models/fable-class-2026-07.json --raw-file payload.jso
 
 Then inspect whether the report shows meaningful savings for the actual model
 profile, expected output size, expansions, and repeated-inspection count.
+
+The competitive baseline report in
+[docs/competitive-baselines.md](competitive-baselines.md) is the checked-in
+source for broader claims against raw context, simple truncation, native field
+selection, RTK-style grep filtering, Caveman-style terse output, and repeated
+cache-backed `prog` expansion. It includes cases where `prog` loses.

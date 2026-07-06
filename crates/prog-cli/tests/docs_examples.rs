@@ -332,10 +332,12 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/evidence.md",
         "docs/cost.md",
         "docs/task-success-eval.md",
+        "docs/competitive-baselines.md",
         "docs/positioning.md",
         "docs/paths.md",
         "docs/token-economics.md",
         "fixtures/evals/task-success-metrics.json",
+        "fixtures/evals/competitive-baseline-metrics.json",
         "models/fable-class-2026-07.json",
         "skills/prog/SKILL.md",
         "INVARIANTS.md",
@@ -354,6 +356,7 @@ fn docs_keep_acceptance_topics_visible() {
         "MCP gateways/proxies",
         "jq -r '.items[42].body'",
         "measured only on checked-in fixture evals",
+        "competitive baseline report",
     ] {
         assert!(
             positioning.contains(expected),
@@ -414,5 +417,29 @@ fn docs_keep_acceptance_topics_visible() {
     assert!(
         task_metrics.as_array().unwrap().len() >= 40,
         "task success metrics should include strategy rows for at least 10 scenarios"
+    );
+
+    let competitive = std::fs::read_to_string(root.join("docs/competitive-baselines.md")).unwrap();
+    for expected in [
+        "Competitive baselines",
+        "native_field_selection",
+        "rtk_grep_filter",
+        "caveman_terse_output",
+        "prog_repeated_cache",
+        "tiny payload counterexample",
+    ] {
+        assert!(
+            competitive.contains(expected),
+            "competitive baseline doc should mention {expected}"
+        );
+    }
+
+    let competitive_metrics: Value = serde_json::from_slice(
+        &std::fs::read(root.join("fixtures/evals/competitive-baseline-metrics.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        competitive_metrics.as_array().unwrap().len() >= 80,
+        "competitive baseline metrics should include 8 strategy rows for at least 10 scenarios"
     );
 }
