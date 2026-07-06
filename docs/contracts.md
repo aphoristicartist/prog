@@ -29,6 +29,11 @@ The current public contracts include:
 - `Summary`
 - `OmittedRegion`
 - `NextAction`
+- `LensManifest`
+- `LensMatch`
+- `LensView`
+- `LensOmission`
+- `LensFixtures`
 - `SliceRequest`
 - `CursorRecord`
 - `CacheEntryMeta`
@@ -54,6 +59,11 @@ Consumers should branch on stable required fields first:
 - `warnings`
 
 For expansions, use JSON Pointer paths from `omitted` or `next_actions` instead of guessing positions from a preview. Previews are bounded and may omit long arrays, large strings, deep objects, or high-cardinality fields.
+
+For lens-driven calls, inspect the flattened `lens` metadata on the returned
+envelope before assuming the preview shape is the source's native shape. Lens
+previews may select or rename fields, but expansion still addresses the
+original cached payload by JSON Pointer.
 
 ## Drift checks
 

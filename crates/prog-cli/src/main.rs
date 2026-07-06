@@ -13,12 +13,13 @@ use prog_adapters::{
 };
 use prog_core::{
     AuthRef, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance, CoreError,
-    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, Extra, NextAction, OmittedRegion,
-    OperationProfile, PreviewPolicy, Projection, RedactionPolicy, Result, SOURCE_PROFILE_VERSION,
-    SliceRequest, SourceProfile, Store, Summary, TrustSettings, cache_allowed,
-    call_effect_warnings, check_call, check_discovery, cli_adapter_effects, cli_hardening_effects,
-    expand, http_adapter_effects, http_hardening_effects, infer, join, new_cache_entry, project,
-    public_contract_schemas, render_hints, slice_value, tighten_effects,
+    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, Extra, LensManifest, NextAction,
+    OmittedRegion, OperationProfile, PreviewPolicy, RedactionPolicy, Result,
+    SOURCE_PROFILE_VERSION, SliceRequest, SourceProfile, Store, Summary, TrustSettings,
+    cache_allowed, call_effect_warnings, check_call, check_discovery, cli_adapter_effects,
+    cli_hardening_effects, expand, http_adapter_effects, http_hardening_effects, infer, join,
+    lens_slice_request, new_cache_entry, project, project_with_lens, public_contract_schemas,
+    render_hints, slice_value, tighten_effects, validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -34,6 +35,9 @@ use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 struct Cli {
     #[arg(long, env = "PROG_DIR", default_value = "./.prog", global = true)]
     dir: PathBuf,
+
+    #[arg(long, env = "PROG_LENS_DIR", default_value = "./lenses", global = true)]
+    lens_dir: PathBuf,
 
     #[arg(long, global = true)]
     pretty: bool,
@@ -92,6 +96,9 @@ struct CallArgs {
 
     #[arg(long)]
     view: Option<String>,
+
+    #[arg(long)]
+    lens: Option<String>,
 
     #[arg(long)]
     yes: bool,
@@ -201,7 +208,7 @@ async fn run(cli: &Cli) -> Result<()> {
         }
         Command::Call(args) => {
             let store = Store::open(&cli.dir)?;
-            let envelope = call_source(&store, args).await?;
+            let envelope = call_source(&store, &cli.lens_dir, args).await?;
             write_success(&envelope, cli.pretty)
         }
         Command::Expand(args) => {
@@ -336,6 +343,7 @@ struct EnvelopeInput {
     warnings: Vec<String>,
     schema_hints: BTreeMap<String, String>,
     next_action_operation: Option<String>,
+    lens: Option<LensManifest>,
 }
 
 struct CursorInput<'a> {
@@ -347,6 +355,7 @@ struct CursorInput<'a> {
     slice: &'a SliceRequest,
     cache: &'a CachePolicy,
     may_cache: bool,
+    lens: Option<&'a LensManifest>,
 }
 
 async fn discover_source(store: &Store, args: &DiscoverArgs) -> Result<DiscoverReport> {
@@ -434,7 +443,11 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
     })
 }
 
-async fn call_source(store: &Store, args: &CallArgs) -> Result<DisclosureEnvelope> {
+async fn call_source(
+    store: &Store,
+    lens_dir: &Path,
+    args: &CallArgs,
+) -> Result<DisclosureEnvelope> {
     let profile = store
         .read_profile(&args.source_id)?
         .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
@@ -442,7 +455,19 @@ async fn call_source(store: &Store, args: &CallArgs) -> Result<DisclosureEnvelop
     let call_args = parse_json_argument(&args.args, "call --args")?;
     validate_call_args(&operation, &call_args)?;
     check_call(&operation, CallFlags { yes: args.yes }, &profile.trust)?;
-    let view = parse_view(args.view.as_deref())?;
+    let requested_view = parse_view(args.view.as_deref())?;
+    let lens = match &args.lens {
+        Some(id) => {
+            let lens = load_lens(lens_dir, id)?;
+            validate_lens_matches_call(&lens, &profile, &operation)?;
+            Some(lens)
+        }
+        None => None,
+    };
+    let view = match &lens {
+        Some(lens) => lens_slice_request(lens, &requested_view)?,
+        None => requested_view,
+    };
     let root_path = view.path.clone().unwrap_or_default();
     let effective_cache = effective_cache_policy(&profile, &operation);
     let may_cache = !args.no_cache && cache_allowed(&operation, &effective_cache);
@@ -471,6 +496,7 @@ async fn call_source(store: &Store, args: &CallArgs) -> Result<DisclosureEnvelop
                 slice: &view,
                 cache: &effective_cache,
                 may_cache,
+                lens: lens.as_ref(),
             },
         )?;
         return envelope_for_payload(
@@ -491,6 +517,7 @@ async fn call_source(store: &Store, args: &CallArgs) -> Result<DisclosureEnvelop
                     .map(|shape| render_hints(shape, ""))
                     .unwrap_or_default(),
                 next_action_operation: Some(args.operation.clone()),
+                lens,
             },
             cursor,
         );
@@ -570,6 +597,7 @@ async fn call_source(store: &Store, args: &CallArgs) -> Result<DisclosureEnvelop
             slice: &view,
             cache: &effective_cache,
             may_cache,
+            lens: lens.as_ref(),
         },
     )?;
     envelope_for_payload(
@@ -586,6 +614,7 @@ async fn call_source(store: &Store, args: &CallArgs) -> Result<DisclosureEnvelop
             warnings,
             schema_hints: render_hints(&observed, ""),
             next_action_operation: Some(args.operation.clone()),
+            lens,
         },
         cursor,
     )
@@ -652,6 +681,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
                 warnings,
                 schema_hints: BTreeMap::new(),
                 next_action_operation: None,
+                lens: None,
             },
             None,
         );
@@ -671,6 +701,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
             warnings,
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
+            lens: None,
         },
         Some(args.cursor.clone()),
     )
@@ -734,6 +765,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
             warnings: Vec::new(),
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
+            lens: None,
         },
         cursor,
     )
@@ -1094,6 +1126,131 @@ fn parse_view(raw: Option<&str>) -> Result<SliceRequest> {
             extra: Extra::new(),
         }),
     }
+}
+
+fn load_lens(lens_dir: &Path, id: &str) -> Result<LensManifest> {
+    let manifests = load_lens_manifests(lens_dir)?;
+    let mut matches = manifests
+        .into_iter()
+        .filter(|manifest| manifest.id == id)
+        .collect::<Vec<_>>();
+    match matches.len() {
+        0 => Err(CoreError::BadArgs {
+            operation: "call --lens".to_string(),
+            reason: format!("lens '{id}' not found in '{}'", lens_dir.to_string_lossy()),
+        }),
+        1 => Ok(matches.remove(0)),
+        _ => Err(CoreError::BadArgs {
+            operation: "call --lens".to_string(),
+            reason: format!(
+                "lens '{id}' is defined more than once in '{}'",
+                lens_dir.to_string_lossy()
+            ),
+        }),
+    }
+}
+
+fn load_lens_manifests(lens_dir: &Path) -> Result<Vec<LensManifest>> {
+    if !lens_dir.exists() {
+        return Err(CoreError::BadArgs {
+            operation: "call --lens".to_string(),
+            reason: format!(
+                "lens directory '{}' does not exist",
+                lens_dir.to_string_lossy()
+            ),
+        });
+    }
+
+    let mut manifests = Vec::new();
+    for entry in std::fs::read_dir(lens_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() || !is_lens_manifest_path(&path) {
+            continue;
+        }
+        let raw = std::fs::read_to_string(&path).map_err(|error| CoreError::BadArgs {
+            operation: "call --lens".to_string(),
+            reason: format!("could not read lens '{}': {error}", path.to_string_lossy()),
+        })?;
+        let manifest = parse_lens_manifest(&path, &raw)?;
+        validate_lens_manifest(&manifest)?;
+        manifests.push(manifest);
+    }
+    Ok(manifests)
+}
+
+fn is_lens_manifest_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("json" | "yaml" | "yml")
+    )
+}
+
+fn parse_lens_manifest(path: &Path, raw: &str) -> Result<LensManifest> {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("json") => serde_json::from_str(raw).map_err(|error| CoreError::BadArgs {
+            operation: "call --lens".to_string(),
+            reason: format!(
+                "lens '{}' must be valid JSON: {error}",
+                path.to_string_lossy()
+            ),
+        }),
+        Some("yaml" | "yml") => serde_yaml_ng::from_str(raw).map_err(|error| CoreError::BadArgs {
+            operation: "call --lens".to_string(),
+            reason: format!(
+                "lens '{}' must be valid YAML: {error}",
+                path.to_string_lossy()
+            ),
+        }),
+        _ => Err(CoreError::BadArgs {
+            operation: "call --lens".to_string(),
+            reason: format!(
+                "lens '{}' must use .json, .yaml, or .yml",
+                path.to_string_lossy()
+            ),
+        }),
+    }
+}
+
+fn validate_lens_matches_call(
+    lens: &LensManifest,
+    profile: &SourceProfile,
+    operation: &OperationProfile,
+) -> Result<()> {
+    if let Some(source_id) = &lens.match_rules.source_id
+        && source_id != &profile.id
+    {
+        return Err(CoreError::BadArgs {
+            operation: "call --lens".to_string(),
+            reason: format!(
+                "lens '{}' matches source_id '{}', not '{}'",
+                lens.id, source_id, profile.id
+            ),
+        });
+    }
+    if let Some(source_kind) = lens.match_rules.source_kind
+        && source_kind != profile.kind
+    {
+        return Err(CoreError::BadArgs {
+            operation: "call --lens".to_string(),
+            reason: format!(
+                "lens '{}' matches source_kind '{:?}', not '{:?}'",
+                lens.id, source_kind, profile.kind
+            ),
+        });
+    }
+    if let Some(expected_operation) = &lens.match_rules.operation
+        && expected_operation != &operation.id
+    {
+        return Err(CoreError::BadArgs {
+            operation: "call --lens".to_string(),
+            reason: format!(
+                "lens '{}' matches operation '{}', not '{}'",
+                lens.id, expected_operation, operation.id
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn validate_call_args(operation: &OperationProfile, args: &Value) -> Result<()> {
@@ -1560,13 +1717,18 @@ fn cursor_for_projection(store: &Store, input: CursorInput<'_>) -> Result<Option
     if !input.may_cache {
         return Ok(None);
     }
-    let projection = expand(
+    let lens_projection = project_with_lens(
         input.payload,
         input.root_path,
         input.slice,
         &PreviewPolicy::default(),
+        input.lens,
     )?;
-    if projection.omitted.is_empty() {
+    let has_expand_action = lens_projection
+        .next_actions
+        .iter()
+        .any(|action| action.kind == "expand" && action.path.is_some());
+    if lens_projection.projection.omitted.is_empty() && !has_expand_action {
         return Ok(None);
     }
     Ok(Some(store.create_cursor(
@@ -1587,8 +1749,14 @@ fn envelope_for_payload(
     let mut policy = PreviewPolicy::default();
     let mut last = None;
     for _ in 0..16 {
-        let projection = expand(&input.payload, &input.root_path, &input.slice, &policy)?;
-        let mut envelope = make_envelope(&input, projection, cursor.clone());
+        let lens_projection = project_with_lens(
+            &input.payload,
+            &input.root_path,
+            &input.slice,
+            &policy,
+            input.lens.as_ref(),
+        )?;
+        let mut envelope = make_envelope(&input, lens_projection, cursor.clone());
         let bytes = finalize_envelope_bytes(&mut envelope)?;
         if bytes <= policy.max_envelope_bytes {
             return Ok(envelope);
@@ -1625,10 +1793,16 @@ fn envelope_for_payload(
 
 fn make_envelope(
     input: &EnvelopeInput,
-    projection: Projection,
+    lens_projection: prog_core::LensProjection,
     cursor: Option<String>,
 ) -> DisclosureEnvelope {
-    let next_actions = cursor
+    let projection = lens_projection.projection;
+    let mut next_actions = lens_projection
+        .next_actions
+        .into_iter()
+        .filter(|action| cursor.is_some() || action.kind != "expand")
+        .collect::<Vec<_>>();
+    let generated_next_actions = cursor
         .as_ref()
         .map(|_| {
             projection
@@ -1645,6 +1819,25 @@ fn make_envelope(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    for action in generated_next_actions {
+        let duplicate = next_actions
+            .iter()
+            .any(|existing| existing.kind == action.kind && existing.path == action.path);
+        if !duplicate {
+            next_actions.push(action);
+        }
+    }
+    next_actions.truncate(10);
+    let mut extra = Extra::new();
+    if let Some(lens) = &input.lens {
+        extra.insert(
+            "lens".to_string(),
+            json!({
+                "id": lens.id,
+                "version": lens.version
+            }),
+        );
+    }
     DisclosureEnvelope {
         schema_version: DISCLOSURE_VERSION.to_string(),
         source_id: Some(input.source_id.clone()),
@@ -1666,7 +1859,7 @@ fn make_envelope(
         provenance: input.provenance.clone(),
         cache: input.cache.clone(),
         warnings: input.warnings.clone(),
-        extra: Extra::new(),
+        extra,
     }
 }
 

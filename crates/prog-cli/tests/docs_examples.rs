@@ -157,7 +157,14 @@ fn documented_command_help_surface_stays_real() {
     }
 
     let call_help = stdout(&prog(&root, &["call", "--help"]));
-    for expected in ["--args", "--view", "--yes", "--no-cache", "--refresh"] {
+    for expected in [
+        "--args",
+        "--view",
+        "--lens",
+        "--yes",
+        "--no-cache",
+        "--refresh",
+    ] {
         assert!(
             call_help.contains(expected),
             "call help should contain {expected}"
@@ -207,6 +214,7 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/cache.md",
         "docs/safety.md",
         "docs/contracts.md",
+        "docs/lenses.md",
         "docs/token-economics.md",
         "INVARIANTS.md",
         "CHANGELOG.md",
