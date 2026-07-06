@@ -2,7 +2,9 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io::Read,
     path::{Path, PathBuf},
-    process::ExitCode,
+    process::{ExitCode, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
 };
 
 use chrono::{SecondsFormat, Utc};
@@ -27,7 +29,14 @@ use prog_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    process::Command as TokioCommand,
+    sync::mpsc,
+};
 use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
+
+static RUN_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Parser)]
 #[command(
@@ -55,6 +64,7 @@ enum Command {
     Hints(HintsArgs),
     Call(CallArgs),
     Observe(ObserveArgs),
+    Run(RunArgs),
     Paths(PathsArgs),
     Expand(ExpandArgs),
     Cache {
@@ -131,6 +141,30 @@ struct ObserveArgs {
 
     #[arg(long, default_value_t = 86_400)]
     ttl_seconds: u64,
+}
+
+#[derive(Debug, Args)]
+struct RunArgs {
+    #[arg(long, default_value_t = 30_000)]
+    timeout_ms: u64,
+
+    #[arg(long, default_value_t = 1024 * 1024)]
+    max_stdout_bytes: usize,
+
+    #[arg(long, default_value_t = 1024 * 1024)]
+    max_stderr_bytes: usize,
+
+    #[arg(long, default_value_t = 86_400)]
+    ttl_seconds: u64,
+
+    #[arg(long)]
+    preserve_exit_code: bool,
+
+    #[arg(long)]
+    out: Option<PathBuf>,
+
+    #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
+    command: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -230,7 +264,7 @@ async fn main() -> ExitCode {
     };
 
     match run(&cli).await {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(exit_code) => exit_code,
         Err(error) => write_error(&error, cli.pretty),
     }
 }
@@ -243,42 +277,59 @@ fn init_tracing() {
         .try_init();
 }
 
-async fn run(cli: &Cli) -> Result<()> {
+async fn run(cli: &Cli) -> Result<ExitCode> {
     match &cli.command {
         Command::Discover(args) => {
             let store = Store::open(&cli.dir)?;
             let report = discover_source(&store, args).await?;
-            write_success(&report, cli.pretty)
+            write_success(&report, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
         }
         Command::Hints(args) => {
             let store = Store::open(&cli.dir)?;
             let response = hints_source(&store, args)?;
-            write_success(&response, cli.pretty)
+            write_success(&response, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
         }
         Command::Call(args) => {
             let store = Store::open(&cli.dir)?;
             let envelope = call_source(&store, &cli.lens_dir, args).await?;
-            write_success(&envelope, cli.pretty)
+            write_success(&envelope, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
         }
         Command::Observe(args) => {
             let store = Store::open(&cli.dir)?;
             let envelope = observe_artifact(&store, args)?;
-            write_success(&envelope, cli.pretty)
+            write_success(&envelope, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Run(args) => {
+            let store = Store::open(&cli.dir)?;
+            let result = run_command(&store, args).await?;
+            write_success(&result.envelope, cli.pretty)?;
+            Ok(if args.preserve_exit_code {
+                child_exit_code(result.exit_code)
+            } else {
+                ExitCode::SUCCESS
+            })
         }
         Command::Paths(args) => {
             let store = Store::open(&cli.dir)?;
             let response = paths_cursor(&store, args)?;
-            write_success(&response, cli.pretty)
+            write_success(&response, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
         }
         Command::Expand(args) => {
             let store = Store::open(&cli.dir)?;
             let envelope = expand_cursor(&store, args)?;
-            write_success(&envelope, cli.pretty)
+            write_success(&envelope, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
         }
         Command::Cache { command } => match command {
             CacheCommand::List => {
                 let store = Store::open(&cli.dir)?;
-                write_success(&store.list_entries(100)?, cli.pretty)
+                write_success(&store.list_entries(100)?, cli.pretty)?;
+                Ok(ExitCode::SUCCESS)
             }
             CacheCommand::Get(args) => {
                 let store = Store::open(&cli.dir)?;
@@ -301,7 +352,8 @@ async fn run(cli: &Cli) -> Result<()> {
                     },
                     &PreviewPolicy::default(),
                 )?;
-                write_success(&CacheGetOutput { entry, projection }, cli.pretty)
+                write_success(&CacheGetOutput { entry, projection }, cli.pretty)?;
+                Ok(ExitCode::SUCCESS)
             }
             CacheCommand::Purge(args) => {
                 let store = Store::open(&cli.dir)?;
@@ -317,13 +369,15 @@ async fn run(cli: &Cli) -> Result<()> {
                         reason: "pass --all, --expired, or --source <id>".to_string(),
                     });
                 };
-                write_success(&summary, cli.pretty)
+                write_success(&summary, cli.pretty)?;
+                Ok(ExitCode::SUCCESS)
             }
         },
         Command::Meta(args) => {
             let store = Store::open(&cli.dir)?;
             let envelope = meta_contracts(&store, args)?;
-            write_success(&envelope, cli.pretty)
+            write_success(&envelope, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
@@ -406,6 +460,7 @@ struct EnvelopeInput {
     warnings: Vec<String>,
     schema_hints: BTreeMap<String, String>,
     next_action_operation: Option<String>,
+    additional_next_actions: Vec<NextAction>,
     lens: Option<LensManifest>,
 }
 
@@ -432,6 +487,71 @@ struct NormalizedObservation {
     kind: String,
     payload: Value,
     warnings: Vec<String>,
+}
+
+struct RunEnvelopeResult {
+    envelope: DisclosureEnvelope,
+    exit_code: RunExitCode,
+}
+
+#[derive(Clone, Copy)]
+enum RunExitCode {
+    Success,
+    Code(i32),
+    Signal(i32),
+    Timeout,
+    SpawnError,
+}
+
+struct RunCapture {
+    stream: &'static str,
+    bytes: Vec<u8>,
+    total_bytes: usize,
+    truncated: bool,
+}
+
+struct RunChunk {
+    stream: &'static str,
+    bytes: Vec<u8>,
+}
+
+struct RunText {
+    text: String,
+    head: Vec<String>,
+    tail: Vec<String>,
+    line_count: usize,
+    byte_count: usize,
+    captured_bytes: usize,
+    truncated: bool,
+    utf8_valid: bool,
+    redactions: usize,
+}
+
+#[derive(Clone)]
+struct RunFailureSection {
+    kind: &'static str,
+    stream: &'static str,
+    line_start: usize,
+    line_end: usize,
+    lines: Vec<String>,
+    reason: String,
+    priority: u8,
+}
+
+struct RunPayloadInput<'a> {
+    run_id: &'a str,
+    argv: &'a [String],
+    redacted_argv: &'a [String],
+    cwd: &'a Path,
+    started_at: chrono::DateTime<Utc>,
+    ended_at: chrono::DateTime<Utc>,
+    duration_ms: u64,
+    status: &'a RunProcessStatus,
+    stdout: &'a RunText,
+    stderr: &'a RunText,
+    combined: Vec<Value>,
+    failure_sections: &'a [RunFailureSection],
+    out: Option<&'a PathBuf>,
 }
 
 #[derive(Debug, Serialize)]
@@ -630,6 +750,7 @@ async fn call_source(
                     .map(|shape| render_hints(shape, ""))
                     .unwrap_or_default(),
                 next_action_operation: Some(args.operation.clone()),
+                additional_next_actions: Vec::new(),
                 lens,
             },
             cursor,
@@ -734,6 +855,7 @@ async fn call_source(
             warnings,
             schema_hints: render_hints(&observed, ""),
             next_action_operation: Some(args.operation.clone()),
+            additional_next_actions: Vec::new(),
             lens,
         },
         cursor,
@@ -821,9 +943,800 @@ fn observe_artifact(store: &Store, args: &ObserveArgs) -> Result<DisclosureEnvel
             warnings,
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
+            additional_next_actions: Vec::new(),
             lens: None,
         },
         cursor,
+    )
+}
+
+async fn run_command(store: &Store, args: &RunArgs) -> Result<RunEnvelopeResult> {
+    let cwd = std::env::current_dir()?;
+    let started_at = Utc::now();
+    let started_instant = Instant::now();
+    let argv = args.command.clone();
+    let run_sequence = RUN_CAPTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let started_at_nanos = started_at
+        .timestamp_nanos_opt()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| started_at.timestamp_micros().to_string());
+    let run_id = format!(
+        "run_{}_{}_{}",
+        std::process::id(),
+        started_at_nanos,
+        run_sequence
+    );
+    let operation = run_operation_name(&argv);
+    let redacted_argv = redact_run_argv(&argv);
+    let cache_args = json!({
+        "run_id": &run_id,
+        "argv": argv,
+        "cwd": cwd.to_string_lossy(),
+        "started_at": started_at.to_rfc3339_opts(SecondsFormat::Nanos, true)
+    });
+    let cache_key = Store::cache_key("run", &operation, &cache_args)?;
+
+    let mut command = TokioCommand::new(&args.command[0]);
+    command
+        .args(&args.command[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    configure_run_process_group(&mut command);
+
+    let run = match command.spawn() {
+        Ok(child) => {
+            run_spawned_child(
+                child,
+                args.timeout_ms,
+                args.max_stdout_bytes,
+                args.max_stderr_bytes,
+            )
+            .await?
+        }
+        Err(error) => RunProcessResult {
+            stdout: empty_run_capture("stdout"),
+            stderr: empty_run_capture("stderr"),
+            combined: Vec::new(),
+            status: RunProcessStatus::SpawnError(error.to_string()),
+        },
+    };
+
+    let ended_at = Utc::now();
+    let duration_ms = started_instant
+        .elapsed()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    let stdout_text = run_text_from_capture(&run.stdout);
+    let stderr_text = run_text_from_capture(&run.stderr);
+    let combined = run
+        .combined
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| {
+            let text = redact_run_output_bytes(&chunk.bytes).text;
+            json!({
+                "index": index,
+                "stream": chunk.stream,
+                "text": text,
+                "byte_count": chunk.bytes.len()
+            })
+        })
+        .collect::<Vec<_>>();
+    let failure_sections = detect_run_failure_sections(&run.status, &stdout_text, &stderr_text);
+    let payload = run_payload(RunPayloadInput {
+        run_id: &run_id,
+        argv: &args.command,
+        redacted_argv: &redacted_argv,
+        cwd: &cwd,
+        started_at,
+        ended_at,
+        duration_ms,
+        status: &run.status,
+        stdout: &stdout_text,
+        stderr: &stderr_text,
+        combined,
+        failure_sections: &failure_sections,
+        out: args.out.as_ref(),
+    });
+    let redaction = RedactionPolicy::default();
+    let (redacted_payload, policy_redactions) = redaction.apply_persistence(&payload);
+    if let Some(path) = &args.out {
+        write_private_file(path, &serde_json::to_vec_pretty(&redacted_payload)?)?;
+    }
+    let payload_hash = store.put_payload(&redacted_payload)?;
+    let payload_bytes = json_len_u64(&redacted_payload)?;
+    let ttl: i64 = args
+        .ttl_seconds
+        .try_into()
+        .map_err(|_| CoreError::BadArgs {
+            operation: "run".to_string(),
+            reason: "ttl_seconds is too large".to_string(),
+        })?;
+    let mut provenance = run_provenance(
+        &run_id,
+        &cache_key,
+        &redacted_argv,
+        &cwd,
+        duration_ms,
+        &run.status,
+        args,
+    );
+    let mut entry = new_cache_entry(
+        cache_key.clone(),
+        payload_hash,
+        "run".to_string(),
+        operation.clone(),
+        payload_bytes,
+        ttl,
+    );
+    entry.provenance = Some(provenance.clone());
+    store.put_entry(&cache_key, &entry)?;
+    let cursor = Some(store.create_cursor(
+        &cache_key,
+        "run",
+        &operation,
+        "",
+        RedactionPolicy::default().version,
+        ttl,
+    )?);
+    provenance.cache_key = Some(cache_key.clone());
+
+    let mut warnings = run_warnings(&run.status, args, &run.stdout, &run.stderr);
+    let text_redactions = stdout_text
+        .redactions
+        .saturating_add(stderr_text.redactions)
+        .saturating_add(
+            redacted_argv
+                .iter()
+                .filter(|arg| arg.contains("[REDACTED"))
+                .count(),
+        );
+    let redacted_paths = policy_redactions.len().saturating_add(text_redactions);
+    if redacted_paths > 0 {
+        warnings.push(format!(
+            "redacted {redacted_paths} sensitive value(s) before persistence"
+        ));
+    }
+    if args.out.is_some() {
+        warnings.push("wrote redacted structured run capture to --out path".to_string());
+    }
+    let next_actions = run_next_actions(cursor.as_deref(), &failure_sections);
+    let envelope = envelope_for_payload(
+        store,
+        EnvelopeInput {
+            source_id: "run".to_string(),
+            operation,
+            source_kind: Some("cli".to_string()),
+            payload: redacted_payload,
+            root_path: "".to_string(),
+            slice: SliceRequest {
+                path: None,
+                limit: None,
+                depth: None,
+                fields: Vec::new(),
+                omit: Vec::new(),
+                extra: Extra::new(),
+            },
+            payload_bytes,
+            provenance: Some(provenance),
+            cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
+            effects: Some(run_effects()),
+            redacted_paths,
+            cache_disabled_reason: None,
+            warnings,
+            schema_hints: BTreeMap::new(),
+            next_action_operation: None,
+            additional_next_actions: next_actions,
+            lens: None,
+        },
+        cursor,
+    )?;
+
+    Ok(RunEnvelopeResult {
+        envelope,
+        exit_code: run_exit_code(&run.status),
+    })
+}
+
+struct RunProcessResult {
+    stdout: RunCapture,
+    stderr: RunCapture,
+    combined: Vec<RunChunk>,
+    status: RunProcessStatus,
+}
+
+enum RunProcessStatus {
+    Exited {
+        success: bool,
+        code: Option<i32>,
+        signal: Option<i32>,
+    },
+    TimedOut,
+    SpawnError(String),
+}
+
+async fn run_spawned_child(
+    mut child: tokio::process::Child,
+    timeout_ms: u64,
+    max_stdout_bytes: usize,
+    max_stderr_bytes: usize,
+) -> Result<RunProcessResult> {
+    let stdout = child.stdout.take().ok_or_else(|| CoreError::CliTransport {
+        operation: "run".to_string(),
+        message: "failed to capture stdout".to_string(),
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| CoreError::CliTransport {
+        operation: "run".to_string(),
+        message: "failed to capture stderr".to_string(),
+    })?;
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let stdout_task = tokio::spawn(read_run_stream(
+        "stdout",
+        stdout,
+        max_stdout_bytes,
+        tx.clone(),
+    ));
+    let stderr_task = tokio::spawn(read_run_stream(
+        "stderr",
+        stderr,
+        max_stderr_bytes,
+        tx.clone(),
+    ));
+    drop(tx);
+
+    let wait = tokio::time::timeout(Duration::from_millis(timeout_ms), child.wait()).await;
+    let status = match wait {
+        Ok(result) => {
+            let status = result.map_err(|error| CoreError::CliTransport {
+                operation: "run".to_string(),
+                message: error.to_string(),
+            })?;
+            RunProcessStatus::Exited {
+                success: status.success(),
+                code: status.code(),
+                signal: exit_signal(&status),
+            }
+        }
+        Err(_) => {
+            kill_run_process_group(&mut child).await;
+            RunProcessStatus::TimedOut
+        }
+    };
+    let stdout = stdout_task
+        .await
+        .map_err(|error| CoreError::CliTransport {
+            operation: "run".to_string(),
+            message: error.to_string(),
+        })?
+        .map_err(|error| CoreError::CliTransport {
+            operation: "run".to_string(),
+            message: error.to_string(),
+        })?;
+    let stderr = stderr_task
+        .await
+        .map_err(|error| CoreError::CliTransport {
+            operation: "run".to_string(),
+            message: error.to_string(),
+        })?
+        .map_err(|error| CoreError::CliTransport {
+            operation: "run".to_string(),
+            message: error.to_string(),
+        })?;
+    let mut combined = Vec::new();
+    while let Ok(chunk) = rx.try_recv() {
+        combined.push(chunk);
+    }
+    Ok(RunProcessResult {
+        stdout,
+        stderr,
+        combined,
+        status,
+    })
+}
+
+#[cfg(unix)]
+fn configure_run_process_group(command: &mut TokioCommand) {
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_run_process_group(_command: &mut TokioCommand) {}
+
+async fn kill_run_process_group(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    {
+        if let Some(pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) {
+            let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
+        }
+    }
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+}
+
+#[cfg(unix)]
+fn exit_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal()
+}
+
+#[cfg(not(unix))]
+fn exit_signal(_status: &std::process::ExitStatus) -> Option<i32> {
+    None
+}
+
+async fn read_run_stream<R: AsyncRead + Unpin>(
+    stream: &'static str,
+    mut reader: R,
+    cap: usize,
+    tx: mpsc::UnboundedSender<RunChunk>,
+) -> std::io::Result<RunCapture> {
+    let mut output = Vec::new();
+    let mut total_bytes = 0usize;
+    let mut truncated = false;
+    let mut buffer = [0u8; 8192];
+    loop {
+        let read = reader.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        total_bytes = total_bytes.saturating_add(read);
+        let remaining = cap.saturating_sub(output.len());
+        if remaining > 0 {
+            let stored = read.min(remaining);
+            let bytes = buffer[..stored].to_vec();
+            output.extend_from_slice(&bytes);
+            let _ = tx.send(RunChunk { stream, bytes });
+        }
+        if read > remaining || total_bytes > cap {
+            truncated = true;
+        }
+    }
+    Ok(RunCapture {
+        stream,
+        bytes: output,
+        total_bytes,
+        truncated,
+    })
+}
+
+fn empty_run_capture(stream: &'static str) -> RunCapture {
+    RunCapture {
+        stream,
+        bytes: Vec::new(),
+        total_bytes: 0,
+        truncated: false,
+    }
+}
+
+fn run_operation_name(argv: &[String]) -> String {
+    Path::new(&argv[0])
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&argv[0])
+        .to_string()
+}
+
+fn run_text_from_capture(capture: &RunCapture) -> RunText {
+    let mut text = redact_run_output_bytes(&capture.bytes);
+    text.byte_count = capture.total_bytes;
+    text.captured_bytes = capture.bytes.len();
+    text.truncated = capture.truncated;
+    text
+}
+
+fn redact_run_output_bytes(bytes: &[u8]) -> RunText {
+    let utf8_valid = std::str::from_utf8(bytes).is_ok();
+    let text = String::from_utf8_lossy(bytes);
+    let mut redactions = 0usize;
+    let lines = text
+        .lines()
+        .map(|line| {
+            let redacted = redact_observed_text(line);
+            if redacted != line {
+                redactions += 1;
+            }
+            redacted
+        })
+        .collect::<Vec<_>>();
+    let line_count = lines.len();
+    let head = lines.iter().take(10).cloned().collect::<Vec<_>>();
+    let tail_start = lines.len().saturating_sub(10).max(head.len());
+    let tail = lines.iter().skip(tail_start).cloned().collect::<Vec<_>>();
+    RunText {
+        text: lines.join("\n"),
+        head,
+        tail,
+        line_count,
+        byte_count: bytes.len(),
+        captured_bytes: bytes.len(),
+        truncated: false,
+        utf8_valid,
+        redactions,
+    }
+}
+
+fn run_payload(input: RunPayloadInput<'_>) -> Value {
+    json!({
+        "format": "run",
+        "command": {
+            "capture_id": input.run_id,
+            "argv": input.redacted_argv,
+            "argv_count": input.argv.len(),
+            "cwd": input.cwd.to_string_lossy(),
+            "started_at": input.started_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+            "ended_at": input.ended_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+            "duration_ms": input.duration_ms,
+            "success": matches!(input.status, RunProcessStatus::Exited { success: true, .. }),
+            "exit_code": match input.status {
+                RunProcessStatus::Exited { code, .. } => json!(code),
+                _ => Value::Null,
+            },
+            "signal": match input.status {
+                RunProcessStatus::Exited { signal, .. } => json!(signal),
+                _ => Value::Null,
+            },
+            "timed_out": matches!(input.status, RunProcessStatus::TimedOut),
+            "spawn_error": match input.status {
+                RunProcessStatus::SpawnError(message) => json!(message),
+                _ => Value::Null,
+            },
+            "out": input.out.map(|path| path.to_string_lossy().to_string())
+        },
+        "stdout": run_stream_value(input.stdout),
+        "stderr": run_stream_value(input.stderr),
+        "combined": input.combined,
+        "failure_sections": input.failure_sections
+            .iter()
+            .enumerate()
+            .map(|(index, section)| {
+                json!({
+                    "index": index,
+                    "kind": section.kind,
+                    "stream": section.stream,
+                    "line_start": section.line_start,
+                    "line_end": section.line_end,
+                    "reason": section.reason,
+                    "priority": section.priority,
+                    "lines": section.lines
+                })
+            })
+            .collect::<Vec<_>>()
+    })
+}
+
+fn run_stream_value(text: &RunText) -> Value {
+    json!({
+        "format": "text",
+        "text": text.text,
+        "head": text.head,
+        "tail": text.tail,
+        "line_count": text.line_count,
+        "byte_count": text.byte_count,
+        "captured_bytes": text.captured_bytes,
+        "truncated": text.truncated,
+        "utf8_valid": text.utf8_valid
+    })
+}
+
+fn detect_run_failure_sections(
+    status: &RunProcessStatus,
+    stdout: &RunText,
+    stderr: &RunText,
+) -> Vec<RunFailureSection> {
+    let mut sections = Vec::new();
+    collect_failure_sections("stderr", &stderr.text, &mut sections);
+    collect_failure_sections("stdout", &stdout.text, &mut sections);
+    if sections.is_empty() {
+        match status {
+            RunProcessStatus::Exited { success: false, .. } => {
+                let lines = stderr
+                    .text
+                    .lines()
+                    .chain(stdout.text.lines())
+                    .rev()
+                    .take(8)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                if !lines.is_empty() {
+                    sections.push(RunFailureSection {
+                        kind: "generic",
+                        stream: "stderr",
+                        line_start: 1,
+                        line_end: lines.len(),
+                        lines: lines.into_iter().rev().collect(),
+                        reason: "command exited unsuccessfully; inspect captured diagnostics"
+                            .to_string(),
+                        priority: 50,
+                    });
+                }
+            }
+            RunProcessStatus::TimedOut => sections.push(RunFailureSection {
+                kind: "timeout",
+                stream: "stderr",
+                line_start: 1,
+                line_end: 1,
+                lines: vec!["command timed out".to_string()],
+                reason: "command exceeded --timeout-ms".to_string(),
+                priority: 95,
+            }),
+            RunProcessStatus::SpawnError(message) => sections.push(RunFailureSection {
+                kind: "spawn_error",
+                stream: "stderr",
+                line_start: 1,
+                line_end: 1,
+                lines: vec![message.clone()],
+                reason: "command could not be started".to_string(),
+                priority: 100,
+            }),
+            RunProcessStatus::Exited { success: true, .. } => {}
+        }
+    }
+    sections.sort_by(|left, right| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left.stream.cmp(right.stream))
+            .then_with(|| left.line_start.cmp(&right.line_start))
+    });
+    sections.truncate(10);
+    sections
+}
+
+fn collect_failure_sections(
+    stream: &'static str,
+    text: &str,
+    sections: &mut Vec<RunFailureSection>,
+) {
+    let lines = text.lines().map(str::to_string).collect::<Vec<_>>();
+    for (index, line) in lines.iter().enumerate() {
+        let lower = line.to_ascii_lowercase();
+        let detected = if line.contains("error[") || line.contains("panicked at") {
+            Some(("rust", 90, "Rust compiler or test failure"))
+        } else if line.contains("Traceback (most recent call last):") {
+            Some(("python", 90, "Python traceback"))
+        } else if line.contains("npm ERR!")
+            || line.starts_with("Error:")
+            || line.starts_with("node:")
+        {
+            Some(("node", 85, "Node.js or npm error"))
+        } else if lower.contains("error")
+            || lower.contains("failed")
+            || lower.contains("exception")
+            || lower.contains("not found")
+        {
+            Some(("generic", 60, "generic failure diagnostic"))
+        } else {
+            None
+        };
+        if let Some((kind, priority, reason)) = detected {
+            let start = index.saturating_sub(2);
+            let end = (index + 6).min(lines.len());
+            sections.push(RunFailureSection {
+                kind,
+                stream,
+                line_start: start + 1,
+                line_end: end,
+                lines: lines[start..end].to_vec(),
+                reason: reason.to_string(),
+                priority,
+            });
+        }
+    }
+}
+
+fn run_next_actions(cursor: Option<&str>, sections: &[RunFailureSection]) -> Vec<NextAction> {
+    let Some(cursor) = cursor else {
+        return Vec::new();
+    };
+    sections
+        .iter()
+        .take(6)
+        .enumerate()
+        .map(|(index, section)| {
+            let path = format!("/failure_sections/{index}");
+            let mut extra = Extra::new();
+            extra.insert("priority".to_string(), json!(section.priority));
+            extra.insert("stream".to_string(), json!(section.stream));
+            extra.insert("kind".to_string(), json!(section.kind));
+            extra.insert(
+                "argv".to_string(),
+                json!(["prog", "expand", cursor, "--path", path]),
+            );
+            NextAction {
+                kind: "expand".to_string(),
+                operation: None,
+                path: Some(path),
+                reason: Some(section.reason.clone()),
+                extra,
+            }
+        })
+        .collect()
+}
+
+fn run_provenance(
+    run_id: &str,
+    cache_key: &str,
+    redacted_argv: &[String],
+    cwd: &Path,
+    duration_ms: u64,
+    status: &RunProcessStatus,
+    args: &RunArgs,
+) -> CallProvenance {
+    let mut extra = Extra::new();
+    extra.insert(
+        "run".to_string(),
+        json!({
+            "argv": redacted_argv,
+            "cwd": cwd.to_string_lossy(),
+            "timeout_ms": args.timeout_ms,
+            "max_stdout_bytes": args.max_stdout_bytes,
+            "max_stderr_bytes": args.max_stderr_bytes,
+            "preserve_exit_code": args.preserve_exit_code,
+            "exit_code": match status {
+                RunProcessStatus::Exited { code, .. } => json!(code),
+                _ => Value::Null,
+            },
+            "signal": match status {
+                RunProcessStatus::Exited { signal, .. } => json!(signal),
+                _ => Value::Null,
+            },
+            "timed_out": matches!(status, RunProcessStatus::TimedOut)
+        }),
+    );
+    CallProvenance {
+        source_call_id: run_id.to_string(),
+        cache_key: Some(cache_key.to_string()),
+        captured_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        status: Some(run_status_name(status).to_string()),
+        duration_ms: Some(duration_ms),
+        extra,
+    }
+}
+
+fn run_warnings(
+    status: &RunProcessStatus,
+    args: &RunArgs,
+    stdout: &RunCapture,
+    stderr: &RunCapture,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    match status {
+        RunProcessStatus::Exited {
+            success: false,
+            code,
+            signal,
+        } => {
+            warnings.push(format!(
+                "child command exited unsuccessfully: exit_code={code:?}, signal={signal:?}; envelope still returned successfully"
+            ));
+        }
+        RunProcessStatus::TimedOut => warnings.push(format!(
+            "child command timed out after {} ms and was killed",
+            args.timeout_ms
+        )),
+        RunProcessStatus::SpawnError(message) => {
+            warnings.push(format!("child command could not be started: {message}"));
+        }
+        RunProcessStatus::Exited { success: true, .. } => {}
+    }
+    if stdout.truncated {
+        warnings.push(format!(
+            "{} exceeded max_stdout_bytes ({}); captured output was truncated",
+            stdout.stream, args.max_stdout_bytes
+        ));
+    }
+    if stderr.truncated {
+        warnings.push(format!(
+            "{} exceeded max_stderr_bytes ({}); captured diagnostics were truncated",
+            stderr.stream, args.max_stderr_bytes
+        ));
+    }
+    warnings
+}
+
+fn run_status_name(status: &RunProcessStatus) -> &'static str {
+    match status {
+        RunProcessStatus::Exited { success: true, .. } => "success",
+        RunProcessStatus::Exited { success: false, .. } => "exit_nonzero",
+        RunProcessStatus::TimedOut => "timeout",
+        RunProcessStatus::SpawnError(_) => "spawn_error",
+    }
+}
+
+fn run_exit_code(status: &RunProcessStatus) -> RunExitCode {
+    match status {
+        RunProcessStatus::Exited { success: true, .. } => RunExitCode::Success,
+        RunProcessStatus::Exited {
+            code: Some(code), ..
+        } => RunExitCode::Code(*code),
+        RunProcessStatus::Exited {
+            signal: Some(signal),
+            ..
+        } => RunExitCode::Signal(*signal),
+        RunProcessStatus::Exited { .. } => RunExitCode::Code(1),
+        RunProcessStatus::TimedOut => RunExitCode::Timeout,
+        RunProcessStatus::SpawnError(_) => RunExitCode::SpawnError,
+    }
+}
+
+fn child_exit_code(code: RunExitCode) -> ExitCode {
+    let raw = match code {
+        RunExitCode::Success => 0,
+        RunExitCode::Code(code) => code.clamp(1, 255),
+        RunExitCode::Signal(signal) => (128 + signal).clamp(1, 255),
+        RunExitCode::Timeout => 124,
+        RunExitCode::SpawnError => 127,
+    };
+    ExitCode::from(raw as u8)
+}
+
+fn run_effects() -> EffectSet {
+    EffectSet {
+        read_only: false,
+        mutating: true,
+        network: true,
+        shell: true,
+        sensitive: false,
+        cacheable: true,
+        requires_confirmation: false,
+        extra: Extra::new(),
+    }
+}
+
+fn redact_run_argv(argv: &[String]) -> Vec<String> {
+    let mut redact_next = false;
+    argv.iter()
+        .map(|arg| {
+            if redact_next {
+                redact_next = false;
+                return "[REDACTED:run_arg_secret]".to_string();
+            }
+            if is_sensitive_flag(arg) {
+                redact_next = true;
+                return arg.clone();
+            }
+            redact_inline_secret(arg)
+        })
+        .collect()
+}
+
+fn is_sensitive_flag(arg: &str) -> bool {
+    let trimmed = arg.trim_start_matches('-');
+    is_sensitive_name(trimmed)
+}
+
+fn redact_inline_secret(arg: &str) -> String {
+    for separator in ["=", ":"] {
+        if let Some((name, _)) = arg.split_once(separator)
+            && is_sensitive_name(name.trim_start_matches('-'))
+        {
+            return format!("{name}{separator}[REDACTED:run_arg_secret]");
+        }
+    }
+    redact_observed_text(arg)
+}
+
+fn is_sensitive_name(name: &str) -> bool {
+    let normalized = name
+        .chars()
+        .filter(|ch| *ch != '-' && *ch != '_')
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    matches!(
+        normalized.as_str(),
+        "authorization"
+            | "apikey"
+            | "bearer"
+            | "cookie"
+            | "credential"
+            | "password"
+            | "privatekey"
+            | "secret"
+            | "session"
+            | "token"
     )
 }
 
@@ -1249,6 +2162,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
                 warnings,
                 schema_hints: BTreeMap::new(),
                 next_action_operation: None,
+                additional_next_actions: Vec::new(),
                 lens: None,
             },
             None,
@@ -1273,6 +2187,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
             warnings,
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
+            additional_next_actions: Vec::new(),
             lens: None,
         },
         Some(args.cursor.clone()),
@@ -1341,6 +2256,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
             warnings: Vec::new(),
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
+            additional_next_actions: Vec::new(),
             lens: None,
         },
         cursor,
@@ -2667,6 +3583,14 @@ fn make_envelope(
         })
         .unwrap_or_default();
     for action in generated_next_actions {
+        let duplicate = next_actions
+            .iter()
+            .any(|existing| existing.kind == action.kind && existing.path == action.path);
+        if !duplicate {
+            next_actions.push(action);
+        }
+    }
+    for action in input.additional_next_actions.clone() {
         let duplicate = next_actions
             .iter()
             .any(|existing| existing.kind == action.kind && existing.path == action.path);

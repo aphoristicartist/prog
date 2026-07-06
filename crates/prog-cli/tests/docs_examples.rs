@@ -144,6 +144,7 @@ fn documented_command_help_surface_stays_real() {
         &["hints", "--help"],
         &["call", "--help"],
         &["observe", "--help"],
+        &["run", "--help"],
         &["paths", "--help"],
         &["expand", "--help"],
         &["cache", "--help"],
@@ -186,6 +187,21 @@ fn documented_command_help_surface_stays_real() {
         assert!(
             observe_help.contains(expected),
             "observe help should contain {expected}"
+        );
+    }
+
+    let run_help = stdout(&prog(&root, &["run", "--help"]));
+    for expected in [
+        "--timeout-ms",
+        "--max-stdout-bytes",
+        "--max-stderr-bytes",
+        "--ttl-seconds",
+        "--preserve-exit-code",
+        "--out",
+    ] {
+        assert!(
+            run_help.contains(expected),
+            "run help should contain {expected}"
         );
     }
 
@@ -243,6 +259,7 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/metadata.md",
         "docs/lenses.md",
         "docs/observe.md",
+        "docs/run.md",
         "docs/paths.md",
         "docs/token-economics.md",
         "INVARIANTS.md",
