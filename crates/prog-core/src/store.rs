@@ -264,10 +264,11 @@ impl Store {
     where
         F: FnMut(Option<SourceProfile>) -> SourceProfile,
     {
+        validate_profile_id(id)?;
         let lock_path = self.dir.join("profiles").join(format!("{id}.lock"));
         let _lock = ProfileLock::acquire(&lock_path)?;
 
-        let path = self.profile_path(id);
+        let path = self.profile_path(id)?;
         let current = if path.exists() {
             Some(serde_json::from_slice(&fs::read(&path)?)?)
         } else {
@@ -289,15 +290,16 @@ impl Store {
     }
 
     pub fn read_profile(&self, id: &str) -> Result<Option<SourceProfile>> {
-        let path = self.profile_path(id);
+        let path = self.profile_path(id)?;
         if !path.exists() {
             return Ok(None);
         }
         Ok(Some(serde_json::from_slice(&fs::read(path)?)?))
     }
 
-    fn profile_path(&self, id: &str) -> PathBuf {
-        self.dir.join("profiles").join(format!("{id}.json"))
+    fn profile_path(&self, id: &str) -> Result<PathBuf> {
+        validate_profile_id(id)?;
+        Ok(self.dir.join("profiles").join(format!("{id}.json")))
     }
 
     fn read_entry(&self, key: &str) -> Result<Option<CacheEntryMeta>> {
@@ -478,6 +480,21 @@ fn parse_time(value: &str) -> Result<DateTime<Utc>> {
 
 fn format_time(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn validate_profile_id(id: &str) -> Result<()> {
+    let valid_chars = id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'));
+    if id.is_empty() || id == "." || id == ".." || !valid_chars {
+        return Err(CoreError::BadArgs {
+            operation: "profile".to_string(),
+            reason: format!(
+                "source id '{id}' must contain only ASCII letters, digits, '.', '_', or '-'"
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn set_dir_permissions(path: &Path) -> Result<()> {
