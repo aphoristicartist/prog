@@ -190,7 +190,15 @@ fn documented_command_help_surface_stays_real() {
     }
 
     let paths_help = stdout(&prog(&root, &["paths", "--help"]));
-    for expected in ["--prefix", "--limit", "--depth"] {
+    for expected in [
+        "--prefix",
+        "--reason",
+        "--field",
+        "--omitted-only",
+        "--expandable-only",
+        "--limit",
+        "--depth",
+    ] {
         assert!(
             paths_help.contains(expected),
             "paths help should contain {expected}"
@@ -234,6 +242,7 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/contracts.md",
         "docs/lenses.md",
         "docs/observe.md",
+        "docs/paths.md",
         "docs/token-economics.md",
         "INVARIANTS.md",
         "CHANGELOG.md",

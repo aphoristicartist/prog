@@ -7,6 +7,9 @@ profile-backed `prog call`.
 Use `observe` for one-off artifacts such as JSON payloads, NDJSON logs, plain
 text logs, test output saved to a file, or pasted command output.
 
+See [Path discovery](paths.md) for filtering omitted regions and using ranked
+`next_actions`.
+
 ## JSON
 
 ```bash

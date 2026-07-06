@@ -138,6 +138,18 @@ struct PathsArgs {
     #[arg(long, default_value = "")]
     prefix: String,
 
+    #[arg(long)]
+    reason: Option<String>,
+
+    #[arg(long, value_delimiter = ',')]
+    field: Vec<String>,
+
+    #[arg(long)]
+    omitted_only: bool,
+
+    #[arg(long)]
+    expandable_only: bool,
+
     #[arg(long, default_value_t = 200)]
     limit: usize,
 
@@ -426,6 +438,7 @@ struct PathsResponse {
     prefix: String,
     paths: Vec<PathEntry>,
     omitted: Vec<OmittedRegion>,
+    next_actions: Vec<NextAction>,
     cache: CacheInfo,
     warnings: Vec<String>,
 }
@@ -439,6 +452,13 @@ struct PathEntry {
     omitted_reason: Option<OmissionReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
+}
+
+struct PathFilters {
+    reason: Option<OmissionReason>,
+    fields: BTreeSet<String>,
+    omitted_only: bool,
+    expandable_only: bool,
 }
 
 async fn discover_source(store: &Store, args: &DiscoverArgs) -> Result<DiscoverReport> {
@@ -787,6 +807,7 @@ fn observe_artifact(store: &Store, args: &ObserveArgs) -> Result<DisclosureEnvel
 }
 
 fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
+    let filters = path_filters(args)?;
     let redaction_version = RedactionPolicy::default().version;
     let record = store.get_cursor(&args.cursor, redaction_version)?;
     let entry = store
@@ -816,6 +837,18 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
     let truncated = collect_paths(target, &prefix, args.depth, args.limit, &mut paths);
     annotate_path_omissions(&mut paths, &projection.omitted);
     append_missing_omitted_paths(&mut paths, &projection.omitted, args.limit);
+    paths.retain(|path| path_matches_filters(path, &filters));
+    let omitted = projection
+        .omitted
+        .into_iter()
+        .filter(|region| omitted_matches_filters(region, &filters))
+        .collect::<Vec<_>>();
+    let next_actions = expansion_next_actions(
+        Some(args.cursor.as_str()),
+        Some(record.operation.as_str()),
+        &omitted,
+        args.limit.min(10),
+    );
     let age = age_seconds(&entry.created_at)?;
     let mut warnings = Vec::new();
     if truncated {
@@ -838,10 +871,79 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
         root_path: record.root_path,
         prefix,
         paths,
-        omitted: projection.omitted,
+        omitted,
+        next_actions,
         cache: cache_info(CacheStatus::Hit, &entry, Some(age)),
         warnings,
     })
+}
+
+fn path_filters(args: &PathsArgs) -> Result<PathFilters> {
+    let reason = args
+        .reason
+        .as_deref()
+        .map(parse_omission_reason)
+        .transpose()?;
+    Ok(PathFilters {
+        reason,
+        fields: args.field.iter().cloned().collect(),
+        omitted_only: args.omitted_only || reason.is_some(),
+        expandable_only: args.expandable_only,
+    })
+}
+
+fn parse_omission_reason(raw: &str) -> Result<OmissionReason> {
+    let normalized = raw.replace('-', "_").to_ascii_lowercase();
+    match normalized.as_str() {
+        "large_string" => Ok(OmissionReason::LargeString),
+        "long_array" => Ok(OmissionReason::LongArray),
+        "many_fields" => Ok(OmissionReason::ManyFields),
+        "deep_object" => Ok(OmissionReason::DeepObject),
+        "node_budget" => Ok(OmissionReason::NodeBudget),
+        "redacted" => Ok(OmissionReason::Redacted),
+        _ => Err(CoreError::BadArgs {
+            operation: "paths --reason".to_string(),
+            reason: format!(
+                "unknown omission reason '{raw}'; expected one of large_string, long_array, many_fields, deep_object, node_budget, redacted"
+            ),
+        }),
+    }
+}
+
+fn path_matches_filters(path: &PathEntry, filters: &PathFilters) -> bool {
+    if filters.expandable_only && !path.expandable {
+        return false;
+    }
+    if filters.omitted_only && path.omitted_reason.is_none() {
+        return false;
+    }
+    if let Some(reason) = filters.reason
+        && path.omitted_reason != Some(reason)
+    {
+        return false;
+    }
+    if !filters.fields.is_empty() && !path_has_any_field(&path.path, &filters.fields) {
+        return false;
+    }
+    true
+}
+
+fn omitted_matches_filters(region: &OmittedRegion, filters: &PathFilters) -> bool {
+    if let Some(reason) = filters.reason
+        && region.reason != reason
+    {
+        return false;
+    }
+    if !filters.fields.is_empty() && !path_has_any_field(&region.path, &filters.fields) {
+        return false;
+    }
+    true
+}
+
+fn path_has_any_field(path: &str, fields: &BTreeSet<String>) -> bool {
+    prog_core::pointer::parse(path)
+        .map(|segments| segments.iter().any(|segment| fields.contains(segment)))
+        .unwrap_or(false)
 }
 
 fn collect_paths(
@@ -951,6 +1053,113 @@ fn append_missing_omitted_paths(
             omitted_reason: Some(region.reason),
             detail: region.detail.clone(),
         });
+    }
+}
+
+fn expansion_next_actions(
+    cursor: Option<&str>,
+    operation: Option<&str>,
+    omitted: &[OmittedRegion],
+    limit: usize,
+) -> Vec<NextAction> {
+    let Some(cursor) = cursor else {
+        return Vec::new();
+    };
+    let mut ranked = omitted.iter().collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        omission_priority(right.reason)
+            .cmp(&omission_priority(left.reason))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    ranked
+        .into_iter()
+        .take(limit)
+        .map(|region| expansion_next_action(cursor, operation, region))
+        .collect()
+}
+
+fn expansion_next_action(
+    cursor: &str,
+    operation: Option<&str>,
+    region: &OmittedRegion,
+) -> NextAction {
+    let mut extra = Extra::new();
+    extra.insert(
+        "priority".to_string(),
+        json!(omission_priority(region.reason)),
+    );
+    extra.insert(
+        "omitted_reason".to_string(),
+        json!(omission_reason_name(region.reason)),
+    );
+    if let Some(detail) = &region.detail {
+        extra.insert("detail".to_string(), json!(detail));
+    }
+    extra.insert(
+        "argv".to_string(),
+        json!(["prog", "expand", cursor, "--path", region.path]),
+    );
+    extra.insert(
+        "offline".to_string(),
+        json!("uses cached redacted payload; does not contact upstream"),
+    );
+    NextAction {
+        kind: "expand".to_string(),
+        operation: operation.map(str::to_string),
+        path: Some(region.path.clone()),
+        reason: Some(omission_action_reason(region)),
+        extra,
+    }
+}
+
+fn omission_priority(reason: OmissionReason) -> u8 {
+    match reason {
+        OmissionReason::LargeString => 90,
+        OmissionReason::DeepObject => 80,
+        OmissionReason::ManyFields => 70,
+        OmissionReason::LongArray => 60,
+        OmissionReason::NodeBudget => 50,
+        OmissionReason::Redacted => 10,
+    }
+}
+
+fn omission_reason_name(reason: OmissionReason) -> &'static str {
+    match reason {
+        OmissionReason::LargeString => "large_string",
+        OmissionReason::LongArray => "long_array",
+        OmissionReason::ManyFields => "many_fields",
+        OmissionReason::DeepObject => "deep_object",
+        OmissionReason::NodeBudget => "node_budget",
+        OmissionReason::Redacted => "redacted",
+    }
+}
+
+fn omission_action_reason(region: &OmittedRegion) -> String {
+    match region.reason {
+        OmissionReason::LargeString => format!(
+            "{} is a large string; expand to inspect a bounded view of the stored redacted value",
+            region.path
+        ),
+        OmissionReason::LongArray => format!(
+            "{} is a long array; expand with --limit to inspect selected items",
+            region.path
+        ),
+        OmissionReason::ManyFields => format!(
+            "{} has many fields; expand with --fields or --omit to inspect selected fields",
+            region.path
+        ),
+        OmissionReason::DeepObject => format!(
+            "{} was omitted by depth; expand with --depth to inspect nested structure",
+            region.path
+        ),
+        OmissionReason::NodeBudget => format!(
+            "{} was omitted by the global node budget; expand a narrower prefix",
+            region.path
+        ),
+        OmissionReason::Redacted => format!(
+            "{} is redacted before persistence; expansion will not reveal the original secret",
+            region.path
+        ),
     }
 }
 
@@ -2398,19 +2607,13 @@ fn make_envelope(
         .collect::<Vec<_>>();
     let generated_next_actions = cursor
         .as_ref()
-        .map(|_| {
-            projection
-                .omitted
-                .iter()
-                .take(10)
-                .map(|omitted| NextAction {
-                    kind: "expand".to_string(),
-                    operation: input.next_action_operation.clone(),
-                    path: Some(omitted.path.clone()),
-                    reason: Some(format!("omitted: {:?}", omitted.reason)),
-                    extra: Extra::new(),
-                })
-                .collect::<Vec<_>>()
+        .map(|cursor| {
+            expansion_next_actions(
+                Some(cursor.as_str()),
+                input.next_action_operation.as_deref(),
+                &projection.omitted,
+                10,
+            )
         })
         .unwrap_or_default();
     for action in generated_next_actions {
