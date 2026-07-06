@@ -143,6 +143,8 @@ fn documented_command_help_surface_stays_real() {
         &["discover", "--help"],
         &["hints", "--help"],
         &["call", "--help"],
+        &["observe", "--help"],
+        &["paths", "--help"],
         &["expand", "--help"],
         &["cache", "--help"],
         &["cache", "list", "--help"],
@@ -176,6 +178,22 @@ fn documented_command_help_surface_stays_real() {
         assert!(
             expand_help.contains(expected),
             "expand help should contain {expected}"
+        );
+    }
+
+    let observe_help = stdout(&prog(&root, &["observe", "--help"]));
+    for expected in ["--file", "--stdin", "--mime", "--name", "--ttl-seconds"] {
+        assert!(
+            observe_help.contains(expected),
+            "observe help should contain {expected}"
+        );
+    }
+
+    let paths_help = stdout(&prog(&root, &["paths", "--help"]));
+    for expected in ["--prefix", "--limit", "--depth"] {
+        assert!(
+            paths_help.contains(expected),
+            "paths help should contain {expected}"
         );
     }
 
@@ -215,6 +233,7 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/safety.md",
         "docs/contracts.md",
         "docs/lenses.md",
+        "docs/observe.md",
         "docs/token-economics.md",
         "INVARIANTS.md",
         "CHANGELOG.md",

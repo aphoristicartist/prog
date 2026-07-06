@@ -1,7 +1,8 @@
 use std::{
     fs,
+    io::Write,
     path::Path,
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
 use serde_json::{Value, json};
@@ -15,6 +16,23 @@ fn prog(args: &[&str]) -> Output {
         .args(args)
         .output()
         .expect("prog binary should run")
+}
+
+fn prog_with_stdin(args: &[&str], stdin: &[u8]) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_prog"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("prog binary should spawn");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin)
+        .expect("stdin should write");
+    child.wait_with_output().expect("prog binary should run")
 }
 
 fn stdout(output: &Output) -> String {
@@ -36,6 +54,8 @@ fn help_shows_complete_command_tree() {
         "discover",
         "hints",
         "call",
+        "observe",
+        "paths",
         "expand",
         "cache",
         "meta",
@@ -77,6 +97,389 @@ fn missing_call_and_expand_inputs_return_structured_errors() {
     assert_eq!(stderr(&expand), "");
     let value: Value = serde_json::from_slice(&expand.stdout).expect("stdout must be JSON");
     assert_eq!(value["error"]["kind"], "cursor_not_found");
+}
+
+#[test]
+fn observe_json_file_uses_envelope_cache_redaction_and_expand() {
+    let dir = tempfile::tempdir().unwrap();
+    let payload = json!({
+        "items": (0..30)
+            .map(|index| json!({
+                "id": index,
+                "title": format!("Item {index}"),
+                "body": "x".repeat(800),
+                "token": "super-secret-token"
+            }))
+            .collect::<Vec<_>>()
+    });
+    let file = dir.path().join("large.json");
+    fs::write(&file, serde_json::to_vec(&payload).unwrap()).unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+
+    let observed = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--mime",
+        "application/json",
+        "--name",
+        "json-fixture",
+    ]);
+    assert!(observed.status.success(), "{}", stdout(&observed));
+    assert_eq!(stderr(&observed), "");
+    let envelope: Value = serde_json::from_slice(&observed.stdout).unwrap();
+    assert_eq!(envelope["source_id"], "observe");
+    assert_eq!(envelope["operation"], "json-fixture");
+    assert_eq!(envelope["cache"]["status"], "stored");
+    assert_eq!(envelope["data_preview"]["items"][0]["token"], "«redacted»");
+    assert!(!stdout(&observed).contains("super-secret-token"));
+    assert!(
+        envelope["omitted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|omitted| omitted["path"] == "/items")
+    );
+    let cursor = envelope["cursor"].as_str().unwrap();
+
+    let paths = prog(&[
+        "--dir", dir_arg, "paths", cursor, "--prefix", "/items", "--limit", "20",
+    ]);
+    assert!(paths.status.success(), "{}", stdout(&paths));
+    assert_eq!(stderr(&paths), "");
+    let path_listing: Value = serde_json::from_slice(&paths.stdout).unwrap();
+    assert_eq!(path_listing["cache"]["status"], "hit");
+    assert!(
+        path_listing["paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| {
+                entry["path"] == "/items/0/token" && entry["omitted_reason"] == "redacted"
+            })
+    );
+    assert!(!stdout(&paths).contains("super-secret-token"));
+
+    let expanded = prog(&[
+        "--dir",
+        dir_arg,
+        "expand",
+        cursor,
+        "--path",
+        "/items/0/body",
+        "--depth",
+        "1",
+    ]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let expanded_value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(expanded_value["cache"]["status"], "hit");
+    assert!(
+        expanded_value["data_preview"]
+            .as_str()
+            .unwrap()
+            .starts_with('x')
+    );
+    assert!(
+        expanded_value["summary"]["envelope_bytes"]
+            .as_u64()
+            .unwrap()
+            <= 16 * 1024
+    );
+}
+
+#[test]
+fn observe_stdin_text_has_head_tail_line_paths_and_secret_redaction() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = (0..25)
+        .map(|index| {
+            if index == 1 {
+                "token=plain-secret".to_string()
+            } else {
+                format!("row-{index}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let output = prog_with_stdin(
+        &[
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "observe",
+            "--stdin",
+            "--mime",
+            "text/plain",
+            "--name",
+            "stdin-log",
+        ],
+        text.as_bytes(),
+    );
+    assert!(output.status.success(), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("plain-secret"));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["data_preview"]["format"], "text");
+    assert_eq!(envelope["data_preview"]["line_count"], 25);
+    assert_eq!(envelope["data_preview"]["head"][0], "row-0");
+    assert_eq!(
+        envelope["data_preview"]["head"][1],
+        "token=[REDACTED:observed_text_secret]"
+    );
+    assert!(
+        envelope["omitted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|omitted| omitted["path"] == "/lines")
+    );
+
+    let cursor = envelope["cursor"].as_str().unwrap();
+    let paths = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "paths",
+        cursor,
+        "--prefix",
+        "/lines",
+        "--limit",
+        "12",
+    ]);
+    assert!(paths.status.success(), "{}", stdout(&paths));
+    let path_listing: Value = serde_json::from_slice(&paths.stdout).unwrap();
+    assert_eq!(path_listing["prefix"], "/lines");
+    assert_eq!(path_listing["cache"]["status"], "hit");
+    assert!(
+        path_listing["paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "/lines/1/text")
+    );
+
+    let expanded = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "expand",
+        cursor,
+        "--path",
+        "/lines/1/text",
+    ]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(
+        value["data_preview"],
+        "token=[REDACTED:observed_text_secret]"
+    );
+}
+
+#[test]
+fn observe_ndjson_exposes_records_for_expansion() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = br#"{"id":1,"value":"one"}
+{"id":2,"value":"two"}
+"#;
+    let output = prog_with_stdin(
+        &[
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/x-ndjson",
+            "--name",
+            "events",
+        ],
+        input,
+    );
+    assert!(output.status.success(), "{}", stdout(&output));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["data_preview"]["format"], "ndjson");
+    assert_eq!(envelope["data_preview"]["record_count"], 2);
+    let cursor = envelope["cursor"].as_str().unwrap();
+
+    let paths = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "paths",
+        cursor,
+        "--prefix",
+        "/records",
+    ]);
+    assert!(paths.status.success(), "{}", stdout(&paths));
+    let path_listing: Value = serde_json::from_slice(&paths.stdout).unwrap();
+    assert!(
+        path_listing["paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "/records/1/value")
+    );
+
+    let expanded = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "expand",
+        cursor,
+        "--path",
+        "/records/1/value",
+    ]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(value["data_preview"], "two");
+}
+
+#[test]
+fn observe_handles_empty_and_invalid_utf8_text_but_rejects_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let empty = prog_with_stdin(
+        &[
+            "--dir",
+            dir_arg,
+            "observe",
+            "--stdin",
+            "--mime",
+            "text/plain",
+        ],
+        b"",
+    );
+    assert!(empty.status.success(), "{}", stdout(&empty));
+    let empty_value: Value = serde_json::from_slice(&empty.stdout).unwrap();
+    assert_eq!(empty_value["data_preview"]["line_count"], 0);
+
+    let invalid = prog_with_stdin(
+        &[
+            "--dir",
+            dir_arg,
+            "observe",
+            "--stdin",
+            "--mime",
+            "text/plain",
+            "--name",
+            "invalid-utf8",
+        ],
+        &[b'o', 0xff, b'k'],
+    );
+    assert!(invalid.status.success(), "{}", stdout(&invalid));
+    let invalid_value: Value = serde_json::from_slice(&invalid.stdout).unwrap();
+    assert_eq!(invalid_value["data_preview"]["utf8_valid"], false);
+    assert!(
+        invalid_value["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().unwrap().contains("UTF-8"))
+    );
+
+    let binary = prog_with_stdin(
+        &[
+            "--dir",
+            dir_arg,
+            "observe",
+            "--stdin",
+            "--mime",
+            "text/plain",
+            "--name",
+            "binary",
+        ],
+        &[0, 1, 2, 3],
+    );
+    assert!(!binary.status.success());
+    let error: Value = serde_json::from_slice(&binary.stdout).unwrap();
+    assert_eq!(error["error"]["kind"], "bad_args");
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("binary")
+    );
+}
+
+#[test]
+fn observe_huge_text_line_is_bounded_and_expandable() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("huge.log");
+    fs::write(&file, format!("prefix-{}", "x".repeat(20_000))).unwrap();
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--mime",
+        "text/plain",
+        "--name",
+        "huge-line",
+    ]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(envelope["summary"]["envelope_bytes"].as_u64().unwrap() <= 16 * 1024);
+    assert!(
+        envelope["omitted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |omitted| omitted["path"] == "/lines/0/text" && omitted["reason"] == "large_string"
+            )
+    );
+    let cursor = envelope["cursor"].as_str().unwrap();
+
+    let expanded = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "expand",
+        cursor,
+        "--path",
+        "/lines/0/text",
+        "--depth",
+        "1",
+    ]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert!(value["summary"]["envelope_bytes"].as_u64().unwrap() <= 16 * 1024);
+    assert!(
+        value["data_preview"]
+            .as_str()
+            .unwrap()
+            .starts_with("prefix-")
+    );
+}
+
+#[test]
+fn observe_cursor_expiry_fails_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let observed = prog_with_stdin(
+        &[
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "observe",
+            "--stdin",
+            "--mime",
+            "text/plain",
+            "--name",
+            "expired",
+            "--ttl-seconds",
+            "0",
+        ],
+        b"expired line",
+    );
+    assert!(observed.status.success(), "{}", stdout(&observed));
+    let envelope: Value = serde_json::from_slice(&observed.stdout).unwrap();
+    assert_eq!(envelope["cache"]["ttl_seconds"], 0);
+    let cursor = envelope["cursor"].as_str().unwrap();
+
+    let expanded = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "expand",
+        cursor,
+        "--path",
+        "/lines/0/text",
+    ]);
+    assert!(!expanded.status.success());
+    let error: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(error["error"]["kind"], "cursor_expired");
 }
 
 #[test]

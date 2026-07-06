@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    io::Read,
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -14,7 +15,7 @@ use prog_adapters::{
 use prog_core::{
     AuthRef, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance, CoreError,
     DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, Extra, LensManifest, NextAction,
-    OmittedRegion, OperationProfile, PreviewPolicy, RedactionPolicy, Result,
+    OmissionReason, OmittedRegion, OperationProfile, PreviewPolicy, RedactionPolicy, Result,
     SOURCE_PROFILE_VERSION, SliceRequest, SourceProfile, Store, Summary, TrustSettings,
     cache_allowed, call_effect_warnings, check_call, check_discovery, cli_adapter_effects,
     cli_hardening_effects, expand, http_adapter_effects, http_hardening_effects, infer, join,
@@ -51,6 +52,8 @@ enum Command {
     Discover(DiscoverArgs),
     Hints(HintsArgs),
     Call(CallArgs),
+    Observe(ObserveArgs),
+    Paths(PathsArgs),
     Expand(ExpandArgs),
     Cache {
         #[command(subcommand)]
@@ -108,6 +111,38 @@ struct CallArgs {
 
     #[arg(long)]
     refresh: bool,
+}
+
+#[derive(Debug, Args)]
+struct ObserveArgs {
+    #[arg(long, conflicts_with = "stdin")]
+    file: Option<PathBuf>,
+
+    #[arg(long, conflicts_with = "file")]
+    stdin: bool,
+
+    #[arg(long)]
+    mime: Option<String>,
+
+    #[arg(long)]
+    name: Option<String>,
+
+    #[arg(long, default_value_t = 86_400)]
+    ttl_seconds: u64,
+}
+
+#[derive(Debug, Args)]
+struct PathsArgs {
+    cursor: String,
+
+    #[arg(long, default_value = "")]
+    prefix: String,
+
+    #[arg(long, default_value_t = 200)]
+    limit: usize,
+
+    #[arg(long, default_value_t = 6)]
+    depth: usize,
 }
 
 #[derive(Debug, Args)]
@@ -210,6 +245,16 @@ async fn run(cli: &Cli) -> Result<()> {
             let store = Store::open(&cli.dir)?;
             let envelope = call_source(&store, &cli.lens_dir, args).await?;
             write_success(&envelope, cli.pretty)
+        }
+        Command::Observe(args) => {
+            let store = Store::open(&cli.dir)?;
+            let envelope = observe_artifact(&store, args)?;
+            write_success(&envelope, cli.pretty)
+        }
+        Command::Paths(args) => {
+            let store = Store::open(&cli.dir)?;
+            let response = paths_cursor(&store, args)?;
+            write_success(&response, cli.pretty)
         }
         Command::Expand(args) => {
             let store = Store::open(&cli.dir)?;
@@ -356,6 +401,44 @@ struct CursorInput<'a> {
     cache: &'a CachePolicy,
     may_cache: bool,
     lens: Option<&'a LensManifest>,
+}
+
+struct ObservationInput {
+    name: String,
+    input: Value,
+    mime: String,
+    bytes: Vec<u8>,
+}
+
+struct NormalizedObservation {
+    kind: String,
+    payload: Value,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct PathsResponse {
+    schema_version: &'static str,
+    cursor: String,
+    source_id: String,
+    operation: String,
+    root_path: String,
+    prefix: String,
+    paths: Vec<PathEntry>,
+    omitted: Vec<OmittedRegion>,
+    cache: CacheInfo,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PathEntry {
+    path: String,
+    kind: String,
+    expandable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    omitted_reason: Option<OmissionReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
 }
 
 async fn discover_source(store: &Store, args: &DiscoverArgs) -> Result<DiscoverReport> {
@@ -618,6 +701,257 @@ async fn call_source(
         },
         cursor,
     )
+}
+
+fn observe_artifact(store: &Store, args: &ObserveArgs) -> Result<DisclosureEnvelope> {
+    let input = read_observation_input(args)?;
+    let normalized = normalize_observation(&input.bytes, &input.mime)?;
+    let redaction = RedactionPolicy::default();
+    let (redacted, redacted_paths) = redaction.apply_persistence(&normalized.payload);
+    let redacted_bytes = serde_json::to_vec(&redacted)?;
+    let payload_bytes = redacted_bytes.len().try_into().unwrap_or(u64::MAX);
+    let cache_key = Store::cache_key(
+        "observe",
+        &input.name,
+        &json!({
+            "kind": normalized.kind,
+            "mime": input.mime,
+            "redacted_sha256": hex_sha256(&redacted_bytes)
+        }),
+    )?;
+    let payload_hash = store.put_payload(&redacted)?;
+    let ttl: i64 = args
+        .ttl_seconds
+        .try_into()
+        .map_err(|_| CoreError::BadArgs {
+            operation: "observe".to_string(),
+            reason: "ttl_seconds is too large".to_string(),
+        })?;
+    let mut entry = new_cache_entry(
+        cache_key.clone(),
+        payload_hash,
+        "observe".to_string(),
+        input.name.clone(),
+        payload_bytes,
+        ttl,
+    );
+    entry.provenance = Some(observation_provenance(
+        &cache_key,
+        &input,
+        &normalized.kind,
+        redacted_paths.len(),
+    ));
+    store.put_entry(&cache_key, &entry)?;
+
+    let slice = SliceRequest {
+        path: None,
+        limit: None,
+        depth: None,
+        fields: Vec::new(),
+        omit: Vec::new(),
+        extra: Extra::new(),
+    };
+    let cursor = Some(store.create_cursor(
+        &cache_key,
+        "observe",
+        &input.name,
+        "",
+        RedactionPolicy::default().version,
+        ttl,
+    )?);
+    let mut warnings = normalized.warnings;
+    if !redacted_paths.is_empty() {
+        warnings.push(format!(
+            "redacted {} sensitive path(s) before persistence",
+            redacted_paths.len()
+        ));
+    }
+    envelope_for_payload(
+        store,
+        EnvelopeInput {
+            source_id: "observe".to_string(),
+            operation: input.name,
+            payload: redacted,
+            root_path: "".to_string(),
+            slice,
+            payload_bytes,
+            provenance: entry.provenance.clone(),
+            cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
+            warnings,
+            schema_hints: BTreeMap::new(),
+            next_action_operation: None,
+            lens: None,
+        },
+        cursor,
+    )
+}
+
+fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
+    let redaction_version = RedactionPolicy::default().version;
+    let record = store.get_cursor(&args.cursor, redaction_version)?;
+    let entry = store
+        .get_entry(&record.cache_key)?
+        .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
+    let payload = store
+        .get_payload(&entry.payload_hash)?
+        .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
+    let prefix = if args.prefix.is_empty() {
+        record.root_path.clone()
+    } else {
+        args.prefix.clone()
+    };
+    if !prog_core::pointer::is_within(&record.root_path, &prefix)? {
+        return Err(CoreError::PathOutsideBoundary {
+            path: prefix,
+            boundary: record.root_path,
+        });
+    }
+    let target =
+        prog_core::pointer::get(&payload, &prefix)?.ok_or_else(|| CoreError::PathNotFound {
+            path: prefix.clone(),
+            hint: prog_core::pointer::siblings_hint(&payload, &prefix),
+        })?;
+    let projection = project(target, &PreviewPolicy::default(), &prefix);
+    let mut paths = Vec::new();
+    let truncated = collect_paths(target, &prefix, args.depth, args.limit, &mut paths);
+    annotate_path_omissions(&mut paths, &projection.omitted);
+    append_missing_omitted_paths(&mut paths, &projection.omitted, args.limit);
+    let age = age_seconds(&entry.created_at)?;
+    let mut warnings = Vec::new();
+    if truncated {
+        warnings.push(format!(
+            "path listing reached --limit {}; use --prefix to narrow the result",
+            args.limit
+        ));
+    }
+    if age > 0 {
+        warnings.push(format!(
+            "cached payload age_seconds={age}; re-run the original observation or call to refresh"
+        ));
+    }
+
+    Ok(PathsResponse {
+        schema_version: DISCLOSURE_VERSION,
+        cursor: args.cursor.clone(),
+        source_id: record.source_id,
+        operation: record.operation,
+        root_path: record.root_path,
+        prefix,
+        paths,
+        omitted: projection.omitted,
+        cache: cache_info(CacheStatus::Hit, &entry, Some(age)),
+        warnings,
+    })
+}
+
+fn collect_paths(
+    value: &Value,
+    path: &str,
+    depth: usize,
+    limit: usize,
+    out: &mut Vec<PathEntry>,
+) -> bool {
+    let mut truncated = false;
+    collect_paths_inner(value, path, depth, limit, out, &mut truncated);
+    truncated
+}
+
+fn collect_paths_inner(
+    value: &Value,
+    path: &str,
+    depth: usize,
+    limit: usize,
+    out: &mut Vec<PathEntry>,
+    truncated: &mut bool,
+) {
+    if out.len() >= limit {
+        *truncated = true;
+        return;
+    }
+
+    out.push(PathEntry {
+        path: path.to_string(),
+        kind: value_kind(value).to_string(),
+        expandable: matches!(value, Value::Array(_) | Value::Object(_)),
+        omitted_reason: None,
+        detail: None,
+    });
+
+    if depth == 0 {
+        if matches!(value, Value::Array(items) if !items.is_empty())
+            || matches!(value, Value::Object(map) if !map.is_empty())
+        {
+            *truncated = true;
+        }
+        return;
+    }
+
+    match value {
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                if out.len() >= limit {
+                    *truncated = true;
+                    break;
+                }
+                let child_path = prog_core::pointer::push(path, &index.to_string());
+                collect_paths_inner(item, &child_path, depth - 1, limit, out, truncated);
+            }
+        }
+        Value::Object(map) => {
+            let mut keys = map.keys().collect::<Vec<_>>();
+            keys.sort();
+            for key in keys {
+                if out.len() >= limit {
+                    *truncated = true;
+                    break;
+                }
+                let child_path = prog_core::pointer::push(path, key);
+                collect_paths_inner(&map[key], &child_path, depth - 1, limit, out, truncated);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn annotate_path_omissions(paths: &mut [PathEntry], omitted: &[OmittedRegion]) {
+    let omitted_by_path = omitted
+        .iter()
+        .map(|region| (region.path.as_str(), region))
+        .collect::<BTreeMap<_, _>>();
+
+    for path in paths {
+        if let Some(region) = omitted_by_path.get(path.path.as_str()) {
+            path.expandable = true;
+            path.omitted_reason = Some(region.reason);
+            path.detail.clone_from(&region.detail);
+        }
+    }
+}
+
+fn append_missing_omitted_paths(
+    paths: &mut Vec<PathEntry>,
+    omitted: &[OmittedRegion],
+    limit: usize,
+) {
+    let mut seen = paths
+        .iter()
+        .map(|path| path.path.clone())
+        .collect::<BTreeSet<_>>();
+    for region in omitted {
+        if paths.len() >= limit {
+            break;
+        }
+        if !seen.insert(region.path.clone()) {
+            continue;
+        }
+        paths.push(PathEntry {
+            path: region.path.clone(),
+            kind: "omitted".to_string(),
+            expandable: true,
+            omitted_reason: Some(region.reason),
+            detail: region.detail.clone(),
+        });
+    }
 }
 
 fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope> {
@@ -1125,6 +1459,266 @@ fn parse_view(raw: Option<&str>) -> Result<SliceRequest> {
             omit: Vec::new(),
             extra: Extra::new(),
         }),
+    }
+}
+
+fn read_observation_input(args: &ObserveArgs) -> Result<ObservationInput> {
+    let (bytes, name, input) = if let Some(path) = &args.file {
+        let bytes = std::fs::read(path).map_err(|error| CoreError::BadArgs {
+            operation: "observe".to_string(),
+            reason: format!(
+                "file '{}' could not be read: {error}",
+                path.to_string_lossy()
+            ),
+        })?;
+        let name = args.name.clone().unwrap_or_else(|| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("file")
+                .to_string()
+        });
+        (
+            bytes,
+            name,
+            json!({
+                "kind": "file",
+                "path": path.to_string_lossy()
+            }),
+        )
+    } else if args.stdin {
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .read_to_end(&mut bytes)
+            .map_err(|error| CoreError::BadArgs {
+                operation: "observe".to_string(),
+                reason: format!("stdin could not be read: {error}"),
+            })?;
+        (
+            bytes,
+            args.name.clone().unwrap_or_else(|| "stdin".to_string()),
+            json!({"kind": "stdin"}),
+        )
+    } else {
+        return Err(CoreError::BadArgs {
+            operation: "observe".to_string(),
+            reason: "pass --file <path> or --stdin".to_string(),
+        });
+    };
+
+    let mime = args
+        .mime
+        .clone()
+        .unwrap_or_else(|| sniff_mime_from_bytes(&bytes).to_string());
+    Ok(ObservationInput {
+        name,
+        input,
+        mime,
+        bytes,
+    })
+}
+
+fn normalize_observation(bytes: &[u8], mime: &str) -> Result<NormalizedObservation> {
+    let normalized_mime = mime.to_ascii_lowercase();
+    if normalized_mime.contains("ndjson") || normalized_mime.contains("jsonlines") {
+        return normalize_ndjson_observation(bytes);
+    }
+    if normalized_mime.contains("json") || sniff_mime_from_bytes(bytes) == "application/json" {
+        return normalize_json_observation(bytes, mime);
+    }
+    normalize_text_observation(bytes)
+}
+
+fn normalize_json_observation(bytes: &[u8], mime: &str) -> Result<NormalizedObservation> {
+    let payload = serde_json::from_slice(bytes).map_err(|error| CoreError::BadArgs {
+        operation: "observe".to_string(),
+        reason: format!("input with mime '{mime}' must be valid JSON: {error}"),
+    })?;
+    Ok(NormalizedObservation {
+        kind: "json".to_string(),
+        payload,
+        warnings: Vec::new(),
+    })
+}
+
+fn normalize_ndjson_observation(bytes: &[u8]) -> Result<NormalizedObservation> {
+    let text = std::str::from_utf8(bytes).map_err(|error| CoreError::BadArgs {
+        operation: "observe".to_string(),
+        reason: format!("NDJSON input must be valid UTF-8: {error}"),
+    })?;
+    let mut records = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let record = serde_json::from_str::<Value>(line).map_err(|error| CoreError::BadArgs {
+            operation: "observe".to_string(),
+            reason: format!("NDJSON line {} is not valid JSON: {error}", index + 1),
+        })?;
+        records.push(record);
+    }
+    let record_count = records.len();
+    let line_count = text.lines().count();
+    Ok(NormalizedObservation {
+        kind: "ndjson".to_string(),
+        payload: json!({
+            "format": "ndjson",
+            "records": records,
+            "record_count": record_count,
+            "line_count": line_count,
+            "byte_count": bytes.len()
+        }),
+        warnings: Vec::new(),
+    })
+}
+
+fn normalize_text_observation(bytes: &[u8]) -> Result<NormalizedObservation> {
+    if is_binaryish(bytes) {
+        return Err(CoreError::BadArgs {
+            operation: "observe".to_string(),
+            reason: "input appears to be binary; pass a text, JSON, or NDJSON artifact".to_string(),
+        });
+    }
+
+    let mut warnings = Vec::new();
+    let text = match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_string(),
+        Err(_) => {
+            warnings
+                .push("input was not valid UTF-8; replacement characters were used".to_string());
+            String::from_utf8_lossy(bytes).to_string()
+        }
+    };
+    let lines = text
+        .lines()
+        .enumerate()
+        .map(|(index, line)| {
+            json!({
+                "number": index + 1,
+                "text": redact_observed_text(line)
+            })
+        })
+        .collect::<Vec<_>>();
+    let line_count = lines.len();
+    let head = lines
+        .iter()
+        .take(10)
+        .map(|line| line["text"].clone())
+        .collect::<Vec<_>>();
+    let tail_start = lines.len().saturating_sub(10).max(head.len());
+    let tail = lines
+        .iter()
+        .skip(tail_start)
+        .map(|line| line["text"].clone())
+        .collect::<Vec<_>>();
+
+    Ok(NormalizedObservation {
+        kind: "text".to_string(),
+        payload: json!({
+            "format": "text",
+            "head": head,
+            "tail": tail,
+            "lines": lines,
+            "line_count": line_count,
+            "byte_count": bytes.len(),
+            "utf8_valid": warnings.is_empty()
+        }),
+        warnings,
+    })
+}
+
+fn sniff_mime_from_bytes(bytes: &[u8]) -> &'static str {
+    if bytes
+        .iter()
+        .copied()
+        .find(|byte| !byte.is_ascii_whitespace())
+        .is_some_and(|byte| byte == b'{' || byte == b'[')
+    {
+        "application/json"
+    } else {
+        "text/plain"
+    }
+}
+
+fn is_binaryish(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    if bytes.contains(&0) {
+        return true;
+    }
+    let suspicious = bytes
+        .iter()
+        .filter(|byte| byte.is_ascii_control() && !matches!(byte, b'\n' | b'\r' | b'\t'))
+        .count();
+    suspicious.saturating_mul(10) > bytes.len()
+}
+
+fn redact_observed_text(line: &str) -> String {
+    let separators = ["=", ":", " "];
+    for key in [
+        "authorization",
+        "api_key",
+        "apikey",
+        "password",
+        "secret",
+        "token",
+    ] {
+        let lower = line.to_ascii_lowercase();
+        for separator in separators {
+            let marker = format!("{key}{separator}");
+            if let Some(start) = lower.find(&marker) {
+                let marker_end = start + marker.len();
+                let value_start = marker_end
+                    + line[marker_end..]
+                        .chars()
+                        .take_while(|ch| ch.is_whitespace())
+                        .map(char::len_utf8)
+                        .sum::<usize>();
+                let value_end = line[value_start..]
+                    .find(char::is_whitespace)
+                    .map(|offset| value_start + offset)
+                    .unwrap_or(line.len());
+                let mut redacted = String::new();
+                redacted.push_str(&line[..value_start]);
+                redacted.push_str("[REDACTED:observed_text_secret]");
+                redacted.push_str(&line[value_end..]);
+                return redacted;
+            }
+        }
+    }
+    line.to_string()
+}
+
+fn observation_provenance(
+    cache_key: &str,
+    input: &ObservationInput,
+    kind: &str,
+    redacted_paths: usize,
+) -> CallProvenance {
+    let mut extra = Extra::new();
+    extra.insert(
+        "observe".to_string(),
+        json!({
+            "name": &input.name,
+            "input": &input.input,
+            "mime": &input.mime,
+            "kind": kind,
+            "input_bytes": input.bytes.len(),
+            "redacted_paths": redacted_paths
+        }),
+    );
+    CallProvenance {
+        source_call_id: format!(
+            "observe_{}",
+            Utc::now()
+                .timestamp_nanos_opt()
+                .unwrap_or_else(|| Utc::now().timestamp_micros())
+        ),
+        cache_key: Some(cache_key.to_string()),
+        captured_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        status: Some("observed".to_string()),
+        duration_ms: None,
+        extra,
     }
 }
 
