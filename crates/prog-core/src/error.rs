@@ -136,6 +136,9 @@ pub enum CoreError {
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("import error from {format}: {reason}")]
+    ImportError { format: String, reason: String },
 }
 
 impl CoreError {
@@ -176,6 +179,7 @@ impl CoreError {
             CoreError::Storage(_) => "storage",
             CoreError::Json(_) => "json",
             CoreError::Io(_) => "io",
+            CoreError::ImportError { .. } => "import_error",
         }
     }
 
@@ -277,6 +281,9 @@ impl CoreError {
             }
             CoreError::Json(_) => "Provide valid JSON for the requested argument.".to_string(),
             CoreError::Io(_) => "Check the referenced path and filesystem permissions.".to_string(),
+            CoreError::ImportError { format, .. } => {
+                format!("Check the {} import format and source schema.", format)
+            }
         }
     }
 

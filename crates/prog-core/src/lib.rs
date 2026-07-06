@@ -1,6 +1,7 @@
 pub mod contracts;
 pub mod disclosure;
 pub mod error;
+pub mod importers;
 pub mod lens;
 pub mod pointer;
 pub mod policy;

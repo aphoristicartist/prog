@@ -1809,6 +1809,146 @@ fn discover_http_seed_persists_profile_without_upstream_probe() {
     assert_eq!(profile["operations"][0]["id"], "list");
 }
 
+#[test]
+fn discover_imports_openapi_without_upstream_probe() {
+    let dir = tempfile::tempdir().unwrap();
+    let spec = write_seed(
+        dir.path(),
+        "openapi.json",
+        r#"{
+          "openapi": "3.1.0",
+          "info": {"title": "Issues", "version": "2026-07"},
+          "servers": [{"url": "http://127.0.0.1:9"}],
+          "paths": {
+            "/issues/{id}": {
+              "get": {
+                "operationId": "getIssue",
+                "parameters": [{
+                  "name": "id",
+                  "in": "path",
+                  "required": true,
+                  "schema": {"type": "string"}
+                }],
+                "responses": {
+                  "200": {
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "type": "object",
+                          "properties": {"id": {"type": "string"}}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }"#,
+    );
+
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        spec.to_str().unwrap(),
+        "--import",
+        "openapi",
+        "--probe",
+    ]);
+
+    assert!(output.status.success(), "{}", stdout(&output));
+    assert_eq!(stderr(&output), "");
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["import_format"], "openapi");
+    assert_eq!(report["operations_found"], 1);
+    assert_eq!(report["schemas_imported"], 1);
+    assert_eq!(report["operations_probed"], 0);
+    assert!(
+        report["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap()
+                .contains("never executes upstream"))
+    );
+
+    let profile = read_profile(dir.path(), "api");
+    assert_eq!(profile["kind"], "http");
+    assert_eq!(profile["import_source"], "openapi");
+    assert_eq!(profile["adapter"]["http"]["base_url"], "http://127.0.0.1:9");
+    let operation = &profile["operations"][0];
+    assert_eq!(operation["id"], "getissue");
+    assert!(operation["output_shape"].is_null());
+    assert!(operation["declared_output_schema"].is_object());
+    assert_eq!(operation["effects"]["read_only"], true);
+    assert_eq!(operation["invocation"]["http"]["path"], "/issues/{id}");
+}
+
+#[test]
+fn discover_imports_cli_help_conservatively() {
+    let dir = tempfile::tempdir().unwrap();
+    let help = write_seed(
+        dir.path(),
+        "taskctl.help",
+        "Usage: taskctl <COMMAND>\n\nCommands:\n  list      list tasks\n  delete    delete a task\n\nOptions:\n  -h, --help\n",
+    );
+
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "discover",
+        "taskctl",
+        "--kind",
+        "cli",
+        "--seed",
+        help.to_str().unwrap(),
+        "--import",
+        "cli-help",
+        "--command-base",
+        "taskctl --profile prod",
+    ]);
+
+    assert!(output.status.success(), "{}", stdout(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["import_format"], "cli-help");
+    assert_eq!(report["operations_found"], 2);
+    assert_eq!(report["operations_probed"], 0);
+    assert!(
+        report["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().unwrap().contains("conservative"))
+    );
+
+    let profile = read_profile(dir.path(), "taskctl");
+    assert_eq!(profile["kind"], "cli");
+    assert_eq!(profile["trust"]["allow_shell"], false);
+    for operation in profile["operations"].as_array().unwrap() {
+        assert_eq!(operation["effects"]["read_only"], false);
+        assert_eq!(operation["effects"]["mutating"], true);
+        assert_eq!(operation["effects"]["requires_confirmation"], true);
+        assert_eq!(operation["effects"]["shell"], false);
+    }
+    let list = profile["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|operation| operation["id"] == "taskctl_list")
+        .unwrap();
+    assert_eq!(list["invocation"]["cli"]["command"], "taskctl");
+    assert_eq!(list["invocation"]["cli"]["args"][0], "--profile");
+    assert_eq!(list["invocation"]["cli"]["args"][1], "prod");
+    assert_eq!(list["invocation"]["cli"]["args"][2], "list");
+}
+
 #[tokio::test]
 async fn source_add_http_creates_working_profile_from_url() {
     let server = MockServer::start().await;

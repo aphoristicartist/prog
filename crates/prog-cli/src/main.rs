@@ -14,6 +14,9 @@ use prog_adapters::{
     http::{HttpOperation, HttpSource},
     mcp::McpSource,
 };
+use prog_core::importers::{
+    ImportContext, ImportReport, import_cli_help, import_json_schema, import_openapi,
+};
 use prog_core::{
     AuthRef, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance, CoreError,
     DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, EvidenceRef, Extra, LensManifest,
@@ -89,6 +92,25 @@ enum SourceKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum ImportFormat {
+    Auto,
+    Openapi,
+    JsonSchema,
+    CliHelp,
+}
+
+impl ImportFormat {
+    fn as_str(self) -> &'static str {
+        match self {
+            ImportFormat::Auto => "auto",
+            ImportFormat::Openapi => "openapi",
+            ImportFormat::JsonSchema => "json-schema",
+            ImportFormat::CliHelp => "cli-help",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum AgentKind {
     Codex,
     ClaudeCode,
@@ -116,6 +138,15 @@ struct DiscoverArgs {
 
     #[arg(long)]
     seed: String,
+
+    #[arg(long = "import", value_enum)]
+    import: Option<ImportFormat>,
+
+    #[arg(long)]
+    command_base: Option<String>,
+
+    #[arg(long, default_value_t = 10)]
+    max_schema_depth: usize,
 
     #[arg(long)]
     probe: bool,
@@ -515,6 +546,9 @@ struct DiscoverReport {
     operations_found: usize,
     operations_probed: usize,
     shapes_learned: usize,
+    import_format: Option<String>,
+    schemas_imported: usize,
+    examples_inferred: usize,
     warnings: Vec<String>,
     effects_assumed: Vec<String>,
 }
@@ -844,8 +878,65 @@ struct PathFilters {
 }
 
 async fn discover_source(store: &Store, args: &DiscoverArgs) -> Result<DiscoverReport> {
+    if let Some(format) = args.import {
+        return discover_from_import(store, args, format).await;
+    }
     let seed = read_seed(&args.seed)?;
     discover_from_seed(store, &args.source_id, args.kind, seed, args.probe).await
+}
+
+async fn discover_from_import(
+    store: &Store,
+    args: &DiscoverArgs,
+    format: ImportFormat,
+) -> Result<DiscoverReport> {
+    let raw = read_import_raw(&args.seed)?;
+    let ctx = ImportContext {
+        max_schema_depth: args.max_schema_depth,
+        ..ImportContext::default()
+    };
+    let (profile, report, import_format) = import_profile_from_raw(args, format, &raw, &ctx)?;
+    let expected = core_kind(args.kind);
+    if profile.kind != expected {
+        return Err(CoreError::BadArgs {
+            operation: "discover --import".to_string(),
+            reason: format!(
+                "--kind {:?} does not match imported profile kind {:?}",
+                expected, profile.kind
+            ),
+        });
+    }
+    let mut warnings = report.warnings.clone();
+    warnings.extend(
+        report
+            .errors
+            .iter()
+            .map(|error| format!("import warning: {error}")),
+    );
+    if args.probe {
+        warnings.push(
+            "probe is skipped for imported profiles; import never executes upstream calls"
+                .to_string(),
+        );
+    }
+    let source_id = args.source_id.clone();
+    let profile = store.update_profile(&source_id, |current| {
+        merge_profiles(current, profile.clone())
+    })?;
+    Ok(DiscoverReport {
+        schema_version: DISCLOSURE_VERSION,
+        source_id,
+        kind: profile.kind,
+        profile_version: profile.version,
+        operations_found: report.operations_imported,
+        operations_probed: 0,
+        shapes_learned: 0,
+        import_format: Some(import_format.to_string()),
+        schemas_imported: report.schemas_imported,
+        examples_inferred: report.examples_inferred,
+        warnings,
+        effects_assumed: Vec::new(),
+    })
 }
 
 async fn discover_from_seed(
@@ -892,6 +983,9 @@ async fn discover_from_seed(
         operations_found,
         operations_probed,
         shapes_learned,
+        import_format: None,
+        schemas_imported: 0,
+        examples_inferred: 0,
         warnings: prepared.warnings,
         effects_assumed: prepared.effects_assumed,
     })
@@ -3520,6 +3614,112 @@ fn read_seed(seed: &str) -> Result<Value> {
     serde_json::from_str(&raw).map_err(|error| CoreError::BadArgs {
         operation: "discover".to_string(),
         reason: format!("seed must be valid JSON: {error}"),
+    })
+}
+
+fn read_import_raw(seed: &str) -> Result<String> {
+    let path = Path::new(seed);
+    if path.exists() {
+        std::fs::read_to_string(path).map_err(|error| CoreError::BadArgs {
+            operation: "discover --import".to_string(),
+            reason: format!("import path '{seed}' could not be read: {error}"),
+        })
+    } else {
+        Ok(seed.to_string())
+    }
+}
+
+fn import_profile_from_raw(
+    args: &DiscoverArgs,
+    format: ImportFormat,
+    raw: &str,
+    ctx: &ImportContext,
+) -> Result<(SourceProfile, ImportReport, &'static str)> {
+    match format {
+        ImportFormat::Openapi => {
+            require_import_kind(args.kind, SourceKind::Http, format)?;
+            let value = parse_import_json(raw, format)?;
+            let (profile, report) = import_openapi(args.source_id.clone(), &value, ctx)?;
+            Ok((profile, report, format.as_str()))
+        }
+        ImportFormat::JsonSchema => {
+            require_import_kind(args.kind, SourceKind::Http, format)?;
+            let value = parse_import_json(raw, format)?;
+            let (profile, report) = import_json_schema(args.source_id.clone(), &value, ctx)?;
+            Ok((profile, report, format.as_str()))
+        }
+        ImportFormat::CliHelp => {
+            require_import_kind(args.kind, SourceKind::Cli, format)?;
+            let command_base = args.command_base.as_deref().ok_or_else(|| CoreError::BadArgs {
+                operation: "discover --import cli-help".to_string(),
+                reason: "pass --command-base <command> so the generated profile has an explicit executable".to_string(),
+            })?;
+            let (profile, report) =
+                import_cli_help(args.source_id.clone(), raw, command_base, ctx)?;
+            Ok((profile, report, format.as_str()))
+        }
+        ImportFormat::Auto => import_profile_auto(args, raw, ctx),
+    }
+}
+
+fn import_profile_auto(
+    args: &DiscoverArgs,
+    raw: &str,
+    ctx: &ImportContext,
+) -> Result<(SourceProfile, ImportReport, &'static str)> {
+    if let Ok(value) = serde_json::from_str::<Value>(raw) {
+        if value
+            .get("openapi")
+            .and_then(Value::as_str)
+            .is_some_and(|version| version.starts_with("3."))
+        {
+            require_import_kind(args.kind, SourceKind::Http, ImportFormat::Auto)?;
+            let (profile, report) = import_openapi(args.source_id.clone(), &value, ctx)?;
+            return Ok((profile, report, ImportFormat::Openapi.as_str()));
+        }
+        if value.get("$schema").is_some() || value.get("type").is_some() {
+            require_import_kind(args.kind, SourceKind::Http, ImportFormat::Auto)?;
+            let (profile, report) = import_json_schema(args.source_id.clone(), &value, ctx)?;
+            return Ok((profile, report, ImportFormat::JsonSchema.as_str()));
+        }
+    }
+
+    if args.kind == SourceKind::Cli {
+        let command_base = args
+            .command_base
+            .as_deref()
+            .ok_or_else(|| CoreError::BadArgs {
+                operation: "discover --import auto".to_string(),
+                reason: "CLI help auto-import requires --command-base <command>".to_string(),
+            })?;
+        let (profile, report) = import_cli_help(args.source_id.clone(), raw, command_base, ctx)?;
+        return Ok((profile, report, ImportFormat::CliHelp.as_str()));
+    }
+
+    Err(CoreError::BadArgs {
+        operation: "discover --import auto".to_string(),
+        reason: "could not detect OpenAPI 3.x, JSON Schema, or CLI help import".to_string(),
+    })
+}
+
+fn parse_import_json(raw: &str, format: ImportFormat) -> Result<Value> {
+    serde_json::from_str(raw).map_err(|error| CoreError::BadArgs {
+        operation: format!("discover --import {}", format.as_str()),
+        reason: format!("import input must be valid JSON: {error}"),
+    })
+}
+
+fn require_import_kind(
+    actual: SourceKind,
+    expected: SourceKind,
+    format: ImportFormat,
+) -> Result<()> {
+    if actual == expected {
+        return Ok(());
+    }
+    Err(CoreError::BadArgs {
+        operation: format!("discover --import {}", format.as_str()),
+        reason: format!("--kind must be {expected:?} for this import format"),
     })
 }
 

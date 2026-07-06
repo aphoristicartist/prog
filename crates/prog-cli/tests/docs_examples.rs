@@ -306,7 +306,8 @@ fn docs_keep_acceptance_topics_visible() {
         "No upstream auto-pagination",
         "No table inference",
         "No MCP server mode",
-        "No OpenAPI import yet",
+        "No automatic trust upgrade",
+        "prog discover",
         "prog --dir /tmp/prog-demo --pretty source add-cli",
         "prog --dir /tmp/prog-demo --pretty meta SourceProfile",
     ] {
@@ -379,6 +380,9 @@ fn docs_keep_acceptance_topics_visible() {
     for expected in [
         "prog source add-http",
         "prog source add-cli",
+        "prog discover --import",
+        "declared_output_schema",
+        "MCP tools without `readOnlyHint: true`",
         "--read-only",
         "confirmation-gated",
         "generated_seed",

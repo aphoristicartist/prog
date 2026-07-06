@@ -45,6 +45,30 @@ prog call local inspect --args '{}' --yes
 The command is stored as argv, not as a shell string. Shell-backed sources still
 require explicit seed/profile editing because shell trust should be reviewed.
 
+## Import Existing Descriptors
+
+`prog discover --import` seeds profiles from descriptors that tools already
+publish. Imports never execute upstream calls during discovery, even if
+`--probe` is passed.
+
+```bash
+prog discover api --kind http --seed openapi.json --import openapi
+prog discover schema_api --kind http --seed schema.json --import json-schema
+prog discover taskctl --kind cli --seed taskctl.help --import cli-help --command-base taskctl
+```
+
+Use `--import auto` to detect OpenAPI 3.x or JSON Schema JSON. CLI help imports
+need `--command-base` so the generated profile records the exact executable.
+
+Imported schemas are bounded by `--max-schema-depth` and preserve `$ref` values
+without dereferencing external documents. Declared schemas are stored as
+`declared_output_schema`; later probes or calls learn `output_shape`
+separately, so observations refine priors without overwriting them.
+
+CLI help imports are conservative: parsed commands are not marked read-only,
+are not cacheable, and require `--yes`. MCP tools without `readOnlyHint: true`
+follow the same fail-closed rule in the importer API.
+
 ## Generated Output
 
 Both source-add commands return:
