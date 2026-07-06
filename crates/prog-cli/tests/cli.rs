@@ -483,6 +483,250 @@ fn observe_cursor_expiry_fails_closed() {
 }
 
 #[test]
+fn envelopes_expose_observation_metadata_for_agent_safety() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+
+    let complete = prog_with_stdin(
+        &[
+            "--dir",
+            dir_arg,
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "complete",
+        ],
+        br#"{"ok":true}"#,
+    );
+    assert!(complete.status.success(), "{}", stdout(&complete));
+    let complete_value: Value = serde_json::from_slice(&complete.stdout).unwrap();
+    assert_eq!(
+        complete_value["observation"]["completeness"]["status"],
+        "complete"
+    );
+    assert_eq!(
+        complete_value["observation"]["completeness"]["preview_complete"],
+        true
+    );
+    assert_eq!(
+        complete_value["observation"]["payload"]["cache_status"],
+        "stored"
+    );
+    assert_eq!(complete_value["observation"]["payload"]["cached"], true);
+    assert_eq!(
+        complete_value["observation"]["trust"]["profile_backed"],
+        false
+    );
+    assert_eq!(
+        complete_value["observation"]["trust"]["source_kind"],
+        "artifact"
+    );
+    assert_eq!(
+        complete_value["observation"]["safety"]["redacted_before_persistence"],
+        false
+    );
+
+    let partial = prog_with_stdin(
+        &[
+            "--dir",
+            dir_arg,
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "partial-redacted",
+        ],
+        serde_json::to_vec(&json!({
+            "items": (0..12)
+                .map(|index| json!({
+                    "id": index,
+                    "body": "x".repeat(500),
+                    "token": "secret-value"
+                }))
+                .collect::<Vec<_>>()
+        }))
+        .unwrap()
+        .as_slice(),
+    );
+    assert!(partial.status.success(), "{}", stdout(&partial));
+    let partial_value: Value = serde_json::from_slice(&partial.stdout).unwrap();
+    assert_eq!(
+        partial_value["observation"]["completeness"]["status"],
+        "truncated"
+    );
+    assert_eq!(
+        partial_value["observation"]["completeness"]["preview_complete"],
+        false
+    );
+    assert_eq!(
+        partial_value["observation"]["completeness"]["redacted"],
+        true
+    );
+    assert!(
+        partial_value["observation"]["completeness"]["omitted_count"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(
+        partial_value["observation"]["safety"]["redacted_paths"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    let cursor = partial_value["cursor"].as_str().unwrap();
+    let expanded = prog(&["--dir", dir_arg, "expand", cursor, "--path", "/items"]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let expanded_value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(
+        expanded_value["observation"]["payload"]["cache_status"],
+        "hit"
+    );
+    assert_eq!(expanded_value["observation"]["freshness"]["stale"], true);
+    assert_eq!(
+        expanded_value["observation"]["freshness"]["refresh_recommended"],
+        true
+    );
+
+    let script = dir.path().join("emit_metadata.py");
+    fs::write(
+        &script,
+        "import json\nprint(json.dumps({'value': 1, 'token': 'secret-value'}))\n",
+    )
+    .unwrap();
+    let safe_seed = write_seed(
+        dir.path(),
+        "safe-metadata.json",
+        &format!(
+            r#"{{
+              "kind": "cli",
+              "operations": [{{
+                "name": "emit",
+                "command": "python3",
+                "args": ["{}"],
+                "effect": {{
+                  "read_only": true,
+                  "mutating": false,
+                  "network": false,
+                  "shell": false,
+                  "sensitive": false,
+                  "cacheable": true,
+                  "requires_confirmation": false
+                }}
+              }}]
+            }}"#,
+            script.to_str().unwrap()
+        ),
+    );
+    let discover_safe = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "safe_meta",
+        "--kind",
+        "cli",
+        "--seed",
+        safe_seed.to_str().unwrap(),
+    ]);
+    assert!(discover_safe.status.success(), "{}", stdout(&discover_safe));
+    let no_cache = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "safe_meta",
+        "emit",
+        "--args",
+        "{}",
+        "--no-cache",
+    ]);
+    assert!(no_cache.status.success(), "{}", stdout(&no_cache));
+    let no_cache_value: Value = serde_json::from_slice(&no_cache.stdout).unwrap();
+    assert_eq!(
+        no_cache_value["observation"]["trust"]["profile_backed"],
+        true
+    );
+    assert_eq!(no_cache_value["observation"]["trust"]["source_kind"], "cli");
+    assert_eq!(
+        no_cache_value["observation"]["payload"]["cache_status"],
+        "skipped"
+    );
+    assert_eq!(
+        no_cache_value["observation"]["payload"]["expandable"],
+        false
+    );
+    assert!(
+        no_cache_value["observation"]["safety"]["cache_disabled_reason"]
+            .as_str()
+            .unwrap()
+            .contains("--no-cache")
+    );
+
+    let sensitive_seed = write_seed(
+        dir.path(),
+        "sensitive-metadata.json",
+        &format!(
+            r#"{{
+              "kind": "cli",
+              "operations": [{{
+                "name": "emit",
+                "command": "python3",
+                "args": ["{}"],
+                "effect": {{
+                  "read_only": true,
+                  "mutating": false,
+                  "network": false,
+                  "shell": false,
+                  "sensitive": true,
+                  "cacheable": false,
+                  "requires_confirmation": false
+                }}
+              }}]
+            }}"#,
+            script.to_str().unwrap()
+        ),
+    );
+    let discover_sensitive = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "sensitive_meta",
+        "--kind",
+        "cli",
+        "--seed",
+        sensitive_seed.to_str().unwrap(),
+    ]);
+    assert!(
+        discover_sensitive.status.success(),
+        "{}",
+        stdout(&discover_sensitive)
+    );
+    let sensitive = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "sensitive_meta",
+        "emit",
+        "--args",
+        "{}",
+    ]);
+    assert!(sensitive.status.success(), "{}", stdout(&sensitive));
+    let sensitive_value: Value = serde_json::from_slice(&sensitive.stdout).unwrap();
+    assert_eq!(
+        sensitive_value["observation"]["safety"]["sensitive_cache_disabled"],
+        true
+    );
+    assert_eq!(
+        sensitive_value["observation"]["safety"]["effects"]["sensitive"],
+        true
+    );
+}
+
+#[test]
 fn paths_filters_and_planner_actions_cover_omission_reasons() {
     let dir = tempfile::tempdir().unwrap();
     let wide = (0..30)
@@ -1208,6 +1452,30 @@ fn meta_lists_and_discloses_contract_schemas() {
     let value: Value = serde_json::from_slice(&lens_schema.stdout).unwrap();
     assert_eq!(value["operation"], "LensManifest");
     assert_eq!(value["data_preview"]["title"], "LensManifest");
+
+    let envelope_schema = prog(&["--dir", dir_arg, "meta", "DisclosureEnvelope"]);
+    assert!(
+        envelope_schema.status.success(),
+        "{}",
+        stdout(&envelope_schema)
+    );
+    let value: Value = serde_json::from_slice(&envelope_schema.stdout).unwrap();
+    assert!(
+        value["data_preview"]["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key("observation")
+    );
+
+    let observation_schema = prog(&["--dir", dir_arg, "meta", "ObservationMetadata"]);
+    assert!(
+        observation_schema.status.success(),
+        "{}",
+        stdout(&observation_schema)
+    );
+    let value: Value = serde_json::from_slice(&observation_schema.stdout).unwrap();
+    assert_eq!(value["operation"], "ObservationMetadata");
+    assert_eq!(value["data_preview"]["title"], "ObservationMetadata");
 }
 
 #[test]

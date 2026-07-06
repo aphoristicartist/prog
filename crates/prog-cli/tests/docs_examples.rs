@@ -240,6 +240,7 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/cache.md",
         "docs/safety.md",
         "docs/contracts.md",
+        "docs/metadata.md",
         "docs/lenses.md",
         "docs/observe.md",
         "docs/paths.md",

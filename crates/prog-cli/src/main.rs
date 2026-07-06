@@ -15,12 +15,14 @@ use prog_adapters::{
 use prog_core::{
     AuthRef, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance, CoreError,
     DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, Extra, LensManifest, NextAction,
-    OmissionReason, OmittedRegion, OperationProfile, PreviewPolicy, RedactionPolicy, Result,
-    SOURCE_PROFILE_VERSION, SliceRequest, SourceProfile, Store, Summary, TrustSettings,
-    cache_allowed, call_effect_warnings, check_call, check_discovery, cli_adapter_effects,
-    cli_hardening_effects, expand, http_adapter_effects, http_hardening_effects, infer, join,
-    lens_slice_request, new_cache_entry, project, project_with_lens, public_contract_schemas,
-    render_hints, slice_value, tighten_effects, validate_lens_manifest,
+    ObservationCompleteness, ObservationFreshness, ObservationMetadata, ObservationPayloadStatus,
+    ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion, OperationProfile,
+    PreviewPolicy, RedactionPolicy, Result, SOURCE_PROFILE_VERSION, SliceRequest, SourceProfile,
+    Store, Summary, TrustSettings, cache_allowed, call_effect_warnings, check_call,
+    check_discovery, cli_adapter_effects, cli_hardening_effects, expand, http_adapter_effects,
+    http_hardening_effects, infer, join, lens_slice_request, new_cache_entry, project,
+    project_with_lens, public_contract_schemas, render_hints, slice_value, tighten_effects,
+    validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -391,12 +393,16 @@ struct AdapterCall {
 struct EnvelopeInput {
     source_id: String,
     operation: String,
+    source_kind: Option<String>,
     payload: Value,
     root_path: String,
     slice: SliceRequest,
     payload_bytes: u64,
     provenance: Option<CallProvenance>,
     cache: Option<CacheInfo>,
+    effects: Option<EffectSet>,
+    redacted_paths: usize,
+    cache_disabled_reason: Option<String>,
     warnings: Vec<String>,
     schema_hints: BTreeMap<String, String>,
     next_action_operation: Option<String>,
@@ -607,12 +613,16 @@ async fn call_source(
             EnvelopeInput {
                 source_id: args.source_id.clone(),
                 operation: args.operation.clone(),
+                source_kind: Some(profile_source_kind_name(profile.kind).to_string()),
                 payload,
                 root_path: root_path.clone(),
                 slice: view,
                 payload_bytes: entry.payload_bytes,
                 provenance: entry.provenance.clone(),
                 cache: Some(cache_info),
+                effects: Some(operation.effects.clone()),
+                redacted_paths: 0,
+                cache_disabled_reason: None,
                 warnings: Vec::new(),
                 schema_hints: operation
                     .output_shape
@@ -662,6 +672,7 @@ async fn call_source(
         ));
     }
 
+    let mut cache_disabled_reason = None;
     let cache_status = if may_cache {
         let payload_hash = store.put_payload(&redacted)?;
         let ttl = ttl_seconds(&effective_cache);
@@ -679,7 +690,9 @@ async fn call_source(
         Some(cache_info(CacheStatus::Stored, &entry, Some(0)))
     } else {
         provenance.cache_key = None;
-        warnings.push(cache_skip_warning(args.no_cache, &operation));
+        let reason = cache_skip_warning(args.no_cache, &operation);
+        warnings.push(reason.clone());
+        cache_disabled_reason = Some(reason);
         Some(CacheInfo {
             status: CacheStatus::Skipped,
             ttl_seconds: None,
@@ -708,12 +721,16 @@ async fn call_source(
         EnvelopeInput {
             source_id: args.source_id.clone(),
             operation: args.operation.clone(),
+            source_kind: Some(profile_source_kind_name(profile.kind).to_string()),
             payload: redacted,
             root_path,
             slice: view,
             payload_bytes,
             provenance: Some(provenance),
             cache: cache_status,
+            effects: Some(operation.effects.clone()),
+            redacted_paths: redacted_paths.len(),
+            cache_disabled_reason,
             warnings,
             schema_hints: render_hints(&observed, ""),
             next_action_operation: Some(args.operation.clone()),
@@ -791,12 +808,16 @@ fn observe_artifact(store: &Store, args: &ObserveArgs) -> Result<DisclosureEnvel
         EnvelopeInput {
             source_id: "observe".to_string(),
             operation: input.name,
+            source_kind: Some("artifact".to_string()),
             payload: redacted,
             root_path: "".to_string(),
             slice,
             payload_bytes,
             provenance: entry.provenance.clone(),
             cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
+            effects: None,
+            redacted_paths: redacted_paths.len(),
+            cache_disabled_reason: None,
             warnings,
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
@@ -1206,8 +1227,9 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
         return envelope_for_payload(
             store,
             EnvelopeInput {
-                source_id: record.source_id,
-                operation: record.operation,
+                source_id: record.source_id.clone(),
+                operation: record.operation.clone(),
+                source_kind: source_kind_for_source_id(&record.source_id),
                 payload: receipt,
                 root_path: "".to_string(),
                 slice: SliceRequest {
@@ -1221,6 +1243,9 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
                 payload_bytes: bytes.len().try_into().unwrap_or(u64::MAX),
                 provenance: entry.provenance.clone(),
                 cache: Some(cache_info(CacheStatus::Hit, &entry, Some(age))),
+                effects: None,
+                redacted_paths: 0,
+                cache_disabled_reason: None,
                 warnings,
                 schema_hints: BTreeMap::new(),
                 next_action_operation: None,
@@ -1233,14 +1258,18 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
     envelope_for_payload(
         store,
         EnvelopeInput {
-            source_id: record.source_id,
-            operation: record.operation,
+            source_id: record.source_id.clone(),
+            operation: record.operation.clone(),
+            source_kind: source_kind_for_source_id(&record.source_id),
             payload,
             root_path: record.root_path,
             slice,
             payload_bytes: entry.payload_bytes,
             provenance: entry.provenance.clone(),
             cache: Some(cache_info(CacheStatus::Hit, &entry, Some(age))),
+            effects: None,
+            redacted_paths: 0,
+            cache_disabled_reason: None,
             warnings,
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
@@ -1299,12 +1328,16 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
         EnvelopeInput {
             source_id: "prog".to_string(),
             operation,
+            source_kind: Some("internal".to_string()),
             payload,
             root_path: "".to_string(),
             slice,
             payload_bytes,
             provenance: entry.provenance.clone(),
             cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
+            effects: None,
+            redacted_paths: 0,
+            cache_disabled_reason: None,
             warnings: Vec::new(),
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
@@ -2479,6 +2512,22 @@ fn cache_skip_warning(no_cache: bool, operation: &OperationProfile) -> String {
     }
 }
 
+fn profile_source_kind_name(kind: prog_core::SourceKind) -> &'static str {
+    match kind {
+        prog_core::SourceKind::Http => "http",
+        prog_core::SourceKind::Cli => "cli",
+        prog_core::SourceKind::Mcp => "mcp",
+    }
+}
+
+fn source_kind_for_source_id(source_id: &str) -> Option<String> {
+    match source_id {
+        "observe" => Some("artifact".to_string()),
+        "prog" => Some("internal".to_string()),
+        _ => None,
+    }
+}
+
 fn cache_info(
     status: CacheStatus,
     entry: &prog_core::CacheEntryMeta,
@@ -2600,6 +2649,7 @@ fn make_envelope(
     cursor: Option<String>,
 ) -> DisclosureEnvelope {
     let projection = lens_projection.projection;
+    let observation = observation_metadata(input, &projection.omitted, cursor.as_deref());
     let mut next_actions = lens_projection
         .next_actions
         .into_iter()
@@ -2655,8 +2705,109 @@ fn make_envelope(
         next_actions,
         provenance: input.provenance.clone(),
         cache: input.cache.clone(),
+        observation: Some(observation),
         warnings: input.warnings.clone(),
         extra,
+    }
+}
+
+fn observation_metadata(
+    input: &EnvelopeInput,
+    omitted: &[OmittedRegion],
+    cursor: Option<&str>,
+) -> ObservationMetadata {
+    let redacted_omissions = omitted
+        .iter()
+        .filter(|region| region.reason == OmissionReason::Redacted)
+        .count();
+    let redacted_count = input.redacted_paths.max(redacted_omissions);
+    let truncated = omitted
+        .iter()
+        .any(|region| region.reason != OmissionReason::Redacted);
+    let path_scoped = !input.root_path.is_empty()
+        || input.slice.path.is_some()
+        || !input.slice.fields.is_empty()
+        || !input.slice.omit.is_empty();
+    let preview_complete = omitted.is_empty() && !path_scoped;
+    let completeness_status = if path_scoped {
+        "path_scoped"
+    } else if truncated {
+        "truncated"
+    } else if redacted_count > 0 {
+        "redacted"
+    } else if !omitted.is_empty() {
+        "partial"
+    } else {
+        "complete"
+    };
+    let cache_status = input.cache.as_ref().map(|cache| cache.status);
+    let cached = matches!(cache_status, Some(CacheStatus::Stored | CacheStatus::Hit));
+    let age_seconds = input.cache.as_ref().and_then(|cache| cache.age_seconds);
+    let stale = matches!(cache_status, Some(CacheStatus::Hit)) && age_seconds.unwrap_or(0) > 0;
+    let sensitive_cache_disabled = matches!(cache_status, Some(CacheStatus::Skipped))
+        && input
+            .effects
+            .as_ref()
+            .is_some_and(|effects| effects.sensitive);
+    ObservationMetadata {
+        completeness: ObservationCompleteness {
+            status: completeness_status.to_string(),
+            preview_complete,
+            path_scoped,
+            truncated,
+            redacted: redacted_count > 0,
+            omitted_count: omitted.len().try_into().unwrap_or(u64::MAX),
+            redacted_count: redacted_count.try_into().unwrap_or(u64::MAX),
+            root_path: input.root_path.clone(),
+            extra: Extra::new(),
+        },
+        freshness: ObservationFreshness {
+            captured_at: input
+                .provenance
+                .as_ref()
+                .map(|provenance| provenance.captured_at.clone()),
+            age_seconds,
+            expires_at: input
+                .cache
+                .as_ref()
+                .and_then(|cache| cache.expires_at.clone()),
+            stale_after_seconds: match cache_status {
+                Some(CacheStatus::Hit) => Some(0),
+                _ => input.cache.as_ref().and_then(|cache| cache.ttl_seconds),
+            },
+            stale,
+            refresh_recommended: stale,
+            extra: Extra::new(),
+        },
+        trust: ObservationTrust {
+            profile_backed: !matches!(input.source_id.as_str(), "observe" | "prog"),
+            source_kind: input.source_kind.clone(),
+            adapter_provenance: input
+                .provenance
+                .as_ref()
+                .is_some_and(|provenance| provenance.extra.contains_key("adapter")),
+            provenance_status: input
+                .provenance
+                .as_ref()
+                .and_then(|provenance| provenance.status.clone()),
+            extra: Extra::new(),
+        },
+        safety: ObservationSafety {
+            redacted_before_persistence: redacted_count > 0,
+            redacted_paths: redacted_count.try_into().unwrap_or(u64::MAX),
+            sensitive_cache_disabled,
+            cache_disabled_reason: input.cache_disabled_reason.clone(),
+            effects: input.effects.clone(),
+            extra: Extra::new(),
+        },
+        payload: ObservationPayloadStatus {
+            cache_status,
+            cached,
+            expandable: cursor.is_some(),
+            payload_bytes: input.payload_bytes,
+            extra: Extra::new(),
+        },
+        extra: Extra::new(),
     }
 }
 
