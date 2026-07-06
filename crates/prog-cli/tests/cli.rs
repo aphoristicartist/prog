@@ -55,6 +55,7 @@ fn help_shows_complete_command_tree() {
         "hints",
         "call",
         "observe",
+        "run",
         "paths",
         "expand",
         "cache",
@@ -480,6 +481,248 @@ fn observe_cursor_expiry_fails_closed() {
     assert!(!expanded.status.success());
     let error: Value = serde_json::from_slice(&expanded.stdout).unwrap();
     assert_eq!(error["error"]["kind"], "cursor_expired");
+}
+
+#[test]
+fn run_success_captures_streams_interleaving_out_file_and_expansion() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let out = dir.path().join("run-capture.json");
+    let output = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--out",
+        out.to_str().unwrap(),
+        "--",
+        "python3",
+        "-c",
+        "import sys\nfor i in range(3):\n print(f'out-{i}', flush=True)\n sys.stderr.write(f'err-{i}\\n'); sys.stderr.flush()",
+    ]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    assert_eq!(stderr(&output), "");
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["source_id"], "run");
+    assert_eq!(envelope["data_preview"]["format"], "run");
+    assert_eq!(envelope["data_preview"]["command"]["success"], true);
+    assert_eq!(envelope["data_preview"]["stdout"]["line_count"], 3);
+    assert_eq!(envelope["data_preview"]["stderr"]["line_count"], 3);
+    let combined = envelope["data_preview"]["combined"].as_array().unwrap();
+    assert!(combined.iter().any(|chunk| chunk["stream"] == "stdout"));
+    assert!(combined.iter().any(|chunk| chunk["stream"] == "stderr"));
+    assert_eq!(envelope["observation"]["payload"]["cache_status"], "stored");
+    assert_eq!(envelope["observation"]["payload"]["expandable"], true);
+    assert!(out.exists());
+    let out_value: Value = serde_json::from_slice(&fs::read(out).unwrap()).unwrap();
+    assert_eq!(out_value["stdout"]["text"], "out-0\nout-1\nout-2");
+
+    let cursor = envelope["cursor"].as_str().unwrap();
+    let expanded = prog(&["--dir", dir_arg, "expand", cursor, "--path", "/stderr/text"]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(value["data_preview"], "err-0\nerr-1\nerr-2");
+}
+
+#[test]
+fn run_repeated_identical_commands_create_distinct_cache_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let args = [
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        "-c",
+        "print('same')",
+    ];
+
+    let first = prog(&args);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let second = prog(&args);
+    assert!(second.status.success(), "{}", stdout(&second));
+
+    let first_envelope: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let second_envelope: Value = serde_json::from_slice(&second.stdout).unwrap();
+    let first_capture = first_envelope["data_preview"]["command"]["capture_id"]
+        .as_str()
+        .unwrap();
+    let second_capture = second_envelope["data_preview"]["command"]["capture_id"]
+        .as_str()
+        .unwrap();
+    assert!(first_capture.starts_with("run_"));
+    assert!(second_capture.starts_with("run_"));
+    assert_ne!(first_capture, second_capture);
+    assert_eq!(
+        first_envelope["provenance"]["source_call_id"],
+        first_capture
+    );
+    assert_eq!(
+        second_envelope["provenance"]["source_call_id"],
+        second_capture
+    );
+    assert_ne!(
+        first_envelope["provenance"]["cache_key"],
+        second_envelope["provenance"]["cache_key"]
+    );
+
+    for envelope in [first_envelope, second_envelope] {
+        let cursor = envelope["cursor"].as_str().unwrap();
+        let expanded = prog(&["--dir", dir_arg, "expand", cursor, "--path", "/stdout/text"]);
+        assert!(expanded.status.success(), "{}", stdout(&expanded));
+        let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+        assert_eq!(value["data_preview"], "same");
+    }
+}
+
+#[test]
+fn run_failure_returns_envelope_and_can_preserve_exit_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let script = "import sys\nsys.stderr.write('Traceback (most recent call last):\\n  File \"x.py\", line 1\\nValueError: bad\\n')\nsys.exit(7)";
+
+    let output = prog(&["--dir", dir_arg, "run", "--", "python3", "-c", script]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["data_preview"]["command"]["success"], false);
+    assert_eq!(envelope["data_preview"]["command"]["exit_code"], 7);
+    assert_eq!(
+        envelope["data_preview"]["failure_sections"][0]["kind"],
+        "python"
+    );
+    assert!(
+        envelope["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action["path"] == "/failure_sections/0" && action["argv"][3] == "--path")
+    );
+    let cursor = envelope["cursor"].as_str().unwrap();
+    let expanded = prog(&[
+        "--dir",
+        dir_arg,
+        "expand",
+        cursor,
+        "--path",
+        "/failure_sections/0",
+    ]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(value["data_preview"]["kind"], "python");
+
+    let preserved = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--preserve-exit-code",
+        "--",
+        "python3",
+        "-c",
+        script,
+    ]);
+    assert_eq!(preserved.status.code(), Some(7));
+    let value: Value = serde_json::from_slice(&preserved.stdout).unwrap();
+    assert_eq!(value["data_preview"]["command"]["exit_code"], 7);
+}
+
+#[test]
+fn run_large_streams_are_bounded_expandable_and_redacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let output = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--max-stdout-bytes",
+        "256",
+        "--max-stderr-bytes",
+        "128",
+        "--",
+        "python3",
+        "-c",
+        "import sys\nsys.stdout.write('token=plain-secret\\n' + 'x' * 20000)\nsys.stderr.write('error[E0425]: bad\\n' + 'y' * 20000)",
+    ]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("plain-secret"));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(envelope["summary"]["envelope_bytes"].as_u64().unwrap() <= 16 * 1024);
+    assert_eq!(envelope["data_preview"]["stdout"]["truncated"], true);
+    assert_eq!(envelope["data_preview"]["stderr"]["truncated"], true);
+    assert_eq!(
+        envelope["data_preview"]["stdout"]["head"][0],
+        "token=[REDACTED:observed_text_secret]"
+    );
+    assert_eq!(
+        envelope["data_preview"]["failure_sections"][0]["kind"],
+        "rust"
+    );
+    assert!(
+        envelope["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().unwrap().contains("stdout exceeded"))
+    );
+    let cursor = envelope["cursor"].as_str().unwrap();
+    let expanded = prog(&["--dir", dir_arg, "expand", cursor, "--path", "/stdout/text"]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    assert!(!stdout(&expanded).contains("plain-secret"));
+    let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert!(
+        value["data_preview"]
+            .as_str()
+            .unwrap()
+            .contains("[REDACTED:observed_text_secret]")
+    );
+}
+
+#[test]
+fn run_timeout_and_missing_command_return_structured_envelopes() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let timeout = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--timeout-ms",
+        "50",
+        "--",
+        "python3",
+        "-c",
+        "import time; time.sleep(5)",
+    ]);
+    assert!(timeout.status.success(), "{}", stdout(&timeout));
+    let value: Value = serde_json::from_slice(&timeout.stdout).unwrap();
+    assert_eq!(value["data_preview"]["command"]["timed_out"], true);
+    assert_eq!(
+        value["data_preview"]["failure_sections"][0]["kind"],
+        "timeout"
+    );
+
+    let missing = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "prog-command-that-does-not-exist-43",
+    ]);
+    assert!(missing.status.success(), "{}", stdout(&missing));
+    let value: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert!(value["data_preview"]["command"]["spawn_error"].is_string());
+    assert_eq!(
+        value["data_preview"]["failure_sections"][0]["kind"],
+        "spawn_error"
+    );
+
+    let missing_preserved = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--preserve-exit-code",
+        "--",
+        "prog-command-that-does-not-exist-43",
+    ]);
+    assert_eq!(missing_preserved.status.code(), Some(127));
 }
 
 #[test]
