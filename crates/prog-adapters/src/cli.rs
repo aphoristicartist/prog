@@ -538,7 +538,7 @@ fn redact_argv(
         .filter(|(name, _)| {
             operation.sensitive_args.iter().any(|arg| arg == *name) || is_sensitive_name(name)
         })
-        .filter_map(|(_, value)| value.as_str().map(str::to_string))
+        .filter_map(|(_, value)| redaction_value(value))
         .collect();
 
     argv.into_iter()
@@ -548,6 +548,16 @@ fn redact_argv(
             })
         })
         .collect()
+}
+
+fn redaction_value(value: &Value) -> Option<String> {
+    let value = match value {
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Null | Value::Array(_) | Value::Object(_) => return None,
+    };
+    (!value.is_empty()).then_some(value)
 }
 
 fn default_timeout_ms() -> u64 {

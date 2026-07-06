@@ -567,12 +567,22 @@ fn sensitive_arg_names(operation: &HttpOperation, args: &Map<String, Value>) -> 
 fn redact_url(url: &str, args: &Map<String, Value>, sensitive_names: &BTreeSet<String>) -> String {
     let mut output = url.to_string();
     for name in sensitive_names {
-        if let Some(value) = args.get(name).and_then(Value::as_str) {
-            output = output.replace(value, "[REDACTED]");
-            output = output.replace(&percent_encode(value), "[REDACTED]");
+        if let Some(value) = redaction_value(args.get(name)) {
+            output = output.replace(&value, "[REDACTED]");
+            output = output.replace(&percent_encode(&value), "[REDACTED]");
         }
     }
     output
+}
+
+fn redaction_value(value: Option<&Value>) -> Option<String> {
+    let value = match value? {
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Null | Value::Array(_) | Value::Object(_) => return None,
+    };
+    (!value.is_empty()).then_some(value)
 }
 
 fn is_sensitive_header(name: &str) -> bool {

@@ -265,6 +265,25 @@ async fn declared_sensitive_arg_names_are_redacted_from_provenance_args() {
 }
 
 #[tokio::test]
+async fn non_string_sensitive_args_are_redacted_from_argv() {
+    let mut op = operation(
+        "secret",
+        &["-c", "import sys; print('ok')", "--pin", "{pin}"],
+    );
+    op.sensitive_args = vec!["pin".to_string()];
+    let source = source(op);
+
+    let result = source
+        .execute("secret", &json!({"pin": 12345}))
+        .await
+        .unwrap();
+
+    let provenance = serde_json::to_string(&result.provenance).unwrap();
+    assert!(!provenance.contains("12345"));
+    assert!(provenance.contains("[REDACTED]"));
+}
+
+#[tokio::test]
 async fn shell_backed_operation_fails_closed_without_profile_trust() {
     let mut op = operation("shell", &["-c", "print('should not run')"]);
     op.shell = true;
