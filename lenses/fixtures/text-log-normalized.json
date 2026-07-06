@@ -1,0 +1,26 @@
+{
+  "format": "text",
+  "head": [
+    "2026-07-06T12:00:00Z INFO service started",
+    "2026-07-06T12:00:01Z WARN retrying request id=req-1"
+  ],
+  "tail": [
+    "2026-07-06T12:00:08Z ERROR checkout failed status=500",
+    "2026-07-06T12:00:09Z INFO shutdown"
+  ],
+  "lines": [
+    {"number": 1, "text": "2026-07-06T12:00:00Z INFO service started"},
+    {"number": 2, "text": "2026-07-06T12:00:01Z WARN retrying request id=req-1"},
+    {"number": 3, "text": "2026-07-06T12:00:02Z INFO request token=[REDACTED:observed_text_secret]"},
+    {"number": 4, "text": "2026-07-06T12:00:03Z INFO payload aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"number": 5, "text": "2026-07-06T12:00:04Z INFO payload bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    {"number": 6, "text": "2026-07-06T12:00:05Z INFO payload cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+    {"number": 7, "text": "2026-07-06T12:00:06Z INFO payload dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+    {"number": 8, "text": "2026-07-06T12:00:07Z INFO payload eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
+    {"number": 9, "text": "2026-07-06T12:00:08Z ERROR checkout failed status=500"},
+    {"number": 10, "text": "2026-07-06T12:00:09Z INFO shutdown"}
+  ],
+  "line_count": 10,
+  "byte_count": 1300,
+  "utf8_valid": true
+}

@@ -9,6 +9,13 @@ prog run -- pytest -q
 prog run -- gh api repos/OWNER/REPO/issues
 ```
 
+Use the first-party lens pack when the command output is noisy and failure
+triage is the goal:
+
+```bash
+prog --lens-dir ./lenses run --lens run.failures -- cargo test
+```
+
 The stored payload includes:
 
 - redacted argv and current working directory

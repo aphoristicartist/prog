@@ -1,0 +1,45 @@
+{
+  "format": "run",
+  "command": {
+    "capture_id": "run_fixture_success",
+    "argv": ["cargo", "test", "-p", "prog-cli"],
+    "argv_count": 4,
+    "cwd": "/work/repo",
+    "started_at": "2026-07-06T12:00:00.000Z",
+    "ended_at": "2026-07-06T12:00:15.000Z",
+    "duration_ms": 15000,
+    "success": true,
+    "exit_code": 0,
+    "signal": null,
+    "timed_out": false,
+    "spawn_error": null,
+    "out": null
+  },
+  "stdout": {
+    "format": "text",
+    "text": "running 128 tests\ntest observe_json_file_uses_envelope_cache_redaction_and_expand ... ok\ntest run_success_captures_streams_interleaving_out_file_and_expansion ... ok\nsummary zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    "head": ["running 128 tests", "test observe_json_file_uses_envelope_cache_redaction_and_expand ... ok"],
+    "tail": ["test run_success_captures_streams_interleaving_out_file_and_expansion ... ok", "summary zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"],
+    "line_count": 4,
+    "byte_count": 720,
+    "captured_bytes": 720,
+    "truncated": false,
+    "utf8_valid": true
+  },
+  "stderr": {
+    "format": "text",
+    "text": "warning: one test emitted structured diagnostic metadata\nwarning detail wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "head": ["warning: one test emitted structured diagnostic metadata"],
+    "tail": ["warning detail wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"],
+    "line_count": 2,
+    "byte_count": 340,
+    "captured_bytes": 340,
+    "truncated": false,
+    "utf8_valid": true
+  },
+  "combined": [
+    {"index": 0, "stream": "stdout", "text": "running 128 tests", "byte_count": 18},
+    {"index": 1, "stream": "stderr", "text": "warning: one test emitted structured diagnostic metadata", "byte_count": 56}
+  ],
+  "failure_sections": []
+}

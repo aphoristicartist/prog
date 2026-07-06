@@ -1,3 +1,8 @@
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
+
 use prog_core::{
     LENS_MANIFEST_VERSION, LensManifest, PreviewPolicy, SliceRequest, lens_slice_request,
     project_with_lens, validate_lens_manifest,
@@ -17,6 +22,13 @@ fn empty_slice() -> SliceRequest {
         omit: Vec::new(),
         extra: serde_json::Map::new(),
     }
+}
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("repo root should canonicalize")
 }
 
 #[test]
@@ -181,4 +193,104 @@ fn missing_lens_fields_are_not_fabricated() {
 
     assert_eq!(projected.projection.preview[0]["id"], json!(1));
     assert!(projected.projection.preview[0].get("missing").is_none());
+}
+
+#[test]
+fn first_party_lens_pack_is_valid_unique_fixture_backed_and_token_efficient() {
+    let lens_dir = repo_root().join("lenses");
+    let mut ids = BTreeSet::new();
+    let mut manifest_count = 0usize;
+
+    for entry in std::fs::read_dir(&lens_dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        manifest_count += 1;
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let lens: LensManifest = serde_json::from_str(&raw).unwrap();
+        validate_lens_manifest(&lens).unwrap();
+        assert!(ids.insert(lens.id.clone()), "duplicate lens id {}", lens.id);
+        assert!(
+            !lens.invariants.is_empty(),
+            "{} should document invariants",
+            lens.id
+        );
+        assert!(
+            !lens.fixtures.positive.is_empty(),
+            "{} should include positive fixtures",
+            lens.id
+        );
+        assert!(
+            !lens.fixtures.negative.is_empty(),
+            "{} should include counterexample fixtures",
+            lens.id
+        );
+
+        for fixture in lens
+            .fixtures
+            .positive
+            .iter()
+            .chain(lens.fixtures.negative.iter())
+        {
+            assert!(
+                lens_dir.join(fixture).exists(),
+                "{} references missing fixture {}",
+                lens.id,
+                fixture
+            );
+        }
+
+        for fixture in &lens.fixtures.positive {
+            let payload_raw = std::fs::read_to_string(lens_dir.join(fixture)).unwrap();
+            let payload: Value = serde_json::from_str(&payload_raw).unwrap();
+            let slice = lens_slice_request(&lens, &empty_slice()).unwrap();
+            let root_path = slice.path.as_deref().unwrap_or("");
+            let projected = project_with_lens(
+                &payload,
+                root_path,
+                &slice,
+                &PreviewPolicy::default(),
+                Some(&lens),
+            )
+            .unwrap();
+            let lens_visible = json!({
+                "data_preview": projected.projection.preview,
+                "omitted": projected.projection.omitted,
+                "next_actions": projected.next_actions
+            });
+            let lens_bytes = serde_json::to_vec(&lens_visible).unwrap().len();
+            let raw_bytes = payload_raw.len();
+            let simple_truncation_bytes = raw_bytes.min(2048);
+            assert!(
+                lens_bytes < raw_bytes,
+                "{} fixture {} should project smaller than raw payload: lens={} raw={}",
+                lens.id,
+                fixture,
+                lens_bytes,
+                raw_bytes
+            );
+            assert!(
+                lens_bytes <= simple_truncation_bytes,
+                "{} fixture {} should beat the simple 2KiB truncation baseline: lens={} truncation={}",
+                lens.id,
+                fixture,
+                lens_bytes,
+                simple_truncation_bytes
+            );
+            assert!(
+                !serde_json::to_string(&lens_visible)
+                    .unwrap()
+                    .contains("plain-secret"),
+                "{} fixture {} should not expose unredacted fixture secrets",
+                lens.id,
+                fixture
+            );
+        }
+    }
+
+    assert!(
+        manifest_count >= 5,
+        "first-party pack should ship at least five lenses"
+    );
 }

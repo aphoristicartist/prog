@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::Write,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Output, Stdio},
 };
 
@@ -41,6 +41,17 @@ fn stdout(output: &Output) -> String {
 
 fn stderr(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).expect("stderr should be utf8")
+}
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("repo root should canonicalize")
+}
+
+fn first_party_lens_dir() -> PathBuf {
+    repo_root().join("lenses")
 }
 
 #[test]
@@ -189,6 +200,90 @@ fn observe_json_file_uses_envelope_cache_redaction_and_expand() {
             .as_u64()
             .unwrap()
             <= 16 * 1024
+    );
+}
+
+#[test]
+fn observe_can_apply_first_party_text_log_lens_and_reject_counterexample() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let lens_dir = first_party_lens_dir();
+    let lens_dir_arg = lens_dir.to_str().unwrap();
+    let log = dir.path().join("service.log");
+    fs::write(
+        &log,
+        "2026-07-06T12:00:00Z INFO start\n2026-07-06T12:00:01Z ERROR token=plain-secret\n2026-07-06T12:00:02Z INFO stop\n",
+    )
+    .unwrap();
+
+    let output = prog(&[
+        "--dir",
+        dir_arg,
+        "--lens-dir",
+        lens_dir_arg,
+        "observe",
+        "--file",
+        log.to_str().unwrap(),
+        "--mime",
+        "text/plain",
+        "--lens",
+        "observe.text.logs",
+    ]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("plain-secret"));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["lens"]["id"], "observe.text.logs");
+    assert_eq!(envelope["data_preview"]["line_count"], 3);
+    assert!(
+        envelope["data_preview"]
+            .as_object()
+            .unwrap()
+            .get("lines")
+            .is_none()
+    );
+    assert!(
+        envelope["omitted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|omitted| omitted["path"] == "/lines" && omitted["expandable"] == true)
+    );
+    let cursor = envelope["cursor"].as_str().unwrap();
+    let expanded = prog(&["--dir", dir_arg, "expand", cursor, "--path", "/lines/1"]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    assert!(!stdout(&expanded).contains("plain-secret"));
+    let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(value["data_preview"]["number"], 2);
+    assert!(
+        value["data_preview"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("[REDACTED:observed_text_secret]")
+    );
+
+    let json_file = dir.path().join("items.json");
+    fs::write(&json_file, r#"{"items":[{"id":1,"title":"tiny"}]}"#).unwrap();
+    let rejected = prog(&[
+        "--dir",
+        dir_arg,
+        "--lens-dir",
+        lens_dir_arg,
+        "observe",
+        "--file",
+        json_file.to_str().unwrap(),
+        "--mime",
+        "application/json",
+        "--lens",
+        "observe.text.logs",
+    ]);
+    assert!(!rejected.status.success());
+    let error: Value = serde_json::from_slice(&rejected.stdout).unwrap();
+    assert_eq!(error["error"]["kind"], "bad_args");
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("artifact_kind 'text', not 'json'")
     );
 }
 
@@ -790,6 +885,72 @@ fn run_failure_returns_envelope_and_can_preserve_exit_code() {
     assert_eq!(preserved.status.code(), Some(7));
     let value: Value = serde_json::from_slice(&preserved.stdout).unwrap();
     assert_eq!(value["data_preview"]["command"]["exit_code"], 7);
+}
+
+#[test]
+fn run_can_apply_first_party_failure_lens_and_expand_redacted_capture() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let lens_dir = first_party_lens_dir();
+    let lens_dir_arg = lens_dir.to_str().unwrap();
+    let script = "import sys\nsecret = 'plain' + '-secret'\nprint('token=' + secret)\nsys.stderr.write('Traceback (most recent call last):\\n  File \"x.py\", line 1\\nRuntimeError: token=' + secret + '\\n')\nsys.exit(2)";
+
+    let output = prog(&[
+        "--dir",
+        dir_arg,
+        "--lens-dir",
+        lens_dir_arg,
+        "run",
+        "--lens",
+        "run.failures",
+        "--",
+        "python3",
+        "-c",
+        script,
+    ]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("plain-secret"));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["lens"]["id"], "run.failures");
+    assert_eq!(envelope["data_preview"]["success"], false);
+    assert_eq!(envelope["data_preview"]["exit_code"], 2);
+    assert!(
+        envelope["data_preview"]
+            .as_object()
+            .unwrap()
+            .get("stderr")
+            .is_none()
+    );
+    assert_eq!(
+        envelope["data_preview"]["failure_sections"][0]["kind"],
+        "python"
+    );
+    assert!(
+        envelope["omitted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|omitted| omitted["path"] == "/stderr/text" && omitted["expandable"] == true)
+    );
+    assert!(
+        envelope["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action["path"] == "/failure_sections/0")
+    );
+
+    let cursor = envelope["cursor"].as_str().unwrap();
+    let expanded = prog(&["--dir", dir_arg, "expand", cursor, "--path", "/stderr/text"]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    assert!(!stdout(&expanded).contains("plain-secret"));
+    let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert!(
+        value["data_preview"]
+            .as_str()
+            .unwrap()
+            .contains("[REDACTED:observed_text_secret]")
+    );
 }
 
 #[test]
@@ -2395,6 +2556,118 @@ view:
             .unwrap()
             .starts_with("body ")
     );
+}
+
+#[test]
+fn call_can_apply_first_party_github_issues_lens() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("issues.py");
+    fs::write(
+        &script,
+        r#"import json
+items = [
+    {
+        "number": 44,
+        "title": "Add first-party lens packs",
+        "state": "open",
+        "user": {"login": "alice"},
+        "labels": [{"name": "enhancement"}, {"name": "agent"}],
+        "comments": 3,
+        "updated_at": "2026-07-06T12:00:00Z",
+        "html_url": "https://github.com/example/prog/issues/44",
+        "body": "body " + ("x" * 900),
+    },
+    {
+        "number": 45,
+        "title": "Install hooks",
+        "state": "closed",
+        "user": {"login": "bob"},
+        "labels": [{"name": "integration"}],
+        "comments": 1,
+        "updated_at": "2026-07-06T12:05:00Z",
+        "html_url": "https://github.com/example/prog/issues/45",
+        "pull_request": {"url": "https://api.github.com/repos/example/prog/pulls/45"},
+        "body": "other " + ("y" * 900),
+    },
+]
+print(json.dumps({"items": items, "total_count": len(items)}))
+"#,
+    )
+    .unwrap();
+    let seed_json = json!({
+        "kind": "cli",
+        "operations": [{
+            "name": "list_issues",
+            "command": "python3",
+            "args": [script.to_str().unwrap()],
+            "effect": {
+                "read_only": true,
+                "mutating": false,
+                "network": false,
+                "shell": false,
+                "sensitive": false,
+                "cacheable": true,
+                "requires_confirmation": false
+            }
+        }]
+    });
+    let seed = write_seed(dir.path(), "cli.json", &seed_json.to_string());
+    let dir_arg = dir.path().to_str().unwrap();
+    let lens_dir = first_party_lens_dir();
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "githubish",
+        "--kind",
+        "cli",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+
+    let call = prog(&[
+        "--dir",
+        dir_arg,
+        "--lens-dir",
+        lens_dir.to_str().unwrap(),
+        "call",
+        "githubish",
+        "list_issues",
+        "--args",
+        "{}",
+        "--lens",
+        "github.issues.triage",
+    ]);
+    assert!(call.status.success(), "{}", stdout(&call));
+    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    assert_eq!(envelope["lens"]["id"], "github.issues.triage");
+    assert_eq!(envelope["data_preview"].as_array().unwrap().len(), 2);
+    assert_eq!(envelope["data_preview"][0]["number"], 44);
+    assert_eq!(
+        envelope["data_preview"][0]["labels"],
+        json!(["enhancement", "agent"])
+    );
+    assert!(envelope["data_preview"][0].get("body").is_none());
+    assert!(
+        envelope["omitted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|omitted| omitted["path"] == "/items/*/body" && omitted["expandable"] == true)
+    );
+    let cursor = envelope["cursor"].as_str().unwrap();
+    let expanded = prog(&[
+        "--dir",
+        dir_arg,
+        "expand",
+        cursor,
+        "--path",
+        "/items/0/body",
+    ]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert!(value["data_preview"].as_str().unwrap().starts_with("body "));
 }
 
 #[test]

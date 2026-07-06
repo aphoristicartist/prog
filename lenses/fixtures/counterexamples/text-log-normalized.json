@@ -1,0 +1,9 @@
+{
+  "format": "text",
+  "head": ["plain text"],
+  "tail": ["plain text"],
+  "lines": [{"number": 1, "text": "plain text"}],
+  "line_count": 1,
+  "byte_count": 10,
+  "utf8_valid": true
+}

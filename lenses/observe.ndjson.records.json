@@ -1,0 +1,61 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "observe.ndjson.records",
+  "version": 1,
+  "match": {
+    "source_id": "observe",
+    "artifact_kind": "ndjson"
+  },
+  "view": {
+    "root": "/records",
+    "limit": 20,
+    "depth": 3,
+    "fields": {
+      "timestamp": "/timestamp",
+      "level": "/level",
+      "message": "/message",
+      "error": "/error",
+      "status": "/status",
+      "request_id": "/request_id"
+    }
+  },
+  "omit": [
+    {
+      "path": "/records/*/payload",
+      "reason": "deep_object",
+      "detail": "event payloads are expandable only after a record is selected",
+      "expandable": true
+    },
+    {
+      "path": "/records/*/stack",
+      "reason": "large_string",
+      "detail": "stack traces are expandable only when the record matters",
+      "expandable": true
+    }
+  ],
+  "next_actions": [
+    {
+      "kind": "expand",
+      "path": "/records/{index}/payload",
+      "reason": "inspect the event payload for a selected record"
+    },
+    {
+      "kind": "expand",
+      "path": "/records/{index}/stack",
+      "reason": "inspect the full stack trace for a selected failing record"
+    }
+  ],
+  "invariants": [
+    "missing_record_fields_are_not_fabricated",
+    "payloads_and_stacks_are_expandable",
+    "record_preview_is_bounded"
+  ],
+  "fixtures": {
+    "positive": [
+      "fixtures/ndjson-records-normalized.json"
+    ],
+    "negative": [
+      "fixtures/counterexamples/text-log-normalized.json"
+    ]
+  }
+}

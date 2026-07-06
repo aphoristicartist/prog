@@ -1,0 +1,71 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "run.failures",
+  "version": 1,
+  "match": {
+    "source_kind": "cli",
+    "source_id": "run",
+    "artifact_kind": "run"
+  },
+  "view": {
+    "limit": 8,
+    "depth": 4,
+    "fields": {
+      "argv": "/command/argv",
+      "success": "/command/success",
+      "exit_code": "/command/exit_code",
+      "signal": "/command/signal",
+      "timed_out": "/command/timed_out",
+      "spawn_error": "/command/spawn_error",
+      "duration_ms": "/command/duration_ms",
+      "failure_sections": "/failure_sections",
+      "stderr_head": "/stderr/head",
+      "stdout_head": "/stdout/head"
+    }
+  },
+  "omit": [
+    {
+      "path": "/stdout/text",
+      "reason": "large_string",
+      "detail": "full stdout is expandable from the redacted run capture",
+      "expandable": true
+    },
+    {
+      "path": "/stderr/text",
+      "reason": "large_string",
+      "detail": "full stderr is expandable from the redacted run capture",
+      "expandable": true
+    },
+    {
+      "path": "/combined",
+      "reason": "long_array",
+      "detail": "interleaved stream chunks are expandable when ordering matters",
+      "expandable": true
+    }
+  ],
+  "next_actions": [
+    {
+      "kind": "expand",
+      "path": "/failure_sections/0",
+      "reason": "inspect the highest-priority failure section first"
+    },
+    {
+      "kind": "expand",
+      "path": "/stderr/text",
+      "reason": "inspect full stderr when the failure section is insufficient"
+    }
+  ],
+  "invariants": [
+    "projection_uses_redacted_cached_payload",
+    "stdout_and_stderr_are_expandable",
+    "failure_sections_are_not_fabricated"
+  ],
+  "fixtures": {
+    "positive": [
+      "fixtures/run-failure.json"
+    ],
+    "negative": [
+      "fixtures/counterexamples/json-items.json"
+    ]
+  }
+}

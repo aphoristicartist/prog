@@ -1,0 +1,70 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "json.items.triage",
+  "version": 1,
+  "match": {
+    "source_id": "observe",
+    "artifact_kind": "json"
+  },
+  "view": {
+    "root": "/items",
+    "limit": 20,
+    "depth": 3,
+    "fields": {
+      "id": "/id",
+      "number": "/number",
+      "title": "/title",
+      "state": "/state",
+      "status": "/status",
+      "type": "/type",
+      "labels": "/labels/*/name",
+      "updated_at": "/updated_at",
+      "url": "/url"
+    }
+  },
+  "omit": [
+    {
+      "path": "/items/*/body",
+      "reason": "large_string",
+      "detail": "item bodies are expandable on demand",
+      "expandable": true
+    },
+    {
+      "path": "/items/*/content",
+      "reason": "large_string",
+      "detail": "item content is expandable on demand",
+      "expandable": true
+    },
+    {
+      "path": "/items/*/payload",
+      "reason": "deep_object",
+      "detail": "large item payloads are expandable on demand",
+      "expandable": true
+    }
+  ],
+  "next_actions": [
+    {
+      "kind": "expand",
+      "path": "/items/{index}/body",
+      "reason": "inspect the full body after selecting an item"
+    },
+    {
+      "kind": "expand",
+      "path": "/items/{index}/payload",
+      "reason": "inspect the raw payload after selecting an item"
+    }
+  ],
+  "invariants": [
+    "array_items_are_sampled_deterministically",
+    "missing_fields_are_not_fabricated",
+    "large_item_details_are_expandable"
+  ],
+  "fixtures": {
+    "positive": [
+      "fixtures/json-items.json"
+    ],
+    "negative": [
+      "fixtures/counterexamples/text-log-normalized.json"
+    ]
+  }
+}

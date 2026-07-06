@@ -1,0 +1,43 @@
+{
+  "items": [
+    {
+      "id": "item-1",
+      "title": "Investigate checkout failure",
+      "state": "open",
+      "status": "needs-triage",
+      "type": "bug",
+      "labels": [{"name": "bug"}, {"name": "checkout"}],
+      "updated_at": "2026-07-06T12:00:00Z",
+      "url": "https://example.test/items/1",
+      "body": "Failure body aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "payload": {
+        "trace": "trace aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "id": "item-2",
+      "title": "Update retry policy",
+      "state": "open",
+      "status": "ready",
+      "type": "task",
+      "labels": [{"name": "backend"}],
+      "updated_at": "2026-07-06T12:02:00Z",
+      "url": "https://example.test/items/2",
+      "content": "Content bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "id": "item-3",
+      "title": "Document command wrapper",
+      "state": "closed",
+      "status": "done",
+      "type": "docs",
+      "labels": [{"name": "docs"}],
+      "updated_at": "2026-07-06T12:04:00Z",
+      "url": "https://example.test/items/3",
+      "body": "Documentation body ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "meta": {
+    "count": 3
+  }
+}
