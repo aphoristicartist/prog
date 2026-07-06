@@ -1,0 +1,72 @@
+[
+  {
+    "id": "github-pr-review",
+    "source_kind": "cli",
+    "raw_payload_bytes": 191790,
+    "call_envelope_bytes": 11319,
+    "expansion_envelope_bytes": 2982,
+    "expansion_task_bytes": 14301,
+    "cache_hit_status": "hit",
+    "cache_hit_envelope_bytes": 11306,
+    "raw_tokens": 47948,
+    "prog_task_tokens": 3576,
+    "token_ratio": 13.41,
+    "target_path": "/review_threads/37/comments/0/body"
+  },
+  {
+    "id": "kubectl-events",
+    "source_kind": "cli",
+    "raw_payload_bytes": 145813,
+    "call_envelope_bytes": 7846,
+    "expansion_envelope_bytes": 2881,
+    "expansion_task_bytes": 10727,
+    "cache_hit_status": "hit",
+    "cache_hit_envelope_bytes": 7833,
+    "raw_tokens": 36454,
+    "prog_task_tokens": 2682,
+    "token_ratio": 13.59,
+    "target_path": "/items/42/message"
+  },
+  {
+    "id": "cloudwatch-logs",
+    "source_kind": "cli",
+    "raw_payload_bytes": 157667,
+    "call_envelope_bytes": 7244,
+    "expansion_envelope_bytes": 2989,
+    "expansion_task_bytes": 10233,
+    "cache_hit_status": "hit",
+    "cache_hit_envelope_bytes": 7228,
+    "raw_tokens": 39417,
+    "prog_task_tokens": 2559,
+    "token_ratio": 15.4,
+    "target_path": "/events/77/message"
+  },
+  {
+    "id": "jira-triage",
+    "source_kind": "cli",
+    "raw_payload_bytes": 169953,
+    "call_envelope_bytes": 10330,
+    "expansion_envelope_bytes": 2923,
+    "expansion_task_bytes": 13253,
+    "cache_hit_status": "hit",
+    "cache_hit_envelope_bytes": 10317,
+    "raw_tokens": 42489,
+    "prog_task_tokens": 3314,
+    "token_ratio": 12.82,
+    "target_path": "/issues/31/comments/1/body"
+  },
+  {
+    "id": "mcp-incidents",
+    "source_kind": "mcp",
+    "raw_payload_bytes": 150772,
+    "call_envelope_bytes": 12787,
+    "expansion_envelope_bytes": 2897,
+    "expansion_task_bytes": 15684,
+    "cache_hit_status": "hit",
+    "cache_hit_envelope_bytes": 12774,
+    "raw_tokens": 37693,
+    "prog_task_tokens": 3921,
+    "token_ratio": 9.61,
+    "target_path": "/alerts/33/runbook"
+  }
+]

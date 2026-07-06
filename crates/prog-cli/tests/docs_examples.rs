@@ -333,11 +333,22 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/cost.md",
         "docs/task-success-eval.md",
         "docs/competitive-baselines.md",
+        "docs/real-world-demos.md",
         "docs/positioning.md",
         "docs/paths.md",
         "docs/token-economics.md",
         "fixtures/evals/task-success-metrics.json",
         "fixtures/evals/competitive-baseline-metrics.json",
+        "fixtures/evals/real-world-demo-metrics.json",
+        "demos/real-world/README.md",
+        "demos/real-world/generate_payload.py",
+        "demos/real-world/demo_mcp_server.py",
+        "demos/real-world/report_payloads.py",
+        "demos/real-world/seeds/github-pr-review.json",
+        "demos/real-world/seeds/kubectl-events.json",
+        "demos/real-world/seeds/cloudwatch-logs.json",
+        "demos/real-world/seeds/jira-triage.json",
+        "demos/real-world/seeds/mcp-incidents.json",
         "models/fable-class-2026-07.json",
         "skills/prog/SKILL.md",
         "INVARIANTS.md",
@@ -441,6 +452,32 @@ fn docs_keep_acceptance_topics_visible() {
     assert!(
         competitive_metrics.as_array().unwrap().len() >= 80,
         "competitive baseline metrics should include 8 strategy rows for at least 10 scenarios"
+    );
+
+    let real_world = std::fs::read_to_string(root.join("docs/real-world-demos.md")).unwrap();
+    for expected in [
+        "github-pr-review",
+        "kubectl-events",
+        "cloudwatch-logs",
+        "jira-triage",
+        "mcp-incidents",
+        "cache hit",
+        "Token ratio",
+    ] {
+        assert!(
+            real_world.contains(expected),
+            "real-world demo doc should mention {expected}"
+        );
+    }
+
+    let real_world_metrics: Value = serde_json::from_slice(
+        &std::fs::read(root.join("fixtures/evals/real-world-demo-metrics.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        real_world_metrics.as_array().unwrap().len(),
+        5,
+        "real-world demo metrics should include five demo rows"
     );
 
     let observe = std::fs::read_to_string(root.join("docs/observe.md")).unwrap();

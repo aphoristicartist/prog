@@ -1,0 +1,19 @@
+{
+  "kind": "cli",
+  "operations": [
+    {
+      "name": "review",
+      "command": "python3",
+      "args": ["demos/real-world/generate_payload.py", "github_pr_review"],
+      "effect": {
+        "read_only": true,
+        "mutating": false,
+        "network": false,
+        "shell": false,
+        "sensitive": false,
+        "cacheable": true,
+        "requires_confirmation": false
+      }
+    }
+  ]
+}
