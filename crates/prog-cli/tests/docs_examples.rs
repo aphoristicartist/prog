@@ -46,30 +46,43 @@ fn json(output: &Output) -> Value {
 #[test]
 fn readme_cli_quickstart_commands_stay_copy_pasteable() {
     let root = repo_root();
-    assert!(root.join("fixtures/cli/seed.json").exists());
     assert!(root.join("fixtures/cli/list_items.py").exists());
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
 
-    let discover = prog(
+    let source = prog(
         &root,
         &[
             "--dir",
             dir_arg,
-            "discover",
+            "source",
+            "add-cli",
             "demo_cli",
-            "--kind",
-            "cli",
-            "--seed",
-            "fixtures/cli/seed.json",
+            "--operation",
+            "list",
+            "--read-only",
+            "--",
+            "python3",
+            "fixtures/cli/list_items.py",
         ],
     );
-    assert_success(&discover);
-    let discovered = json(&discover);
-    assert_eq!(discovered["source_id"], "demo_cli");
-    assert_eq!(discovered["operations_found"], 1);
-    assert_eq!(discovered["operations_probed"], 0);
-    assert_eq!(discovered["effects_assumed"].as_array().unwrap().len(), 0);
+    assert_success(&source);
+    let added = json(&source);
+    assert_eq!(added["source_id"], "demo_cli");
+    assert_eq!(added["kind"], "cli");
+    assert_eq!(
+        added["generated_seed"]["operations"][0]["command"],
+        "python3"
+    );
+    assert_eq!(added["discovery"]["operations_found"], 1);
+    assert_eq!(added["discovery"]["operations_probed"], 0);
+    assert_eq!(
+        added["discovery"]["effects_assumed"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
 
     let hints = prog(&root, &["--dir", dir_arg, "hints", "demo_cli", "list"]);
     assert_success(&hints);
@@ -141,6 +154,9 @@ fn documented_command_help_surface_stays_real() {
     let commands: &[&[&str]] = &[
         &["--help"],
         &["discover", "--help"],
+        &["source", "--help"],
+        &["source", "add-http", "--help"],
+        &["source", "add-cli", "--help"],
         &["hints", "--help"],
         &["call", "--help"],
         &["observe", "--help"],
@@ -185,7 +201,14 @@ fn documented_command_help_surface_stays_real() {
     }
 
     let observe_help = stdout(&prog(&root, &["observe", "--help"]));
-    for expected in ["--file", "--stdin", "--mime", "--name", "--ttl-seconds"] {
+    for expected in [
+        "--file",
+        "--stdin",
+        "--mime",
+        "--name",
+        "--lens",
+        "--ttl-seconds",
+    ] {
         assert!(
             observe_help.contains(expected),
             "observe help should contain {expected}"
@@ -200,6 +223,7 @@ fn documented_command_help_surface_stays_real() {
         "--ttl-seconds",
         "--preserve-exit-code",
         "--out",
+        "--lens",
     ] {
         assert!(
             run_help.contains(expected),
@@ -212,6 +236,22 @@ fn documented_command_help_surface_stays_real() {
         assert!(
             init_help.contains(expected),
             "init help should contain {expected}"
+        );
+    }
+
+    let source_http_help = stdout(&prog(&root, &["source", "add-http", "--help"]));
+    for expected in ["--operation", "--url", "--method", "--probe"] {
+        assert!(
+            source_http_help.contains(expected),
+            "source add-http help should contain {expected}"
+        );
+    }
+
+    let source_cli_help = stdout(&prog(&root, &["source", "add-cli", "--help"]));
+    for expected in ["--operation", "--read-only", "--probe"] {
+        assert!(
+            source_cli_help.contains(expected),
+            "source add-cli help should contain {expected}"
         );
     }
 
@@ -267,6 +307,7 @@ fn docs_keep_acceptance_topics_visible() {
         "No table inference",
         "No MCP server mode",
         "No OpenAPI import yet",
+        "prog --dir /tmp/prog-demo --pretty source add-cli",
         "prog --dir /tmp/prog-demo --pretty meta SourceProfile",
     ] {
         assert!(
@@ -277,6 +318,7 @@ fn docs_keep_acceptance_topics_visible() {
 
     for doc in [
         "docs/walkthroughs.md",
+        "docs/source-setup.md",
         "docs/cache.md",
         "docs/safety.md",
         "docs/contracts.md",
@@ -328,6 +370,20 @@ fn docs_keep_acceptance_topics_visible() {
         assert!(
             lens_packs.contains(expected),
             "lens pack doc should mention {expected}"
+        );
+    }
+
+    let source_setup = std::fs::read_to_string(root.join("docs/source-setup.md")).unwrap();
+    for expected in [
+        "prog source add-http",
+        "prog source add-cli",
+        "--read-only",
+        "confirmation-gated",
+        "generated_seed",
+    ] {
+        assert!(
+            source_setup.contains(expected),
+            "source setup doc should mention {expected}"
         );
     }
 }
