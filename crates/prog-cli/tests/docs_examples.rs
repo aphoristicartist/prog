@@ -287,6 +287,7 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/integrations.md",
         "docs/evidence.md",
         "docs/cost.md",
+        "docs/positioning.md",
         "docs/paths.md",
         "docs/token-economics.md",
         "models/fable-class-2026-07.json",
@@ -295,5 +296,22 @@ fn docs_keep_acceptance_topics_visible() {
         "CHANGELOG.md",
     ] {
         assert!(root.join(doc).exists(), "{doc} should exist");
+    }
+
+    let positioning = std::fs::read_to_string(root.join("docs/positioning.md")).unwrap();
+    for expected in [
+        "## Use prog When",
+        "## Do Not Use prog When",
+        "## Comparison Matrix",
+        "Native API field selection",
+        "RTK-style command interception",
+        "MCP gateways/proxies",
+        "jq -r '.items[42].body'",
+        "measured only on checked-in fixture evals",
+    ] {
+        assert!(
+            positioning.contains(expected),
+            "positioning doc should mention {expected}"
+        );
     }
 }
