@@ -19,15 +19,16 @@ use prog_core::importers::{
 };
 use prog_core::{
     AuthRef, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance, CoreError,
-    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, EvidenceRef, Extra, LensManifest,
-    NextAction, ObservationCompleteness, ObservationFreshness, ObservationMetadata,
+    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, EvidenceRef, ExpansionScope, Extra,
+    LensManifest, NextAction, ObservationCompleteness, ObservationFreshness, ObservationMetadata,
     ObservationPayloadStatus, ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion,
-    OperationProfile, PreviewPolicy, RedactionPolicy, Result, SOURCE_PROFILE_VERSION, SliceRequest,
-    SourceProfile, Store, Summary, TrustSettings, cache_allowed, call_effect_warnings,
-    canonical_json, check_call, check_discovery, cli_adapter_effects, cli_hardening_effects,
-    expand, http_adapter_effects, http_hardening_effects, infer, join, lens_slice_request,
-    new_cache_entry, project, project_with_lens, public_contract_schemas, render_hints,
-    slice_value, tighten_effects, validate_lens_manifest,
+    OperationProfile, PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, Result,
+    SOURCE_PROFILE_VERSION, ScopedSlice, SliceRequest, SourceProfile, Store, Summary,
+    TrustSettings, cache_allowed, call_effect_warnings, canonical_json, check_call,
+    check_discovery, cli_adapter_effects, cli_hardening_effects, expand, http_adapter_effects,
+    http_hardening_effects, infer, join, lens_slice_request, new_cache_entry, project,
+    project_with_lens, public_contract_schemas, render_hints, slice_value, tighten_effects,
+    validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -494,19 +495,15 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 let payload = store
                     .get_payload(&entry.payload_hash)?
                     .ok_or_else(|| CoreError::CacheMiss(args.key.clone()))?;
-                let projection = expand(
-                    &payload,
-                    "",
-                    &SliceRequest {
-                        path: None,
-                        limit: None,
-                        depth: None,
-                        fields: Vec::new(),
-                        omit: Vec::new(),
-                        extra: serde_json::Map::new(),
-                    },
-                    &PreviewPolicy::default(),
-                )?;
+                let scoped = ScopedSlice::root(SliceRequest {
+                    path: None,
+                    limit: None,
+                    depth: None,
+                    fields: Vec::new(),
+                    omit: Vec::new(),
+                    extra: serde_json::Map::new(),
+                })?;
+                let projection = expand(&payload, &scoped, &PreviewPolicy::default())?;
                 write_success(&CacheGetOutput { entry, projection }, cli.pretty)?;
                 Ok(ExitCode::SUCCESS)
             }
@@ -618,7 +615,7 @@ struct EnvelopeInput {
     source_id: String,
     operation: String,
     source_kind: Option<String>,
-    payload: Value,
+    payload: RedactedPayload,
     root_path: String,
     slice: SliceRequest,
     payload_bytes: u64,
@@ -640,7 +637,7 @@ struct CursorInput<'a> {
     source_id: &'a str,
     operation: &'a str,
     root_path: &'a str,
-    payload: &'a Value,
+    payload: &'a RedactedPayload,
     slice: &'a SliceRequest,
     cache: &'a CachePolicy,
     may_cache: bool,
@@ -1247,8 +1244,10 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         .read_profile(&args.source_id)?
         .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
     let hints = build_hints_document(&profile, args.operation.as_deref())?;
-    let payload_hash = store.put_payload(&hints)?;
-    let projection = project(&hints, &PreviewPolicy::default(), "");
+    let redacted = RawPayload::new(hints).redact(&RedactionPolicy::default());
+    let payload = redacted.payload;
+    let payload_hash = store.put_payload(&payload)?;
+    let projection = project(payload.as_value(), &PreviewPolicy::default(), "");
     let cache_key = Store::cache_key(
         &args.source_id,
         "hints",
@@ -1259,7 +1258,7 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         payload_hash,
         args.source_id.clone(),
         "hints".to_string(),
-        serde_json::to_vec(&hints)?
+        serde_json::to_vec(payload.as_value())?
             .len()
             .try_into()
             .unwrap_or(u64::MAX),
@@ -1319,7 +1318,8 @@ async fn call_source(
     {
         let payload = store
             .get_payload(&entry.payload_hash)?
-            .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?;
+            .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
+            .into_redacted();
         let cache_info = cache_info(
             CacheStatus::Hit,
             &entry,
@@ -1372,15 +1372,17 @@ async fn call_source(
     let source = callable_source_from_profile(&profile)?;
     let adapter_call = execute_callable(&source, &operation, &call_args).await?;
     let redaction = RedactionPolicy::default();
-    let (redacted, redacted_paths) = redaction.apply_persistence(&adapter_call.data);
-    let payload_bytes = json_len_u64(&redacted)?;
-    let observed = infer(&redacted);
+    let redacted = RawPayload::new(adapter_call.data).redact(&redaction);
+    let redacted_paths = redacted.redacted_paths;
+    let payload = redacted.payload;
+    let payload_bytes = json_len_u64(payload.as_value())?;
+    let observed = infer(payload.as_value());
     update_profile_from_call(
         store,
         &profile,
         &operation.id,
         &call_args,
-        &redacted,
+        payload.as_value(),
         &observed,
     )?;
 
@@ -1407,7 +1409,7 @@ async fn call_source(
 
     let mut cache_disabled_reason = None;
     let cache_status = if may_cache {
-        let payload_hash = store.put_payload(&redacted)?;
+        let payload_hash = store.put_payload(&payload)?;
         let ttl = ttl_seconds(&effective_cache);
         let mut entry = new_cache_entry(
             cache_key.clone(),
@@ -1442,7 +1444,7 @@ async fn call_source(
             source_id: &args.source_id,
             operation: &args.operation,
             root_path: &root_path,
-            payload: &redacted,
+            payload: &payload,
             slice: &view,
             cache: &effective_cache,
             may_cache,
@@ -1455,7 +1457,7 @@ async fn call_source(
             source_id: args.source_id.clone(),
             operation: args.operation.clone(),
             source_kind: Some(profile_source_kind_name(profile.kind).to_string()),
-            payload: redacted,
+            payload,
             root_path,
             slice: view,
             payload_bytes,
@@ -1491,8 +1493,10 @@ fn observe_artifact(
         None => None,
     };
     let redaction = RedactionPolicy::default();
-    let (redacted, redacted_paths) = redaction.apply_persistence(&normalized.payload);
-    let redacted_bytes = serde_json::to_vec(&redacted)?;
+    let redacted = RawPayload::new(normalized.payload).redact(&redaction);
+    let redacted_paths = redacted.redacted_paths;
+    let payload = redacted.payload;
+    let redacted_bytes = serde_json::to_vec(payload.as_value())?;
     let payload_bytes = redacted_bytes.len().try_into().unwrap_or(u64::MAX);
     let cache_key = Store::cache_key(
         "observe",
@@ -1503,7 +1507,7 @@ fn observe_artifact(
             "redacted_sha256": hex_sha256(&redacted_bytes)
         }),
     )?;
-    let payload_hash = store.put_payload(&redacted)?;
+    let payload_hash = store.put_payload(&payload)?;
     let ttl: i64 = args
         .ttl_seconds
         .try_into()
@@ -1561,7 +1565,7 @@ fn observe_artifact(
             source_id: "observe".to_string(),
             operation: input.name.clone(),
             source_kind: Some("artifact".to_string()),
-            payload: redacted,
+            payload,
             root_path,
             slice,
             payload_bytes,
@@ -1694,12 +1698,17 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         out: args.out.as_ref(),
     });
     let redaction = RedactionPolicy::default();
-    let (redacted_payload, policy_redactions) = redaction.apply_persistence(&payload);
+    let redacted = RawPayload::new(payload).redact(&redaction);
+    let policy_redactions = redacted.redacted_paths;
+    let redacted_payload = redacted.payload;
     if let Some(path) = &args.out {
-        write_private_file(path, &serde_json::to_vec_pretty(&redacted_payload)?)?;
+        write_private_file(
+            path,
+            &serde_json::to_vec_pretty(redacted_payload.as_value())?,
+        )?;
     }
     let payload_hash = store.put_payload(&redacted_payload)?;
-    let payload_bytes = json_len_u64(&redacted_payload)?;
+    let payload_bytes = json_len_u64(redacted_payload.as_value())?;
     let ttl: i64 = args
         .ttl_seconds
         .try_into()
@@ -2876,17 +2885,18 @@ fn estimate_prog_cost_flow(
     expand_paths: &[String],
 ) -> Result<CostFlowEstimate> {
     let normalized = normalize_observation(raw, mime)?;
-    let (redacted, redacted_paths) =
-        RedactionPolicy::default().apply_persistence(&normalized.payload);
-    let redacted_bytes = canonical_json(&redacted)?;
+    let redacted = RawPayload::new(normalized.payload).redact(&RedactionPolicy::default());
+    let redacted_paths = redacted.redacted_paths;
+    let redacted = redacted.payload;
+    let redacted_bytes = canonical_json(redacted.as_value())?;
     let payload_bytes = redacted_bytes.len().try_into().unwrap_or(u64::MAX);
-    let projection = project(&redacted, &PreviewPolicy::default(), "");
+    let projection = project(redacted.as_value(), &PreviewPolicy::default(), "");
     let observe_envelope = json!({
         "schema_version": DISCLOSURE_VERSION,
         "source_id": "observe",
         "operation": "cost",
         "summary": {
-            "kind": value_kind(&redacted),
+            "kind": value_kind(redacted.as_value()),
             "payload_bytes": payload_bytes,
             "approx_tokens": approx_tokens_for_bytes(payload_bytes)
         },
@@ -2899,8 +2909,8 @@ fn estimate_prog_cost_flow(
     let observe_tokens = approx_tokens_for_json(&observe_envelope)?;
 
     let mut paths = Vec::new();
-    let truncated = collect_paths(&redacted, "", 6, 200, &mut paths);
-    let root_projection = project(&redacted, &PreviewPolicy::default(), "");
+    let truncated = collect_paths(redacted.as_value(), "", 6, 200, &mut paths);
+    let root_projection = project(redacted.as_value(), &PreviewPolicy::default(), "");
     annotate_path_omissions(&mut paths, &root_projection.omitted);
     append_missing_omitted_paths(&mut paths, &root_projection.omitted, 200);
     let paths_doc = json!({
@@ -2923,7 +2933,8 @@ fn estimate_prog_cost_flow(
             omit: Vec::new(),
             extra: Extra::new(),
         };
-        let (target_path, selected) = slice_value(&redacted, "", &slice)?;
+        let scoped = ScopedSlice::root(slice)?;
+        let (target_path, selected) = slice_value(&redacted, &scoped)?;
         let expansion = project(&selected, &PreviewPolicy::default(), &target_path);
         let expansion_envelope = json!({
             "schema_version": DISCLOSURE_VERSION,
@@ -3061,21 +3072,28 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
     let payload = store
         .get_payload(&entry.payload_hash)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
-    let prefix = if args.prefix.is_empty() {
+    let requested_prefix = if args.prefix.is_empty() {
         record.root_path.clone()
     } else {
         args.prefix.clone()
     };
-    if !prog_core::pointer::is_within(&record.root_path, &prefix)? {
-        return Err(CoreError::PathOutsideBoundary {
-            path: prefix,
-            boundary: record.root_path,
-        });
-    }
+    let scoped = ScopedSlice::new(
+        ExpansionScope::from_cursor(&record)?,
+        SliceRequest {
+            path: Some(requested_prefix),
+            limit: None,
+            depth: None,
+            fields: Vec::new(),
+            omit: Vec::new(),
+            extra: Extra::new(),
+        },
+    )?;
+    let prefix = scoped.target_path().as_str().to_string();
+    let value = payload.as_value();
     let target =
-        prog_core::pointer::get(&payload, &prefix)?.ok_or_else(|| CoreError::PathNotFound {
+        prog_core::pointer::get(value, &prefix)?.ok_or_else(|| CoreError::PathNotFound {
             path: prefix.clone(),
-            hint: prog_core::pointer::siblings_hint(&payload, &prefix),
+            hint: prog_core::pointer::siblings_hint(value, &prefix),
         })?;
     let projection = project(target, &PreviewPolicy::default(), &prefix);
     let projected_omitted = projection.omitted.clone();
@@ -3111,8 +3129,8 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
     let cache = cache_info(CacheStatus::Hit, &entry, Some(age));
     attach_path_evidence_refs(
         &mut paths,
-        &payload,
-        &record,
+        value,
+        record.record(),
         &entry,
         &cache,
         &projected_omitted,
@@ -3122,9 +3140,9 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
     Ok(PathsResponse {
         schema_version: DISCLOSURE_VERSION,
         cursor: args.cursor.clone(),
-        source_id: record.source_id,
-        operation: record.operation,
-        root_path: record.root_path,
+        source_id: record.source_id.clone(),
+        operation: record.operation.clone(),
+        root_path: record.root_path.clone(),
         prefix,
         paths,
         omitted,
@@ -3472,6 +3490,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
         omit: Vec::new(),
         extra: Extra::new(),
     };
+    let scoped = ScopedSlice::new(ExpansionScope::from_cursor(&record)?, slice.clone())?;
     let age = age_seconds(&entry.created_at)?;
     let mut warnings = Vec::new();
     if age > 0 {
@@ -3482,7 +3501,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
     }
 
     if let Some(path) = &args.out {
-        let (target_path, selected) = slice_value(&payload, &record.root_path, &slice)?;
+        let (target_path, selected) = slice_value(&payload, &scoped)?;
         let bytes = serde_json::to_vec_pretty(&selected)?;
         write_private_file(path, &bytes)?;
         let cache = cache_info(CacheStatus::Hit, &entry, Some(age));
@@ -3504,6 +3523,9 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
             "sha256": hex_sha256(&bytes),
             "evidence_ref": evidence_ref
         });
+        let receipt = RawPayload::new(receipt)
+            .redact(&RedactionPolicy::default())
+            .payload;
         return envelope_for_payload(
             store,
             EnvelopeInput {
@@ -3543,8 +3565,8 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
             source_id: record.source_id.clone(),
             operation: record.operation.clone(),
             source_kind: source_kind_for_source_id(&record.source_id),
-            payload,
-            root_path: record.root_path,
+            payload: payload.into_redacted(),
+            root_path: record.root_path.clone(),
             slice,
             payload_bytes: entry.payload_bytes,
             provenance: entry.provenance.clone(),
@@ -3582,8 +3604,10 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
     };
     let operation = args.contract.as_deref().unwrap_or("contracts").to_string();
     let cache_key = Store::cache_key("prog", "meta", &json!({"contract": args.contract}))?;
+    let redacted = RawPayload::new(payload).redact(&RedactionPolicy::default());
+    let payload = redacted.payload;
     let payload_hash = store.put_payload(&payload)?;
-    let payload_bytes = json_len_u64(&payload)?;
+    let payload_bytes = json_len_u64(payload.as_value())?;
     let entry = new_cache_entry(
         cache_key.clone(),
         payload_hash,
@@ -3601,7 +3625,8 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
         omit: Vec::new(),
         extra: Extra::new(),
     };
-    let projection = expand(&payload, "", &slice, &PreviewPolicy::default())?;
+    let scoped = ScopedSlice::root(slice.clone())?;
+    let projection = expand(&payload, &scoped, &PreviewPolicy::default())?;
     let cursor = if projection.omitted.is_empty() {
         None
     } else {
@@ -5689,8 +5714,8 @@ fn make_envelope(
         source_id: Some(input.source_id.clone()),
         operation: Some(input.operation.clone()),
         summary: Summary {
-            kind: value_kind(&input.payload).to_string(),
-            item_count: item_count(&input.payload),
+            kind: value_kind(input.payload.as_value()).to_string(),
+            item_count: item_count(input.payload.as_value()),
             preview_count: item_count(&preview),
             payload_bytes: input.payload_bytes,
             approx_tokens: input.payload_bytes.saturating_add(3) / 4,
@@ -6019,13 +6044,14 @@ async fn probe_profile(
 }
 
 fn learn_from_probe(operation: &mut OperationProfile, args: &Value, data: &Value) {
-    let redacted = RedactionPolicy::default().apply_persistence(data).0;
-    let observed = infer(&redacted);
+    let redacted = RawPayload::new(data.clone()).redact(&RedactionPolicy::default());
+    let redacted = redacted.payload;
+    let observed = infer(redacted.as_value());
     operation.output_shape = Some(match &operation.output_shape {
         Some(current) => join(current, &observed),
         None => observed,
     });
-    let projection = project(&redacted, &PreviewPolicy::default(), "");
+    let projection = project(redacted.as_value(), &PreviewPolicy::default(), "");
     let examples = operation
         .extra
         .entry("examples".to_string())

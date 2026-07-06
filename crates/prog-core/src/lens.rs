@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value, json};
 
 use crate::{
-    CoreError, Extra, LENS_MANIFEST_VERSION, LensManifest, LensOmission, NextAction, OmittedRegion,
-    PreviewPolicy, Projection, Result, SliceRequest,
+    CoreError, ExpandablePayload, ExpansionScope, Extra, LENS_MANIFEST_VERSION, LensManifest,
+    LensOmission, NextAction, OmittedRegion, PreviewPolicy, Projection, Result, ScopedSlice,
+    SliceRequest,
     disclosure::{expand, project},
     pointer::{get, is_within, parse},
 };
@@ -76,15 +77,16 @@ pub fn lens_slice_request(
 }
 
 pub fn project_with_lens(
-    payload: &Value,
+    payload: &impl ExpandablePayload,
     root_path: &str,
     slice: &SliceRequest,
     policy: &PreviewPolicy,
     manifest: Option<&LensManifest>,
 ) -> Result<LensProjection> {
     let Some(manifest) = manifest else {
+        let scoped = ScopedSlice::new(ExpansionScope::new(root_path)?, slice.clone())?;
         return Ok(LensProjection {
-            projection: expand(payload, root_path, slice, policy)?,
+            projection: expand(payload, &scoped, policy)?,
             next_actions: Vec::new(),
         });
     };
@@ -99,11 +101,13 @@ pub fn project_with_lens(
     }
 
     let projection = if manifest.view.fields.is_empty() {
-        expand(payload, root_path, slice, &effective_policy)?
+        let scoped = ScopedSlice::new(ExpansionScope::new(root_path)?, slice.clone())?;
+        expand(payload, &scoped, &effective_policy)?
     } else {
-        let target = get(payload, root_path)?.ok_or_else(|| CoreError::PathNotFound {
+        let value = payload.expansion_value();
+        let target = get(value, root_path)?.ok_or_else(|| CoreError::PathNotFound {
             path: root_path.to_string(),
-            hint: crate::pointer::siblings_hint(payload, root_path),
+            hint: crate::pointer::siblings_hint(value, root_path),
         })?;
         let selected = select_fields_with_pointers(target, &manifest.view.fields)?;
         project(&selected, &effective_policy, root_path)

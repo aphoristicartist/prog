@@ -4,8 +4,8 @@ use std::{
 };
 
 use prog_core::{
-    LENS_MANIFEST_VERSION, LensManifest, PreviewPolicy, SliceRequest, lens_slice_request,
-    project_with_lens, validate_lens_manifest,
+    LENS_MANIFEST_VERSION, LensManifest, PreviewPolicy, RawPayload, RedactedPayload,
+    RedactionPolicy, SliceRequest, lens_slice_request, project_with_lens, validate_lens_manifest,
 };
 use serde_json::{Value, json};
 
@@ -29,6 +29,12 @@ fn repo_root() -> PathBuf {
         .join("../..")
         .canonicalize()
         .expect("repo root should canonicalize")
+}
+
+fn redacted(value: Value) -> RedactedPayload {
+    RawPayload::new(value)
+        .redact(&RedactionPolicy::default())
+        .payload
 }
 
 #[test]
@@ -66,7 +72,7 @@ fn lens_manifest_projects_fields_omissions_actions_and_redaction() {
     }));
     validate_lens_manifest(&lens).unwrap();
 
-    let payload = json!({
+    let payload = redacted(json!({
         "items": [
             {
                 "id": 1,
@@ -85,7 +91,7 @@ fn lens_manifest_projects_fields_omissions_actions_and_redaction() {
             }
         ],
         "meta": {"count": 2}
-    });
+    }));
 
     let slice = lens_slice_request(&lens, &empty_slice()).unwrap();
     let root = slice.path.as_deref().unwrap();
@@ -180,7 +186,7 @@ fn missing_lens_fields_are_not_fabricated() {
             }
         }
     }));
-    let payload = json!({"items": [{"id": 1}]});
+    let payload = redacted(json!({"items": [{"id": 1}]}));
     let slice = lens_slice_request(&lens, &empty_slice()).unwrap();
     let projected = project_with_lens(
         &payload,
@@ -244,6 +250,7 @@ fn first_party_lens_pack_is_valid_unique_fixture_backed_and_token_efficient() {
         for fixture in &lens.fixtures.positive {
             let payload_raw = std::fs::read_to_string(lens_dir.join(fixture)).unwrap();
             let payload: Value = serde_json::from_str(&payload_raw).unwrap();
+            let payload = redacted(payload);
             let slice = lens_slice_request(&lens, &empty_slice()).unwrap();
             let root_path = slice.path.as_deref().unwrap_or("");
             let projected = project_with_lens(

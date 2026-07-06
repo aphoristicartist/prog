@@ -13,7 +13,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    CacheEntryMeta, CallProvenance, CoreError, CursorRecord, Result, SourceProfile, canonical_json,
+    CacheEntryMeta, CallProvenance, CoreError, CursorRecord, PersistedPayload, RedactedPayload,
+    Result, SourceProfile, ValidatedCursor, canonical_json,
 };
 
 const PAYLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("payloads");
@@ -69,8 +70,8 @@ impl Store {
         Ok(Self { dir, db })
     }
 
-    pub fn put_payload(&self, value: &Value) -> Result<String> {
-        let bytes = serde_json::to_vec(value)?;
+    pub fn put_payload(&self, payload: &RedactedPayload) -> Result<String> {
+        let bytes = serde_json::to_vec(payload.as_value())?;
         let hash = format!("sha256:{}", hex_sha256(&bytes));
         let write = self.db.begin_write().map_err(CoreError::storage)?;
         {
@@ -83,13 +84,15 @@ impl Store {
         Ok(hash)
     }
 
-    pub fn get_payload(&self, hash: &str) -> Result<Option<Value>> {
+    pub fn get_payload(&self, hash: &str) -> Result<Option<PersistedPayload>> {
         let read = self.db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(PAYLOADS).map_err(CoreError::storage)?;
         let Some(bytes) = table.get(hash).map_err(CoreError::storage)? else {
             return Ok(None);
         };
-        Ok(Some(serde_json::from_slice(bytes.value())?))
+        Ok(Some(PersistedPayload::from_store(serde_json::from_slice(
+            bytes.value(),
+        )?)))
     }
 
     pub fn cache_key(source_id: &str, operation: &str, args: &Value) -> Result<String> {
@@ -184,7 +187,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn get_cursor(&self, token: &str, redaction_version: u32) -> Result<CursorRecord> {
+    pub fn get_cursor(&self, token: &str, redaction_version: u32) -> Result<ValidatedCursor> {
         self.get_cursor_at(token, redaction_version, Utc::now())
     }
 
@@ -193,7 +196,7 @@ impl Store {
         token: &str,
         redaction_version: u32,
         now: DateTime<Utc>,
-    ) -> Result<CursorRecord> {
+    ) -> Result<ValidatedCursor> {
         let read = self.db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(CURSORS).map_err(CoreError::storage)?;
         let Some(bytes) = table.get(token).map_err(CoreError::storage)? else {
@@ -216,7 +219,7 @@ impl Store {
                 store_version: redaction_version,
             });
         }
-        Ok(record)
+        Ok(ValidatedCursor::new(token.to_string(), record))
     }
 
     pub fn purge_all(&self) -> Result<PurgeSummary> {

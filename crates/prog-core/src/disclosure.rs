@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::{
-    CoreError, OmissionReason, OmittedRegion, Result, SliceRequest,
-    pointer::{get, is_within, push, siblings_hint},
+    CoreError, ExpandablePayload, OmissionReason, OmittedRegion, Result, ScopedSlice,
+    pointer::{get, push, siblings_hint},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -86,34 +86,28 @@ pub fn project(value: &Value, policy: &PreviewPolicy, base_path: &str) -> Projec
 }
 
 pub fn expand(
-    payload: &Value,
-    root_path: &str,
-    slice: &SliceRequest,
+    payload: &impl ExpandablePayload,
+    slice: &ScopedSlice,
     policy: &PreviewPolicy,
 ) -> Result<Projection> {
-    let (target_path, selected) = slice_value(payload, root_path, slice)?;
-    let effective_policy = policy.with_limit_and_depth(slice.limit, slice.depth);
+    let (target_path, selected) = slice_value(payload, slice)?;
+    let request = slice.request();
+    let effective_policy = policy.with_limit_and_depth(request.limit, request.depth);
     Ok(project(&selected, &effective_policy, &target_path))
 }
 
 pub fn slice_value(
-    payload: &Value,
-    root_path: &str,
-    slice: &SliceRequest,
+    payload: &impl ExpandablePayload,
+    slice: &ScopedSlice,
 ) -> Result<(String, Value)> {
-    let target_path = slice.path.as_deref().unwrap_or(root_path);
-    if !is_within(root_path, target_path)? {
-        return Err(CoreError::PathOutsideBoundary {
-            path: target_path.to_string(),
-            boundary: root_path.to_string(),
-        });
-    }
-
-    let target = get(payload, target_path)?.ok_or_else(|| CoreError::PathNotFound {
+    let value = payload.expansion_value();
+    let target_path = slice.target_path().as_str();
+    let target = get(value, target_path)?.ok_or_else(|| CoreError::PathNotFound {
         path: target_path.to_string(),
-        hint: siblings_hint(payload, target_path),
+        hint: siblings_hint(value, target_path),
     })?;
-    let selected = select_fields(target, &slice.fields, &slice.omit);
+    let request = slice.request();
+    let selected = select_fields(target, &request.fields, &request.omit);
     Ok((target_path.to_string(), selected))
 }
 
