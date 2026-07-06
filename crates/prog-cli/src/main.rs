@@ -1239,12 +1239,48 @@ fn split_http_query(raw: &str) -> Result<BTreeMap<String, String>> {
     Ok(query)
 }
 
+/// Resolve the persistence redaction policy for an optional source profile,
+/// honoring per-source `RedactionConfig` and the `PROG_REDACTION_ALLOWLIST` /
+/// `PROG_REDACTION_EXTRA_KEYWORDS` env overrides (comma-separated). The
+/// built-in allowlist (e.g. `max_tokens`, `session_timeout`) is always present
+/// so benign token-count fields survive by default.
+fn resolve_redaction(profile: Option<&SourceProfile>) -> RedactionPolicy {
+    let mut policy = match profile {
+        Some(profile) => RedactionPolicy::from_config(&profile.redaction),
+        None => RedactionPolicy::default(),
+    };
+    if let Ok(raw) = std::env::var("PROG_REDACTION_ALLOWLIST") {
+        policy.allowlist.extend(
+            raw.split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string),
+        );
+    }
+    if let Ok(raw) = std::env::var("PROG_REDACTION_EXTRA_KEYWORDS") {
+        let names: Vec<String> = raw
+            .split(',')
+            .map(str::trim)
+            .map(str::to_string)
+            .filter(|name| !name.is_empty())
+            .collect();
+        if !names.is_empty() {
+            policy.rules.push(prog_core::RedactionRule {
+                name: "env_extra".to_string(),
+                class: prog_core::RedactionClass::Persistence,
+                field_names: names,
+            });
+        }
+    }
+    policy
+}
+
 fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
     let profile = store
         .read_profile(&args.source_id)?
         .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
     let hints = build_hints_document(&profile, args.operation.as_deref())?;
-    let redacted = RawPayload::new(hints).redact(&RedactionPolicy::default());
+    let redacted = RawPayload::new(hints).redact(&resolve_redaction(Some(&profile)));
     let payload = redacted.payload;
     let payload_hash = store.put_payload(&payload)?;
     let projection = project(payload.as_value(), &PreviewPolicy::default(), "");
@@ -1371,7 +1407,7 @@ async fn call_source(
 
     let source = callable_source_from_profile(&profile)?;
     let adapter_call = execute_callable(&source, &operation, &call_args).await?;
-    let redaction = RedactionPolicy::default();
+    let redaction = resolve_redaction(Some(&profile));
     let redacted = RawPayload::new(adapter_call.data).redact(&redaction);
     let redacted_paths = redacted.redacted_paths;
     let payload = redacted.payload;
@@ -3904,6 +3940,7 @@ fn prepare_http_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery>
                 ..TrustSettings::default()
             },
             effect_defaults: EffectSet::default(),
+            redaction: prog_core::RedactionConfig::default(),
             extra: adapter_seed_extra(
                 "http",
                 seed,
@@ -4019,6 +4056,7 @@ fn prepare_cli_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery> 
             cache: CachePolicy::default(),
             trust: trust.clone(),
             effect_defaults: EffectSet::default(),
+            redaction: prog_core::RedactionConfig::default(),
             extra: adapter_seed_extra(
                 "cli",
                 seed,

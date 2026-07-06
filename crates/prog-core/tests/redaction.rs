@@ -4,7 +4,7 @@
 //! literal underscore forms — and `is_sensitive_name` must do the same for
 //! argv/flag tokens.
 
-use prog_core::{RedactionPolicy, is_sensitive_name};
+use prog_core::{RedactionConfig, RedactionPolicy, is_sensitive_name};
 use serde_json::json;
 
 #[test]
@@ -111,4 +111,161 @@ fn with_extra_persistence_names_redacts_declared_only_names() {
     let serialized = serde_json::to_string(&redacted).unwrap();
     assert!(!serialized.contains("SK-LIVE-1234"));
     assert!(serialized.contains("[REDACTED:declared_sensitive]"));
+}
+
+#[test]
+fn allowlist_protects_benign_token_session_fields() {
+    // These previously matched a default keyword by substring and were wrongly
+    // wiped; the built-in allowlist now exempts them.
+    let payload = json!({
+        "max_tokens": 1024,
+        "total_tokens": 4096,
+        "token_count": 12,
+        "session_timeout": 30,
+        "cookie_consent": true,
+        "secretary": "alex",
+        "secretary_email": "alex@example.com",
+        "tokens": ["a", "b"]
+    });
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+    assert!(paths.is_empty(), "no field should be redacted: {paths:?}");
+    assert_eq!(redacted["max_tokens"], json!(1024));
+    assert_eq!(redacted["session_timeout"], json!(30));
+    assert_eq!(redacted["secretary_email"], json!("alex@example.com"));
+}
+
+#[test]
+fn default_keywords_include_access_signing_pwd() {
+    let payload = json!({
+        "access_key": "AKIAIOSF",
+        "signing_key": "sk-sign",
+        "pwd": "hunter2",
+        "aws_access_key": "AKIA2"
+    });
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+    let serialized = serde_json::to_string(&redacted).unwrap();
+    for secret in ["AKIAIOSF", "sk-sign", "hunter2", "AKIA2"] {
+        assert!(!serialized.contains(secret), "{secret} leaked");
+    }
+    assert_eq!(paths.len(), 4);
+}
+
+#[test]
+fn camel_case_secrets_redacted_benign_camelcase_allowlisted() {
+    let payload = json!({
+        "refreshToken": "rt",
+        "clientSecret": "cs",
+        "accessToken": "at",
+        "apiKey": "ak",
+        "maxTokens": 2048,
+        "totalTokens": 8192,
+        "tokenCount": 5,
+        "sessionTimeout": 60,
+        "secretaryEmail": "s@example.com"
+    });
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+    let serialized = serde_json::to_string(&redacted).unwrap();
+    for secret in ["rt", "cs", "at", "ak"] {
+        assert!(
+            !serialized.contains(secret),
+            "camelCase secret {secret} leaked"
+        );
+    }
+    assert_eq!(redacted["maxTokens"], json!(2048));
+    assert_eq!(redacted["sessionTimeout"], json!(60));
+    assert_eq!(redacted["secretaryEmail"], json!("s@example.com"));
+    assert_eq!(paths.len(), 4);
+}
+
+#[test]
+fn is_sensitive_name_reflects_keywords_and_allowlist() {
+    for sensitive in [
+        "access_key",
+        "signing_key",
+        "pwd",
+        "auth_token",
+        "access-key",
+        "--access-key",
+    ] {
+        assert!(
+            is_sensitive_name(sensitive),
+            "{sensitive:?} should be sensitive"
+        );
+    }
+    for benign in [
+        "max_tokens",
+        "session_timeout",
+        "secretary",
+        "token_count",
+        "author_name",
+    ] {
+        assert!(
+            !is_sensitive_name(benign),
+            "{benign:?} should NOT be sensitive"
+        );
+    }
+}
+
+#[test]
+fn from_config_replaces_keywords_when_set() {
+    let config = RedactionConfig {
+        keywords: Some(vec!["sig".to_string()]),
+        ..RedactionConfig::default()
+    };
+    let policy = RedactionPolicy::from_config(&config);
+    let (redacted, paths) = policy.apply_persistence(&json!({
+        "access_token": "should-survive",
+        "mysig": "should-redact"
+    }));
+    assert_eq!(redacted["access_token"], json!("should-survive"));
+    assert_eq!(paths, vec!["/mysig".to_string()]);
+}
+
+#[test]
+fn from_config_extra_keywords_and_allowlist_compose() {
+    let config = RedactionConfig {
+        extra_keywords: vec!["service_key".to_string()],
+        allowlist: vec!["access_token".to_string()],
+        ..RedactionConfig::default()
+    };
+    let policy = RedactionPolicy::from_config(&config);
+    let (redacted, paths) = policy.apply_persistence(&json!({
+        "access_token": "survives",
+        "client_secret": "redacted",
+        "service_key": "sk"
+    }));
+    assert_eq!(redacted["access_token"], json!("survives"));
+    let serialized = serde_json::to_string(&redacted).unwrap();
+    assert!(!serialized.contains("redacted"));
+    assert!(!serialized.contains("\"sk\""));
+    assert_eq!(paths.len(), 2);
+}
+
+#[test]
+fn redaction_config_round_trips() {
+    let config = RedactionConfig {
+        extra_keywords: vec!["service_key".to_string()],
+        allowlist: vec!["max_tokens".to_string()],
+        keywords: Some(vec!["token".to_string()]),
+        extra: serde_json::Map::new(),
+    };
+    let json_str = serde_json::to_string(&config).unwrap();
+    let back: RedactionConfig = serde_json::from_str(&json_str).unwrap();
+    assert_eq!(config, back);
+    // Default deserializes from an empty object (backward compatible).
+    let empty: RedactionConfig = serde_json::from_str("{}").unwrap();
+    assert!(empty.extra_keywords.is_empty());
+    assert!(empty.allowlist.is_empty());
+    assert!(empty.keywords.is_none());
+}
+
+#[test]
+fn default_policy_keeps_version_one() {
+    // Pinned: the matcher was broadened (#74) but the version is intentionally
+    // NOT bumped, so existing cursors/caches stay valid by design.
+    assert_eq!(RedactionPolicy::default().version, 1);
+    assert_eq!(
+        RedactionPolicy::from_config(&RedactionConfig::default()).version,
+        1
+    );
 }

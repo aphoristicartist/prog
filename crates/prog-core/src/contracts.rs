@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::redaction::RedactionConfig;
 use crate::shape::Shape;
 
 pub const SOURCE_PROFILE_VERSION: &str = "prog.source_profile.v1";
@@ -31,6 +32,8 @@ pub struct SourceProfile {
     pub trust: TrustSettings,
     #[serde(default)]
     pub effect_defaults: EffectSet,
+    #[serde(default)]
+    pub redaction: RedactionConfig,
     #[serde(default, flatten)]
     pub extra: Extra,
 }

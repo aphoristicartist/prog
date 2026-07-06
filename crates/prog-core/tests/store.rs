@@ -355,6 +355,7 @@ fn add_operation(current: Option<SourceProfile>, id: &str) -> SourceProfile {
         cache: CachePolicy::default(),
         trust: TrustSettings::default(),
         effect_defaults: EffectSet::default(),
+        redaction: prog_core::RedactionConfig::default(),
         extra: serde_json::Map::new(),
     });
     if !profile

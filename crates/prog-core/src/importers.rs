@@ -175,6 +175,7 @@ pub fn import_openapi(
             extra: Map::new(),
         },
         effect_defaults: EffectSet::default(),
+        redaction: crate::redaction::RedactionConfig::default(),
         extra: {
             let mut extra = Map::new();
             extra.insert("import_source".to_string(), json!("openapi"));
@@ -268,6 +269,7 @@ pub fn import_json_schema(
         cache: CachePolicy::default(),
         trust: TrustSettings::default(),
         effect_defaults: EffectSet::default(),
+        redaction: crate::redaction::RedactionConfig::default(),
         extra: {
             let mut extra = Map::new();
             extra.insert("import_source".to_string(), json!("json_schema"));
@@ -418,6 +420,7 @@ pub fn import_mcp_schemas(
         cache: CachePolicy::default(),
         trust: TrustSettings::default(),
         effect_defaults: EffectSet::default(),
+        redaction: crate::redaction::RedactionConfig::default(),
         extra: {
             let mut extra = Map::new();
             extra.insert("import_source".to_string(), json!("mcp"));
@@ -492,6 +495,7 @@ pub fn import_cli_help(
             extra: Map::new(),
         },
         effect_defaults: EffectSet::default(),
+        redaction: crate::redaction::RedactionConfig::default(),
         extra: {
             let mut extra = Map::new();
             extra.insert("import_source".to_string(), json!("cli_help"));
