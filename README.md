@@ -131,6 +131,7 @@ See [docs/token-economics.md](docs/token-economics.md) for the checked-in report
 - [Agent integrations](docs/integrations.md), including project-local Codex skill/hooks and MCP-optional workflows.
 - [Evidence references](docs/evidence.md), including compact cursor/path-backed citations for expanded observations.
 - [Cost planner](docs/cost.md), including profile-driven raw-vs-prog estimates for expensive long-context models.
+- [Task-success eval](docs/task-success-eval.md), including deterministic raw/truncation/prog correctness and token metrics.
 - [Positioning](docs/positioning.md), including honest tradeoffs against native filters, truncation, hooks, MCP gateways, and large context.
 - [Invariants](INVARIANTS.md) and [RFC 0001](docs/rfcs/0001-progressive-disclosure-gateway.md), [RFC 0002](docs/rfcs/0002-type-theory-formal-methods-and-reflexivity.md), [RFC 0003](docs/rfcs/0003-observation-lenses.md).
 - [CHANGELOG](CHANGELOG.md).
