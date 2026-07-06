@@ -235,6 +235,36 @@ async fn sensitive_args_are_redacted_from_provenance() {
 }
 
 #[tokio::test]
+async fn declared_sensitive_arg_names_are_redacted_from_provenance_args() {
+    // "service_key" is not a default secret keyword, so before the fix it was
+    // redacted from argv (which consults sensitive_args) but leaked verbatim
+    // into provenance.args, which is persisted to disk with the cache entry.
+    let mut op = operation(
+        "secret",
+        &[
+            "-c",
+            "import sys; print('ok')",
+            "--service-key",
+            "{service_key}",
+        ],
+    );
+    op.sensitive_args = vec!["service_key".to_string()];
+    let source = source(op);
+
+    let result = source
+        .execute("secret", &json!({"service_key": "SK-LIVE-1234"}))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.provenance.args["service_key"],
+        json!("[REDACTED:declared_sensitive]")
+    );
+    let provenance = serde_json::to_string(&result.provenance).unwrap();
+    assert!(!provenance.contains("SK-LIVE-1234"));
+}
+
+#[tokio::test]
 async fn shell_backed_operation_fails_closed_without_profile_trust() {
     let mut op = operation("shell", &["-c", "print('should not run')"]);
     op.shell = true;

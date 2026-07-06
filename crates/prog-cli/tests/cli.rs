@@ -1145,6 +1145,59 @@ fn run_can_apply_first_party_failure_lens_and_expand_redacted_capture() {
 }
 
 #[test]
+fn run_redacts_compound_secret_flags_in_recorded_argv() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let output = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        "-c",
+        "import sys; print('ran')",
+        "--access-token",
+        "eyJLEAK_TOKEN",
+        "--passwd",
+        "leakpass",
+    ]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    // The envelope itself must not leak the access-token value (the only
+    // secret-bearing argv element that fits inside the bounded preview).
+    assert!(!stdout(&output).contains("eyJLEAK_TOKEN"));
+
+    // The cached payload reached via expand must be clean too. Before the fix,
+    // compound flags like --access-token and the missing --passwd token were
+    // not recognized, so their values were persisted raw in command.argv.
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let cursor = envelope["cursor"].as_str().unwrap();
+    let expanded = prog(&[
+        "--dir",
+        dir_arg,
+        "expand",
+        cursor,
+        "--path",
+        "/command/argv",
+        "--limit",
+        "10",
+    ]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let expanded_out = stdout(&expanded);
+    assert!(
+        !expanded_out.contains("eyJLEAK_TOKEN"),
+        "access-token value reached the cache: {expanded_out}"
+    );
+    assert!(
+        !expanded_out.contains("leakpass"),
+        "passwd value reached the cache: {expanded_out}"
+    );
+    assert!(
+        expanded_out.contains("[REDACTED"),
+        "expected a redaction sentinel in recorded argv: {expanded_out}"
+    );
+}
+
+#[test]
 fn run_large_streams_are_bounded_expandable_and_redacted() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();

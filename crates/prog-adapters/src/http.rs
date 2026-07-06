@@ -5,7 +5,7 @@ use std::{
 
 use prog_core::{
     AuthRef, CoreError, PreviewPolicy, Projection, RawPayload, RedactionPolicy, Result,
-    ScopedSlice, SliceRequest, expand,
+    ScopedSlice, SliceRequest, expand, is_sensitive_name,
 };
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
@@ -187,7 +187,7 @@ impl HttpSource {
             duration_ms,
             response_bytes: bytes.len(),
             truncated,
-            args: redacted_args(args),
+            args: redacted_args(args, &operation.sensitive_args),
         };
 
         if !status.is_success() {
@@ -548,8 +548,9 @@ fn bounded_preview(data: &Value) -> Result<Projection> {
     expand(&payload, &slice, &PreviewPolicy::default())
 }
 
-fn redacted_args(args: &Map<String, Value>) -> Value {
-    let (redacted, _) = RedactionPolicy::default().apply_persistence(&Value::Object(args.clone()));
+fn redacted_args(args: &Map<String, Value>, sensitive: &[String]) -> Value {
+    let (redacted, _) = RedactionPolicy::with_extra_persistence_names(sensitive)
+        .apply_persistence(&Value::Object(args.clone()));
     redacted
 }
 
@@ -578,28 +579,6 @@ fn is_sensitive_header(name: &str) -> bool {
     matches!(
         name,
         "authorization" | "proxy-authorization" | "cookie" | "set-cookie" | "x-api-key"
-    )
-}
-
-fn is_sensitive_name(name: &str) -> bool {
-    let normalized = name
-        .chars()
-        .filter(|ch| *ch != '-' && *ch != '_')
-        .flat_map(char::to_lowercase)
-        .collect::<String>();
-    matches!(
-        normalized.as_str(),
-        "password"
-            | "passwd"
-            | "secret"
-            | "token"
-            | "apikey"
-            | "authorization"
-            | "credential"
-            | "privatekey"
-            | "session"
-            | "cookie"
-            | "bearer"
     )
 }
 

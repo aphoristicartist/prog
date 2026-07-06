@@ -329,10 +329,11 @@ impl Store {
         source_id: Option<&str>,
     ) -> Result<PurgeSummary> {
         let key_set: std::collections::BTreeSet<&str> = keys.iter().map(String::as_str).collect();
-        let mut payload_hashes = std::collections::BTreeSet::new();
+        // Candidate payload hashes come from the entries being purged.
+        let mut candidate_hashes = std::collections::BTreeSet::new();
         for key in keys {
             if let Some(entry) = self.read_entry(key)? {
-                payload_hashes.insert(entry.payload_hash);
+                candidate_hashes.insert(entry.payload_hash);
             }
         }
 
@@ -342,11 +343,27 @@ impl Store {
             let mut entries = write.open_table(ENTRIES).map_err(CoreError::storage)?;
             let mut payloads = write.open_table(PAYLOADS).map_err(CoreError::storage)?;
             let mut cursors = write.open_table(CURSORS).map_err(CoreError::storage)?;
+
+            // Reference-count payload blobs: a candidate hash is only safe to
+            // remove when no surviving entry still references it. Without this
+            // check, purging one entry orphans the payload for any other entry
+            // that shares the same content hash (`put_payload` dedupes by
+            // sha256), breaking `expand` for the survivor.
+            let mut surviving_hashes = std::collections::BTreeSet::new();
+            for entry in entries.iter().map_err(CoreError::storage)? {
+                let (key, value) = entry.map_err(CoreError::storage)?;
+                if !key_set.contains(key.value()) {
+                    let meta: CacheEntryMeta = serde_json::from_slice(value.value())?;
+                    surviving_hashes.insert(meta.payload_hash);
+                }
+            }
+
             let purged_entries = remove_keys(&mut entries, keys)?;
-            let purged_payloads = remove_keys(
-                &mut payloads,
-                &payload_hashes.into_iter().collect::<Vec<_>>(),
-            )?;
+            let orphaned: Vec<String> = candidate_hashes
+                .into_iter()
+                .filter(|hash| !surviving_hashes.contains(hash))
+                .collect();
+            let purged_payloads = remove_keys(&mut payloads, &orphaned)?;
             let purged_cursors = retain_cursors(&mut cursors, &key_set, source_id)?;
             summary = PurgeSummary {
                 purged_entries,

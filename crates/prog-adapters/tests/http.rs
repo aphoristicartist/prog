@@ -74,6 +74,45 @@ async fn executes_json_request_with_encoded_path_query_and_body_template() {
 }
 
 #[tokio::test]
+async fn declared_sensitive_arg_names_are_redacted_from_provenance_args() {
+    // "service_key" is not a default secret keyword: before the fix it was
+    // scrubbed from final_url (which consults sensitive_args) but leaked
+    // verbatim into provenance.args, which is persisted to disk.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/anything"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&server)
+        .await;
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "fetch".to_string(),
+            method: "GET".to_string(),
+            path: "/anything".to_string(),
+            query: map([("service_key", "{service_key}")]),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: None,
+            max_response_bytes: None,
+            sensitive_args: vec!["service_key".to_string()],
+        },
+    );
+
+    let result = source
+        .execute_with_env("fetch", &json!({"service_key": "SK-LIVE-1234"}), &|_| None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.provenance.args["service_key"],
+        json!("[REDACTED:declared_sensitive]")
+    );
+    let provenance = serde_json::to_string(&result.provenance).unwrap();
+    assert!(!provenance.contains("SK-LIVE-1234"));
+}
+
+#[tokio::test]
 async fn rejects_missing_and_unknown_args_with_names() {
     let server = MockServer::start().await;
     let source = source(
