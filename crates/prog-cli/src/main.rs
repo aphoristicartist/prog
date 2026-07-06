@@ -16,15 +16,15 @@ use prog_adapters::{
 };
 use prog_core::{
     AuthRef, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance, CoreError,
-    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, Extra, LensManifest, NextAction,
-    ObservationCompleteness, ObservationFreshness, ObservationMetadata, ObservationPayloadStatus,
-    ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion, OperationProfile,
-    PreviewPolicy, RedactionPolicy, Result, SOURCE_PROFILE_VERSION, SliceRequest, SourceProfile,
-    Store, Summary, TrustSettings, cache_allowed, call_effect_warnings, check_call,
-    check_discovery, cli_adapter_effects, cli_hardening_effects, expand, http_adapter_effects,
-    http_hardening_effects, infer, join, lens_slice_request, new_cache_entry, project,
-    project_with_lens, public_contract_schemas, render_hints, slice_value, tighten_effects,
-    validate_lens_manifest,
+    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, EvidenceRef, Extra, LensManifest,
+    NextAction, ObservationCompleteness, ObservationFreshness, ObservationMetadata,
+    ObservationPayloadStatus, ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion,
+    OperationProfile, PreviewPolicy, RedactionPolicy, Result, SOURCE_PROFILE_VERSION, SliceRequest,
+    SourceProfile, Store, Summary, TrustSettings, cache_allowed, call_effect_warnings,
+    canonical_json, check_call, check_discovery, cli_adapter_effects, cli_hardening_effects,
+    expand, http_adapter_effects, http_hardening_effects, infer, join, lens_slice_request,
+    new_cache_entry, project, project_with_lens, public_contract_schemas, render_hints,
+    slice_value, tighten_effects, validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -601,6 +601,18 @@ struct InitFileSpec {
     executable: bool,
 }
 
+struct EvidenceRefInput<'a> {
+    source_id: &'a str,
+    operation: &'a str,
+    cursor: Option<&'a str>,
+    path: &'a str,
+    value: &'a Value,
+    provenance: Option<&'a CallProvenance>,
+    cache: Option<&'a CacheInfo>,
+    omitted: &'a [OmittedRegion],
+    redacted_paths: usize,
+}
+
 #[derive(Debug, Serialize)]
 struct InitReport {
     schema_version: &'static str,
@@ -647,6 +659,8 @@ struct PathEntry {
     omitted_reason: Option<OmissionReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    evidence_ref: Option<EvidenceRef>,
 }
 
 struct PathFilters {
@@ -2031,6 +2045,63 @@ fn write_init_file(path: &Path, content: &str, executable: bool) -> Result<()> {
     Ok(())
 }
 
+fn evidence_ref(input: EvidenceRefInput<'_>) -> EvidenceRef {
+    let omitted_in_scope = input
+        .omitted
+        .iter()
+        .filter(|region| omission_intersects_path(input.path, &region.path))
+        .collect::<Vec<_>>();
+    let redacted = input.redacted_paths > 0
+        || value_contains_redaction(input.value)
+        || omitted_in_scope
+            .iter()
+            .any(|region| region.reason == OmissionReason::Redacted);
+    let lossy = omitted_in_scope
+        .iter()
+        .any(|region| region.reason != OmissionReason::Redacted);
+    let redacted_slice_sha256 = canonical_json(input.value)
+        .ok()
+        .map(|bytes| hex_sha256(bytes.as_slice()));
+    let cache_status = input.cache.map(|cache| cache.status);
+    let age_seconds = input.cache.and_then(|cache| cache.age_seconds);
+    let stale = matches!(cache_status, Some(CacheStatus::Hit)) && age_seconds.unwrap_or(0) > 0;
+    EvidenceRef {
+        schema_version: "prog.evidence_ref.v1".to_string(),
+        source_id: input.source_id.to_string(),
+        operation: input.operation.to_string(),
+        cursor: input.cursor.map(str::to_string),
+        path: input.path.to_string(),
+        uri: input
+            .cursor
+            .map(|cursor| format!("prog://{cursor}#{}", input.path)),
+        captured_at: input
+            .provenance
+            .map(|provenance| provenance.captured_at.clone()),
+        cache_status,
+        age_seconds,
+        expires_at: input.cache.and_then(|cache| cache.expires_at.clone()),
+        stale,
+        redacted,
+        lossy,
+        redacted_slice_sha256,
+        extra: Extra::new(),
+    }
+}
+
+fn omission_intersects_path(path: &str, omitted_path: &str) -> bool {
+    prog_core::pointer::is_within(path, omitted_path).unwrap_or(false)
+        || prog_core::pointer::is_within(omitted_path, path).unwrap_or(false)
+}
+
+fn value_contains_redaction(value: &Value) -> bool {
+    match value {
+        Value::String(value) => value.contains("[REDACTED:"),
+        Value::Array(values) => values.iter().any(value_contains_redaction),
+        Value::Object(map) => map.values().any(value_contains_redaction),
+        _ => false,
+    }
+}
+
 fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
     let filters = path_filters(args)?;
     let redaction_version = RedactionPolicy::default().version;
@@ -2058,10 +2129,11 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
             hint: prog_core::pointer::siblings_hint(&payload, &prefix),
         })?;
     let projection = project(target, &PreviewPolicy::default(), &prefix);
+    let projected_omitted = projection.omitted.clone();
     let mut paths = Vec::new();
     let truncated = collect_paths(target, &prefix, args.depth, args.limit, &mut paths);
-    annotate_path_omissions(&mut paths, &projection.omitted);
-    append_missing_omitted_paths(&mut paths, &projection.omitted, args.limit);
+    annotate_path_omissions(&mut paths, &projected_omitted);
+    append_missing_omitted_paths(&mut paths, &projected_omitted, args.limit);
     paths.retain(|path| path_matches_filters(path, &filters));
     let omitted = projection
         .omitted
@@ -2087,6 +2159,16 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
             "cached payload age_seconds={age}; re-run the original observation or call to refresh"
         ));
     }
+    let cache = cache_info(CacheStatus::Hit, &entry, Some(age));
+    attach_path_evidence_refs(
+        &mut paths,
+        &payload,
+        &record,
+        &entry,
+        &cache,
+        &projected_omitted,
+        &args.cursor,
+    )?;
 
     Ok(PathsResponse {
         schema_version: DISCLOSURE_VERSION,
@@ -2098,7 +2180,7 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
         paths,
         omitted,
         next_actions,
-        cache: cache_info(CacheStatus::Hit, &entry, Some(age)),
+        cache,
         warnings,
     })
 }
@@ -2202,6 +2284,7 @@ fn collect_paths_inner(
         expandable: matches!(value, Value::Array(_) | Value::Object(_)),
         omitted_reason: None,
         detail: None,
+        evidence_ref: None,
     });
 
     if depth == 0 {
@@ -2277,8 +2360,39 @@ fn append_missing_omitted_paths(
             expandable: true,
             omitted_reason: Some(region.reason),
             detail: region.detail.clone(),
+            evidence_ref: None,
         });
     }
+}
+
+fn attach_path_evidence_refs(
+    paths: &mut [PathEntry],
+    payload: &Value,
+    record: &prog_core::CursorRecord,
+    entry: &prog_core::CacheEntryMeta,
+    cache: &CacheInfo,
+    omitted: &[OmittedRegion],
+    cursor: &str,
+) -> Result<()> {
+    for path in paths {
+        if !path.expandable && path.omitted_reason.is_none() {
+            continue;
+        }
+        if let Some(value) = prog_core::pointer::get(payload, &path.path)? {
+            path.evidence_ref = Some(evidence_ref(EvidenceRefInput {
+                source_id: &record.source_id,
+                operation: &record.operation,
+                cursor: Some(cursor),
+                path: &path.path,
+                value,
+                provenance: entry.provenance.as_ref(),
+                cache: Some(cache),
+                omitted,
+                redacted_paths: 0,
+            }));
+        }
+    }
+    Ok(())
 }
 
 fn expansion_next_actions(
@@ -2422,11 +2536,24 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
         let (target_path, selected) = slice_value(&payload, &record.root_path, &slice)?;
         let bytes = serde_json::to_vec_pretty(&selected)?;
         write_private_file(path, &bytes)?;
+        let cache = cache_info(CacheStatus::Hit, &entry, Some(age));
+        let evidence_ref = evidence_ref(EvidenceRefInput {
+            source_id: &record.source_id,
+            operation: &record.operation,
+            cursor: Some(&args.cursor),
+            path: &target_path,
+            value: &selected,
+            provenance: entry.provenance.as_ref(),
+            cache: Some(&cache),
+            omitted: &[],
+            redacted_paths: 0,
+        });
         let receipt = json!({
             "path": path,
             "json_pointer": target_path,
             "bytes": bytes.len(),
-            "sha256": hex_sha256(&bytes)
+            "sha256": hex_sha256(&bytes),
+            "evidence_ref": evidence_ref
         });
         return envelope_for_payload(
             store,
@@ -2446,7 +2573,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
                 },
                 payload_bytes: bytes.len().try_into().unwrap_or(u64::MAX),
                 provenance: entry.provenance.clone(),
-                cache: Some(cache_info(CacheStatus::Hit, &entry, Some(age))),
+                cache: Some(cache),
                 effects: None,
                 redacted_paths: 0,
                 cache_disabled_reason: None,
@@ -3856,7 +3983,9 @@ fn make_envelope(
     cursor: Option<String>,
 ) -> DisclosureEnvelope {
     let projection = lens_projection.projection;
-    let observation = observation_metadata(input, &projection.omitted, cursor.as_deref());
+    let preview = projection.preview;
+    let omitted = projection.omitted;
+    let observation = observation_metadata(input, &omitted, cursor.as_deref());
     let mut next_actions = lens_projection
         .next_actions
         .into_iter()
@@ -3868,7 +3997,7 @@ fn make_envelope(
             expansion_next_actions(
                 Some(cursor.as_str()),
                 input.next_action_operation.as_deref(),
-                &projection.omitted,
+                &omitted,
                 10,
             )
         })
@@ -3900,6 +4029,24 @@ fn make_envelope(
             }),
         );
     }
+    if let Some(cursor) = cursor.as_deref() {
+        let evidence_path = input.slice.path.as_deref().unwrap_or(&input.root_path);
+        extra.insert(
+            "evidence_ref".to_string(),
+            serde_json::to_value(evidence_ref(EvidenceRefInput {
+                source_id: &input.source_id,
+                operation: &input.operation,
+                cursor: Some(cursor),
+                path: evidence_path,
+                value: &preview,
+                provenance: input.provenance.as_ref(),
+                cache: input.cache.as_ref(),
+                omitted: &omitted,
+                redacted_paths: input.redacted_paths,
+            }))
+            .unwrap_or(Value::Null),
+        );
+    }
     DisclosureEnvelope {
         schema_version: DISCLOSURE_VERSION.to_string(),
         source_id: Some(input.source_id.clone()),
@@ -3907,15 +4054,15 @@ fn make_envelope(
         summary: Summary {
             kind: value_kind(&input.payload).to_string(),
             item_count: item_count(&input.payload),
-            preview_count: item_count(&projection.preview),
+            preview_count: item_count(&preview),
             payload_bytes: input.payload_bytes,
             approx_tokens: input.payload_bytes.saturating_add(3) / 4,
             envelope_bytes: None,
             extra: Extra::new(),
         },
-        data_preview: projection.preview,
+        data_preview: preview,
         schema_hints: input.schema_hints.clone(),
-        omitted: projection.omitted,
+        omitted,
         cursor,
         next_actions,
         provenance: input.provenance.clone(),

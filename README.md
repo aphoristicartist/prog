@@ -127,6 +127,7 @@ See [docs/token-economics.md](docs/token-economics.md) for the checked-in report
 - [Profile-free observations](docs/observe.md), including stdin, file, JSON, NDJSON, text capture, path discovery, and cursor expansion.
 - [Command wrapper](docs/run.md), including `prog run`, preserved exit codes, failure sections, and redacted output captures.
 - [Agent integrations](docs/integrations.md), including project-local Codex skill/hooks and MCP-optional workflows.
+- [Evidence references](docs/evidence.md), including compact cursor/path-backed citations for expanded observations.
 - [Invariants](INVARIANTS.md) and [RFC 0001](docs/rfcs/0001-progressive-disclosure-gateway.md), [RFC 0002](docs/rfcs/0002-type-theory-formal-methods-and-reflexivity.md), [RFC 0003](docs/rfcs/0003-observation-lenses.md).
 - [CHANGELOG](CHANGELOG.md).
 

@@ -270,6 +270,7 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/observe.md",
         "docs/run.md",
         "docs/integrations.md",
+        "docs/evidence.md",
         "docs/paths.md",
         "docs/token-economics.md",
         "skills/prog/SKILL.md",

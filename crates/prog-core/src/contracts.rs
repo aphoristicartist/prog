@@ -279,6 +279,34 @@ pub struct ObservationPayloadStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+pub struct EvidenceRef {
+    pub schema_version: String,
+    pub source_id: String,
+    pub operation: String,
+    #[serde(default)]
+    pub cursor: Option<String>,
+    pub path: String,
+    #[serde(default)]
+    pub uri: Option<String>,
+    #[serde(default)]
+    pub captured_at: Option<String>,
+    #[serde(default)]
+    pub cache_status: Option<CacheStatus>,
+    #[serde(default)]
+    pub age_seconds: Option<u64>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    pub stale: bool,
+    pub redacted: bool,
+    pub lossy: bool,
+    #[serde(default)]
+    pub redacted_slice_sha256: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub struct Summary {
     pub kind: String,
     #[serde(default)]
@@ -517,6 +545,7 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<TrustSettings>(&mut schemas, "TrustSettings")?;
     insert_schema::<AuthRef>(&mut schemas, "AuthRef")?;
     insert_schema::<DisclosureEnvelope>(&mut schemas, "DisclosureEnvelope")?;
+    insert_schema::<EvidenceRef>(&mut schemas, "EvidenceRef")?;
     insert_schema::<Summary>(&mut schemas, "Summary")?;
     insert_schema::<OmittedRegion>(&mut schemas, "OmittedRegion")?;
     insert_schema::<NextAction>(&mut schemas, "NextAction")?;
