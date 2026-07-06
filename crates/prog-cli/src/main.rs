@@ -62,6 +62,10 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Discover(DiscoverArgs),
+    Source {
+        #[command(subcommand)]
+        command: SourceCommand,
+    },
     Hints(HintsArgs),
     Call(CallArgs),
     Observe(ObserveArgs),
@@ -115,6 +119,46 @@ struct DiscoverArgs {
 
     #[arg(long)]
     probe: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum SourceCommand {
+    AddHttp(SourceAddHttpArgs),
+    AddCli(SourceAddCliArgs),
+}
+
+#[derive(Debug, Args)]
+struct SourceAddHttpArgs {
+    source_id: String,
+
+    #[arg(long)]
+    operation: String,
+
+    #[arg(long)]
+    url: String,
+
+    #[arg(long, default_value = "GET")]
+    method: String,
+
+    #[arg(long)]
+    probe: bool,
+}
+
+#[derive(Debug, Args)]
+struct SourceAddCliArgs {
+    source_id: String,
+
+    #[arg(long)]
+    operation: String,
+
+    #[arg(long)]
+    read_only: bool,
+
+    #[arg(long)]
+    probe: bool,
+
+    #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
+    command: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -349,6 +393,12 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             write_success(&report, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::Source { command } => {
+            let store = Store::open(&cli.dir)?;
+            let report = source_command(&store, command).await?;
+            write_success(&report, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Hints(args) => {
             let store = Store::open(&cli.dir)?;
             let response = hints_source(&store, args)?;
@@ -456,7 +506,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct DiscoverReport {
     schema_version: &'static str,
     source_id: String,
@@ -467,6 +517,18 @@ struct DiscoverReport {
     shapes_learned: usize,
     warnings: Vec<String>,
     effects_assumed: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct SourceAddReport {
+    schema_version: &'static str,
+    source_id: String,
+    kind: prog_core::SourceKind,
+    operation: String,
+    generated_seed: Value,
+    discovery: DiscoverReport,
+    next_steps: Vec<String>,
+    warnings: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -783,13 +845,23 @@ struct PathFilters {
 
 async fn discover_source(store: &Store, args: &DiscoverArgs) -> Result<DiscoverReport> {
     let seed = read_seed(&args.seed)?;
-    validate_seed_kind(args.kind, &seed)?;
-    let mut prepared = prepare_discovery(&args.source_id, args.kind, seed).await?;
+    discover_from_seed(store, &args.source_id, args.kind, seed, args.probe).await
+}
+
+async fn discover_from_seed(
+    store: &Store,
+    source_id: &str,
+    kind: SourceKind,
+    seed: Value,
+    probe: bool,
+) -> Result<DiscoverReport> {
+    validate_seed_kind(kind, &seed)?;
+    let mut prepared = prepare_discovery(source_id, kind, seed).await?;
     let operations_found = prepared.profile.operations.len();
     let mut operations_probed = 0usize;
     let mut shapes_learned = 0usize;
 
-    if args.probe {
+    if probe {
         let probe = prepared.probe.take();
         if let Some(probe) = &probe {
             probe_profile(
@@ -808,13 +880,13 @@ async fn discover_source(store: &Store, args: &DiscoverArgs) -> Result<DiscoverR
         }
     }
 
-    let profile = store.update_profile(&args.source_id, |current| {
+    let profile = store.update_profile(source_id, |current| {
         merge_profiles(current, prepared.profile.clone())
     })?;
 
     Ok(DiscoverReport {
         schema_version: DISCLOSURE_VERSION,
-        source_id: args.source_id.clone(),
+        source_id: source_id.to_string(),
         kind: profile.kind,
         profile_version: profile.version,
         operations_found,
@@ -823,6 +895,232 @@ async fn discover_source(store: &Store, args: &DiscoverArgs) -> Result<DiscoverR
         warnings: prepared.warnings,
         effects_assumed: prepared.effects_assumed,
     })
+}
+
+async fn source_command(store: &Store, command: &SourceCommand) -> Result<SourceAddReport> {
+    match command {
+        SourceCommand::AddHttp(args) => source_add_http(store, args).await,
+        SourceCommand::AddCli(args) => source_add_cli(store, args).await,
+    }
+}
+
+async fn source_add_http(store: &Store, args: &SourceAddHttpArgs) -> Result<SourceAddReport> {
+    let operation = source_add_operation(&args.operation, "source add-http")?;
+    let method = normalize_http_method(&args.method)?;
+    let url = split_http_url(&args.url)?;
+    let read_only = method == "GET";
+    let mut warnings = Vec::new();
+    if !read_only {
+        warnings.push(format!(
+            "generated HTTP operation '{}' is confirmation-gated because method '{}' is not GET",
+            operation, method
+        ));
+    }
+    let seed = json!({
+        "kind": "http",
+        "base_url": url.base_url,
+        "operations": [{
+            "name": operation,
+            "method": method,
+            "path": url.path,
+            "query": url.query,
+            "effect": generated_effect(read_only, true, false)
+        }]
+    });
+    let discovery = discover_from_seed(
+        store,
+        &args.source_id,
+        SourceKind::Http,
+        seed.clone(),
+        args.probe,
+    )
+    .await?;
+    warnings.extend(discovery.warnings.clone());
+    let next_steps = source_add_next_steps(&args.source_id, &operation, !read_only);
+    Ok(SourceAddReport {
+        schema_version: DISCLOSURE_VERSION,
+        source_id: args.source_id.clone(),
+        kind: prog_core::SourceKind::Http,
+        operation,
+        generated_seed: seed,
+        next_steps,
+        warnings,
+        discovery,
+    })
+}
+
+async fn source_add_cli(store: &Store, args: &SourceAddCliArgs) -> Result<SourceAddReport> {
+    let operation = source_add_operation(&args.operation, "source add-cli")?;
+    let Some((command, command_args)) = args.command.split_first() else {
+        return Err(CoreError::BadArgs {
+            operation: "source add-cli".to_string(),
+            reason: "pass a command after --".to_string(),
+        });
+    };
+    let read_only = args.read_only;
+    let mut warnings = Vec::new();
+    if !read_only {
+        warnings.push(format!(
+            "generated CLI operation '{}' is confirmation-gated; pass --read-only only for commands safe to invoke automatically",
+            operation
+        ));
+    }
+    let seed = json!({
+        "kind": "cli",
+        "operations": [{
+            "name": operation,
+            "command": command,
+            "args": command_args,
+            "effect": generated_effect(read_only, true, false)
+        }]
+    });
+    let discovery = discover_from_seed(
+        store,
+        &args.source_id,
+        SourceKind::Cli,
+        seed.clone(),
+        args.probe,
+    )
+    .await?;
+    warnings.extend(discovery.warnings.clone());
+    let next_steps = source_add_next_steps(&args.source_id, &operation, !read_only);
+    Ok(SourceAddReport {
+        schema_version: DISCLOSURE_VERSION,
+        source_id: args.source_id.clone(),
+        kind: prog_core::SourceKind::Cli,
+        operation,
+        generated_seed: seed,
+        next_steps,
+        warnings,
+        discovery,
+    })
+}
+
+fn source_add_operation(operation: &str, context: &str) -> Result<String> {
+    let operation = operation.trim();
+    if operation.is_empty() {
+        return Err(CoreError::BadArgs {
+            operation: context.to_string(),
+            reason: "--operation must not be empty".to_string(),
+        });
+    }
+    Ok(operation.to_string())
+}
+
+fn source_add_next_steps(source_id: &str, operation: &str, needs_yes: bool) -> Vec<String> {
+    let confirmation = if needs_yes { " --yes" } else { "" };
+    vec![
+        format!("prog hints {source_id} {operation}"),
+        format!("prog call {source_id} {operation} --args '{{}}'{confirmation}"),
+    ]
+}
+
+fn generated_effect(read_only: bool, network: bool, shell: bool) -> Value {
+    json!({
+        "read_only": read_only,
+        "mutating": !read_only,
+        "network": network,
+        "shell": shell,
+        "sensitive": !read_only,
+        "cacheable": read_only,
+        "requires_confirmation": !read_only
+    })
+}
+
+fn normalize_http_method(method: &str) -> Result<String> {
+    let method = method.trim().to_ascii_uppercase();
+    if method.is_empty() || !method.chars().all(|ch| ch.is_ascii_alphabetic()) {
+        return Err(CoreError::BadArgs {
+            operation: "source add-http".to_string(),
+            reason: "--method must be an HTTP token such as GET or POST".to_string(),
+        });
+    }
+    Ok(method)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct HttpUrlParts {
+    base_url: String,
+    path: String,
+    query: BTreeMap<String, String>,
+}
+
+fn split_http_url(raw: &str) -> Result<HttpUrlParts> {
+    let raw = raw.trim();
+    let Some((scheme, rest)) = raw.split_once("://") else {
+        return Err(CoreError::BadArgs {
+            operation: "source add-http".to_string(),
+            reason: "--url must include http:// or https://".to_string(),
+        });
+    };
+    let scheme = scheme.to_ascii_lowercase();
+    if !matches!(scheme.as_str(), "http" | "https") {
+        return Err(CoreError::BadArgs {
+            operation: "source add-http".to_string(),
+            reason: "--url scheme must be http or https".to_string(),
+        });
+    }
+    if rest.contains('#') {
+        return Err(CoreError::BadArgs {
+            operation: "source add-http".to_string(),
+            reason: "--url fragments are not part of HTTP requests; remove the fragment"
+                .to_string(),
+        });
+    }
+    let split_at = rest
+        .find(|ch| ['/', '?'].contains(&ch))
+        .unwrap_or(rest.len());
+    let authority = &rest[..split_at];
+    if authority.is_empty() || authority.contains('@') {
+        return Err(CoreError::BadArgs {
+            operation: "source add-http".to_string(),
+            reason: "--url must include a host and must not embed credentials".to_string(),
+        });
+    }
+    let tail = &rest[split_at..];
+    let (path, query_raw) = if tail.is_empty() {
+        ("/", "")
+    } else if let Some(query) = tail.strip_prefix('?') {
+        ("/", query)
+    } else if let Some((path, query)) = tail.split_once('?') {
+        (if path.is_empty() { "/" } else { path }, query)
+    } else {
+        (tail, "")
+    };
+    let query = split_http_query(query_raw)?;
+    Ok(HttpUrlParts {
+        base_url: format!("{scheme}://{authority}"),
+        path: path.to_string(),
+        query,
+    })
+}
+
+fn split_http_query(raw: &str) -> Result<BTreeMap<String, String>> {
+    let mut query = BTreeMap::new();
+    if raw.is_empty() {
+        return Ok(query);
+    }
+    for pair in raw.split('&').filter(|pair| !pair.is_empty()) {
+        let Some((key, value)) = pair.split_once('=') else {
+            return Err(CoreError::BadArgs {
+                operation: "source add-http".to_string(),
+                reason: format!("query parameter '{pair}' must use key=value form"),
+            });
+        };
+        if key.is_empty() {
+            return Err(CoreError::BadArgs {
+                operation: "source add-http".to_string(),
+                reason: "query parameter names must not be empty".to_string(),
+            });
+        }
+        if query.insert(key.to_string(), value.to_string()).is_some() {
+            return Err(CoreError::BadArgs {
+                operation: "source add-http".to_string(),
+                reason: format!("query parameter '{key}' appears more than once"),
+            });
+        }
+    }
+    Ok(query)
 }
 
 fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
