@@ -442,4 +442,34 @@ fn docs_keep_acceptance_topics_visible() {
         competitive_metrics.as_array().unwrap().len() >= 80,
         "competitive baseline metrics should include 8 strategy rows for at least 10 scenarios"
     );
+
+    let observe = std::fs::read_to_string(root.join("docs/observe.md")).unwrap();
+    for expected in [
+        "Parser/Indexer Pipeline",
+        "observation.parser",
+        "confidence",
+        "lossy",
+        "SARIF",
+        "JUnit XML",
+        "unified diff",
+        "text fallback",
+    ] {
+        assert!(
+            observe.contains(expected),
+            "observe doc should mention {expected}"
+        );
+    }
+
+    let metadata = std::fs::read_to_string(root.join("docs/metadata.md")).unwrap();
+    for expected in [
+        "parser.id",
+        "parser.path_semantics",
+        "parser.lossy",
+        "parser.fallback",
+    ] {
+        assert!(
+            metadata.contains(expected),
+            "metadata doc should mention {expected}"
+        );
+    }
 }

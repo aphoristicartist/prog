@@ -20,6 +20,12 @@ Use these fields before answering from a preview:
   before shape inference, cache persistence, and expansion
 - `payload.cache_status`, `cached`, and `expandable`: whether the full redacted
   payload can be expanded later
+- `parser.id`, `confidence`, `lossy`, and `fallback`: which observation
+  parser/indexer handled the artifact, how strong the match was, whether the
+  preview is extracted or bounded, and whether the bounded text fallback was
+  used
+- `parser.path_semantics` and `range_semantics`: how to interpret expansion
+  paths and text ranges for the selected parser
 
 ## Agent Rules
 
@@ -29,6 +35,11 @@ Use these fields before answering from a preview:
   redacted value, not the original secret.
 - If `payload.expandable` is false, there is no cursor-backed recovery path for
   omitted data.
+- If `parser.lossy` is true, use `prog expand` for exact cited slices before
+  relying on extracted summaries such as JUnit XML test cases, HTML headings, or
+  unified diff file lists.
+- If `parser.fallback` is true, treat the artifact as bounded text even when the
+  MIME type looked structured.
 - If `freshness.refresh_recommended` is true, rerun the original call or
   observation before making freshness-sensitive claims.
 - If `trust.profile_backed` is false, prefer explicit citations to the observed

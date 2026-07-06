@@ -15,6 +15,7 @@
 - Added bounded source-profile importers for OpenAPI, JSON Schema, MCP schemas, CLI help, and checked-in examples.
 - Added deterministic task-success evals comparing raw, simple truncation, call-only, and targeted expansion strategies.
 - Added competitive baseline evals against raw context, truncation, native field selection, RTK-style grep filtering, Caveman-style terse output, and repeated cache-backed expansion.
+- Added a deterministic observation parser/indexer pipeline with parser metadata for JSON, NDJSON, SARIF, JUnit XML, HTML, unified diffs, and text fallback.
 - Added RFC 0003, defining observation lenses as the general progressive-disclosure model for agent artifacts.
 - Added LensManifest v1 contracts, repo-local lens loading, and lens-driven call previews.
 - Added progressive-disclosure docs, fixture walkthroughs, cache and safety notes, JSON contract documentation, and a token economics report.

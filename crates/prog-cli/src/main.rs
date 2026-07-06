@@ -631,6 +631,7 @@ struct EnvelopeInput {
     schema_hints: BTreeMap<String, String>,
     next_action_operation: Option<String>,
     additional_next_actions: Vec<NextAction>,
+    observation_parser: Option<Value>,
     lens: Option<LensManifest>,
 }
 
@@ -656,7 +657,31 @@ struct ObservationInput {
 struct NormalizedObservation {
     kind: String,
     payload: Value,
+    parser: ObservationParserInfo,
     warnings: Vec<String>,
+}
+
+#[derive(Clone)]
+struct ObservationParserInfo {
+    id: &'static str,
+    label: &'static str,
+    confidence: f64,
+    lossy: bool,
+    fallback: bool,
+    reason: &'static str,
+    path_semantics: &'static str,
+    range_semantics: &'static str,
+}
+
+struct ParserMatch {
+    confidence: f64,
+    reason: &'static str,
+}
+
+struct ObservationParser {
+    id: &'static str,
+    detect: fn(&[u8], &str) -> Option<ParserMatch>,
+    parse: fn(&[u8], &str, ParserMatch) -> Result<NormalizedObservation>,
 }
 
 struct RunEnvelopeResult {
@@ -1337,6 +1362,7 @@ async fn call_source(
                     .unwrap_or_default(),
                 next_action_operation: Some(args.operation.clone()),
                 additional_next_actions: Vec::new(),
+                observation_parser: None,
                 lens,
             },
             cursor,
@@ -1442,6 +1468,7 @@ async fn call_source(
             schema_hints: render_hints(&observed, ""),
             next_action_operation: Some(args.operation.clone()),
             additional_next_actions: Vec::new(),
+            observation_parser: None,
             lens,
         },
         cursor,
@@ -1547,6 +1574,7 @@ fn observe_artifact(
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
             additional_next_actions: Vec::new(),
+            observation_parser: Some(parser_metadata(&normalized.parser)),
             lens,
         },
         cursor,
@@ -1747,6 +1775,7 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
             additional_next_actions: next_actions,
+            observation_parser: None,
             lens,
         },
         cursor,
@@ -3501,6 +3530,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
                 schema_hints: BTreeMap::new(),
                 next_action_operation: None,
                 additional_next_actions: Vec::new(),
+                observation_parser: None,
                 lens: None,
             },
             None,
@@ -3526,6 +3556,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
             additional_next_actions: Vec::new(),
+            observation_parser: None,
             lens: None,
         },
         Some(args.cursor.clone()),
@@ -3595,6 +3626,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
             schema_hints: BTreeMap::new(),
             next_action_operation: None,
             additional_next_actions: Vec::new(),
+            observation_parser: None,
             lens: None,
         },
         cursor,
@@ -4119,18 +4151,135 @@ fn read_observation_input(args: &ObserveArgs) -> Result<ObservationInput> {
     })
 }
 
+const OBSERVATION_PARSERS: &[ObservationParser] = &[
+    ObservationParser {
+        id: "sarif",
+        detect: detect_sarif_observation,
+        parse: parse_sarif_observation,
+    },
+    ObservationParser {
+        id: "ndjson",
+        detect: detect_ndjson_observation,
+        parse: parse_ndjson_observation,
+    },
+    ObservationParser {
+        id: "json",
+        detect: detect_json_observation,
+        parse: parse_json_observation,
+    },
+    ObservationParser {
+        id: "junit_xml",
+        detect: detect_junit_xml_observation,
+        parse: parse_junit_xml_observation,
+    },
+    ObservationParser {
+        id: "html_basic",
+        detect: detect_html_observation,
+        parse: parse_html_observation,
+    },
+    ObservationParser {
+        id: "unified_diff",
+        detect: detect_diff_observation,
+        parse: parse_diff_observation,
+    },
+    ObservationParser {
+        id: "text_fallback",
+        detect: detect_text_observation,
+        parse: parse_text_observation,
+    },
+];
+
 fn normalize_observation(bytes: &[u8], mime: &str) -> Result<NormalizedObservation> {
-    let normalized_mime = mime.to_ascii_lowercase();
-    if normalized_mime.contains("ndjson") || normalized_mime.contains("jsonlines") {
-        return normalize_ndjson_observation(bytes);
+    let mut parser_errors = Vec::new();
+    for parser in OBSERVATION_PARSERS {
+        let Some(matched) = (parser.detect)(bytes, mime) else {
+            continue;
+        };
+        match (parser.parse)(bytes, mime, matched) {
+            Ok(mut normalized) => {
+                normalized.warnings.extend(parser_errors);
+                return Ok(normalized);
+            }
+            Err(error) => parser_errors.push(format!("{}: {error}", parser.id)),
+        }
     }
-    if normalized_mime.contains("json") || sniff_mime_from_bytes(bytes) == "application/json" {
-        return normalize_json_observation(bytes, mime);
+
+    if is_binaryish(bytes) {
+        return Err(CoreError::BadArgs {
+            operation: "observe".to_string(),
+            reason: "input appears to be binary; pass a text, JSON, NDJSON, diff, XML, HTML, or SARIF artifact".to_string(),
+        });
     }
-    normalize_text_observation(bytes)
+    let mut normalized = parse_text_observation(
+        bytes,
+        mime,
+        ParserMatch {
+            confidence: 0.25,
+            reason: "all specific parsers failed; using text fallback",
+        },
+    )?;
+    normalized.warnings.extend(parser_errors);
+    Ok(normalized)
 }
 
-fn normalize_json_observation(bytes: &[u8], mime: &str) -> Result<NormalizedObservation> {
+fn detect_sarif_observation(bytes: &[u8], mime: &str) -> Option<ParserMatch> {
+    let normalized_mime = mime.to_ascii_lowercase();
+    if !normalized_mime.contains("sarif") && !normalized_mime.contains("json") {
+        return None;
+    }
+    let value = serde_json::from_slice::<Value>(bytes).ok()?;
+    if value.get("runs").and_then(Value::as_array).is_some()
+        && value.get("version").and_then(Value::as_str).is_some()
+    {
+        Some(ParserMatch {
+            confidence: 0.98,
+            reason: "JSON object contains SARIF version and runs",
+        })
+    } else {
+        None
+    }
+}
+
+fn parse_sarif_observation(
+    bytes: &[u8],
+    mime: &str,
+    matched: ParserMatch,
+) -> Result<NormalizedObservation> {
+    let mut normalized = parse_json_observation(bytes, mime, matched)?;
+    normalized.kind = "sarif".to_string();
+    normalized.parser.id = "sarif";
+    normalized.parser.label = "SARIF JSON";
+    normalized.parser.path_semantics = "sarif JSON pointer";
+    Ok(normalized)
+}
+
+fn detect_ndjson_observation(_bytes: &[u8], mime: &str) -> Option<ParserMatch> {
+    let normalized_mime = mime.to_ascii_lowercase();
+    (normalized_mime.contains("ndjson") || normalized_mime.contains("jsonlines")).then_some(
+        ParserMatch {
+            confidence: 0.98,
+            reason: "mime declares NDJSON or JSON Lines",
+        },
+    )
+}
+
+fn detect_json_observation(bytes: &[u8], mime: &str) -> Option<ParserMatch> {
+    let normalized_mime = mime.to_ascii_lowercase();
+    if normalized_mime.contains("ndjson") || normalized_mime.contains("jsonlines") {
+        return None;
+    }
+    (normalized_mime.contains("json") || sniff_mime_from_bytes(bytes) == "application/json")
+        .then_some(ParserMatch {
+            confidence: 0.95,
+            reason: "mime or byte sniffing indicates JSON",
+        })
+}
+
+fn parse_json_observation(
+    bytes: &[u8],
+    mime: &str,
+    matched: ParserMatch,
+) -> Result<NormalizedObservation> {
     let payload = serde_json::from_slice(bytes).map_err(|error| CoreError::BadArgs {
         operation: "observe".to_string(),
         reason: format!("input with mime '{mime}' must be valid JSON: {error}"),
@@ -4138,11 +4287,25 @@ fn normalize_json_observation(bytes: &[u8], mime: &str) -> Result<NormalizedObse
     Ok(NormalizedObservation {
         kind: "json".to_string(),
         payload,
+        parser: ObservationParserInfo {
+            id: "json",
+            label: "JSON tree",
+            confidence: matched.confidence,
+            lossy: false,
+            fallback: false,
+            reason: matched.reason,
+            path_semantics: "json pointer",
+            range_semantics: "tree nodes",
+        },
         warnings: Vec::new(),
     })
 }
 
-fn normalize_ndjson_observation(bytes: &[u8]) -> Result<NormalizedObservation> {
+fn parse_ndjson_observation(
+    bytes: &[u8],
+    _mime: &str,
+    matched: ParserMatch,
+) -> Result<NormalizedObservation> {
     let text = std::str::from_utf8(bytes).map_err(|error| CoreError::BadArgs {
         operation: "observe".to_string(),
         reason: format!("NDJSON input must be valid UTF-8: {error}"),
@@ -4169,11 +4332,163 @@ fn normalize_ndjson_observation(bytes: &[u8]) -> Result<NormalizedObservation> {
             "line_count": line_count,
             "byte_count": bytes.len()
         }),
+        parser: ObservationParserInfo {
+            id: "ndjson",
+            label: "NDJSON records",
+            confidence: matched.confidence,
+            lossy: false,
+            fallback: false,
+            reason: matched.reason,
+            path_semantics: "json pointer over /records",
+            range_semantics: "line-delimited records",
+        },
         warnings: Vec::new(),
     })
 }
 
-fn normalize_text_observation(bytes: &[u8]) -> Result<NormalizedObservation> {
+fn detect_junit_xml_observation(bytes: &[u8], mime: &str) -> Option<ParserMatch> {
+    let normalized_mime = mime.to_ascii_lowercase();
+    let prefix = text_prefix(bytes).to_ascii_lowercase();
+    (normalized_mime.contains("junit")
+        || (normalized_mime.contains("xml")
+            && (prefix.contains("<testsuite") || prefix.contains("<testsuites"))))
+    .then_some(ParserMatch {
+        confidence: 0.90,
+        reason: "mime or XML root indicates JUnit",
+    })
+}
+
+fn parse_junit_xml_observation(
+    bytes: &[u8],
+    _mime: &str,
+    matched: ParserMatch,
+) -> Result<NormalizedObservation> {
+    let (text, mut warnings, utf8_valid) = decode_text(bytes);
+    let cases = parse_junit_cases(&text);
+    let mut payload = text_payload(&text, bytes.len(), utf8_valid, "junit_xml");
+    payload["testcases"] = Value::Array(cases);
+    payload["testcase_count"] = json!(payload["testcases"].as_array().map_or(0, Vec::len));
+    Ok(NormalizedObservation {
+        kind: "junit_xml".to_string(),
+        payload,
+        parser: ObservationParserInfo {
+            id: "junit_xml",
+            label: "JUnit XML",
+            confidence: matched.confidence,
+            lossy: true,
+            fallback: false,
+            reason: matched.reason,
+            path_semantics: "json pointer over parsed testcases and /lines",
+            range_semantics: "line ranges from XML text",
+        },
+        warnings: {
+            warnings.push(
+                "JUnit XML parser is lightweight and preserves raw line expansion".to_string(),
+            );
+            warnings
+        },
+    })
+}
+
+fn detect_html_observation(bytes: &[u8], mime: &str) -> Option<ParserMatch> {
+    let normalized_mime = mime.to_ascii_lowercase();
+    let prefix = text_prefix(bytes).to_ascii_lowercase();
+    (normalized_mime.contains("html")
+        || prefix.contains("<html")
+        || prefix.contains("<!doctype html"))
+    .then_some(ParserMatch {
+        confidence: 0.88,
+        reason: "mime or text prefix indicates HTML",
+    })
+}
+
+fn parse_html_observation(
+    bytes: &[u8],
+    _mime: &str,
+    matched: ParserMatch,
+) -> Result<NormalizedObservation> {
+    let (text, mut warnings, utf8_valid) = decode_text(bytes);
+    let mut payload = text_payload(&text, bytes.len(), utf8_valid, "html");
+    payload["title"] = json!(extract_tag_text(&text, "title"));
+    payload["headings"] = Value::Array(
+        ["h1", "h2", "h3"]
+            .into_iter()
+            .flat_map(|tag| extract_all_tag_text(&text, tag))
+            .map(Value::String)
+            .collect(),
+    );
+    payload["links"] = Value::Array(extract_links(&text));
+    Ok(NormalizedObservation {
+        kind: "html".to_string(),
+        payload,
+        parser: ObservationParserInfo {
+            id: "html_basic",
+            label: "Basic HTML",
+            confidence: matched.confidence,
+            lossy: true,
+            fallback: false,
+            reason: matched.reason,
+            path_semantics: "json pointer over title/headings/links and /lines",
+            range_semantics: "line ranges from HTML source",
+        },
+        warnings: {
+            warnings.push("HTML parser does not render or execute the document".to_string());
+            warnings
+        },
+    })
+}
+
+fn detect_diff_observation(bytes: &[u8], mime: &str) -> Option<ParserMatch> {
+    let normalized_mime = mime.to_ascii_lowercase();
+    let prefix = text_prefix(bytes);
+    (normalized_mime.contains("diff")
+        || normalized_mime.contains("patch")
+        || prefix.starts_with("diff --git")
+        || prefix.contains("\n--- ")
+        || prefix.contains("\n+++ "))
+    .then_some(ParserMatch {
+        confidence: 0.86,
+        reason: "mime or diff markers indicate unified diff",
+    })
+}
+
+fn parse_diff_observation(
+    bytes: &[u8],
+    _mime: &str,
+    matched: ParserMatch,
+) -> Result<NormalizedObservation> {
+    let (text, warnings, utf8_valid) = decode_text(bytes);
+    let mut payload = text_payload(&text, bytes.len(), utf8_valid, "unified_diff");
+    payload["files"] = Value::Array(parse_diff_files(&text));
+    Ok(NormalizedObservation {
+        kind: "unified_diff".to_string(),
+        payload,
+        parser: ObservationParserInfo {
+            id: "unified_diff",
+            label: "Unified diff",
+            confidence: matched.confidence,
+            lossy: false,
+            fallback: false,
+            reason: matched.reason,
+            path_semantics: "json pointer over diff files and /lines",
+            range_semantics: "line ranges from diff text",
+        },
+        warnings,
+    })
+}
+
+fn detect_text_observation(bytes: &[u8], _mime: &str) -> Option<ParserMatch> {
+    (!is_binaryish(bytes)).then_some(ParserMatch {
+        confidence: 0.50,
+        reason: "fallback text parser accepted non-binary bytes",
+    })
+}
+
+fn parse_text_observation(
+    bytes: &[u8],
+    _mime: &str,
+    matched: ParserMatch,
+) -> Result<NormalizedObservation> {
     if is_binaryish(bytes) {
         return Err(CoreError::BadArgs {
             operation: "observe".to_string(),
@@ -4181,15 +4496,27 @@ fn normalize_text_observation(bytes: &[u8]) -> Result<NormalizedObservation> {
         });
     }
 
-    let mut warnings = Vec::new();
-    let text = match std::str::from_utf8(bytes) {
-        Ok(text) => text.to_string(),
-        Err(_) => {
-            warnings
-                .push("input was not valid UTF-8; replacement characters were used".to_string());
-            String::from_utf8_lossy(bytes).to_string()
-        }
-    };
+    let (text, warnings, utf8_valid) = decode_text(bytes);
+    let mut payload = text_payload(&text, bytes.len(), utf8_valid, "text");
+    payload["repeated_stack_traces"] = json!(count_repeated_stack_trace_lines(&text));
+    Ok(NormalizedObservation {
+        kind: "text".to_string(),
+        payload,
+        parser: ObservationParserInfo {
+            id: "text_fallback",
+            label: "Text fallback",
+            confidence: matched.confidence,
+            lossy: !utf8_valid,
+            fallback: true,
+            reason: matched.reason,
+            path_semantics: "json pointer over /lines",
+            range_semantics: "line ranges from text",
+        },
+        warnings,
+    })
+}
+
+fn text_payload(text: &str, byte_count: usize, utf8_valid: bool, format: &str) -> Value {
     let lines = text
         .lines()
         .enumerate()
@@ -4213,19 +4540,187 @@ fn normalize_text_observation(bytes: &[u8]) -> Result<NormalizedObservation> {
         .map(|line| line["text"].clone())
         .collect::<Vec<_>>();
 
-    Ok(NormalizedObservation {
-        kind: "text".to_string(),
-        payload: json!({
-            "format": "text",
-            "head": head,
-            "tail": tail,
-            "lines": lines,
-            "line_count": line_count,
-            "byte_count": bytes.len(),
-            "utf8_valid": warnings.is_empty()
-        }),
-        warnings,
+    json!({
+        "format": format,
+        "head": head,
+        "tail": tail,
+        "lines": lines,
+        "line_count": line_count,
+        "byte_count": byte_count,
+        "utf8_valid": utf8_valid
     })
+}
+
+fn parser_metadata(parser: &ObservationParserInfo) -> Value {
+    json!({
+        "id": parser.id,
+        "label": parser.label,
+        "confidence": parser.confidence,
+        "lossy": parser.lossy,
+        "fallback": parser.fallback,
+        "reason": parser.reason,
+        "path_semantics": parser.path_semantics,
+        "range_semantics": parser.range_semantics
+    })
+}
+
+fn decode_text(bytes: &[u8]) -> (String, Vec<String>, bool) {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => (text.to_string(), Vec::new(), true),
+        Err(_) => (
+            String::from_utf8_lossy(bytes).to_string(),
+            vec!["input was not valid UTF-8; replacement characters were used".to_string()],
+            false,
+        ),
+    }
+}
+
+fn text_prefix(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_string()
+}
+
+fn parse_junit_cases(text: &str) -> Vec<Value> {
+    text.match_indices("<testcase")
+        .map(|(start, _)| {
+            let end = text[start..]
+                .find('>')
+                .map(|offset| start + offset)
+                .unwrap_or(text.len());
+            let tag = &text[start..end];
+            json!({
+                "name": extract_attr(tag, "name"),
+                "classname": extract_attr(tag, "classname"),
+                "time": extract_attr(tag, "time"),
+                "line_start": line_number_at(text, start)
+            })
+        })
+        .collect()
+}
+
+fn parse_diff_files(text: &str) -> Vec<Value> {
+    let mut files = Vec::new();
+    let mut current: Option<Map<String, Value>> = None;
+    for (index, line) in text.lines().enumerate() {
+        if let Some(path) = line.strip_prefix("diff --git ") {
+            if let Some(file) = current.take() {
+                files.push(Value::Object(file));
+            }
+            let mut file = Map::new();
+            file.insert("header".to_string(), json!(path));
+            file.insert("line_start".to_string(), json!(index));
+            file.insert("hunks".to_string(), Value::Array(Vec::new()));
+            current = Some(file);
+        } else if line.starts_with("@@")
+            && let Some(file) = current.as_mut()
+            && let Some(hunks) = file.get_mut("hunks").and_then(Value::as_array_mut)
+        {
+            hunks.push(json!({"header": line, "line_start": index}));
+        }
+    }
+    if let Some(file) = current {
+        files.push(Value::Object(file));
+    }
+    files
+}
+
+fn extract_tag_text(text: &str, tag: &str) -> Option<String> {
+    extract_all_tag_text(text, tag).into_iter().next()
+}
+
+fn extract_all_tag_text(text: &str, tag: &str) -> Vec<String> {
+    let lower = text.to_ascii_lowercase();
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let mut values = Vec::new();
+    let mut offset = 0usize;
+    while let Some(start) = lower[offset..].find(&open) {
+        let absolute_start = offset + start;
+        let Some(tag_end) = lower[absolute_start..].find('>') else {
+            break;
+        };
+        let content_start = absolute_start + tag_end + 1;
+        let Some(end) = lower[content_start..].find(&close) else {
+            break;
+        };
+        let content_end = content_start + end;
+        values.push(
+            strip_tags(&text[content_start..content_end])
+                .trim()
+                .to_string(),
+        );
+        offset = content_end + close.len();
+    }
+    values
+}
+
+fn extract_links(text: &str) -> Vec<Value> {
+    let lower = text.to_ascii_lowercase();
+    let mut links = Vec::new();
+    let mut offset = 0usize;
+    while let Some(start) = lower[offset..].find("<a ") {
+        let absolute_start = offset + start;
+        let Some(tag_end) = lower[absolute_start..].find('>') else {
+            break;
+        };
+        let tag = &text[absolute_start..absolute_start + tag_end];
+        links.push(json!({
+            "href": extract_attr(tag, "href"),
+            "line_start": line_number_at(text, absolute_start)
+        }));
+        offset = absolute_start + tag_end + 1;
+    }
+    links
+}
+
+fn extract_attr(tag: &str, attr: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let needles = [
+            format!(" {attr}={quote}"),
+            format!("\t{attr}={quote}"),
+            format!("\n{attr}={quote}"),
+        ];
+        if let Some((start, needle)) = needles
+            .iter()
+            .filter_map(|needle| tag.find(needle).map(|start| (start, needle)))
+            .next()
+        {
+            let value_start = start + needle.len();
+            let value_end = tag[value_start..]
+                .find(quote)
+                .map(|offset| value_start + offset)
+                .unwrap_or(tag.len());
+            return Some(tag[value_start..value_end].to_string());
+        }
+    }
+    None
+}
+
+fn strip_tags(raw: &str) -> String {
+    let mut output = String::new();
+    let mut in_tag = false;
+    for ch in raw.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => output.push(ch),
+            _ => {}
+        }
+    }
+    output
+}
+
+fn line_number_at(text: &str, byte_offset: usize) -> usize {
+    text[..byte_offset.min(text.len())].lines().count()
+}
+
+fn count_repeated_stack_trace_lines(text: &str) -> usize {
+    let mut counts = BTreeMap::new();
+    for line in text.lines().map(str::trim) {
+        if line.starts_with("at ") || line.starts_with("File \"") {
+            *counts.entry(line.to_string()).or_insert(0usize) += 1;
+        }
+    }
+    counts.values().filter(|count| **count > 1).count()
 }
 
 fn sniff_mime_from_bytes(bytes: &[u8]) -> &'static str {
@@ -5253,6 +5748,10 @@ fn observation_metadata(
             .effects
             .as_ref()
             .is_some_and(|effects| effects.sensitive);
+    let mut metadata_extra = Extra::new();
+    if let Some(parser) = &input.observation_parser {
+        metadata_extra.insert("parser".to_string(), parser.clone());
+    }
     ObservationMetadata {
         completeness: ObservationCompleteness {
             status: completeness_status.to_string(),
@@ -5311,7 +5810,7 @@ fn observation_metadata(
             payload_bytes: input.payload_bytes,
             extra: Extra::new(),
         },
-        extra: Extra::new(),
+        extra: metadata_extra,
     }
 }
 
