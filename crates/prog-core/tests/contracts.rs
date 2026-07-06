@@ -1,8 +1,8 @@
 use prog_core::{
     AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CallProvenance, CursorRecord,
-    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, LENS_MANIFEST_VERSION, LensManifest,
-    NextAction, OmittedRegion, SliceRequest, SourceProfile, Summary, TrustSettings, canonical_json,
-    public_contract_schemas,
+    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, EvidenceRef, LENS_MANIFEST_VERSION,
+    LensManifest, NextAction, OmittedRegion, SliceRequest, SourceProfile, Summary, TrustSettings,
+    canonical_json, public_contract_schemas,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -42,6 +42,19 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
         json!({
             "schema_version": DISCLOSURE_VERSION,
             "summary": {"kind": "object"},
+            "x_future": "kept"
+        }),
+        "x_future",
+    );
+    assert_extra_roundtrips::<EvidenceRef>(
+        json!({
+            "schema_version": "prog.evidence_ref.v1",
+            "source_id": "observe",
+            "operation": "artifact",
+            "path": "/items/0",
+            "stale": false,
+            "redacted": false,
+            "lossy": false,
             "x_future": "kept"
         }),
         "x_future",

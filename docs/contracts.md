@@ -13,6 +13,7 @@ Inspect one contract:
 ```bash
 prog --pretty meta SourceProfile
 prog --pretty meta DisclosureEnvelope
+prog --pretty meta EvidenceRef
 prog --pretty meta CacheEntryMeta
 ```
 
@@ -26,6 +27,7 @@ The current public contracts include:
 - `TrustSettings`
 - `AuthRef`
 - `DisclosureEnvelope`
+- `EvidenceRef`
 - `Summary`
 - `OmittedRegion`
 - `NextAction`
@@ -67,6 +69,11 @@ use known fields and ignore unknown extras.
 `observation` describes how to interpret the preview: completeness, freshness,
 trust, safety, and cache-backed payload availability. This metadata is additive;
 consumers should ignore unknown fields inside its subobjects.
+
+`evidence_ref` is a compact citation for cursor/path-backed evidence. It may
+appear on envelopes, expanded slices, path entries, and export receipts. It is
+not a capability; consumers must still call `prog expand` with the cursor and
+path when they need evidence.
 
 For lens-driven calls, inspect the flattened `lens` metadata on the returned
 envelope before assuming the preview shape is the source's native shape. Lens

@@ -192,6 +192,171 @@ fn observe_json_file_uses_envelope_cache_redaction_and_expand() {
 }
 
 #[test]
+fn evidence_refs_are_stable_refresh_sensitive_and_redaction_safe() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let file = dir.path().join("evidence.json");
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({
+            "answer": "alpha",
+            "token": "plain-secret",
+            "nested": {"value": "alpha"}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let observed = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--name",
+        "evidence",
+    ]);
+    assert!(observed.status.success(), "{}", stdout(&observed));
+    let observed_value: Value = serde_json::from_slice(&observed.stdout).unwrap();
+    let cursor = observed_value["cursor"].as_str().unwrap();
+
+    let expanded = prog(&["--dir", dir_arg, "expand", cursor, "--path", "/answer"]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let expanded_value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    let evidence = &expanded_value["evidence_ref"];
+    assert_eq!(evidence["schema_version"], "prog.evidence_ref.v1");
+    assert_eq!(evidence["source_id"], "observe");
+    assert_eq!(evidence["operation"], "evidence");
+    assert_eq!(evidence["cursor"], cursor);
+    assert_eq!(evidence["path"], "/answer");
+    assert_eq!(evidence["uri"], format!("prog://{cursor}#/answer"));
+    assert_eq!(evidence["cache_status"], "hit");
+    assert_eq!(evidence["redacted"], false);
+    assert_eq!(evidence["lossy"], false);
+    let first_hash = evidence["redacted_slice_sha256"].as_str().unwrap();
+
+    let expanded_again = prog(&["--dir", dir_arg, "expand", cursor, "--path", "/answer"]);
+    assert!(
+        expanded_again.status.success(),
+        "{}",
+        stdout(&expanded_again)
+    );
+    let expanded_again_value: Value = serde_json::from_slice(&expanded_again.stdout).unwrap();
+    assert_eq!(
+        expanded_again_value["evidence_ref"]["redacted_slice_sha256"],
+        first_hash
+    );
+    assert_eq!(expanded_again_value["evidence_ref"]["uri"], evidence["uri"]);
+
+    let paths = prog(&[
+        "--dir", dir_arg, "paths", cursor, "--prefix", "/nested", "--limit", "10",
+    ]);
+    assert!(paths.status.success(), "{}", stdout(&paths));
+    let paths_value: Value = serde_json::from_slice(&paths.stdout).unwrap();
+    let nested = paths_value["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["path"] == "/nested")
+        .unwrap();
+    assert_eq!(nested["evidence_ref"]["path"], "/nested");
+    assert_eq!(
+        nested["evidence_ref"]["uri"],
+        format!("prog://{cursor}#/nested")
+    );
+    assert!(nested["evidence_ref"]["redacted_slice_sha256"].is_string());
+
+    let redacted = prog(&["--dir", dir_arg, "expand", cursor, "--path", "/token"]);
+    assert!(redacted.status.success(), "{}", stdout(&redacted));
+    assert!(!stdout(&redacted).contains("plain-secret"));
+    let redacted_value: Value = serde_json::from_slice(&redacted.stdout).unwrap();
+    assert_eq!(redacted_value["evidence_ref"]["redacted"], true);
+    assert!(
+        !redacted_value["evidence_ref"]
+            .to_string()
+            .contains("plain-secret")
+    );
+
+    let redacted_paths = prog(&[
+        "--dir", dir_arg, "paths", cursor, "--prefix", "/token", "--limit", "10",
+    ]);
+    assert!(
+        redacted_paths.status.success(),
+        "{}",
+        stdout(&redacted_paths)
+    );
+    assert!(!stdout(&redacted_paths).contains("plain-secret"));
+    let redacted_paths_value: Value = serde_json::from_slice(&redacted_paths.stdout).unwrap();
+    let redacted_entry = redacted_paths_value["paths"]
+        .as_array()
+        .unwrap()
+        .first()
+        .unwrap();
+    assert_eq!(redacted_entry["path"], "/token");
+    assert_eq!(redacted_entry["evidence_ref"]["redacted"], true);
+
+    let out = dir.path().join("evidence-answer.json");
+    let exported = prog(&[
+        "--dir",
+        dir_arg,
+        "expand",
+        cursor,
+        "--path",
+        "/answer",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(exported.status.success(), "{}", stdout(&exported));
+    assert!(out.exists());
+    let export_value: Value = serde_json::from_slice(&exported.stdout).unwrap();
+    assert_eq!(
+        export_value["data_preview"]["evidence_ref"]["path"],
+        "/answer"
+    );
+    assert_eq!(
+        export_value["data_preview"]["evidence_ref"]["redacted_slice_sha256"],
+        first_hash
+    );
+
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({
+            "answer": "beta",
+            "token": "plain-secret",
+            "nested": {"value": "beta"}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let refreshed = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--name",
+        "evidence",
+    ]);
+    assert!(refreshed.status.success(), "{}", stdout(&refreshed));
+    let refreshed_value: Value = serde_json::from_slice(&refreshed.stdout).unwrap();
+    let refreshed_cursor = refreshed_value["cursor"].as_str().unwrap();
+    let changed = prog(&[
+        "--dir",
+        dir_arg,
+        "expand",
+        refreshed_cursor,
+        "--path",
+        "/answer",
+    ]);
+    assert!(changed.status.success(), "{}", stdout(&changed));
+    let changed_value: Value = serde_json::from_slice(&changed.stdout).unwrap();
+    assert_ne!(
+        changed_value["evidence_ref"]["redacted_slice_sha256"],
+        first_hash
+    );
+}
+
+#[test]
 fn observe_stdin_text_has_head_tail_line_paths_and_secret_redaction() {
     let dir = tempfile::tempdir().unwrap();
     let text = (0..25)
@@ -1889,6 +2054,22 @@ fn meta_lists_and_discloses_contract_schemas() {
     let value: Value = serde_json::from_slice(&observation_schema.stdout).unwrap();
     assert_eq!(value["operation"], "ObservationMetadata");
     assert_eq!(value["data_preview"]["title"], "ObservationMetadata");
+
+    let evidence_schema = prog(&["--dir", dir_arg, "meta", "EvidenceRef"]);
+    assert!(
+        evidence_schema.status.success(),
+        "{}",
+        stdout(&evidence_schema)
+    );
+    let value: Value = serde_json::from_slice(&evidence_schema.stdout).unwrap();
+    assert_eq!(value["operation"], "EvidenceRef");
+    assert_eq!(value["data_preview"]["title"], "EvidenceRef");
+    assert!(
+        value["data_preview"]["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key("redacted_slice_sha256")
+    );
 }
 
 #[test]
