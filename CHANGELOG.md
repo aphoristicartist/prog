@@ -8,6 +8,7 @@
 - Added `prog run` for profile-free command capture with redacted cached stdout, stderr, failure sections, and optional preserved exit codes.
 - Added `prog init --agent codex --project` for project-local skill and hook installation with dry-run and no-overwrite behavior.
 - Added `EvidenceRef` metadata so agents can cite cursor/path-backed observations without pasting raw payloads.
+- Added `prog cost` for profile-driven raw-vs-prog expensive-model cost planning.
 - Added RFC 0003, defining observation lenses as the general progressive-disclosure model for agent artifacts.
 - Added LensManifest v1 contracts, repo-local lens loading, and lens-driven call previews.
 - Added progressive-disclosure docs, fixture walkthroughs, cache and safety notes, JSON contract documentation, and a token economics report.

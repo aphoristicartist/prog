@@ -1,0 +1,11 @@
+{
+  "schema_version": "prog.model_profile.v1",
+  "model": "fable-class-long-context-2026-07",
+  "input_price_per_million_tokens": 10.0,
+  "output_price_per_million_tokens": 50.0,
+  "context_window_tokens": 1000000,
+  "cache_read_price_per_million_tokens": 1.0,
+  "cache_write_price_per_million_tokens": 10.0,
+  "pricing_source": "checked-in illustrative profile; refresh from vendor pricing before budget decisions",
+  "priced_at": "2026-07-06"
+}

@@ -146,6 +146,7 @@ fn documented_command_help_surface_stays_real() {
         &["observe", "--help"],
         &["run", "--help"],
         &["init", "--help"],
+        &["cost", "--help"],
         &["paths", "--help"],
         &["expand", "--help"],
         &["cache", "--help"],
@@ -214,6 +215,20 @@ fn documented_command_help_surface_stays_real() {
         );
     }
 
+    let cost_help = stdout(&prog(&root, &["cost", "--help"]));
+    for expected in [
+        "--model-profile",
+        "--raw-file",
+        "--expand-path",
+        "--estimated-output-tokens",
+        "--repeated-inspections",
+    ] {
+        assert!(
+            cost_help.contains(expected),
+            "cost help should contain {expected}"
+        );
+    }
+
     let paths_help = stdout(&prog(&root, &["paths", "--help"]));
     for expected in [
         "--prefix",
@@ -271,8 +286,10 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/run.md",
         "docs/integrations.md",
         "docs/evidence.md",
+        "docs/cost.md",
         "docs/paths.md",
         "docs/token-economics.md",
+        "models/fable-class-2026-07.json",
         "skills/prog/SKILL.md",
         "INVARIANTS.md",
         "CHANGELOG.md",
