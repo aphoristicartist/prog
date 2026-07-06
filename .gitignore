@@ -4,3 +4,6 @@
 .prog/
 *.redb
 .DS_Store
+# Python bytecode emitted by fixture/demo scripts during tests.
+__pycache__/
+

@@ -303,10 +303,12 @@ fn docs_keep_acceptance_topics_visible() {
         "Layer 1",
         "Layer 2",
         "Layer n+1",
-        "No upstream auto-pagination",
-        "No table inference",
+        // Three former V1 non-goals are now tracked as roadmap goals
+        // (#69, #70, #72); MCP server mode stays a permanent non-goal (#71).
+        "upstream auto-pagination",
+        "table inference",
+        "automatic trust upgrade from imported descriptors",
         "No MCP server mode",
-        "No automatic trust upgrade",
         "prog discover",
         "prog --dir /tmp/prog-demo --pretty source add-cli",
         "prog --dir /tmp/prog-demo --pretty meta SourceProfile",
