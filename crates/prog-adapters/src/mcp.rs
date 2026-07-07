@@ -170,6 +170,7 @@ impl McpSource {
                 cache: CachePolicy::default(),
                 trust: TrustSettings::default(),
                 effect_defaults: EffectSet::default(),
+                redaction: prog_core::RedactionConfig::default(),
                 extra,
             },
             provenance: self.provenance("discover", protocol_version, duration_ms, 0, false, false),
