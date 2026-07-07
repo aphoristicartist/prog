@@ -104,3 +104,20 @@ fn ragged_csv_is_flagged_lossy_and_padded() {
     assert!(table.lossy);
     assert_eq!(table.rows[1], vec!["4", "5", ""]);
 }
+
+#[test]
+fn markdown_over_wide_row_is_flagged_lossy() {
+    let md = "| A | B |\n| --- | --- |\n| 1 | 2 | 3 |\n";
+    let table = parse_table(md, TableFormat::Markdown).unwrap();
+    assert!(table.lossy, "an over-wide markdown row must be flagged lossy");
+    assert_eq!(table.columns, vec!["A", "B"]);
+    assert_eq!(table.rows[0], vec!["1", "2"]);
+}
+
+#[test]
+fn csv_leading_utf8_bom_is_stripped_from_header() {
+    let csv = "\u{FEFF}name,role\nAda,engineer\n";
+    let table = parse_table(csv, TableFormat::Csv).unwrap();
+    assert_eq!(table.columns[0], "name");
+    assert_eq!(table.rows[0][0], "Ada");
+}

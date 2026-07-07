@@ -183,6 +183,9 @@ fn detection(
 /// (with embedded delimiters, newlines, and escaped `""` quotes). The first
 /// record is treated as the header row.
 fn parse_delimited(text: &str, delimiter: char) -> Option<ParsedTable> {
+    // Excel and many CSV exporters emit a leading UTF-8 BOM; strip it so the
+    // first header cell is not corrupted.
+    let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
     let records = read_delimited(text, delimiter);
     let header = records.first()?;
     if header.len() < 2 {
@@ -302,11 +305,15 @@ fn parse_markdown(text: &str) -> Option<ParsedTable> {
     }
     let width = columns.len();
     let mut rows = Vec::new();
+    let mut lossy = false;
     for line in lines {
         if !line.contains('|') {
             continue;
         }
         let mut cells = split_markdown_cells(line);
+        if cells.len() != width {
+            lossy = true;
+        }
         cells.resize(width, String::new());
         rows.push(cells);
     }
@@ -317,7 +324,7 @@ fn parse_markdown(text: &str) -> Option<ParsedTable> {
         format: TableFormat::Markdown,
         columns,
         rows,
-        lossy: false,
+        lossy,
         confidence: 0.9,
     })
 }
