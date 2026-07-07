@@ -1534,6 +1534,7 @@ async fn call_source(
             let mut total_bytes = payload_bytes;
             let mut stop = prog_core::StopReason::NoMore;
             let started = std::time::Instant::now();
+            let mut prefetch_warnings: Vec<String> = Vec::new();
             while pages_fetched < caps.max_pages {
                 let Some(target) = hints
                     .as_ref()
@@ -1550,19 +1551,41 @@ async fn call_source(
                     prog_core::PageTarget::Args(args) => args,
                     prog_core::PageTarget::Url(_) => {
                         // URL continuation (Link rel="next") needs an adapter
-                        // execute_url path, not yet wired; stop here.
+                        // execute_url path that is not yet wired. Cursor/page
+                        // targets are tried first, so reaching here means no
+                        // followable cursor existed; warn and stop rather than
+                        // silently report "no_more".
+                        prefetch_warnings.push(
+                            "pagination prefetch stopped: the next page is a URL continuation \
+                             (Link rel=\"next\") which requires an adapter execute_url path not \
+                             yet wired"
+                                .to_string(),
+                        );
                         stop = prog_core::StopReason::NoMore;
                         break;
                     }
                 };
-                let page_call = execute_callable(&source, &operation, &page_args).await?;
+                // Page N (N>=2) fetches are best-effort: an upstream failure on
+                // a later page must not void the already-built page-1 envelope.
+                let page_call = match execute_callable(&source, &operation, &page_args).await {
+                    Ok(call) => call,
+                    Err(error) => {
+                        prefetch_warnings.push(format!(
+                            "pagination prefetch stopped at page {}: {error}",
+                            pages_fetched + 1
+                        ));
+                        stop = prog_core::StopReason::NoMore;
+                        break;
+                    }
+                };
                 let page_payload = RawPayload::new(page_call.data).redact(&redaction).payload;
                 let page_bytes = json_len_u64(page_payload.as_value())?;
-                total_bytes += page_bytes;
-                if total_bytes > caps.max_total_bytes {
+                if total_bytes + page_bytes > caps.max_total_bytes {
                     stop = prog_core::StopReason::ByteCap;
                     break;
                 }
+                total_bytes += page_bytes;
+                prefetch_warnings.extend(page_call.warnings);
                 if may_cache {
                     let page_cache_key =
                         Store::cache_key(&args.source_id, &args.operation, &page_args)?;
@@ -1591,6 +1614,7 @@ async fn call_source(
             if pages_fetched >= caps.max_pages {
                 stop = prog_core::StopReason::PageCap;
             }
+            envelope.warnings.extend(prefetch_warnings);
             envelope.extra.insert(
                 "pagination".to_string(),
                 json!({
