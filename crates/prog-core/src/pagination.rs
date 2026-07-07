@@ -87,30 +87,26 @@ pub fn parse_link_rel_next(link_header: &str) -> Option<String> {
 /// produced by the HTTP adapter: `link_rel_next`, `next`, `next_page` /
 /// `nextPageToken`, `has_more`) and the `current_args` used for this page.
 ///
-/// Resolution order: a Link `rel="next"` URL, then a full-URL `next` field,
-/// then a cursor token written to the caller's existing cursor-ish param (or
-/// `page_token`), then a `page` increment when the caller paginates by page
-/// number. Returns `None` when there is no next page.
+/// Resolution order: a cursor token (written to the caller's existing
+/// cursor-ish param, or `page_token`), then a `page` increment, then a Link
+/// `rel="next"` URL, then a full-URL `next` field. Cursor/page are tried
+/// FIRST because the follow loop can chase them directly; URL continuation
+/// requires an adapter `execute_url` path that is not yet wired, so it is only
+/// chosen when no followable cursor/page is present (otherwise a Link header
+/// would silently preempt a usable cursor). Returns `None` when there is no
+/// next page.
 pub fn next_args_from_hints(hints: &Value, current_args: &Value) -> Option<PageTarget> {
-    if let Some(link) = hints.get("link_rel_next").and_then(Value::as_str)
-        && let Some(url) = parse_link_rel_next(link)
-    {
-        return Some(PageTarget::Url(url));
-    }
-
-    if let Some(next) = hints.get("next").and_then(Value::as_str)
-        && (next.starts_with("http://") || next.starts_with("https://"))
-    {
-        return Some(PageTarget::Url(next.to_string()));
-    }
-
-    let token = ["next_page", "nextPageToken", "next"]
-        .iter()
-        .find_map(|key| hints.get(*key).and_then(Value::as_str));
     let base = match current_args {
         Value::Object(map) => map.clone(),
         _ => Map::new(),
     };
+
+    // A cursor token. A URL-valued `next` is NOT a cursor (it is handled by
+    // the URL branches below), so filter it out here.
+    let token = ["next_page", "nextPageToken", "next"]
+        .iter()
+        .find_map(|key| hints.get(*key).and_then(Value::as_str))
+        .filter(|token| !token.starts_with("http://") && !token.starts_with("https://"));
     if let Some(token) = token {
         let param = cursor_param(&base).unwrap_or_else(|| "page_token".to_string());
         let mut next_args = base;
@@ -126,8 +122,20 @@ pub fn next_args_from_hints(hints: &Value, current_args: &Value) -> Option<PageT
         && let Some(page) = base.get("page").and_then(Value::as_u64)
     {
         let mut next_args = base;
-        next_args.insert("page".to_string(), Value::from(page + 1));
+        next_args.insert("page".to_string(), Value::from(page.saturating_add(1)));
         return Some(PageTarget::Args(Value::Object(next_args)));
+    }
+
+    if let Some(link) = hints.get("link_rel_next").and_then(Value::as_str)
+        && let Some(url) = parse_link_rel_next(link)
+    {
+        return Some(PageTarget::Url(url));
+    }
+
+    if let Some(next) = hints.get("next").and_then(Value::as_str)
+        && (next.starts_with("http://") || next.starts_with("https://"))
+    {
+        return Some(PageTarget::Url(next.to_string()));
     }
 
     None
@@ -196,10 +204,13 @@ mod tests {
     #[test]
     fn cursor_token_written_to_existing_param() {
         let hints = json!({"nextPageToken": "TOKEN-2"});
-        let target = next_args_from_hints(&hints, &json!({"page_token": "TOKEN-1", "limit": 5}));
+        // Use a non-default cursor param (starting_after) so the test fails if
+        // the cursor_param candidate scan regresses.
+        let target =
+            next_args_from_hints(&hints, &json!({"starting_after": "TOKEN-1", "limit": 5}));
         match target {
             Some(PageTarget::Args(args)) => {
-                assert_eq!(args["page_token"], json!("TOKEN-2"));
+                assert_eq!(args["starting_after"], json!("TOKEN-2"));
                 assert_eq!(args["limit"], json!(5));
             }
             other => panic!("expected Args target, got {other:?}"),
@@ -213,6 +224,22 @@ mod tests {
         match target {
             PageTarget::Args(args) => assert_eq!(args["page_token"], json!("abc")),
             other => panic!("expected Args target, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cursor_token_wins_over_unsupported_link_url() {
+        // Both a followable cursor and a Link rel="next" URL are present: the
+        // cursor must win so the follow loop can chase it instead of aborting
+        // on the (not-yet-wired) URL continuation.
+        let hints = json!({
+            "link_rel_next": "<https://api/p2>; rel=\"next\"",
+            "nextPageToken": "CURSOR-2"
+        });
+        let target = next_args_from_hints(&hints, &json!({"page_token": "CURSOR-1"})).unwrap();
+        match target {
+            PageTarget::Args(args) => assert_eq!(args["page_token"], json!("CURSOR-2")),
+            other => panic!("expected Args (cursor) target, got {other:?}"),
         }
     }
 
