@@ -343,7 +343,10 @@ fn bearer_followed_by_a_path_is_not_false_flagged() {
     // the token class excludes path separators. The value is preserved.
     let payload = json!({"command": "bearer /usr/local/bin/verylongtoolname here"});
     let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
-    assert!(paths.is_empty(), "a bearer-prefixed path must not be redacted: {paths:?}");
+    assert!(
+        paths.is_empty(),
+        "a bearer-prefixed path must not be redacted: {paths:?}"
+    );
     assert_eq!(
         redacted["command"],
         json!("bearer /usr/local/bin/verylongtoolname here")

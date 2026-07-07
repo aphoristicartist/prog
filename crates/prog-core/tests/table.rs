@@ -109,7 +109,10 @@ fn ragged_csv_is_flagged_lossy_and_padded() {
 fn markdown_over_wide_row_is_flagged_lossy() {
     let md = "| A | B |\n| --- | --- |\n| 1 | 2 | 3 |\n";
     let table = parse_table(md, TableFormat::Markdown).unwrap();
-    assert!(table.lossy, "an over-wide markdown row must be flagged lossy");
+    assert!(
+        table.lossy,
+        "an over-wide markdown row must be flagged lossy"
+    );
     assert_eq!(table.columns, vec!["A", "B"]);
     assert_eq!(table.rows[0], vec!["1", "2"]);
 }
