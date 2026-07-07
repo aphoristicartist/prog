@@ -322,8 +322,7 @@ fn contains_bearer_token(text: &str) -> bool {
         let token_len = rest
             .bytes()
             .take_while(|byte| {
-                byte.is_ascii_alphanumeric()
-                    || matches!(byte, b'.' | b'-' | b'_' | b'+' | b'=')
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b'+' | b'=')
             })
             .count();
         if token_len >= 16 {
