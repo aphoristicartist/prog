@@ -2,7 +2,13 @@
 
 ## Unreleased
 
-- Added `prog observe` and `prog paths` for profile-free stdin/file JSON, NDJSON, and text observations with cursor-backed path discovery.
+- Added `prog call --pages N` upstream auto-pagination: follows cursor/page pagination for read-only operations under hard page/byte/time caps, prefetching pages into the local cache (#69).
+- Added semantic table inference in `prog observe` for CSV/TSV (RFC 4180), GitHub markdown tables, and aligned/whitespace tables, exposed as bounded `/rows`-expandable payloads (#70).
+- Added graded-evidence trust auto-upgrade: `TrustSettings.auto_upgrade` plus `EvidenceGrade` let proven read-only importer evidence relax confirmation, never mutating/shell/sensitive operations (#72).
+- Added value-pattern redaction so secrets embedded in string values (Bearer tokens, PEM blocks, JWTs, sensitive URL parameters) are redacted before persistence (#73).
+- Added tunable default redaction: a built-in allowlist (e.g. `max_tokens`, `session_timeout`), expanded secret keywords (`access_key`, `signing_key`, `pwd`), and per-source `RedactionConfig` with env overrides (#74).
+- Hardened redaction for non-string (number/bool) declared-sensitive args and validated profile ids against path traversal.
+
 - Added filtered path discovery and ranked expansion `next_actions` with exact cached `prog expand` argv.
 - Added observation metadata for envelope completeness, freshness, trust, safety, and payload status.
 - Added `prog run` for profile-free command capture with redacted cached stdout, stderr, failure sections, and optional preserved exit codes.
