@@ -205,6 +205,43 @@ fn observe_json_file_uses_envelope_cache_redaction_and_expand() {
 }
 
 #[test]
+fn observe_csv_file_yields_table_envelope_with_expandable_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let csv = dir.path().join("roster.csv");
+    fs::write(&csv, "name,role\nAda,engineer\nLin,manager\n").unwrap();
+
+    let observed = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        csv.to_str().unwrap(),
+        "--mime",
+        "text/csv",
+        "--name",
+        "roster",
+    ]);
+    assert!(observed.status.success(), "{}", stdout(&observed));
+    let envelope: Value = serde_json::from_slice(&observed.stdout).unwrap();
+    assert_eq!(envelope["source_id"], "observe");
+    // The table parser produced a tabular payload, not a text fallback.
+    assert_eq!(envelope["data_preview"]["format"], "csv");
+    assert_eq!(envelope["data_preview"]["columns"][0], "name");
+    assert_eq!(envelope["data_preview"]["rows"][0][0], "Ada");
+
+    // /rows is expandable from the cached payload without re-reading the file.
+    let cursor = envelope["cursor"].as_str().unwrap();
+    let expanded = prog(&[
+        "--dir", dir_arg, "expand", cursor, "--path", "/rows", "--limit", "10",
+    ]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let rows: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(rows["data_preview"].as_array().unwrap().len(), 2);
+    assert_eq!(rows["data_preview"][1][0], "Lin");
+}
+
+#[test]
 fn observe_can_apply_first_party_text_log_lens_and_reject_counterexample() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();

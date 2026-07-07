@@ -4237,6 +4237,11 @@ const OBSERVATION_PARSERS: &[ObservationParser] = &[
         parse: parse_diff_observation,
     },
     ObservationParser {
+        id: "table",
+        detect: detect_table_observation,
+        parse: parse_table_observation,
+    },
+    ObservationParser {
         id: "text_fallback",
         detect: detect_text_observation,
         parse: parse_text_observation,
@@ -4535,6 +4540,68 @@ fn detect_text_observation(bytes: &[u8], _mime: &str) -> Option<ParserMatch> {
     (!is_binaryish(bytes)).then_some(ParserMatch {
         confidence: 0.50,
         reason: "fallback text parser accepted non-binary bytes",
+    })
+}
+
+fn detect_table_observation(bytes: &[u8], mime: &str) -> Option<ParserMatch> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let detection = prog_core::table::detect_table(text, mime)?;
+    Some(ParserMatch {
+        confidence: detection.confidence,
+        reason: detection.reason,
+    })
+}
+
+fn parse_table_observation(
+    bytes: &[u8],
+    mime: &str,
+    matched: ParserMatch,
+) -> Result<NormalizedObservation> {
+    let (text, mut warnings, utf8_valid) = decode_text(bytes);
+    let detection =
+        prog_core::table::detect_table(&text, mime).ok_or_else(|| CoreError::BadArgs {
+            operation: "observe".to_string(),
+            reason: "input matched a table detector but could not be re-detected during parse"
+                .to_string(),
+        })?;
+    let table = prog_core::table::parse_table(&text, detection.format).ok_or_else(|| {
+        CoreError::BadArgs {
+            operation: "observe".to_string(),
+            reason: "table detected but no rows parsed".to_string(),
+        }
+    })?;
+    let lossy = table.lossy || !utf8_valid;
+    let payload = json!({
+        "format": table.format.id(),
+        "columns": table.columns,
+        "rows": table.rows,
+        "row_count": table.row_count(),
+        "column_count": table.column_count(),
+        "byte_count": bytes.len(),
+        "truncated": false,
+        "utf8_valid": utf8_valid,
+        "lossy": lossy
+    });
+    if table.lossy {
+        warnings.push(format!(
+            "table parsed as {} with a lossy structural assumption; cells are original strings",
+            table.format.id()
+        ));
+    }
+    Ok(NormalizedObservation {
+        kind: "table".to_string(),
+        payload,
+        parser: ObservationParserInfo {
+            id: "table",
+            label: table.format.label(),
+            confidence: matched.confidence,
+            lossy,
+            fallback: false,
+            reason: matched.reason,
+            path_semantics: "json pointer over /rows",
+            range_semantics: "row indices over /rows",
+        },
+        warnings,
     })
 }
 
