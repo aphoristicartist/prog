@@ -111,6 +111,11 @@ pub fn check_call(
     flags: CallFlags,
     trust: &TrustSettings,
 ) -> Result<()> {
+    // apply_auto_upgrade also returns an audit note and stamps
+    // extra["auto_upgrade"] on the relaxed effects; that audit trail is
+    // computed (and unit-tested on apply_auto_upgrade directly) but is not
+    // surfaced from this call site to the persisted envelope. Wiring it
+    // through call_source is future work.
     let effects = apply_auto_upgrade(&operation.effects, trust).0;
     if (effects.mutating || effects.requires_confirmation) && !flags.yes {
         return Err(CoreError::RequiresConfirmation {
