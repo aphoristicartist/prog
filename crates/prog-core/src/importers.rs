@@ -172,6 +172,7 @@ pub fn import_openapi(
         trust: TrustSettings {
             allow_shell: false,
             allow_network: true,
+            auto_upgrade: true,
             extra: Map::new(),
         },
         effect_defaults: EffectSet::default(),
@@ -492,6 +493,7 @@ pub fn import_cli_help(
         trust: TrustSettings {
             allow_shell: false,
             allow_network: false,
+            auto_upgrade: true,
             extra: Map::new(),
         },
         effect_defaults: EffectSet::default(),
