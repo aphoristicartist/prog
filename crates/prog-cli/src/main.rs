@@ -221,6 +221,11 @@ struct CallArgs {
 
     #[arg(long)]
     refresh: bool,
+
+    /// Follow pagination links for read-only operations, prefetching up to N
+    /// pages into the local cache under hard page/byte/time caps.
+    #[arg(long, default_value_t = 1)]
+    pages: usize,
 }
 
 #[derive(Debug, Args)]
@@ -1407,6 +1412,7 @@ async fn call_source(
 
     let source = callable_source_from_profile(&profile)?;
     let adapter_call = execute_callable(&source, &operation, &call_args).await?;
+    let first_pagination = adapter_call.pagination.clone();
     let redaction = resolve_redaction(Some(&profile));
     let redacted = RawPayload::new(adapter_call.data).redact(&redaction);
     let redacted_paths = redacted.redacted_paths;
@@ -1487,7 +1493,7 @@ async fn call_source(
             lens: lens.as_ref(),
         },
     )?;
-    envelope_for_payload(
+    let mut envelope = envelope_for_payload(
         store,
         EnvelopeInput {
             source_id: args.source_id.clone(),
@@ -1510,7 +1516,100 @@ async fn call_source(
             lens,
         },
         cursor,
-    )
+    )?;
+
+    // Auto-pagination: when --pages > 1 on a read-only operation, prefetch up
+    // to N pages into the cache under hard page/byte/time caps. The envelope
+    // stays the bounded view of page 1; the additional pages are reachable via
+    // `prog call` with their args or `prog expand` on their cursors.
+    if args.pages > 1 {
+        if prog_core::pagination_allowed(&operation.effects) {
+            let caps = prog_core::PageCaps {
+                max_pages: args.pages.min(50),
+                ..prog_core::PageCaps::default()
+            };
+            let mut current_args = call_args.clone();
+            let mut hints = first_pagination;
+            let mut pages_fetched = 1usize;
+            let mut total_bytes = payload_bytes;
+            let mut stop = prog_core::StopReason::NoMore;
+            let started = std::time::Instant::now();
+            while pages_fetched < caps.max_pages {
+                let Some(target) = hints
+                    .as_ref()
+                    .and_then(|value| prog_core::next_args_from_hints(value, &current_args))
+                else {
+                    stop = prog_core::StopReason::NoMore;
+                    break;
+                };
+                if started.elapsed().as_millis() as u64 > caps.max_wall_ms {
+                    stop = prog_core::StopReason::TimeCap;
+                    break;
+                }
+                let page_args = match target {
+                    prog_core::PageTarget::Args(args) => args,
+                    prog_core::PageTarget::Url(_) => {
+                        // URL continuation (Link rel="next") needs an adapter
+                        // execute_url path, not yet wired; stop here.
+                        stop = prog_core::StopReason::NoMore;
+                        break;
+                    }
+                };
+                let page_call = execute_callable(&source, &operation, &page_args).await?;
+                let page_payload = RawPayload::new(page_call.data).redact(&redaction).payload;
+                let page_bytes = json_len_u64(page_payload.as_value())?;
+                total_bytes += page_bytes;
+                if total_bytes > caps.max_total_bytes {
+                    stop = prog_core::StopReason::ByteCap;
+                    break;
+                }
+                if may_cache {
+                    let page_cache_key =
+                        Store::cache_key(&args.source_id, &args.operation, &page_args)?;
+                    let page_hash = store.put_payload(&page_payload)?;
+                    let ttl = ttl_seconds(&effective_cache);
+                    let mut entry = new_cache_entry(
+                        page_cache_key.clone(),
+                        page_hash,
+                        args.source_id.clone(),
+                        args.operation.clone(),
+                        page_bytes,
+                        ttl,
+                    );
+                    entry.provenance = Some(call_provenance(
+                        &page_cache_key,
+                        page_call.status.clone(),
+                        page_call.duration_ms,
+                        page_call.provenance.clone(),
+                    ));
+                    store.put_entry(&page_cache_key, &entry)?;
+                }
+                pages_fetched += 1;
+                current_args = page_args;
+                hints = page_call.pagination.clone();
+            }
+            if pages_fetched >= caps.max_pages {
+                stop = prog_core::StopReason::PageCap;
+            }
+            envelope.extra.insert(
+                "pagination".to_string(),
+                json!({
+                    "pages_fetched": pages_fetched,
+                    "total_bytes": total_bytes,
+                    "stop_reason": stop.as_str(),
+                    "max_pages": caps.max_pages,
+                }),
+            );
+        } else {
+            envelope.warnings.push(
+                "--pages requested but the operation is not auto-pagination-safe \
+                 (it is not read-only); fetched a single page"
+                    .to_string(),
+            );
+        }
+    }
+
+    Ok(envelope)
 }
 
 fn observe_artifact(
