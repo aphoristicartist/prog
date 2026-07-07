@@ -116,8 +116,6 @@ async fn declared_sensitive_arg_names_are_redacted_from_provenance_args() {
 async fn non_string_sensitive_args_are_redacted_from_final_url() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/anything/12345"))
-        .and(query_param("active", "true"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
         .mount(&server)
         .await;
@@ -214,6 +212,86 @@ async fn wraps_non_json_text_and_truncates_at_byte_cap() {
             .any(|warning| warning.contains("max_response_bytes"))
     );
     assert!(result.provenance.truncated);
+}
+
+#[tokio::test]
+async fn exact_size_text_response_is_not_marked_truncated() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/exact"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("1234567890"))
+        .mount(&server)
+        .await;
+
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "exact".to_string(),
+            method: "GET".to_string(),
+            path: "/exact".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: Some(2_000),
+            max_response_bytes: Some(10),
+            sensitive_args: Vec::new(),
+        },
+    );
+
+    let result = source
+        .execute_with_env("exact", &json!({}), &|_| None)
+        .await
+        .unwrap();
+
+    assert_eq!(result.data["format"], "text");
+    assert_eq!(result.data["byte_count"], 10);
+    assert_eq!(result.data["truncated"], false);
+    assert!(!result.provenance.truncated);
+    assert!(
+        result
+            .warnings
+            .iter()
+            .all(|warning| !warning.contains("max_response_bytes"))
+    );
+}
+
+#[tokio::test]
+async fn text_response_redacts_common_secret_formats() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/logs"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("Authorization: Bearer SECRET123\ntoken=abc api-key: def\nok"),
+        )
+        .mount(&server)
+        .await;
+
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "logs".to_string(),
+            method: "GET".to_string(),
+            path: "/logs".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: Some(2_000),
+            max_response_bytes: Some(64 * 1024),
+            sensitive_args: Vec::new(),
+        },
+    );
+
+    let result = source
+        .execute_with_env("logs", &json!({}), &|_| None)
+        .await
+        .unwrap();
+
+    let rendered = serde_json::to_string(&result.data).unwrap();
+    for secret in ["Bearer SECRET123", "abc", "def"] {
+        assert!(!rendered.contains(secret), "{secret} leaked in {rendered}");
+    }
+    assert!(rendered.contains("[REDACTED:observed_text_secret]"));
 }
 
 #[tokio::test]

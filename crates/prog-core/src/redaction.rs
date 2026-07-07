@@ -281,6 +281,144 @@ pub fn is_sensitive_name(name: &str) -> bool {
         .any(|keyword| field_matches_keyword(&normalized, keyword))
 }
 
+pub fn redact_sensitive_text(input: &str) -> (String, usize) {
+    let mut output = String::with_capacity(input.len());
+    let mut cursor = 0usize;
+    let mut search = 0usize;
+    let mut redactions = 0usize;
+
+    while let Some(range) = next_sensitive_text_value(input, search) {
+        output.push_str(&input[cursor..range.value_start]);
+        output.push_str("[REDACTED:observed_text_secret]");
+        cursor = range.value_end;
+        search = range.value_end;
+        redactions += 1;
+    }
+
+    output.push_str(&input[cursor..]);
+    (output, redactions)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TextSecretRange {
+    value_start: usize,
+    value_end: usize,
+}
+
+fn next_sensitive_text_value(input: &str, search: usize) -> Option<TextSecretRange> {
+    let mut index = search.min(input.len());
+    while index < input.len() {
+        let (key_start, ch) = next_char(input, index)?;
+        index = key_start + ch.len_utf8();
+        if !is_text_key_char(ch) || previous_char(input, key_start).is_some_and(is_text_key_char) {
+            continue;
+        }
+
+        let key_end = consume_while(input, index, is_text_key_char);
+        let key = &input[key_start..key_end];
+        if !is_sensitive_text_key(key) {
+            index = key_end;
+            continue;
+        }
+
+        let (separator, after_separator) = match text_secret_separator(input, key_end) {
+            Some(separator) => separator,
+            None => {
+                index = key_end;
+                continue;
+            }
+        };
+        let value_start = skip_horizontal_whitespace(input, after_separator);
+        if value_start >= input.len() || matches!(input.as_bytes()[value_start], b'\n' | b'\r') {
+            index = key_end;
+            continue;
+        }
+        let value_end = if redacts_to_line_end(key, separator) {
+            line_end(input, value_start)
+        } else {
+            token_end(input, value_start)
+        };
+        if value_end > value_start {
+            return Some(TextSecretRange {
+                value_start,
+                value_end,
+            });
+        }
+        index = key_end;
+    }
+    None
+}
+
+fn text_secret_separator(input: &str, key_end: usize) -> Option<(char, usize)> {
+    let after_spaces = skip_horizontal_whitespace(input, key_end);
+    let (separator_index, separator) = next_char(input, after_spaces)?;
+    match separator {
+        '=' | ':' => Some((separator, separator_index + separator.len_utf8())),
+        ch if after_spaces > key_end && !matches!(ch, '\n' | '\r') => Some((' ', after_spaces)),
+        _ => None,
+    }
+}
+
+fn is_sensitive_text_key(key: &str) -> bool {
+    let normalized = normalize_field(key);
+    is_sensitive_name(key)
+        || matches!(
+            normalized.as_str(),
+            "setcookie" | "proxyauthorization" | "accesstoken" | "refreshtoken" | "sessionid"
+        )
+}
+
+fn redacts_to_line_end(key: &str, separator: char) -> bool {
+    let normalized = normalize_field(key);
+    separator == ':'
+        && (normalized.contains("authorization")
+            || normalized.contains("cookie")
+            || normalized == "bearer")
+}
+
+fn skip_horizontal_whitespace(input: &str, mut index: usize) -> usize {
+    while let Some((next, ch)) = next_char(input, index) {
+        if !matches!(ch, ' ' | '\t') {
+            break;
+        }
+        index = next + ch.len_utf8();
+    }
+    index
+}
+
+fn consume_while(input: &str, mut index: usize, predicate: fn(char) -> bool) -> usize {
+    while let Some((next, ch)) = next_char(input, index) {
+        if !predicate(ch) {
+            break;
+        }
+        index = next + ch.len_utf8();
+    }
+    index
+}
+
+fn token_end(input: &str, start: usize) -> usize {
+    consume_while(input, start, |ch| !ch.is_whitespace())
+}
+
+fn line_end(input: &str, start: usize) -> usize {
+    consume_while(input, start, |ch| !matches!(ch, '\n' | '\r'))
+}
+
+fn is_text_key_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')
+}
+
+fn next_char(input: &str, index: usize) -> Option<(usize, char)> {
+    input[index..]
+        .char_indices()
+        .next()
+        .map(|(offset, ch)| (index + offset, ch))
+}
+
+fn previous_char(input: &str, index: usize) -> Option<char> {
+    input[..index].chars().next_back()
+}
+
 fn push_path(base: &str, segment: &str) -> String {
     if base.is_empty() {
         format!("/{}", escape(segment))

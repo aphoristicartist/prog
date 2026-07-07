@@ -6,8 +6,9 @@ use std::{
 };
 
 use prog_core::{
-    CachePolicy, CoreError, EffectSet, Extra, OperationProfile, Result, SOURCE_PROFILE_VERSION,
-    SourceKind, SourceProfile, TrustSettings, mcp_read_effects, mcp_tool_annotation_effects,
+    CachePolicy, CoreError, EffectSet, Extra, OperationProfile, PreviewPolicy, Result,
+    SOURCE_PROFILE_VERSION, SourceKind, SourceProfile, TrustSettings, mcp_read_effects,
+    mcp_tool_annotation_effects, project, redact_sensitive_text,
 };
 use rmcp::{
     RoleClient, ServiceError,
@@ -362,6 +363,32 @@ impl McpSource {
 
         if let Some(data) = result.structured_content {
             let response_bytes = serde_json::to_vec(&data).map_or(0, |bytes| bytes.len());
+            if response_bytes > self.max_content_bytes {
+                let projection = project(
+                    &data,
+                    &PreviewPolicy {
+                        max_envelope_bytes: self.max_content_bytes,
+                        ..PreviewPolicy::default()
+                    },
+                    "",
+                );
+                return Ok(NormalizedMcpData {
+                    data: json!({
+                        "format": "structured_content",
+                        "preview": projection.preview,
+                        "omitted": projection.omitted,
+                        "byte_count": response_bytes,
+                        "truncated": true
+                    }),
+                    response_bytes,
+                    truncated: true,
+                    structured_content: true,
+                    warnings: vec![format!(
+                        "structuredContent exceeded max_content_bytes ({}); content was truncated",
+                        self.max_content_bytes
+                    )],
+                });
+            }
             return Ok(NormalizedMcpData {
                 data,
                 response_bytes,
@@ -423,7 +450,10 @@ impl McpSource {
                 warnings: Vec::new(),
             };
         }
-        let lines: Vec<&str> = bounded.lines().collect();
+        let lines: Vec<String> = bounded
+            .lines()
+            .map(|line| redact_sensitive_text(line).0)
+            .collect();
         let head: Vec<Value> = lines.iter().take(10).map(|line| json!(line)).collect();
         let tail_start = lines.len().saturating_sub(10).max(head.len());
         let tail: Vec<Value> = lines
@@ -613,7 +643,16 @@ fn prompt_operation(prompt: Prompt) -> OperationProfile {
         }),
         output_shape: None,
         declared_output_schema: None,
-        effects: read_effects(),
+        effects: EffectSet {
+            read_only: false,
+            mutating: false,
+            network: false,
+            shell: false,
+            sensitive: false,
+            cacheable: false,
+            requires_confirmation: true,
+            extra: Extra::new(),
+        },
         cache: CachePolicy::default(),
         pagination: None,
         extra,
@@ -781,7 +820,10 @@ async fn wait_for_stderr(task: Option<JoinHandle<std::io::Result<Capture>>>) {
 
 fn normalize_text_capture(bytes: &[u8], total_bytes: usize, truncated: bool) -> Value {
     let text = String::from_utf8_lossy(bytes);
-    let lines: Vec<&str> = text.lines().collect();
+    let lines: Vec<String> = text
+        .lines()
+        .map(|line| redact_sensitive_text(line).0)
+        .collect();
     let head: Vec<Value> = lines.iter().take(10).map(|line| json!(line)).collect();
     let tail_start = lines.len().saturating_sub(10).max(head.len());
     let tail: Vec<Value> = lines

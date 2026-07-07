@@ -3,6 +3,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    time::{Duration, Instant},
 };
 
 use serde_json::{Value, json};
@@ -1235,6 +1236,97 @@ fn run_redacts_compound_secret_flags_in_recorded_argv() {
 }
 
 #[test]
+fn call_does_not_persist_raw_sensitive_args_in_profiles() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let script = dir.path().join("safe.py");
+    fs::write(
+        &script,
+        "import json\nprint(json.dumps({'ok': True, 'items': [1, 2, 3]}))\n",
+    )
+    .unwrap();
+    let seed_json = json!({
+        "kind": "cli",
+        "operations": [{
+            "name": "fetch",
+            "command": "python3",
+            "args": [script.to_str().unwrap(), "{service_key}"],
+            "input_schema": {
+                "type": "object",
+                "required": ["service_key"],
+                "properties": {
+                    "service_key": {"type": "string"}
+                },
+                "additionalProperties": false
+            },
+            "sensitive_args": ["service_key"],
+            "effect": {
+                "read_only": true,
+                "mutating": false,
+                "network": false,
+                "shell": false,
+                "sensitive": false,
+                "cacheable": true,
+                "requires_confirmation": false
+            }
+        }]
+    });
+    let seed = write_seed(dir.path(), "cli.json", &seed_json.to_string());
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "local",
+        "--kind",
+        "cli",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+
+    let learned_secret = "SK-LIVE-1234";
+    let call = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "local",
+        "fetch",
+        "--args",
+        &json!({"service_key": learned_secret}).to_string(),
+    ]);
+    assert!(call.status.success(), "{}", stdout(&call));
+    let profile = fs::read_to_string(dir.path().join("profiles/local.json")).unwrap();
+    assert!(!profile.contains(learned_secret));
+    assert!(profile.contains("[REDACTED:declared_sensitive]"));
+
+    let no_cache_secret = "SK-NOCACHE-5678";
+    let no_cache = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "local",
+        "fetch",
+        "--args",
+        &json!({"service_key": no_cache_secret}).to_string(),
+        "--no-cache",
+    ]);
+    assert!(no_cache.status.success(), "{}", stdout(&no_cache));
+    let envelope: Value = serde_json::from_slice(&no_cache.stdout).unwrap();
+    assert!(
+        envelope["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap()
+                .contains("profile learning skipped"))
+    );
+    let profile = fs::read_to_string(dir.path().join("profiles/local.json")).unwrap();
+    assert!(!profile.contains(no_cache_secret));
+}
+
+#[test]
 fn run_large_streams_are_bounded_expandable_and_redacted() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
@@ -1332,6 +1424,38 @@ fn run_timeout_and_missing_command_return_structured_envelopes() {
         "prog-command-that-does-not-exist-43",
     ]);
     assert_eq!(missing_preserved.status.code(), Some(127));
+}
+
+#[cfg(unix)]
+#[test]
+fn run_timeout_does_not_wait_for_detached_pipe_holders() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let started = Instant::now();
+
+    let timeout = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--timeout-ms",
+        "50",
+        "--",
+        "python3",
+        "-c",
+        r#"import os, time
+pid = os.fork()
+if pid == 0:
+    os.setsid()
+    time.sleep(2)
+    os._exit(0)
+time.sleep(5)
+"#,
+    ]);
+
+    assert!(timeout.status.success(), "{}", stdout(&timeout));
+    assert!(started.elapsed() < Duration::from_secs(1));
+    let value: Value = serde_json::from_slice(&timeout.stdout).unwrap();
+    assert_eq!(value["data_preview"]["command"]["timed_out"], true);
 }
 
 #[test]
@@ -2266,6 +2390,10 @@ async fn source_add_http_creates_working_profile_from_url() {
         report["generated_seed"]["operations"][0]["effect"]["read_only"],
         true
     );
+    assert_eq!(
+        report["generated_seed"]["operations"][0]["effect"]["network"],
+        true
+    );
     assert_eq!(report["discovery"]["operations_found"], 1);
     assert_eq!(report["discovery"]["operations_probed"], 1);
     assert_eq!(report["discovery"]["shapes_learned"], 1);
@@ -2274,7 +2402,8 @@ async fn source_add_http_creates_working_profile_from_url() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|step| step.as_str().unwrap() == "prog call api list --args '{}'")
+            .any(|step| step.as_str().unwrap()
+                == format!("prog --dir {dir_arg} call api list --args '{{}}'"))
     );
 
     let profile = read_profile(dir.path(), "api");
@@ -2333,6 +2462,18 @@ fn source_add_cli_creates_working_profile_from_command_line() {
         true
     );
     assert_eq!(
+        report["generated_seed"]["operations"][0]["effect"]["network"],
+        false
+    );
+    assert!(
+        report["next_steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step.as_str().unwrap()
+                == format!("prog --dir {dir_arg} call local list --args '{{}}'"))
+    );
+    assert_eq!(
         report["discovery"]["effects_assumed"]
             .as_array()
             .unwrap()
@@ -2344,6 +2485,7 @@ fn source_add_cli_creates_working_profile_from_command_line() {
     let effects = &profile["operations"][0]["effects"];
     assert_eq!(effects["read_only"], true);
     assert_eq!(effects["mutating"], false);
+    assert_eq!(effects["network"], false);
     assert_eq!(effects["shell"], false);
     assert_eq!(effects["cacheable"], true);
 
@@ -2406,7 +2548,8 @@ fn source_add_preserves_fail_closed_defaults_and_reports_invalid_inputs() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|step| step.as_str().unwrap() == "prog call danger show --args '{}' --yes")
+            .any(|step| step.as_str().unwrap()
+                == format!("prog --dir {dir_arg} call danger show --args '{{}}' --yes"))
     );
     let profile = read_profile(dir.path(), "danger");
     let effects = &profile["operations"][0]["effects"];

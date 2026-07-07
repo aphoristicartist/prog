@@ -38,6 +38,25 @@ async fn wraps_text_output_with_head_tail_counts() {
 }
 
 #[tokio::test]
+async fn text_output_redacts_common_secret_formats() {
+    let source = source(operation(
+        "text_secret",
+        &[
+            "-c",
+            "print('Authorization: Bearer SECRET123')\nprint('token=abc api-key: def')",
+        ],
+    ));
+
+    let result = source.execute("text_secret", &json!({})).await.unwrap();
+
+    let rendered = serde_json::to_string(&result.data).unwrap();
+    for secret in ["Bearer SECRET123", "abc", "def"] {
+        assert!(!rendered.contains(secret), "{secret} leaked in {rendered}");
+    }
+    assert!(rendered.contains("[REDACTED:observed_text_secret]"));
+}
+
+#[tokio::test]
 async fn argv_template_substitution_never_resplits_values() {
     let source = source(operation(
         "argv",
@@ -144,6 +163,33 @@ async fn timeout_kills_child_and_returns_structured_error() {
 
     assert_eq!(error.kind(), "cli_timeout");
     assert!(started.elapsed().as_secs() < 2);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn timeout_does_not_wait_for_detached_pipe_holders() {
+    let mut op = operation(
+        "detached",
+        &[
+            "-c",
+            r#"import os, time
+pid = os.fork()
+if pid == 0:
+    os.setsid()
+    time.sleep(2)
+    os._exit(0)
+time.sleep(5)
+"#,
+        ],
+    );
+    op.timeout_ms = Some(50);
+    let source = source(op);
+    let started = Instant::now();
+
+    let error = source.execute("detached", &json!({})).await.unwrap_err();
+
+    assert_eq!(error.kind(), "cli_timeout");
+    assert!(started.elapsed() < Duration::from_secs(1));
 }
 
 #[cfg(unix)]

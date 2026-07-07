@@ -5,7 +5,7 @@ use std::{
 
 use prog_core::{
     AuthRef, CoreError, PreviewPolicy, Projection, RawPayload, RedactionPolicy, Result,
-    ScopedSlice, SliceRequest, expand, is_sensitive_name,
+    ScopedSlice, SliceRequest, expand, is_sensitive_name, redact_sensitive_text,
 };
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
@@ -427,13 +427,13 @@ async fn read_bounded_body(
                 })?
         {
             let remaining = max_response_bytes.saturating_sub(bytes.len());
-            if chunk.len() > remaining {
-                bytes.extend_from_slice(&chunk[..remaining]);
+            if remaining == 0 {
                 truncated = true;
                 break;
             }
-            bytes.extend_from_slice(&chunk);
-            if bytes.len() == max_response_bytes {
+            let take = chunk.len().min(remaining);
+            bytes.extend_from_slice(&chunk[..take]);
+            if take < chunk.len() {
                 truncated = true;
                 break;
             }
@@ -464,7 +464,11 @@ fn normalize_body(bytes: &[u8], content_type: Option<&str>, truncated: bool) -> 
     }
 
     let text = String::from_utf8_lossy(bytes);
-    let lines: Vec<Value> = text.lines().take(20).map(|line| json!(line)).collect();
+    let lines: Vec<Value> = text
+        .lines()
+        .take(20)
+        .map(|line| json!(redact_sensitive_text(line).0))
+        .collect();
     Ok(json!({
         "format": "text",
         "lines": lines,
