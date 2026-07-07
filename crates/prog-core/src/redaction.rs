@@ -15,6 +15,12 @@ pub struct RedactionPolicy {
     /// keyword can be exempted without narrowing the matcher.
     #[serde(default)]
     pub allowlist: Vec<String>,
+    /// When true (default), string values are scanned for high-confidence
+    /// embedded secret shapes (Bearer tokens, PEM blocks, JWTs, sensitive URL
+    /// query params), so a secret living under a benign key is still redacted
+    /// before persistence.
+    #[serde(default = "default_true")]
+    pub scan_values: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -51,6 +57,10 @@ pub struct RedactionConfig {
     /// defaults and merges `extra_keywords`.
     #[serde(default)]
     pub keywords: Option<Vec<String>>,
+    /// Scan string values for embedded secret shapes (Bearer, PEM, JWT,
+    /// sensitive URL params). Defaults to true.
+    #[serde(default = "default_true")]
+    pub scan_values: bool,
     #[serde(default)]
     pub extra: Extra,
 }
@@ -61,6 +71,7 @@ impl Default for RedactionConfig {
             extra_keywords: Vec::new(),
             allowlist: Vec::new(),
             keywords: None,
+            scan_values: true,
             extra: Extra::new(),
         }
     }
@@ -82,6 +93,7 @@ impl Default for RedactionPolicy {
                 .iter()
                 .map(|field| normalize_field(field))
                 .collect(),
+            scan_values: true,
         }
     }
 }
@@ -134,6 +146,7 @@ impl RedactionPolicy {
                 field_names,
             }],
             allowlist,
+            scan_values: config.scan_values,
         }
     }
 
@@ -166,6 +179,10 @@ impl RedactionPolicy {
                     }
                 }
                 Value::Object(output)
+            }
+            Value::String(text) if self.scan_values && contains_value_secret(text) => {
+                paths.push(path.to_string());
+                Value::String("[REDACTED:value_secret]".to_string())
             }
             scalar => scalar.clone(),
         }
@@ -274,4 +291,109 @@ fn push_path(base: &str, segment: &str) -> String {
 
 fn escape(segment: &str) -> String {
     segment.replace('~', "~0").replace('/', "~1")
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// True when `text` contains a high-confidence embedded secret shape. Catches
+/// secrets that live in a string *value* under a benign key, which the
+/// key-based matcher cannot reach. Hand-rolled (no regex) so this module stays
+/// dependency-free for Kani. Intentionally high-precision: a value is only
+/// flagged when it matches a distinctive shape (Bearer token, PEM block, JWT,
+/// or a sensitive URL query parameter with a non-trivial value).
+pub(crate) fn contains_value_secret(text: &str) -> bool {
+    contains_bearer_token(text)
+        || contains_pem_block(text)
+        || contains_jwt(text)
+        || contains_sensitive_url_param(text)
+}
+
+fn contains_bearer_token(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    for pos in lower.match_indices("bearer ").map(|(index, _)| index) {
+        let rest = &lower[pos + "bearer ".len()..];
+        let token_len = rest
+            .bytes()
+            .take_while(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(byte, b'.' | b'-' | b'_' | b'+' | b'/' | b'=' | b':' | b'~')
+            })
+            .count();
+        if token_len >= 16 {
+            return true;
+        }
+    }
+    false
+}
+
+fn contains_pem_block(text: &str) -> bool {
+    text.contains("-----BEGIN ")
+        && (text.contains("KEY-----")
+            || text.contains("CERTIFICATE-----")
+            || text.contains("PARAMS-----"))
+}
+
+fn contains_jwt(text: &str) -> bool {
+    for pos in text.match_indices("eyJ").map(|(index, _)| index) {
+        let rest = &text[pos..];
+        let Some(seg1_end) = rest.bytes().position(|byte| byte == b'.') else {
+            continue;
+        };
+        let after1 = &rest[seg1_end + 1..];
+        if !after1.starts_with("eyJ") {
+            continue;
+        }
+        let Some(seg2_end) = after1.bytes().position(|byte| byte == b'.') else {
+            continue;
+        };
+        let after2 = &after1[seg2_end + 1..];
+        let sig_len = after2
+            .bytes()
+            .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | b'='))
+            .count();
+        if sig_len >= 8 {
+            return true;
+        }
+    }
+    false
+}
+
+fn contains_sensitive_url_param(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    for sep in [b'?', b'&'] {
+        for pos in lower
+            .bytes()
+            .enumerate()
+            .filter(|(_, byte)| *byte == sep)
+            .map(|(index, _)| index)
+        {
+            let rest = &lower[pos + 1..];
+            let Some(eq_pos) = rest.bytes().position(|byte| byte == b'=') else {
+                continue;
+            };
+            let name = &rest[..eq_pos];
+            if name.is_empty()
+                || name.len() > 64
+                || name
+                    .bytes()
+                    .any(|byte| matches!(byte, b'&' | b'?' | b'/' | b' ' | b'#'))
+            {
+                continue;
+            }
+            if !is_sensitive_name(name) {
+                continue;
+            }
+            let value = &rest[eq_pos + 1..];
+            let value_len = value
+                .bytes()
+                .take_while(|byte| !matches!(*byte, b'&' | b' ' | b'"' | b'\'' | b'<' | b'>'))
+                .count();
+            if value_len >= 8 {
+                return true;
+            }
+        }
+    }
+    false
 }
