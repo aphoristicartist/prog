@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{CachePolicy, CoreError, EffectSet, Extra, OperationProfile, Result, TrustSettings};
 
@@ -32,17 +33,90 @@ pub fn check_discovery(operation: &OperationProfile) -> Result<()> {
     Ok(())
 }
 
+/// Evidence strength recorded by an importer for a derived operation's
+/// effects. Only `Proven` read-only evidence can relax confirmation, and only
+/// when `trust.auto_upgrade` is enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceGrade {
+    /// Descriptor explicitly declares the effect (HTTP GET, MCP
+    /// `readOnlyHint` with no `destructiveHint`, an explicit `--read-only`).
+    Proven,
+    /// Effect inferred from method or shape, not explicitly declared.
+    Assumed,
+    /// Ambiguous or absent effect information.
+    Unproven,
+}
+
+impl EvidenceGrade {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proven => "proven",
+            Self::Assumed => "assumed",
+            Self::Unproven => "unproven",
+        }
+    }
+
+    /// Read the grade from an `EffectSet`'s `extra["evidence_grade"]`, defaulting
+    /// to `Unproven` when unset so legacy/ungauged operations keep their current
+    /// behavior.
+    pub fn from_extra(extra: &Extra) -> Self {
+        match extra.get("evidence_grade").and_then(Value::as_str) {
+            Some("proven") => Self::Proven,
+            Some("assumed") => Self::Assumed,
+            _ => Self::Unproven,
+        }
+    }
+}
+
+/// Apply trust auto-upgrade to an operation's effects. A *proven* read-only
+/// operation on a source with `trust.auto_upgrade` has its
+/// `requires_confirmation` cleared. Mutating, shell-backed, and sensitive
+/// operations are never relaxed (I7 preserved); non-proven grades are never
+/// relaxed. Returns the (possibly relaxed) effects and, when a change was made,
+/// a human-readable note for the audit trail.
+pub fn apply_auto_upgrade(
+    effects: &EffectSet,
+    trust: &TrustSettings,
+) -> (EffectSet, Option<String>) {
+    let grade = EvidenceGrade::from_extra(&effects.extra);
+    if trust.auto_upgrade
+        && grade == EvidenceGrade::Proven
+        && effects.read_only
+        && !effects.mutating
+        && !effects.shell
+        && !effects.sensitive
+        && effects.requires_confirmation
+    {
+        let mut relaxed = effects.clone();
+        relaxed.requires_confirmation = false;
+        relaxed.extra.insert(
+            "auto_upgrade".to_string(),
+            Value::String("proven read-only evidence relaxed requires_confirmation".to_string()),
+        );
+        (
+            relaxed,
+            Some(
+                "proven read-only evidence relaxed confirmation under trust.auto_upgrade"
+                    .to_string(),
+            ),
+        )
+    } else {
+        (effects.clone(), None)
+    }
+}
+
 pub fn check_call(
     operation: &OperationProfile,
     flags: CallFlags,
     trust: &TrustSettings,
 ) -> Result<()> {
-    let effects = &operation.effects;
+    let effects = apply_auto_upgrade(&operation.effects, trust).0;
     if (effects.mutating || effects.requires_confirmation) && !flags.yes {
         return Err(CoreError::RequiresConfirmation {
             operation: operation.id.clone(),
-            class: call_confirmation_class(effects).to_string(),
-            effects: describe_effects(effects),
+            class: call_confirmation_class(&effects).to_string(),
+            effects: describe_effects(&effects),
         });
     }
     if effects.shell && !trust.allow_shell {

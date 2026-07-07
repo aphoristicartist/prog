@@ -1,7 +1,7 @@
 use prog_core::{
-    CachePolicy, CallFlags, EffectSet, Extra, OperationProfile, TrustSettings, cache_allowed,
-    call_effect_warnings, check_call, check_discovery, cli_adapter_effects, http_adapter_effects,
-    http_hardening_effects, tighten_effects,
+    CachePolicy, CallFlags, EffectSet, EvidenceGrade, Extra, OperationProfile, TrustSettings,
+    apply_auto_upgrade, cache_allowed, call_effect_warnings, check_call, check_discovery,
+    cli_adapter_effects, http_adapter_effects, http_hardening_effects, tighten_effects,
 };
 use proptest::prelude::*;
 use serde_json::{Value, json};
@@ -258,6 +258,145 @@ fn adapter_defaults_encode_conservative_source_facts() {
 
     let shell_cli = cli_adapter_effects(true);
     assert!(shell_cli.shell);
+}
+
+#[test]
+fn auto_upgrade_relaxes_proven_read_only_confirmation() {
+    let mut effects = gated_read_only();
+    effects
+        .extra
+        .insert("evidence_grade".to_string(), json!("proven"));
+    let (relaxed, note) = apply_auto_upgrade(&effects, &TrustSettings::default());
+    assert!(!relaxed.requires_confirmation);
+    assert!(note.is_some());
+    assert_eq!(
+        relaxed.extra.get("auto_upgrade").and_then(Value::as_str),
+        Some("proven read-only evidence relaxed requires_confirmation")
+    );
+    // The grade is preserved on the way out.
+    assert_eq!(
+        EvidenceGrade::from_extra(&relaxed.extra),
+        EvidenceGrade::Proven
+    );
+}
+
+#[test]
+fn auto_upgrade_never_relaxes_non_proven_or_mutating_or_shell_or_sensitive() {
+    let trust = TrustSettings::default();
+    // Assumed grade -> not relaxed.
+    let mut assumed = gated_read_only();
+    assumed
+        .extra
+        .insert("evidence_grade".to_string(), json!("assumed"));
+    assert!(apply_auto_upgrade(&assumed, &trust).0.requires_confirmation);
+    // Unproven (no grade at all) -> not relaxed.
+    assert!(
+        apply_auto_upgrade(&gated_read_only(), &trust)
+            .0
+            .requires_confirmation
+    );
+
+    let mut mutating = gated_read_only();
+    mutating
+        .extra
+        .insert("evidence_grade".to_string(), json!("proven"));
+    mutating.read_only = false;
+    mutating.mutating = true;
+    assert!(
+        apply_auto_upgrade(&mutating, &trust)
+            .0
+            .requires_confirmation
+    );
+
+    let mut shell = gated_read_only();
+    shell
+        .extra
+        .insert("evidence_grade".to_string(), json!("proven"));
+    shell.shell = true;
+    assert!(apply_auto_upgrade(&shell, &trust).0.requires_confirmation);
+
+    let mut sensitive = gated_read_only();
+    sensitive
+        .extra
+        .insert("evidence_grade".to_string(), json!("proven"));
+    sensitive.sensitive = true;
+    assert!(
+        apply_auto_upgrade(&sensitive, &trust)
+            .0
+            .requires_confirmation
+    );
+}
+
+#[test]
+fn auto_upgrade_disabled_leaves_confirmation_in_place() {
+    let mut effects = gated_read_only();
+    effects
+        .extra
+        .insert("evidence_grade".to_string(), json!("proven"));
+    let trust = TrustSettings {
+        auto_upgrade: false,
+        ..TrustSettings::default()
+    };
+    let (relaxed, note) = apply_auto_upgrade(&effects, &trust);
+    assert!(relaxed.requires_confirmation);
+    assert!(note.is_none());
+}
+
+#[test]
+fn check_call_skips_confirmation_for_proven_read_only_under_auto_upgrade() {
+    let mut effects = gated_read_only();
+    effects
+        .extra
+        .insert("evidence_grade".to_string(), json!("proven"));
+    let operation = operation_with_effects(effects);
+    assert!(
+        check_call(
+            &operation,
+            CallFlags { yes: false },
+            &TrustSettings::default()
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn check_call_still_requires_confirmation_without_proven_grade() {
+    let operation = operation_with_effects(gated_read_only());
+    assert!(
+        check_call(
+            &operation,
+            CallFlags { yes: false },
+            &TrustSettings::default()
+        )
+        .is_err()
+    );
+}
+
+fn gated_read_only() -> EffectSet {
+    EffectSet {
+        read_only: true,
+        mutating: false,
+        network: true,
+        shell: false,
+        sensitive: false,
+        cacheable: true,
+        requires_confirmation: true,
+        extra: Extra::new(),
+    }
+}
+
+fn operation_with_effects(effects: EffectSet) -> OperationProfile {
+    OperationProfile {
+        id: "op".to_string(),
+        description: None,
+        input_schema: Value::Null,
+        output_shape: None,
+        declared_output_schema: None,
+        effects,
+        cache: CachePolicy::default(),
+        pagination: None,
+        extra: Extra::new(),
+    }
 }
 
 proptest! {
