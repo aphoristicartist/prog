@@ -303,6 +303,11 @@ fn default_true() -> bool {
 /// dependency-free for Kani. Intentionally high-precision: a value is only
 /// flagged when it matches a distinctive shape (Bearer token, PEM block, JWT,
 /// or a sensitive URL query parameter with a non-trivial value).
+///
+/// Note: the URL-parameter shape uses the built-in `is_sensitive_name` keyword
+/// set (the defaults), independent of a source's `RedactionConfig` tuning; the
+/// other shapes are keyword-free. Configurable value-scan keywords are future
+/// work.
 pub(crate) fn contains_value_secret(text: &str) -> bool {
     contains_bearer_token(text)
         || contains_pem_block(text)
@@ -318,7 +323,7 @@ fn contains_bearer_token(text: &str) -> bool {
             .bytes()
             .take_while(|byte| {
                 byte.is_ascii_alphanumeric()
-                    || matches!(byte, b'.' | b'-' | b'_' | b'+' | b'/' | b'=' | b':' | b'~')
+                    || matches!(byte, b'.' | b'-' | b'_' | b'+' | b'=')
             })
             .count();
         if token_len >= 16 {
