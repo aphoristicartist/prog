@@ -14,6 +14,9 @@ Inspect one contract:
 prog --pretty meta SourceProfile
 prog --pretty meta DisclosureEnvelope
 prog --pretty meta EvidenceRef
+prog --pretty meta InspectResponse
+prog --pretty meta EvidenceBlock
+prog --pretty meta SearchResponse
 prog --pretty meta CacheEntryMeta
 ```
 
@@ -27,7 +30,18 @@ The current public contracts include:
 - `TrustSettings`
 - `AuthRef`
 - `DisclosureEnvelope`
+- `ObservationMetadata`
 - `EvidenceRef`
+- `InspectResponse`
+- `Finding`
+- `FindingCommandHints`
+- `EvidenceBlock`
+- `EvidenceCitation`
+- `SearchResponse`
+- `SearchHit`
+- `LineRange`
+- `ByteRange`
+- `RedactionState`
 - `Summary`
 - `OmittedRegion`
 - `NextAction`
@@ -74,6 +88,13 @@ consumers should ignore unknown fields inside its subobjects.
 appear on envelopes, expanded slices, path entries, and export receipts. It is
 not a capability; consumers must still call `prog expand` with the cursor and
 path when they need evidence.
+
+Evidence-navigation contracts are the planned machine-readable surface for
+ranked evidence workflows. `InspectResponse` contains ranked `Finding` entries,
+`EvidenceBlock` contains compact citation-oriented evidence for one path, and
+`SearchResponse` contains path-backed hits over redacted cached payloads. These
+contracts are public before the corresponding commands are implemented so
+clients and lenses can converge on one shape.
 
 For lens-driven calls, inspect the flattened `lens` metadata on the returned
 envelope before assuming the preview shape is the source's native shape. Lens
