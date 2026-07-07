@@ -1,0 +1,744 @@
+use std::{cmp::Ordering, collections::BTreeMap};
+
+use serde_json::{Map, Value, json};
+
+use crate::{Extra, Finding, FindingCommandHints, LineRange, RedactionState, Result, pointer};
+
+const DEFAULT_LIMIT: usize = 10;
+const MAX_REASON_CHARS: usize = 180;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FindingOptions {
+    pub goal: Option<String>,
+    pub cursor: Option<String>,
+    pub scope_path: Option<String>,
+    pub limit: usize,
+}
+
+impl Default for FindingOptions {
+    fn default() -> Self {
+        Self {
+            goal: None,
+            cursor: None,
+            scope_path: None,
+            limit: DEFAULT_LIMIT,
+        }
+    }
+}
+
+pub fn normalized_goal(goal: Option<&str>) -> Option<String> {
+    let goal = goal?.trim();
+    if goal.is_empty() {
+        return None;
+    }
+    Some(GoalIntent::from_text(goal).as_str().to_string())
+}
+
+pub fn ranked_findings(payload: &Value, options: &FindingOptions) -> Result<Vec<Finding>> {
+    let scope_path = options.scope_path.as_deref().unwrap_or("");
+    let Some(scoped) = pointer::get(payload, scope_path)? else {
+        return Ok(Vec::new());
+    };
+    if options.limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let intent = GoalIntent::from_text(options.goal.as_deref().unwrap_or(""));
+    let mut candidates = Vec::new();
+    collect_run_signals(scoped, scope_path, &mut candidates);
+    collect_generic_signals(scoped, scope_path, &mut candidates);
+
+    let mut best_by_path_kind: BTreeMap<(String, String), Candidate> = BTreeMap::new();
+    for mut candidate in candidates {
+        candidate.score = score_candidate(&candidate, intent);
+        let key = (candidate.path.clone(), candidate.kind.clone());
+        match best_by_path_kind.get(&key) {
+            Some(existing) if compare_candidates(&candidate, existing) != Ordering::Less => {}
+            _ => {
+                best_by_path_kind.insert(key, candidate);
+            }
+        }
+    }
+
+    let mut candidates = best_by_path_kind.into_values().collect::<Vec<_>>();
+    candidates.sort_by(compare_candidates);
+    candidates.truncate(options.limit);
+
+    Ok(candidates
+        .into_iter()
+        .enumerate()
+        .map(|(index, candidate)| candidate.into_finding(index as u64 + 1, options))
+        .collect())
+}
+
+#[derive(Debug, Clone)]
+struct Candidate {
+    kind: String,
+    path: String,
+    confidence: f64,
+    score: f64,
+    reason: String,
+    title: Option<String>,
+    severity: Option<String>,
+    source: String,
+    line_range: Option<LineRange>,
+    redaction_state: Option<RedactionState>,
+    extra: Extra,
+}
+
+impl Candidate {
+    fn from_signal(path: String, value: &Value, signal: Signal) -> Self {
+        Self {
+            kind: signal.kind.to_string(),
+            path,
+            confidence: signal.confidence,
+            score: 0.0,
+            reason: signal.reason.to_string(),
+            title: Some(signal.title.to_string()),
+            severity: signal.severity.map(str::to_string),
+            source: signal.source.to_string(),
+            line_range: None,
+            redaction_state: redaction_state(value),
+            extra: Extra::new(),
+        }
+    }
+
+    fn into_finding(self, rank: u64, options: &FindingOptions) -> Finding {
+        Finding {
+            rank,
+            kind: self.kind,
+            path: self.path.clone(),
+            confidence: round_confidence(self.confidence),
+            reason: truncate_reason(&self.reason),
+            title: self.title,
+            severity: self.severity,
+            source: Some(self.source),
+            lens_id: None,
+            evidence_ref: None,
+            line_range: self.line_range,
+            byte_range: None,
+            redaction_state: self.redaction_state,
+            commands: command_hints(options.cursor.as_deref(), &self.path),
+            extra: self.extra,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Signal {
+    kind: &'static str,
+    confidence: f64,
+    reason: &'static str,
+    title: &'static str,
+    severity: Option<&'static str>,
+    source: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoalIntent {
+    RootCause,
+    TestFailure,
+    SummarizeIssues,
+    Security,
+    Logs,
+    DiffReview,
+    General,
+}
+
+impl GoalIntent {
+    fn from_text(goal: &str) -> Self {
+        let normalized = normalize_text(goal);
+        if normalized.contains("root cause")
+            || normalized.contains("why")
+            || normalized.contains("debug")
+            || normalized.contains("fix")
+        {
+            Self::RootCause
+        } else if normalized.contains("test")
+            || normalized.contains("pytest")
+            || normalized.contains("cargo")
+            || normalized.contains("fail")
+        {
+            Self::TestFailure
+        } else if normalized.contains("issue")
+            || normalized.contains("summar")
+            || normalized.contains("triage")
+        {
+            Self::SummarizeIssues
+        } else if normalized.contains("security")
+            || normalized.contains("secret")
+            || normalized.contains("vulnerab")
+            || normalized.contains("cve")
+        {
+            Self::Security
+        } else if normalized.contains("log") {
+            Self::Logs
+        } else if normalized.contains("diff") || normalized.contains("review") {
+            Self::DiffReview
+        } else {
+            Self::General
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::RootCause => "root_cause",
+            Self::TestFailure => "test_failure",
+            Self::SummarizeIssues => "summarize_issues",
+            Self::Security => "security",
+            Self::Logs => "logs",
+            Self::DiffReview => "diff_review",
+            Self::General => "general",
+        }
+    }
+}
+
+fn collect_run_signals(value: &Value, path: &str, out: &mut Vec<Candidate>) {
+    let Value::Object(map) = value else {
+        return;
+    };
+
+    if let Some(command) = map.get("command").and_then(Value::as_object) {
+        collect_command_signals(command, pointer::push(path, "command"), out);
+    }
+
+    if let Some(sections) = map.get("failure_sections").and_then(Value::as_array) {
+        collect_failure_sections(sections, pointer::push(path, "failure_sections"), out);
+    }
+}
+
+fn collect_command_signals(command: &Map<String, Value>, path: String, out: &mut Vec<Candidate>) {
+    if command
+        .get("timed_out")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let signal = Signal {
+            kind: "command_timeout",
+            confidence: 0.98,
+            reason: "command metadata reports a timeout",
+            title: "command timed out",
+            severity: Some("error"),
+            source: "generic.run.command",
+        };
+        out.push(Candidate::from_signal(
+            path.clone(),
+            &Value::Object(command.clone()),
+            signal,
+        ));
+    }
+
+    if command
+        .get("spawn_error")
+        .and_then(Value::as_str)
+        .is_some_and(|message| !message.is_empty())
+    {
+        let signal = Signal {
+            kind: "command_spawn_error",
+            confidence: 0.98,
+            reason: "command metadata reports a spawn error",
+            title: "command spawn error",
+            severity: Some("error"),
+            source: "generic.run.command",
+        };
+        out.push(Candidate::from_signal(
+            pointer::push(&path, "spawn_error"),
+            command.get("spawn_error").unwrap_or(&Value::Null),
+            signal,
+        ));
+    }
+
+    if command
+        .get("success")
+        .and_then(Value::as_bool)
+        .is_some_and(|success| !success)
+    {
+        let signal = Signal {
+            kind: "nonzero_exit",
+            confidence: 0.72,
+            reason: "command metadata reports an unsuccessful exit",
+            title: "command exited unsuccessfully",
+            severity: Some("error"),
+            source: "generic.run.command",
+        };
+        out.push(Candidate::from_signal(
+            path,
+            &Value::Object(command.clone()),
+            signal,
+        ));
+    }
+}
+
+fn collect_failure_sections(sections: &[Value], path: String, out: &mut Vec<Candidate>) {
+    for (index, section) in sections.iter().enumerate() {
+        let section_path = pointer::push(&path, &index.to_string());
+        let Value::Object(map) = section else {
+            continue;
+        };
+        let text = section_text(map);
+        let kind = map.get("kind").and_then(Value::as_str).unwrap_or("generic");
+        let signal = failure_section_signal(kind, &text);
+        let priority = map.get("priority").and_then(Value::as_u64).unwrap_or(60);
+        let confidence = (0.78 + priority.min(100) as f64 * 0.002).clamp(signal.confidence, 0.99);
+
+        let mut candidate = Candidate::from_signal(section_path, section, signal);
+        candidate.confidence = confidence;
+        candidate.reason = failure_section_reason(map, signal.reason);
+        candidate.line_range = line_range(map);
+        candidate
+            .extra
+            .insert("section_kind".to_string(), json!(kind));
+        if let Some(stream) = map.get("stream").and_then(Value::as_str) {
+            candidate.extra.insert("stream".to_string(), json!(stream));
+        }
+        candidate
+            .extra
+            .insert("priority".to_string(), json!(priority));
+        out.push(candidate);
+    }
+}
+
+fn failure_section_signal(kind: &str, text: &str) -> Signal {
+    let lower = normalize_text(text);
+    if kind == "timeout" {
+        Signal {
+            kind: "command_timeout",
+            confidence: 0.98,
+            reason: "run failure section reports a timeout",
+            title: "command timed out",
+            severity: Some("error"),
+            source: "generic.run.failure_sections",
+        }
+    } else if kind == "spawn_error" {
+        Signal {
+            kind: "command_spawn_error",
+            confidence: 0.98,
+            reason: "run failure section reports a spawn error",
+            title: "command spawn error",
+            severity: Some("error"),
+            source: "generic.run.failure_sections",
+        }
+    } else if lower.contains("error[") {
+        Signal {
+            kind: "rust_compile_error",
+            confidence: 0.94,
+            reason: "run failure section contains a Rust compiler diagnostic",
+            title: "Rust compiler diagnostic",
+            severity: Some("error"),
+            source: "generic.run.failure_sections",
+        }
+    } else if lower.contains("panicked at") {
+        Signal {
+            kind: "rust_panic",
+            confidence: 0.92,
+            reason: "run failure section contains a Rust panic",
+            title: "Rust panic",
+            severity: Some("error"),
+            source: "generic.run.failure_sections",
+        }
+    } else if lower.contains("traceback (most recent call last)") {
+        Signal {
+            kind: "python_traceback",
+            confidence: 0.92,
+            reason: "run failure section contains a Python traceback",
+            title: "Python traceback",
+            severity: Some("error"),
+            source: "generic.run.failure_sections",
+        }
+    } else if lower.contains("assertionerror") || lower.contains("assertion failed") {
+        Signal {
+            kind: "test_failure",
+            confidence: 0.9,
+            reason: "run failure section contains an assertion failure",
+            title: "test assertion failure",
+            severity: Some("error"),
+            source: "generic.run.failure_sections",
+        }
+    } else if lower.contains("exception") {
+        Signal {
+            kind: "exception",
+            confidence: 0.84,
+            reason: "run failure section contains an exception",
+            title: "exception",
+            severity: Some("error"),
+            source: "generic.run.failure_sections",
+        }
+    } else {
+        Signal {
+            kind: "stderr_error",
+            confidence: 0.78,
+            reason: "run failure section contains captured diagnostics",
+            title: "failure diagnostics",
+            severity: Some("error"),
+            source: "generic.run.failure_sections",
+        }
+    }
+}
+
+fn failure_section_reason(section: &Map<String, Value>, fallback: &str) -> String {
+    let stream = section.get("stream").and_then(Value::as_str);
+    let line_start = section.get("line_start").and_then(Value::as_u64);
+    let line_end = section.get("line_end").and_then(Value::as_u64);
+    match (stream, line_start, line_end) {
+        (Some(stream), Some(start), Some(end)) => {
+            format!("{fallback}; inspect {stream} lines {start}-{end}")
+        }
+        _ => fallback.to_string(),
+    }
+}
+
+fn section_text(section: &Map<String, Value>) -> String {
+    section
+        .get("lines")
+        .and_then(Value::as_array)
+        .map(|lines| {
+            lines
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+fn line_range(map: &Map<String, Value>) -> Option<LineRange> {
+    Some(LineRange {
+        start: map.get("line_start")?.as_u64()?,
+        end: map.get("line_end")?.as_u64()?,
+        extra: Extra::new(),
+    })
+}
+
+fn collect_generic_signals(value: &Value, path: &str, out: &mut Vec<Candidate>) {
+    match value {
+        Value::Object(map) => {
+            collect_object_level_signal(map, path, value, out);
+            for (key, child) in map {
+                let child_path = pointer::push(path, key);
+                if let Some(signal) = key_signal(key, child) {
+                    out.push(Candidate::from_signal(child_path.clone(), child, signal));
+                }
+                collect_generic_signals(child, &child_path, out);
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                collect_generic_signals(child, &pointer::push(path, &index.to_string()), out);
+            }
+        }
+        Value::String(text) => {
+            if let Some(signal) = string_signal(text) {
+                out.push(Candidate::from_signal(path.to_string(), value, signal));
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn collect_object_level_signal(
+    map: &Map<String, Value>,
+    path: &str,
+    value: &Value,
+    out: &mut Vec<Candidate>,
+) {
+    let severity = map
+        .get("severity")
+        .or_else(|| map.get("level"))
+        .or_else(|| map.get("status"))
+        .and_then(Value::as_str)
+        .map(normalize_text);
+    if severity
+        .as_deref()
+        .is_some_and(|value| matches!(value, "error" | "failed" | "failure" | "critical" | "fatal"))
+    {
+        out.push(Candidate::from_signal(
+            path.to_string(),
+            value,
+            Signal {
+                kind: "diagnostic",
+                confidence: 0.68,
+                reason: "object severity indicates an error or failure",
+                title: "error diagnostic",
+                severity: Some("error"),
+                source: "generic.object.severity",
+            },
+        ));
+    }
+}
+
+fn key_signal(key: &str, value: &Value) -> Option<Signal> {
+    if key == "failure_sections" || is_empty_container(value) {
+        return None;
+    }
+    let normalized = normalize_key(key);
+    if normalized.contains("error") {
+        Some(Signal {
+            kind: "generic_error_field",
+            confidence: 0.72,
+            reason: "field name indicates error evidence",
+            title: "error field",
+            severity: Some("error"),
+            source: "generic.field_name",
+        })
+    } else if normalized.contains("failure") || normalized.contains("failed") {
+        Some(Signal {
+            kind: "test_failure",
+            confidence: 0.7,
+            reason: "field name indicates failure evidence",
+            title: "failure field",
+            severity: Some("error"),
+            source: "generic.field_name",
+        })
+    } else if normalized.contains("exception") {
+        Some(Signal {
+            kind: "exception",
+            confidence: 0.72,
+            reason: "field name indicates exception evidence",
+            title: "exception field",
+            severity: Some("error"),
+            source: "generic.field_name",
+        })
+    } else if normalized.contains("diagnostic") {
+        Some(Signal {
+            kind: "diagnostic",
+            confidence: 0.62,
+            reason: "field name indicates diagnostic evidence",
+            title: "diagnostic field",
+            severity: Some("error"),
+            source: "generic.field_name",
+        })
+    } else if normalized.contains("warning") {
+        Some(Signal {
+            kind: "warning",
+            confidence: 0.42,
+            reason: "field name indicates warning evidence",
+            title: "warning field",
+            severity: Some("warning"),
+            source: "generic.field_name",
+        })
+    } else if matches!(normalized.as_str(), "message" | "reason" | "summary") {
+        value.as_str().and_then(string_signal)
+    } else {
+        None
+    }
+}
+
+fn string_signal(text: &str) -> Option<Signal> {
+    let normalized = normalize_text(text);
+    if normalized.contains("error[") {
+        Some(Signal {
+            kind: "rust_compile_error",
+            confidence: 0.86,
+            reason: "string contains a Rust compiler diagnostic marker",
+            title: "Rust compiler diagnostic",
+            severity: Some("error"),
+            source: "generic.string_pattern",
+        })
+    } else if normalized.contains("panicked at") {
+        Some(Signal {
+            kind: "rust_panic",
+            confidence: 0.84,
+            reason: "string contains a Rust panic marker",
+            title: "Rust panic",
+            severity: Some("error"),
+            source: "generic.string_pattern",
+        })
+    } else if normalized.contains("traceback (most recent call last)") {
+        Some(Signal {
+            kind: "stack_trace",
+            confidence: 0.84,
+            reason: "string contains a traceback marker",
+            title: "stack trace",
+            severity: Some("error"),
+            source: "generic.string_pattern",
+        })
+    } else if normalized.contains("assertionerror") || normalized.contains("assertion failed") {
+        Some(Signal {
+            kind: "test_failure",
+            confidence: 0.8,
+            reason: "string contains an assertion failure marker",
+            title: "assertion failure",
+            severity: Some("error"),
+            source: "generic.string_pattern",
+        })
+    } else if normalized.contains("exception") {
+        Some(Signal {
+            kind: "exception",
+            confidence: 0.7,
+            reason: "string contains an exception marker",
+            title: "exception",
+            severity: Some("error"),
+            source: "generic.string_pattern",
+        })
+    } else if normalized.starts_with("error:")
+        || normalized.contains(" error:")
+        || normalized.contains(" failed")
+    {
+        Some(Signal {
+            kind: "stderr_error",
+            confidence: 0.58,
+            reason: "string contains generic error text",
+            title: "error text",
+            severity: Some("error"),
+            source: "generic.string_pattern",
+        })
+    } else if normalized.contains("warning:") || normalized.contains(" warning") {
+        Some(Signal {
+            kind: "warning",
+            confidence: 0.34,
+            reason: "string contains warning text",
+            title: "warning text",
+            severity: Some("warning"),
+            source: "generic.string_pattern",
+        })
+    } else {
+        None
+    }
+}
+
+fn is_empty_container(value: &Value) -> bool {
+    matches!(value, Value::Array(items) if items.is_empty())
+        || matches!(value, Value::Object(map) if map.is_empty())
+}
+
+fn score_candidate(candidate: &Candidate, intent: GoalIntent) -> f64 {
+    let mut score = candidate.confidence;
+    score += kind_bonus(&candidate.kind, intent);
+    if candidate.source == "generic.run.failure_sections" {
+        score += 0.08;
+    }
+    if candidate.path.ends_with("/text") {
+        score -= 0.04;
+    }
+    score.clamp(0.0, 1.25)
+}
+
+fn kind_bonus(kind: &str, intent: GoalIntent) -> f64 {
+    match intent {
+        GoalIntent::RootCause => match kind {
+            "rust_compile_error"
+            | "rust_panic"
+            | "python_traceback"
+            | "command_timeout"
+            | "command_spawn_error"
+            | "test_failure" => 0.12,
+            "nonzero_exit" => 0.02,
+            "warning" => -0.08,
+            _ => 0.04,
+        },
+        GoalIntent::TestFailure => match kind {
+            "test_failure" | "rust_panic" | "python_traceback" | "rust_compile_error" => 0.14,
+            "warning" => -0.08,
+            _ => 0.02,
+        },
+        GoalIntent::SummarizeIssues => match kind {
+            "generic_error_field" | "diagnostic" | "warning" => 0.06,
+            _ => 0.0,
+        },
+        GoalIntent::Security => match kind {
+            "generic_error_field" | "diagnostic" => 0.04,
+            _ => 0.0,
+        },
+        GoalIntent::Logs => match kind {
+            "stack_trace" | "stderr_error" | "exception" | "warning" => 0.08,
+            _ => 0.0,
+        },
+        GoalIntent::DiffReview => match kind {
+            "diagnostic" | "warning" => 0.04,
+            _ => 0.0,
+        },
+        GoalIntent::General => 0.0,
+    }
+}
+
+fn compare_candidates(left: &Candidate, right: &Candidate) -> Ordering {
+    right
+        .score
+        .partial_cmp(&left.score)
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| {
+            right
+                .confidence
+                .partial_cmp(&left.confidence)
+                .unwrap_or(Ordering::Equal)
+        })
+        .then_with(|| left.path.cmp(&right.path))
+        .then_with(|| left.kind.cmp(&right.kind))
+}
+
+fn command_hints(cursor: Option<&str>, path: &str) -> FindingCommandHints {
+    let Some(cursor) = cursor else {
+        return FindingCommandHints::default();
+    };
+    let cursor = shell_arg(cursor);
+    let path = shell_arg(path);
+    FindingCommandHints {
+        inspect: None,
+        expand: Some(format!("prog expand {cursor} --path {path}")),
+        evidence: Some(format!("prog evidence {cursor} --path {path}")),
+        search: None,
+        extra: Extra::new(),
+    }
+}
+
+fn redaction_state(value: &Value) -> Option<RedactionState> {
+    let count = count_redacted_values(value);
+    (count > 0).then(|| RedactionState {
+        redacted: true,
+        redacted_paths: count,
+        lossy: false,
+        redaction_version: None,
+        extra: Extra::new(),
+    })
+}
+
+fn count_redacted_values(value: &Value) -> u64 {
+    match value {
+        Value::String(text)
+            if text.contains("[REDACTED:") || text.contains("\u{00ab}redacted\u{00bb}") =>
+        {
+            1
+        }
+        Value::Array(items) => items.iter().map(count_redacted_values).sum(),
+        Value::Object(map) => map.values().map(count_redacted_values).sum(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => 0,
+    }
+}
+
+fn round_confidence(value: f64) -> f64 {
+    (value.clamp(0.0, 1.0) * 100.0).round() / 100.0
+}
+
+fn truncate_reason(reason: &str) -> String {
+    if reason.chars().count() <= MAX_REASON_CHARS {
+        return reason.to_string();
+    }
+    let mut output = reason
+        .chars()
+        .take(MAX_REASON_CHARS.saturating_sub(1))
+        .collect::<String>();
+    output.push_str("...");
+    output
+}
+
+fn normalize_key(key: &str) -> String {
+    key.chars()
+        .filter(|ch| *ch != '-' && *ch != '_')
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn normalize_text(text: &str) -> String {
+    text.to_ascii_lowercase().replace(['_', '-'], " ")
+}
+
+fn shell_arg(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':' | '~'))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
