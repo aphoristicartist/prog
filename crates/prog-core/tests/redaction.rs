@@ -338,6 +338,19 @@ fn benign_long_strings_are_not_redacted_by_value_scan() {
 }
 
 #[test]
+fn bearer_followed_by_a_path_is_not_false_flagged() {
+    // A filesystem path after "bearer" must not be treated as a bearer token:
+    // the token class excludes path separators. The value is preserved.
+    let payload = json!({"command": "bearer /usr/local/bin/verylongtoolname here"});
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+    assert!(paths.is_empty(), "a bearer-prefixed path must not be redacted: {paths:?}");
+    assert_eq!(
+        redacted["command"],
+        json!("bearer /usr/local/bin/verylongtoolname here")
+    );
+}
+
+#[test]
 fn value_scan_can_be_disabled_via_config() {
     let config = RedactionConfig {
         scan_values: false,
