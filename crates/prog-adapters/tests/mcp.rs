@@ -213,11 +213,12 @@ async fn discovers_tools_resources_prompts_and_declared_output_schema() {
             && operation.effects.read_only
             && operation.extra["invocation"]["mcp"]["kind"] == "resource"
     }));
-    assert!(discovery.profile.operations.iter().any(|operation| {
-        operation.id == "prompt:summarize"
-            && operation.input_schema["required"][0] == "topic"
-            && operation.extra["invocation"]["mcp"]["kind"] == "prompt"
-    }));
+    let prompt = operation(&discovery.profile, "prompt:summarize");
+    assert_eq!(prompt.input_schema["required"][0], "topic");
+    assert_eq!(prompt.extra["invocation"]["mcp"]["kind"], "prompt");
+    assert!(!prompt.effects.read_only);
+    assert!(!prompt.effects.cacheable);
+    assert!(prompt.effects.requires_confirmation);
 }
 
 #[tokio::test]
@@ -276,6 +277,30 @@ async fn calls_tool_prefers_structured_content_and_can_project_large_result() {
         "",
     );
     assert!(!projection.omitted.is_empty());
+}
+
+#[tokio::test]
+async fn structured_content_respects_max_content_bytes() {
+    let mut fixture = fixture("normal");
+    fixture.source.max_content_bytes = 256;
+
+    let result = fixture
+        .source
+        .call_tool("search_docs", &json!({"query": "rust"}))
+        .await
+        .unwrap();
+
+    assert!(result.provenance.structured_content);
+    assert!(result.provenance.truncated);
+    assert_eq!(result.data["format"], "structured_content");
+    assert_eq!(result.data["truncated"], true);
+    assert!(!result.data["omitted"].as_array().unwrap().is_empty());
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("max_content_bytes"))
+    );
 }
 
 #[tokio::test]

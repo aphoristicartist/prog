@@ -37,6 +37,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::Command as TokioCommand,
     sync::mpsc,
+    task::JoinHandle,
 };
 use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
@@ -432,7 +433,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
         }
         Command::Source { command } => {
             let store = Store::open(&cli.dir)?;
-            let report = source_command(&store, command).await?;
+            let report = source_command(&store, &cli.dir, command).await?;
             write_success(&report, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
@@ -1018,14 +1019,22 @@ async fn discover_from_seed(
     })
 }
 
-async fn source_command(store: &Store, command: &SourceCommand) -> Result<SourceAddReport> {
+async fn source_command(
+    store: &Store,
+    dir: &Path,
+    command: &SourceCommand,
+) -> Result<SourceAddReport> {
     match command {
-        SourceCommand::AddHttp(args) => source_add_http(store, args).await,
-        SourceCommand::AddCli(args) => source_add_cli(store, args).await,
+        SourceCommand::AddHttp(args) => source_add_http(store, dir, args).await,
+        SourceCommand::AddCli(args) => source_add_cli(store, dir, args).await,
     }
 }
 
-async fn source_add_http(store: &Store, args: &SourceAddHttpArgs) -> Result<SourceAddReport> {
+async fn source_add_http(
+    store: &Store,
+    dir: &Path,
+    args: &SourceAddHttpArgs,
+) -> Result<SourceAddReport> {
     let operation = source_add_operation(&args.operation, "source add-http")?;
     let method = normalize_http_method(&args.method)?;
     let url = split_http_url(&args.url)?;
@@ -1057,7 +1066,7 @@ async fn source_add_http(store: &Store, args: &SourceAddHttpArgs) -> Result<Sour
     )
     .await?;
     warnings.extend(discovery.warnings.clone());
-    let next_steps = source_add_next_steps(&args.source_id, &operation, !read_only);
+    let next_steps = source_add_next_steps(dir, &args.source_id, &operation, !read_only);
     Ok(SourceAddReport {
         schema_version: DISCLOSURE_VERSION,
         source_id: args.source_id.clone(),
@@ -1070,7 +1079,11 @@ async fn source_add_http(store: &Store, args: &SourceAddHttpArgs) -> Result<Sour
     })
 }
 
-async fn source_add_cli(store: &Store, args: &SourceAddCliArgs) -> Result<SourceAddReport> {
+async fn source_add_cli(
+    store: &Store,
+    dir: &Path,
+    args: &SourceAddCliArgs,
+) -> Result<SourceAddReport> {
     let operation = source_add_operation(&args.operation, "source add-cli")?;
     let Some((command, command_args)) = args.command.split_first() else {
         return Err(CoreError::BadArgs {
@@ -1092,7 +1105,7 @@ async fn source_add_cli(store: &Store, args: &SourceAddCliArgs) -> Result<Source
             "name": operation,
             "command": command,
             "args": command_args,
-            "effect": generated_effect(read_only, true, false)
+            "effect": generated_effect(read_only, false, false)
         }]
     });
     let discovery = discover_from_seed(
@@ -1104,7 +1117,7 @@ async fn source_add_cli(store: &Store, args: &SourceAddCliArgs) -> Result<Source
     )
     .await?;
     warnings.extend(discovery.warnings.clone());
-    let next_steps = source_add_next_steps(&args.source_id, &operation, !read_only);
+    let next_steps = source_add_next_steps(dir, &args.source_id, &operation, !read_only);
     Ok(SourceAddReport {
         schema_version: DISCLOSURE_VERSION,
         source_id: args.source_id.clone(),
@@ -1128,12 +1141,29 @@ fn source_add_operation(operation: &str, context: &str) -> Result<String> {
     Ok(operation.to_string())
 }
 
-fn source_add_next_steps(source_id: &str, operation: &str, needs_yes: bool) -> Vec<String> {
+fn source_add_next_steps(
+    dir: &Path,
+    source_id: &str,
+    operation: &str,
+    needs_yes: bool,
+) -> Vec<String> {
     let confirmation = if needs_yes { " --yes" } else { "" };
+    let dir = shell_quote(&dir.to_string_lossy());
     vec![
-        format!("prog hints {source_id} {operation}"),
-        format!("prog call {source_id} {operation} --args '{{}}'{confirmation}"),
+        format!("prog --dir {dir} hints {source_id} {operation}"),
+        format!("prog --dir {dir} call {source_id} {operation} --args '{{}}'{confirmation}"),
     ]
+}
+
+fn shell_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':'))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn generated_effect(read_only: bool, network: bool, shell: bool) -> Value {
@@ -1419,14 +1449,6 @@ async fn call_source(
     let payload = redacted.payload;
     let payload_bytes = json_len_u64(payload.as_value())?;
     let observed = infer(payload.as_value());
-    update_profile_from_call(
-        store,
-        &profile,
-        &operation.id,
-        &call_args,
-        payload.as_value(),
-        &observed,
-    )?;
 
     let mut provenance = call_provenance(
         &cache_key,
@@ -1436,6 +1458,22 @@ async fn call_source(
     );
     let mut warnings = adapter_call.warnings;
     warnings.extend(call_effect_warnings(&operation));
+    if args.no_cache {
+        warnings.push("profile learning skipped because --no-cache was requested".to_string());
+    } else if operation.effects.sensitive {
+        warnings.push(
+            "profile learning skipped because the operation may handle sensitive data".to_string(),
+        );
+    } else {
+        update_profile_from_call(
+            store,
+            &profile,
+            &operation.id,
+            &call_args,
+            payload.as_value(),
+            &observed,
+        )?;
+    }
     if !redacted_paths.is_empty() {
         warnings.push(format!(
             "redacted {} sensitive path(s) before inference and persistence",
@@ -2016,7 +2054,20 @@ async fn run_spawned_child(
         }
         Err(_) => {
             kill_run_process_group(&mut child).await;
-            RunProcessStatus::TimedOut
+            let _ = tokio::join!(
+                finish_run_reader_or_abort(stdout_task),
+                finish_run_reader_or_abort(stderr_task)
+            );
+            let mut combined = Vec::new();
+            while let Ok(chunk) = rx.try_recv() {
+                combined.push(chunk);
+            }
+            return Ok(RunProcessResult {
+                stdout: empty_run_capture("stdout"),
+                stderr: empty_run_capture("stderr"),
+                combined,
+                status: RunProcessStatus::TimedOut,
+            });
         }
     };
     let stdout = stdout_task
@@ -2067,7 +2118,17 @@ async fn kill_run_process_group(child: &mut tokio::process::Child) {
         }
     }
     let _ = child.start_kill();
-    let _ = child.wait().await;
+    let _ = tokio::time::timeout(Duration::from_millis(100), child.wait()).await;
+}
+
+async fn finish_run_reader_or_abort(mut task: JoinHandle<std::io::Result<RunCapture>>) {
+    tokio::select! {
+        _ = &mut task => {}
+        _ = tokio::time::sleep(Duration::from_millis(25)) => {
+            task.abort();
+            let _ = task.await;
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -2148,10 +2209,8 @@ fn redact_run_output_bytes(bytes: &[u8]) -> RunText {
     let lines = text
         .lines()
         .map(|line| {
-            let redacted = redact_observed_text(line);
-            if redacted != line {
-                redactions += 1;
-            }
+            let (redacted, count) = prog_core::redact_sensitive_text(line);
+            redactions = redactions.saturating_add(count);
             redacted
         })
         .collect::<Vec<_>>();
@@ -4995,39 +5054,7 @@ fn is_binaryish(bytes: &[u8]) -> bool {
 }
 
 fn redact_observed_text(line: &str) -> String {
-    let separators = ["=", ":", " "];
-    for key in [
-        "authorization",
-        "api_key",
-        "apikey",
-        "password",
-        "secret",
-        "token",
-    ] {
-        let lower = line.to_ascii_lowercase();
-        for separator in separators {
-            let marker = format!("{key}{separator}");
-            if let Some(start) = lower.find(&marker) {
-                let marker_end = start + marker.len();
-                let value_start = marker_end
-                    + line[marker_end..]
-                        .chars()
-                        .take_while(|ch| ch.is_whitespace())
-                        .map(char::len_utf8)
-                        .sum::<usize>();
-                let value_end = line[value_start..]
-                    .find(char::is_whitespace)
-                    .map(|offset| value_start + offset)
-                    .unwrap_or(line.len());
-                let mut redacted = String::new();
-                redacted.push_str(&line[..value_start]);
-                redacted.push_str("[REDACTED:observed_text_secret]");
-                redacted.push_str(&line[value_end..]);
-                return redacted;
-            }
-        }
-    }
-    line.to_string()
+    prog_core::redact_sensitive_text(line).0
 }
 
 fn observation_provenance(
@@ -6111,8 +6138,9 @@ fn update_profile_from_call(
 
 fn push_bounded_example(operation: &mut OperationProfile, args: &Value, redacted: &Value) {
     let projection = project(redacted, &PreviewPolicy::default(), "");
+    let redacted_args = redacted_profile_args(operation, args);
     let example = json!({
-        "args": args,
+        "args": redacted_args,
         "projection": projection
     });
     let examples = operation
@@ -6125,6 +6153,27 @@ fn push_bounded_example(operation: &mut OperationProfile, args: &Value, redacted
             examples.remove(0);
         }
     }
+}
+
+fn redacted_profile_args(operation: &OperationProfile, args: &Value) -> Value {
+    let sensitive_args = operation_sensitive_args(operation);
+    RedactionPolicy::with_extra_persistence_names(&sensitive_args)
+        .apply_persistence(args)
+        .0
+}
+
+fn operation_sensitive_args(operation: &OperationProfile) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    if let Some(invocation) = operation.extra.get("invocation").and_then(Value::as_object) {
+        for kind in ["http", "cli"] {
+            if let Some(config) = invocation.get(kind).and_then(Value::as_object)
+                && let Some(values) = config.get("sensitive_args").and_then(Value::as_array)
+            {
+                names.extend(values.iter().filter_map(Value::as_str).map(str::to_string));
+            }
+        }
+    }
+    names.into_iter().collect()
 }
 
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -6230,12 +6279,18 @@ async fn probe_profile(
                 .await
                 .map(|result| result.data),
             ProbeSource::Mcp(source) => {
-                if let Some(tool_name) = operation
+                let mcp_invocation = operation
                     .extra
                     .get("invocation")
                     .and_then(|value| value.get("mcp"))
-                    .and_then(|value| value.get("name"))
+                    .and_then(Value::as_object);
+                if mcp_invocation
+                    .and_then(|value| value.get("kind"))
                     .and_then(Value::as_str)
+                    == Some("tool")
+                    && let Some(tool_name) = mcp_invocation
+                        .and_then(|value| value.get("name"))
+                        .and_then(Value::as_str)
                 {
                     source
                         .call_tool(tool_name, &args)
@@ -6271,13 +6326,14 @@ fn learn_from_probe(operation: &mut OperationProfile, args: &Value, data: &Value
         None => observed,
     });
     let projection = project(redacted.as_value(), &PreviewPolicy::default(), "");
+    let redacted_args = redacted_profile_args(operation, args);
     let examples = operation
         .extra
         .entry("examples".to_string())
         .or_insert_with(|| Value::Array(Vec::new()));
     if let Value::Array(examples) = examples {
         examples.push(json!({
-            "args": args,
+            "args": redacted_args,
             "projection": projection
         }));
     }

@@ -4,7 +4,7 @@
 //! literal underscore forms — and `is_sensitive_name` must do the same for
 //! argv/flag tokens.
 
-use prog_core::{RedactionConfig, RedactionPolicy, is_sensitive_name};
+use prog_core::{RedactionConfig, RedactionPolicy, is_sensitive_name, redact_sensitive_text};
 use serde_json::json;
 
 #[test]
@@ -215,6 +215,21 @@ fn is_sensitive_name_reflects_keywords_and_allowlist() {
             "{benign:?} should NOT be sensitive"
         );
     }
+}
+
+#[test]
+fn sensitive_text_values_are_redacted_across_common_formats() {
+    let text =
+        "Authorization: Bearer SECRET123\ntoken=abc api-key: def\ncookie: sid=ghi\nprivate_key pem";
+    let (redacted, count) = redact_sensitive_text(text);
+
+    for secret in ["Bearer SECRET123", "abc", "def", "sid=ghi", "pem"] {
+        assert!(!redacted.contains(secret), "{secret} leaked in {redacted}");
+    }
+    assert_eq!(count, 5);
+    assert!(redacted.contains("Authorization: [REDACTED:observed_text_secret]"));
+    assert!(redacted.contains("token=[REDACTED:observed_text_secret]"));
+    assert!(redacted.contains("api-key: [REDACTED:observed_text_secret]"));
 }
 
 #[test]

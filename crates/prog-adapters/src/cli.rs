@@ -5,12 +5,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use prog_core::{CoreError, RedactionPolicy, Result, TrustSettings, is_sensitive_name};
+use prog_core::{
+    CoreError, RedactionPolicy, Result, TrustSettings, is_sensitive_name, redact_sensitive_text,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::Command,
+    task::JoinHandle,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -158,8 +161,10 @@ impl CliSource {
             })?,
             Err(_) => {
                 kill_child_process_group(&mut child).await;
-                let _ = stdout_task.await;
-                let _ = stderr_task.await;
+                let _ = tokio::join!(
+                    finish_reader_or_abort(stdout_task),
+                    finish_reader_or_abort(stderr_task)
+                );
                 return Err(CoreError::CliTimeout {
                     operation: operation.id.clone(),
                     timeout_ms,
@@ -256,7 +261,17 @@ async fn kill_child_process_group(child: &mut tokio::process::Child) {
         }
     }
     let _ = child.start_kill();
-    let _ = child.wait().await;
+    let _ = tokio::time::timeout(Duration::from_millis(100), child.wait()).await;
+}
+
+async fn finish_reader_or_abort(mut task: JoinHandle<std::io::Result<Capture>>) {
+    tokio::select! {
+        _ = &mut task => {}
+        _ = tokio::time::sleep(Duration::from_millis(25)) => {
+            task.abort();
+            let _ = task.await;
+        }
+    }
 }
 
 fn args_object<'a>(operation: &CliOperation, args: &'a Value) -> Result<&'a Map<String, Value>> {
@@ -504,7 +519,10 @@ fn normalize_stdout(bytes: &[u8], truncated: bool) -> Value {
 
 fn normalize_text(bytes: &[u8], truncated: bool) -> Value {
     let text = String::from_utf8_lossy(bytes);
-    let lines: Vec<&str> = text.lines().collect();
+    let lines: Vec<String> = text
+        .lines()
+        .map(|line| redact_sensitive_text(line).0)
+        .collect();
     let head: Vec<Value> = lines.iter().take(10).map(|line| json!(line)).collect();
     let tail_start = lines.len().saturating_sub(10).max(head.len());
     let tail: Vec<Value> = lines
