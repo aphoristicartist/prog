@@ -196,6 +196,42 @@ fn profile_updates_converge_under_locking() {
     assert_eq!(profile.version, 2);
 }
 
+#[test]
+fn profile_ids_cannot_escape_profiles_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+
+    for id in [
+        "",
+        ".",
+        "..",
+        "../outside",
+        "nested/source",
+        "nested\\source",
+    ] {
+        let update_error = store
+            .update_profile(id, |current| add_operation(current, "op"))
+            .unwrap_err();
+        assert_eq!(update_error.kind(), "bad_args");
+
+        let read_error = store.read_profile(id).unwrap_err();
+        assert_eq!(read_error.kind(), "bad_args");
+    }
+
+    store
+        .update_profile("github.issues-prod_1", |current| {
+            add_operation(current, "op")
+        })
+        .unwrap();
+    assert!(
+        dir.path()
+            .join("profiles")
+            .join("github.issues-prod_1.json")
+            .exists()
+    );
+    assert!(!dir.path().join("outside.json").exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn store_uses_private_permissions() {

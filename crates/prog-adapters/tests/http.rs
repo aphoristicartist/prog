@@ -113,6 +113,40 @@ async fn declared_sensitive_arg_names_are_redacted_from_provenance_args() {
 }
 
 #[tokio::test]
+async fn non_string_sensitive_args_are_redacted_from_final_url() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/anything/12345"))
+        .and(query_param("active", "true"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&server)
+        .await;
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "fetch".to_string(),
+            method: "GET".to_string(),
+            path: "/anything/{pin}".to_string(),
+            query: map([("active", "{active}")]),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: None,
+            max_response_bytes: None,
+            sensitive_args: vec!["pin".to_string(), "active".to_string()],
+        },
+    );
+
+    let result = source
+        .execute_with_env("fetch", &json!({"pin": 12345, "active": true}), &|_| None)
+        .await
+        .unwrap();
+
+    assert!(!result.provenance.final_url.contains("12345"));
+    assert!(!result.provenance.final_url.contains("active=true"));
+    assert!(result.provenance.final_url.contains("[REDACTED]"));
+}
+
+#[tokio::test]
 async fn rejects_missing_and_unknown_args_with_names() {
     let server = MockServer::start().await;
     let source = source(
