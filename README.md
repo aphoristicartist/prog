@@ -153,13 +153,23 @@ PROG_TOKEN_EVAL_UPDATE=1 cargo test -p prog-cli --test eval -- --nocapture
 
 ---
 
+## Recently shipped
+
+Former V1 non-goals, now implemented:
+
+- **[#69](https://github.com/aphoristicartist/prog/issues/69) — upstream auto-pagination.** `prog call --pages N` follows cursor/page pagination for read-only operations under hard page/byte/time caps.
+- **[#70](https://github.com/aphoristicartist/prog/issues/70) — table inference.** `prog observe` recognizes CSV/TSV, markdown, and aligned tables and exposes them as bounded, `/rows`-expandable payloads.
+- **[#72](https://github.com/aphoristicartist/prog/issues/72) — automatic trust upgrade from imported descriptors.** A graded evidence model lets proven read-only importer evidence relax confirmation under `trust.auto_upgrade`.
+- **[#73](https://github.com/aphoristicartist/prog/issues/73) — secrets embedded in string values** are redacted before persistence (Bearer/PEM/JWT and sensitive URL params).
+
 ## Roadmap
 
-These are tracked as goals and are **not implemented today**:
+Remaining follow-ups from the above:
 
-- **[#69](https://github.com/aphoristicartist/prog/issues/69) — upstream auto-pagination.** Let `expand` follow `next`-style links across paged APIs without the caller orchestrating each fetch.
-- **[#70](https://github.com/aphoristicartist/prog/issues/70) — table inference.** Infer tabular structure from list/array payloads so expansions can return rows instead of nested JSON.
-- **[#72](https://github.com/aphoristicartist/prog/issues/72) — automatic trust upgrade from imported descriptors.** Promote trust level for operations whose imported OpenAPI / JSON Schema fully specifies inputs and effects.
+- Pagination URL continuation (Link `rel="next"` via an adapter `execute_url`) and resume cursors.
+- Table inference for common log formats (e.g. CLF).
+- Importer evidence-grading wiring that activates `trust.auto_upgrade` for real imports.
+- Redaction value-scan keyword tuning via `RedactionConfig`.
 
 ## Non-goals
 
