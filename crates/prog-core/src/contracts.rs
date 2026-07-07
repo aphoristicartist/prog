@@ -9,6 +9,9 @@ use crate::shape::Shape;
 pub const SOURCE_PROFILE_VERSION: &str = "prog.source_profile.v1";
 pub const DISCLOSURE_VERSION: &str = "prog.disclosure.v1";
 pub const LENS_MANIFEST_VERSION: &str = "prog.lens_manifest.v1";
+pub const INSPECT_VERSION: &str = "prog.inspect.v1";
+pub const EVIDENCE_BLOCK_VERSION: &str = "prog.evidence.v1";
+pub const SEARCH_VERSION: &str = "prog.search.v1";
 
 pub type Extra = Map<String, Value>;
 
@@ -314,6 +317,209 @@ pub struct EvidenceRef {
     pub extra: Extra,
 }
 
+/// Ranked evidence-navigation response for `prog inspect`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct InspectResponse {
+    pub schema_version: String,
+    pub cursor: String,
+    pub goal: String,
+    #[serde(default)]
+    pub normalized_goal: Option<String>,
+    #[serde(default)]
+    pub scope_path: Option<String>,
+    #[serde(default)]
+    pub findings: Vec<Finding>,
+    #[serde(default)]
+    pub omitted: Vec<OmittedRegion>,
+    #[serde(default)]
+    pub cache: Option<CacheInfo>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+/// One ranked candidate path that is likely to contain useful evidence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct Finding {
+    pub rank: u64,
+    pub kind: String,
+    pub path: String,
+    pub confidence: f64,
+    pub reason: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub severity: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub lens_id: Option<String>,
+    #[serde(default)]
+    pub evidence_ref: Option<EvidenceRef>,
+    #[serde(default)]
+    pub line_range: Option<LineRange>,
+    #[serde(default)]
+    pub byte_range: Option<ByteRange>,
+    #[serde(default)]
+    pub redaction_state: Option<RedactionState>,
+    #[serde(default)]
+    pub commands: FindingCommandHints,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct FindingCommandHints {
+    #[serde(default)]
+    pub inspect: Option<String>,
+    #[serde(default)]
+    pub expand: Option<String>,
+    #[serde(default)]
+    pub evidence: Option<String>,
+    #[serde(default)]
+    pub search: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct LineRange {
+    pub start: u64,
+    pub end: u64,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ByteRange {
+    pub start: u64,
+    pub end: u64,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct RedactionState {
+    pub redacted: bool,
+    #[serde(default)]
+    pub redacted_paths: u64,
+    #[serde(default)]
+    pub lossy: bool,
+    #[serde(default)]
+    pub redaction_version: Option<u32>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+/// Compact citation-oriented evidence extracted from a cursor path.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct EvidenceBlock {
+    pub schema_version: String,
+    pub cursor: String,
+    pub path: String,
+    pub kind: String,
+    pub summary: String,
+    #[serde(default)]
+    pub excerpt: Value,
+    #[serde(default)]
+    pub citations: Vec<EvidenceCitation>,
+    #[serde(default)]
+    pub evidence_ref: Option<EvidenceRef>,
+    #[serde(default)]
+    pub line_range: Option<LineRange>,
+    #[serde(default)]
+    pub byte_range: Option<ByteRange>,
+    #[serde(default)]
+    pub source_command: Option<String>,
+    #[serde(default)]
+    pub provenance: Option<CallProvenance>,
+    #[serde(default)]
+    pub redaction_state: Option<RedactionState>,
+    #[serde(default)]
+    pub commands: FindingCommandHints,
+    #[serde(default)]
+    pub cache: Option<CacheInfo>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct EvidenceCitation {
+    pub path: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub excerpt: Value,
+    #[serde(default)]
+    pub line_range: Option<LineRange>,
+    #[serde(default)]
+    pub byte_range: Option<ByteRange>,
+    #[serde(default)]
+    pub redaction_state: Option<RedactionState>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+/// Search results over a redacted cached payload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct SearchResponse {
+    pub schema_version: String,
+    pub cursor: String,
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub scope_path: Option<String>,
+    #[serde(default)]
+    pub hits: Vec<SearchHit>,
+    #[serde(default)]
+    pub omitted: Vec<OmittedRegion>,
+    #[serde(default)]
+    pub cache: Option<CacheInfo>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct SearchHit {
+    pub rank: u64,
+    pub path: String,
+    pub score: f64,
+    pub match_kind: String,
+    #[serde(default)]
+    pub preview: Value,
+    #[serde(default)]
+    pub field: Option<String>,
+    #[serde(default)]
+    pub finding_kind: Option<String>,
+    #[serde(default)]
+    pub line_range: Option<LineRange>,
+    #[serde(default)]
+    pub byte_range: Option<ByteRange>,
+    #[serde(default)]
+    pub redaction_state: Option<RedactionState>,
+    #[serde(default)]
+    pub commands: FindingCommandHints,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct Summary {
@@ -555,6 +761,16 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<AuthRef>(&mut schemas, "AuthRef")?;
     insert_schema::<DisclosureEnvelope>(&mut schemas, "DisclosureEnvelope")?;
     insert_schema::<EvidenceRef>(&mut schemas, "EvidenceRef")?;
+    insert_schema::<InspectResponse>(&mut schemas, "InspectResponse")?;
+    insert_schema::<Finding>(&mut schemas, "Finding")?;
+    insert_schema::<FindingCommandHints>(&mut schemas, "FindingCommandHints")?;
+    insert_schema::<EvidenceBlock>(&mut schemas, "EvidenceBlock")?;
+    insert_schema::<EvidenceCitation>(&mut schemas, "EvidenceCitation")?;
+    insert_schema::<SearchResponse>(&mut schemas, "SearchResponse")?;
+    insert_schema::<SearchHit>(&mut schemas, "SearchHit")?;
+    insert_schema::<LineRange>(&mut schemas, "LineRange")?;
+    insert_schema::<ByteRange>(&mut schemas, "ByteRange")?;
+    insert_schema::<RedactionState>(&mut schemas, "RedactionState")?;
     insert_schema::<Summary>(&mut schemas, "Summary")?;
     insert_schema::<OmittedRegion>(&mut schemas, "OmittedRegion")?;
     insert_schema::<NextAction>(&mut schemas, "NextAction")?;

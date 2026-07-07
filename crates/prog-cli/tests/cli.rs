@@ -3151,6 +3151,38 @@ fn meta_lists_and_discloses_contract_schemas() {
             .unwrap()
             .contains_key("redacted_slice_sha256")
     );
+
+    let inspect_schema = prog(&["--dir", dir_arg, "meta", "InspectResponse"]);
+    assert!(
+        inspect_schema.status.success(),
+        "{}",
+        stdout(&inspect_schema)
+    );
+    let value: Value = serde_json::from_slice(&inspect_schema.stdout).unwrap();
+    assert_eq!(value["operation"], "InspectResponse");
+    assert_eq!(value["data_preview"]["title"], "InspectResponse");
+    assert!(
+        value["data_preview"]["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key("findings")
+    );
+
+    let evidence_block_schema = prog(&["--dir", dir_arg, "meta", "EvidenceBlock"]);
+    assert!(
+        evidence_block_schema.status.success(),
+        "{}",
+        stdout(&evidence_block_schema)
+    );
+    let value: Value = serde_json::from_slice(&evidence_block_schema.stdout).unwrap();
+    assert_eq!(value["operation"], "EvidenceBlock");
+    assert_eq!(value["data_preview"]["title"], "EvidenceBlock");
+
+    let search_schema = prog(&["--dir", dir_arg, "meta", "SearchResponse"]);
+    assert!(search_schema.status.success(), "{}", stdout(&search_schema));
+    let value: Value = serde_json::from_slice(&search_schema.stdout).unwrap();
+    assert_eq!(value["operation"], "SearchResponse");
+    assert_eq!(value["data_preview"]["title"], "SearchResponse");
 }
 
 #[test]
