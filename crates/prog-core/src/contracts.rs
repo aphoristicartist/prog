@@ -139,6 +139,11 @@ pub struct TrustSettings {
     pub allow_shell: bool,
     #[serde(default)]
     pub allow_network: bool,
+    /// When true (default), an operation carrying *proven* read-only evidence
+    /// from a trusted importer descriptor may skip confirmation automatically.
+    /// Mutating, shell-backed, and sensitive operations are never relaxed.
+    #[serde(default = "default_true")]
+    pub auto_upgrade: bool,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
@@ -148,6 +153,7 @@ impl Default for TrustSettings {
         Self {
             allow_shell: false,
             allow_network: false,
+            auto_upgrade: true,
             extra: Extra::new(),
         }
     }
