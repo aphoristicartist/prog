@@ -9,6 +9,7 @@ pub mod policy;
 pub mod redaction;
 pub mod shape;
 pub mod store;
+pub mod table;
 
 pub use contracts::*;
 pub use disclosure::*;
@@ -19,3 +20,4 @@ pub use policy::*;
 pub use redaction::*;
 pub use shape::*;
 pub use store::*;
+pub use table::*;
