@@ -258,6 +258,7 @@ fn redaction_config_round_trips() {
         extra_keywords: vec!["service_key".to_string()],
         allowlist: vec!["max_tokens".to_string()],
         keywords: Some(vec!["token".to_string()]),
+        scan_values: true,
         extra: serde_json::Map::new(),
     };
     let json_str = serde_json::to_string(&config).unwrap();
@@ -278,5 +279,91 @@ fn default_policy_keeps_version_one() {
     assert_eq!(
         RedactionPolicy::from_config(&RedactionConfig::default()).version,
         1
+    );
+}
+
+#[test]
+fn value_embedded_bearer_token_is_redacted_under_benign_key() {
+    let payload = json!({
+        "command": "curl -H 'Authorization: Bearer dGhpcyBpcyBhIHZlcnkgbG9uZyB0b2tlbg' https://svc"
+    });
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+    let serialized = serde_json::to_string(&redacted).unwrap();
+    assert!(!serialized.contains("dGhpcyBpcyBhIHZlcnkgbG9uZyB0b2tlbg"));
+    assert_eq!(paths, vec!["/command".to_string()]);
+}
+
+#[test]
+fn value_embedded_pem_block_is_redacted() {
+    let payload = json!({
+        "config": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAZ9vXYb...long...\n-----END RSA PRIVATE KEY-----"
+    });
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+    let serialized = serde_json::to_string(&redacted).unwrap();
+    assert!(!serialized.contains("MIIEpAIBAAKCAQEAZ9vXYb"));
+    assert_eq!(paths, vec!["/config".to_string()]);
+}
+
+#[test]
+fn value_embedded_jwt_is_redacted() {
+    let jwt =
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    let payload = json!({"metadata": format!("token={jwt}")});
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+    let serialized = serde_json::to_string(&redacted).unwrap();
+    assert!(!serialized.contains("SflKxwRJSMeKKF2QT4fwpMeJf36POk6y"));
+    assert_eq!(paths, vec!["/metadata".to_string()]);
+}
+
+#[test]
+fn value_embedded_sensitive_url_param_is_redacted() {
+    let payload = json!({
+        "url": "https://api.example.com/data?api_key=sk-live-1234567890&state=open"
+    });
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+    let serialized = serde_json::to_string(&redacted).unwrap();
+    assert!(!serialized.contains("sk-live-1234567890"));
+    assert_eq!(paths, vec!["/url".to_string()]);
+}
+
+#[test]
+fn benign_long_strings_are_not_redacted_by_value_scan() {
+    let payload = json!({
+        "description": "The bearer of this certificate is authorized to access the system.",
+        "logline": "2026-07-06T12:00:00Z INFO request completed in 42ms",
+        "paragraph": "This sentence has no secrets despite being reasonably long and wordy."
+    });
+    let (_redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+    assert!(paths.is_empty(), "no value should be redacted: {paths:?}");
+}
+
+#[test]
+fn bearer_followed_by_a_path_is_not_false_flagged() {
+    // A filesystem path after "bearer" must not be treated as a bearer token:
+    // the token class excludes path separators. The value is preserved.
+    let payload = json!({"command": "bearer /usr/local/bin/verylongtoolname here"});
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+    assert!(paths.is_empty(), "a bearer-prefixed path must not be redacted: {paths:?}");
+    assert_eq!(
+        redacted["command"],
+        json!("bearer /usr/local/bin/verylongtoolname here")
+    );
+}
+
+#[test]
+fn value_scan_can_be_disabled_via_config() {
+    let config = RedactionConfig {
+        scan_values: false,
+        ..RedactionConfig::default()
+    };
+    let policy = RedactionPolicy::from_config(&config);
+    let payload = json!({
+        "url": "https://x.example.com/data?api_key=sk-live-1234567890"
+    });
+    let (redacted, paths) = policy.apply_persistence(&payload);
+    assert!(paths.is_empty());
+    assert_eq!(
+        redacted["url"],
+        json!("https://x.example.com/data?api_key=sk-live-1234567890")
     );
 }
