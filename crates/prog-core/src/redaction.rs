@@ -217,7 +217,6 @@ const DEFAULT_ALLOWLIST: &[&str] = &[
     "max_tokens",
     "total_tokens",
     "token_count",
-    "tokens",
     "tokenizer",
     "tokenization",
     "session_timeout",

@@ -124,14 +124,25 @@ fn allowlist_protects_benign_token_session_fields() {
         "session_timeout": 30,
         "cookie_consent": true,
         "secretary": "alex",
-        "secretary_email": "alex@example.com",
-        "tokens": ["a", "b"]
+        "secretary_email": "alex@example.com"
     });
     let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
     assert!(paths.is_empty(), "no field should be redacted: {paths:?}");
     assert_eq!(redacted["max_tokens"], json!(1024));
     assert_eq!(redacted["session_timeout"], json!(30));
     assert_eq!(redacted["secretary_email"], json!("alex@example.com"));
+}
+
+#[test]
+fn bare_tokens_field_is_redacted() {
+    // A field literally named "tokens" commonly carries credentials, so it is
+    // NOT on the allowlist (only the compound metric forms are) and must be
+    // redacted under the default policy.
+    let payload = json!({"tokens": "sk-live-1234567890"});
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+    assert_eq!(paths, vec!["/tokens".to_string()]);
+    let serialized = serde_json::to_string(&redacted).unwrap();
+    assert!(!serialized.contains("sk-live-1234567890"));
 }
 
 #[test]
