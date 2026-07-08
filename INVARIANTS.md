@@ -5,9 +5,9 @@ This table maps the RFC 0002 invariant set to executable tests. Property tests r
 | # | Invariant | Harness |
 |---|---|---|
 | I1 | Projection never invents values. Preview leaves must equal the source leaf at that path, be a marker, or be an explicit truncated prefix. | `crates/prog-core/tests/disclosure.rs::projection_never_fabricates_values` |
-| I2 | Persistence-redacted data never reaches disk. | `crates/prog-core/tests/store.rs::persistence_redaction_is_idempotent_and_removes_secret_values`; composed with expansion in `redacted_payload_stays_redacted_through_store_and_expansion`; API boundary in `crates/prog-core/tests/lifecycle.rs::payload_typestate_requires_redaction_before_persistence` |
+| I2 | Persistence-redacted data never reaches disk. | `crates/prog-core/tests/store.rs::persistence_redaction_is_idempotent_and_removes_secret_values`; composed with expansion in `redacted_payload_stays_redacted_through_store_and_expansion`; API boundary in `crates/prog-core/tests/lifecycle.rs::payload_typestate_requires_redaction_before_persistence`; value-pattern redaction of secrets embedded in string values in `crates/prog-core/tests/redaction.rs::{value_embedded_sensitive_name_value_pair_equals_is_redacted,value_embedded_sensitive_name_value_pair_colon_is_redacted,value_scan_never_persists_embedded_high_confidence_secret}` |
 | I3 | Expansion never escapes the cursor provenance boundary, segment-wise and escaping-aware. | `crates/prog-core/tests/disclosure.rs::pointer_containment_is_segment_based`; `expansion_rejects_generated_segment_siblings`; unit cases in `expand_rejects_paths_outside_cursor_boundary_segment_wise`; scoped cursor capability tests in `crates/prog-core/tests/lifecycle.rs::{scoped_slice_validates_json_pointer_syntax_and_scope,validated_cursor_creates_expansion_scope_capability}` |
-| I4 | Redaction is idempotent. | `crates/prog-core/tests/store.rs::persistence_redaction_is_idempotent_and_removes_secret_values` |
+| I4 | Redaction is idempotent. | `crates/prog-core/tests/store.rs::persistence_redaction_is_idempotent_and_removes_secret_values`; value-scan idempotency (redaction markers are never reclassified as secrets) in `crates/prog-core/src/redaction.rs::tests::apply_persistence_detailed_is_pure_and_idempotent` and `crates/prog-core/tests/redaction.rs::value_scan_is_idempotent` |
 | I5 | Shape join is commutative, associative, idempotent, monotone; `Unknown` is identity; enum-cap absorption is order-independent. | `crates/prog-core/tests/shape.rs::{join_is_commutative,join_is_associative,join_is_idempotent,unknown_is_join_identity,join_is_monotone_by_absorption,string_enum_absorption_is_associative_at_cap_boundary}` |
 | I6 | Discovery never invokes non-read-only operations. | `crates/prog-cli/tests/cli.rs::probe_skips_effectless_operations_with_i6_warning`; policy refusal units in `crates/prog-core/tests/policy.rs::discovery_refuses_each_unsafe_effect_independently` |
 | I7 | Mutating, shell-backed, and sensitive operations fail closed without flags/trust. | `crates/prog-core/tests/policy.rs::call_policy_requires_confirmation_and_shell_trust`; CLI integration in `crates/prog-cli/tests/cli.rs::call_validates_args_and_enforces_effect_policy` |
@@ -40,6 +40,7 @@ The pure functions targeted for future model checking are:
 - `prog_core::pointer::{parse,is_within}`
 - `prog_core::disclosure::{project,expand,slice_value}`
 - `prog_core::redaction::RedactionPolicy::apply_persistence`
+- `prog_core::redaction::RedactionPolicy::apply_persistence_detailed`
 - `prog_core::shape::join`
 
 Kani harnesses are not enabled in this PR because the repository has no pinned Kani toolchain or CI install path; adding one would make the standard gate depend on a non-Cargo setup. The proptest harnesses are intentionally written against pure, dependency-free core functions so they can be moved to feature-gated Kani/PropProof harnesses without rewriting the laws.

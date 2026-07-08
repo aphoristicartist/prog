@@ -4,7 +4,10 @@
 //! literal underscore forms — and `is_sensitive_name` must do the same for
 //! argv/flag tokens.
 
-use prog_core::{RedactionConfig, RedactionPolicy, is_sensitive_name, redact_sensitive_text};
+use prog_core::{
+    RawPayload, RedactionConfig, RedactionPolicy, is_sensitive_name, redact_sensitive_text,
+};
+use proptest::prelude::*;
 use serde_json::json;
 
 #[test]
@@ -274,6 +277,7 @@ fn redaction_config_round_trips() {
         allowlist: vec!["max_tokens".to_string()],
         keywords: Some(vec!["token".to_string()]),
         scan_values: true,
+        redact_low_confidence_values: false,
         extra: serde_json::Map::new(),
     };
     let json_str = serde_json::to_string(&config).unwrap();
@@ -384,4 +388,124 @@ fn value_scan_can_be_disabled_via_config() {
         redacted["url"],
         json!("https://x.example.com/data?api_key=sk-live-1234567890")
     );
+}
+
+// --- #73: value-pattern redaction (secrets embedded in string values) -----
+
+#[test]
+fn value_embedded_sensitive_name_value_pair_equals_is_redacted() {
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&json!({
+        "config": "accessToken=topsecretvalue1234"
+    }));
+    let serialized = serde_json::to_string(&redacted).unwrap();
+    assert!(!serialized.contains("topsecretvalue1234"));
+    assert_eq!(redacted["config"], json!("[REDACTED:value_secret]"));
+    assert_eq!(paths, vec!["/config".to_string()]);
+}
+
+#[test]
+fn value_embedded_sensitive_name_value_pair_colon_is_redacted() {
+    let (redacted, paths) = RedactionPolicy::default().apply_persistence(&json!({
+        "log": "password: hunter2xxxxxxx"
+    }));
+    let serialized = serde_json::to_string(&redacted).unwrap();
+    assert!(!serialized.contains("hunter2xxxxxxx"));
+    assert_eq!(redacted["log"], json!("[REDACTED:value_secret]"));
+    assert_eq!(paths, vec!["/log".to_string()]);
+}
+
+#[test]
+fn name_value_pair_with_benign_name_is_preserved() {
+    let (redacted, paths) =
+        RedactionPolicy::default().apply_persistence(&json!({ "note": "username=johndoe12345" }));
+    assert!(paths.is_empty());
+    assert_eq!(redacted["note"], json!("username=johndoe12345"));
+}
+
+#[test]
+fn low_confidence_blob_preserved_by_default_but_flagged_in_report() {
+    let blob = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"; // 46 chars
+    let detail = RedactionPolicy::default().apply_persistence_detailed(&json!({ "blob": blob }));
+    assert_eq!(detail.value_scan.high_confidence_redactions, 0);
+    assert_eq!(detail.value_scan.low_confidence_observations, 1);
+    assert!(detail.value_scan.lossy());
+    // Preserved verbatim by default (never silently mutated without the flag).
+    assert_eq!(detail.value["blob"], json!(blob));
+    assert!(detail.redacted_paths.is_empty());
+    assert_eq!(detail.low_confidence_paths, vec!["/blob".to_string()]);
+}
+
+#[test]
+fn low_confidence_blob_redacted_when_flag_set() {
+    let config = RedactionConfig {
+        redact_low_confidence_values: true,
+        ..RedactionConfig::default()
+    };
+    let policy = RedactionPolicy::from_config(&config);
+    let blob = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let (redacted, paths) = policy.apply_persistence(&json!({ "blob": blob }));
+    let serialized = serde_json::to_string(&redacted).unwrap();
+    assert!(!serialized.contains(blob));
+    assert_eq!(
+        redacted["blob"],
+        json!("[REDACTED:value_secret_low_confidence]")
+    );
+    assert_eq!(paths, vec!["/blob".to_string()]);
+}
+
+#[test]
+fn value_scan_lossy_signal_reaches_redaction_outcome() {
+    let outcome = RawPayload::new(json!({
+        "blob": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    }))
+    .redact(&RedactionPolicy::default());
+    assert!(outcome.value_scan.lossy());
+    assert_eq!(outcome.value_scan.low_confidence_observations, 1);
+    assert!(outcome.redacted_paths.is_empty());
+    // The low-confidence blob survives the Raw -> Redacted typestate boundary
+    // verbatim (it is only flagged, not mutated, under the default policy).
+    assert_eq!(
+        outcome.payload.as_value()["blob"],
+        json!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    );
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+
+    #[test]
+    fn value_scan_never_persists_embedded_high_confidence_secret(
+        secret in "[a-zA-Z0-9_-]{16,40}"
+    ) {
+        // A high-confidence `sensitive_name=value` pair embedded in a value
+        // under a benign key must never reach the serialized redacted output.
+        let value = json!({ "note": format!("accessToken={secret}") });
+        let (redacted, paths) = RedactionPolicy::default().apply_persistence(&value);
+        let serialized = serde_json::to_string(&redacted).unwrap();
+        prop_assert!(!serialized.contains(&secret));
+        prop_assert!(paths.contains(&"/note".to_string()));
+    }
+
+    #[test]
+    fn value_scan_does_not_corrupt_benign_long_strings(text in "[a-zA-Z0-9 .,]{8,60}") {
+        // The charset excludes '=' and ':' so no name=secret pair can form; a
+        // value with no high-confidence secret shape is preserved verbatim with
+        // no redacted paths (a low-confidence blob, if it forms, is also
+        // preserved-and-flagged, never mutated, under the default policy).
+        let value = json!({ "note": text });
+        let (redacted, paths) = RedactionPolicy::default().apply_persistence(&value);
+        prop_assert_eq!(&redacted["note"], &json!(text));
+        prop_assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn value_scan_is_idempotent(payload in "[a-zA-Z0-9_=]{8,80}") {
+        let policy = RedactionPolicy::default();
+        let value = json!({ "k": payload });
+        let (first, _) = policy.apply_persistence(&value);
+        let (second, _) = policy.apply_persistence(&first);
+        // Re-applying redaction to an already-redacted value changes nothing:
+        // redaction markers are never reclassified as secrets (I4 extension).
+        prop_assert_eq!(first, second);
+    }
 }

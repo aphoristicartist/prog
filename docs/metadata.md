@@ -26,6 +26,15 @@ Use these fields before answering from a preview:
   used
 - `parser.path_semantics` and `range_semantics`: how to interpret expansion
   paths and text ranges for the selected parser
+- `value_scan.lossy`, `high_confidence_count`, and `low_confidence_count`:
+  value-pattern redaction outcome. `lossy` is true when a low-confidence
+  secret-like shape (an ambiguous long base64/JWT-like blob) was observed and,
+  by default, preserved verbatim rather than redacted; the counts break down
+  high-confidence value redactions vs. low-confidence observations. When `lossy`,
+  `parser.lossy` is also OR-folded to `true` and `parser.confidence` is capped at
+  `0.6` so the redaction uncertainty propagates. Enable
+  `redaction.redact_low_confidence_values` on the source profile to redact (not
+  just flag) low-confidence shapes.
 
 ## Agent Rules
 
@@ -38,6 +47,10 @@ Use these fields before answering from a preview:
 - If `parser.lossy` is true, use `prog expand` for exact cited slices before
   relying on extracted summaries such as JUnit XML test cases, HTML headings, or
   unified diff file lists.
+- If `value_scan.lossy` is true, a string value contained a secret-like shape
+  the scanner was not confident about and preserved verbatim; do not cite that
+  value as evidence unless `redaction.redact_low_confidence_values` has been
+  enabled to redact it.
 - If `parser.fallback` is true, treat the artifact as bounded text even when the
   MIME type looked structured.
 - If `freshness.refresh_recommended` is true, rerun the original call or

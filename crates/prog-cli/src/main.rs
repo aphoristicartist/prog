@@ -24,11 +24,11 @@ use prog_core::{
     ObservationPayloadStatus, ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion,
     OperationProfile, PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, Result,
     SOURCE_PROFILE_VERSION, ScopedSlice, SliceRequest, SourceProfile, Store, Summary,
-    TrustSettings, cache_allowed, call_effect_warnings, canonical_json, check_call,
-    check_discovery, cli_adapter_effects, cli_hardening_effects, expand, http_adapter_effects,
-    http_hardening_effects, infer, join, lens_slice_request, new_cache_entry, project,
-    project_with_lens, public_contract_schemas, render_hints, slice_value, tighten_effects,
-    validate_lens_manifest,
+    TrustSettings, ValueScanReport, cache_allowed, call_effect_warnings, canonical_json,
+    check_call, check_discovery, cli_adapter_effects, cli_hardening_effects, expand,
+    http_adapter_effects, http_hardening_effects, infer, join, lens_slice_request, new_cache_entry,
+    project, project_with_lens, public_contract_schemas, render_hints, slice_value,
+    tighten_effects, validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -636,6 +636,7 @@ struct EnvelopeInput {
     additional_next_actions: Vec<NextAction>,
     observation_parser: Option<Value>,
     lens: Option<LensManifest>,
+    value_scan: Option<ValueScanReport>,
 }
 
 struct CursorInput<'a> {
@@ -1413,6 +1414,7 @@ async fn call_source(
         return envelope_for_payload(
             store,
             EnvelopeInput {
+                value_scan: None,
                 source_id: args.source_id.clone(),
                 operation: args.operation.clone(),
                 source_kind: Some(profile_source_kind_name(profile.kind).to_string()),
@@ -1446,6 +1448,7 @@ async fn call_source(
     let redaction = resolve_redaction(Some(&profile));
     let redacted = RawPayload::new(adapter_call.data).redact(&redaction);
     let redacted_paths = redacted.redacted_paths;
+    let value_scan = redacted.value_scan;
     let payload = redacted.payload;
     let payload_bytes = json_len_u64(payload.as_value())?;
     let observed = infer(payload.as_value());
@@ -1534,6 +1537,7 @@ async fn call_source(
     let mut envelope = envelope_for_payload(
         store,
         EnvelopeInput {
+            value_scan: Some(value_scan),
             source_id: args.source_id.clone(),
             operation: args.operation.clone(),
             source_kind: Some(profile_source_kind_name(profile.kind).to_string()),
@@ -1692,6 +1696,7 @@ fn observe_artifact(
     let redaction = RedactionPolicy::default();
     let redacted = RawPayload::new(normalized.payload).redact(&redaction);
     let redacted_paths = redacted.redacted_paths;
+    let value_scan = redacted.value_scan;
     let payload = redacted.payload;
     let redacted_bytes = serde_json::to_vec(payload.as_value())?;
     let payload_bytes = redacted_bytes.len().try_into().unwrap_or(u64::MAX);
@@ -1759,6 +1764,7 @@ fn observe_artifact(
     envelope_for_payload(
         store,
         EnvelopeInput {
+            value_scan: Some(value_scan),
             source_id: "observe".to_string(),
             operation: input.name.clone(),
             source_kind: Some("artifact".to_string()),
@@ -1897,6 +1903,7 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
     let redaction = RedactionPolicy::default();
     let redacted = RawPayload::new(payload).redact(&redaction);
     let policy_redactions = redacted.redacted_paths;
+    let value_scan = redacted.value_scan;
     let redacted_payload = redacted.payload;
     if let Some(path) = &args.out {
         write_private_file(
@@ -1965,6 +1972,7 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
     let envelope = envelope_for_payload(
         store,
         EnvelopeInput {
+            value_scan: Some(value_scan),
             source_id: "run".to_string(),
             operation,
             source_kind: Some("cli".to_string()),
@@ -3738,6 +3746,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
         return envelope_for_payload(
             store,
             EnvelopeInput {
+                value_scan: None,
                 source_id: record.source_id.clone(),
                 operation: record.operation.clone(),
                 source_kind: source_kind_for_source_id(&record.source_id),
@@ -3771,6 +3780,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
     envelope_for_payload(
         store,
         EnvelopeInput {
+            value_scan: None,
             source_id: record.source_id.clone(),
             operation: record.operation.clone(),
             source_kind: source_kind_for_source_id(&record.source_id),
@@ -3844,6 +3854,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
     envelope_for_payload(
         store,
         EnvelopeInput {
+            value_scan: None,
             source_id: "prog".to_string(),
             operation,
             source_kind: Some("internal".to_string()),
@@ -6020,8 +6031,37 @@ fn observation_metadata(
             .as_ref()
             .is_some_and(|effects| effects.sensitive);
     let mut metadata_extra = Extra::new();
-    if let Some(parser) = &input.observation_parser {
-        metadata_extra.insert("parser".to_string(), parser.clone());
+    // Surface value-scan lossiness: when low-confidence secret-like shapes were
+    // observed (and, by default, preserved verbatim), OR-fold that uncertainty
+    // into the parser's `lossy`/`confidence` AND emit a disambiguating
+    // `value_scan` extra entry so the cause is inspectable. When nothing was
+    // observed, behavior is byte-identical to today.
+    let parser_value = match (&input.observation_parser, &input.value_scan) {
+        (Some(parser), Some(scan)) if scan.lossy() => {
+            let mut folded = parser.clone();
+            if let Some(obj) = folded.as_object_mut() {
+                obj.insert("lossy".to_string(), Value::Bool(true));
+                if let Some(confidence) = obj.get("confidence").and_then(Value::as_f64) {
+                    obj.insert("confidence".to_string(), Value::from(confidence.min(0.6)));
+                }
+            }
+            Some(folded)
+        }
+        (Some(parser), _) => Some(parser.clone()),
+        _ => None,
+    };
+    if let Some(parser) = parser_value {
+        metadata_extra.insert("parser".to_string(), parser);
+    }
+    if let Some(scan) = input.value_scan.as_ref().filter(|scan| scan.lossy()) {
+        metadata_extra.insert(
+            "value_scan".to_string(),
+            json!({
+                "lossy": true,
+                "high_confidence_count": scan.high_confidence_redactions,
+                "low_confidence_count": scan.low_confidence_observations,
+            }),
+        );
     }
     ObservationMetadata {
         completeness: ObservationCompleteness {

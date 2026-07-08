@@ -17,10 +17,18 @@ pub struct RedactionPolicy {
     pub allowlist: Vec<String>,
     /// When true (default), string values are scanned for high-confidence
     /// embedded secret shapes (Bearer tokens, PEM blocks, JWTs, sensitive URL
-    /// query params), so a secret living under a benign key is still redacted
-    /// before persistence.
+    /// query params, `name=secret` / `name:secret` pairs), so a secret living
+    /// under a benign key is still redacted before persistence.
     #[serde(default = "default_true")]
     pub scan_values: bool,
+    /// When true, low-confidence value-secret shapes (ambiguous long
+    /// base64/JWT-like blobs that are not clearly a known secret shape) are
+    /// ALSO redacted. Defaults to false: such shapes are preserved verbatim
+    /// and only *flagged* via observation metadata (`value_scan.lossy`), so a
+    /// value the scanner is unsure about is never silently mutated. High-
+    /// confidence shapes are always redacted regardless of this flag.
+    #[serde(default)]
+    pub redact_low_confidence_values: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -61,6 +69,10 @@ pub struct RedactionConfig {
     /// sensitive URL params). Defaults to true.
     #[serde(default = "default_true")]
     pub scan_values: bool,
+    /// Also redact low-confidence value-secret shapes (ambiguous long blobs).
+    /// Defaults to false (preserve-and-flag via observation metadata).
+    #[serde(default)]
+    pub redact_low_confidence_values: bool,
     #[serde(default)]
     pub extra: Extra,
 }
@@ -72,6 +84,7 @@ impl Default for RedactionConfig {
             allowlist: Vec::new(),
             keywords: None,
             scan_values: true,
+            redact_low_confidence_values: false,
             extra: Extra::new(),
         }
     }
@@ -94,15 +107,39 @@ impl Default for RedactionPolicy {
                 .map(|field| normalize_field(field))
                 .collect(),
             scan_values: true,
+            redact_low_confidence_values: false,
         }
     }
 }
 
 impl RedactionPolicy {
     pub fn apply_persistence(&self, value: &Value) -> (Value, Vec<String>) {
-        let mut paths = Vec::new();
-        let redacted = self.apply_persistence_at(value, "", &mut paths);
-        (redacted, paths)
+        let detail = self.apply_persistence_detailed(value);
+        (detail.value, detail.redacted_paths)
+    }
+
+    /// Like [`apply_persistence`](Self::apply_persistence) but also reports the
+    /// value-scan outcome: how many high-confidence value-secrets were redacted
+    /// and how many low-confidence secret-like shapes were observed (and, unless
+    /// `redact_low_confidence_values` is set, preserved verbatim). Pure: no I/O,
+    /// no global state (stays a valid Kani target alongside `apply_persistence`).
+    pub fn apply_persistence_detailed(&self, value: &Value) -> RedactionDetail {
+        let mut redacted_paths = Vec::new();
+        let mut low_confidence_paths = Vec::new();
+        let mut report = ValueScanReport::ZERO;
+        let value = self.apply_persistence_at(
+            value,
+            "",
+            &mut redacted_paths,
+            &mut low_confidence_paths,
+            &mut report,
+        );
+        RedactionDetail {
+            value,
+            redacted_paths,
+            low_confidence_paths,
+            value_scan: report,
+        }
     }
 
     /// Default persistence policy extended with one extra Persistence-class
@@ -147,17 +184,31 @@ impl RedactionPolicy {
             }],
             allowlist,
             scan_values: config.scan_values,
+            redact_low_confidence_values: config.redact_low_confidence_values,
         }
     }
 
-    fn apply_persistence_at(&self, value: &Value, path: &str, paths: &mut Vec<String>) -> Value {
+    fn apply_persistence_at(
+        &self,
+        value: &Value,
+        path: &str,
+        redacted_paths: &mut Vec<String>,
+        low_confidence_paths: &mut Vec<String>,
+        report: &mut ValueScanReport,
+    ) -> Value {
         match value {
             Value::Array(items) => Value::Array(
                 items
                     .iter()
                     .enumerate()
                     .map(|(index, item)| {
-                        self.apply_persistence_at(item, &push_path(path, &index.to_string()), paths)
+                        self.apply_persistence_at(
+                            item,
+                            &push_path(path, &index.to_string()),
+                            redacted_paths,
+                            low_confidence_paths,
+                            report,
+                        )
                     })
                     .collect(),
             ),
@@ -166,7 +217,7 @@ impl RedactionPolicy {
                 for (key, child) in map {
                     let child_path = push_path(path, key);
                     if let Some(rule) = self.persistence_rule_for_field(key) {
-                        paths.push(child_path);
+                        redacted_paths.push(child_path);
                         output.insert(
                             key.clone(),
                             Value::String(format!("[REDACTED:{}]", rule.name)),
@@ -174,16 +225,38 @@ impl RedactionPolicy {
                     } else {
                         output.insert(
                             key.clone(),
-                            self.apply_persistence_at(child, &child_path, paths),
+                            self.apply_persistence_at(
+                                child,
+                                &child_path,
+                                redacted_paths,
+                                low_confidence_paths,
+                                report,
+                            ),
                         );
                     }
                 }
                 Value::Object(output)
             }
-            Value::String(text) if self.scan_values && contains_value_secret(text) => {
-                paths.push(path.to_string());
-                Value::String("[REDACTED:value_secret]".to_string())
-            }
+            Value::String(text) if self.scan_values => match classify_value_secret(text) {
+                ValueSecretClass::High => {
+                    redacted_paths.push(path.to_string());
+                    report.high_confidence_redactions += 1;
+                    Value::String("[REDACTED:value_secret]".to_string())
+                }
+                ValueSecretClass::Low => {
+                    report.low_confidence_observations += 1;
+                    low_confidence_paths.push(path.to_string());
+                    if self.redact_low_confidence_values {
+                        redacted_paths.push(path.to_string());
+                        Value::String("[REDACTED:value_secret_low_confidence]".to_string())
+                    } else {
+                        // Preserve verbatim: only observed, never silently mutated
+                        // without the explicit `redact_low_confidence_values` flag.
+                        Value::String(text.clone())
+                    }
+                }
+                ValueSecretClass::None => Value::String(text.clone()),
+            },
             scalar => scalar.clone(),
         }
     }
@@ -435,22 +508,183 @@ fn default_true() -> bool {
     true
 }
 
-/// True when `text` contains a high-confidence embedded secret shape. Catches
-/// secrets that live in a string *value* under a benign key, which the
-/// key-based matcher cannot reach. Hand-rolled (no regex) so this module stays
-/// dependency-free for Kani. Intentionally high-precision: a value is only
-/// flagged when it matches a distinctive shape (Bearer token, PEM block, JWT,
-/// or a sensitive URL query parameter with a non-trivial value).
-///
-/// Note: the URL-parameter shape uses the built-in `is_sensitive_name` keyword
-/// set (the defaults), independent of a source's `RedactionConfig` tuning; the
-/// other shapes are keyword-free. Configurable value-scan keywords are future
-/// work.
-pub(crate) fn contains_value_secret(text: &str) -> bool {
-    contains_bearer_token(text)
+/// Outcome of scanning string values for embedded secret shapes during a
+/// persistence redaction pass. Engine-internal: it is carried out of the pure
+/// redaction layer via [`RedactionDetail`] and surfaced (additively) in
+/// observation metadata, but it is NOT a public JSON contract type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValueScanReport {
+    /// Distinctive secret shapes redacted from string values (Bearer, PEM,
+    /// JWT, sensitive URL param, sensitive `name=secret` / `name:secret` pair).
+    pub high_confidence_redactions: u32,
+    /// Ambiguous long base64/JWT-like blobs observed. Redacted only when
+    /// `redact_low_confidence_values` is set; otherwise preserved verbatim.
+    pub low_confidence_observations: u32,
+}
+
+impl ValueScanReport {
+    /// Empty report (nothing observed).
+    pub const ZERO: Self = Self {
+        high_confidence_redactions: 0,
+        low_confidence_observations: 0,
+    };
+
+    /// True when at least one low-confidence secret-like shape was observed.
+    /// This is the lossy signal surfaced to observation metadata
+    /// (`parser.lossy` / `confidence`).
+    pub fn lossy(&self) -> bool {
+        self.low_confidence_observations > 0
+    }
+}
+
+/// Result of [`RedactionPolicy::apply_persistence_detailed`]: the redacted
+/// value, the paths that were actually mutated (key-name + high-confidence
+/// value-secret + optional low-confidence value-secret), the low-confidence
+/// paths observed, and the value-scan report.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RedactionDetail {
+    pub value: Value,
+    pub redacted_paths: Vec<String>,
+    pub low_confidence_paths: Vec<String>,
+    pub value_scan: ValueScanReport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ValueSecretClass {
+    /// Distinctive secret shape. Always redacted.
+    High,
+    /// Ambiguous long blob. Observed-and-flagged; redacted only when
+    /// `redact_low_confidence_values` is set.
+    Low,
+    /// No secret shape detected.
+    None,
+}
+
+/// Classify a string value's embedded-secret content. High-confidence shapes
+/// (Bearer, PEM, JWT, sensitive URL param, sensitive name=secret/name:secret
+/// pair) are always redacted; a long ambiguous blob is low-confidence and, by
+/// default, only flagged. Hand-rolled (no regex) so this module stays
+/// dependency-free for Kani.
+pub(crate) fn classify_value_secret(text: &str) -> ValueSecretClass {
+    if contains_bearer_token(text)
         || contains_pem_block(text)
         || contains_jwt(text)
         || contains_sensitive_url_param(text)
+        || contains_sensitive_name_value_pair(text)
+    {
+        ValueSecretClass::High
+    } else if contains_ambiguous_long_blob(text) {
+        ValueSecretClass::Low
+    } else {
+        ValueSecretClass::None
+    }
+}
+
+/// High-confidence: a token whose normalized form is a sensitive name
+/// ([`is_sensitive_name`]), followed by an `=` or `:` separator, followed by a
+/// value of length >= 8 that is not a bare path (no `/` in its first segment).
+/// Mirrors the `?`/`&`-anchored URL-parameter matcher but for free-form
+/// `name=secret` / `name: secret` pairs embedded in a value (e.g. a `command`
+/// value quoting `Authorization: Bearer …`, or a `config` blob
+/// `accessToken=…`). Reuses [`is_sensitive_name`] so this stays in lockstep
+/// with key-name matching.
+fn contains_sensitive_name_value_pair(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if !is_value_name_byte(bytes[index]) || index > 0 && is_value_name_byte(bytes[index - 1]) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_value_name_byte(bytes[index]) {
+            index += 1;
+        }
+        // ASCII-only run => slicing on byte boundaries is char-safe.
+        let name = &text[start..index];
+        if !is_sensitive_name(name) {
+            continue;
+        }
+        while index < bytes.len() && matches!(bytes[index], b' ' | b'\t') {
+            index += 1;
+        }
+        if index >= bytes.len() || !matches!(bytes[index], b'=' | b':') {
+            continue;
+        }
+        index += 1;
+        while index < bytes.len() && matches!(bytes[index], b' ' | b'\t') {
+            index += 1;
+        }
+        let value_start = index;
+        while index < bytes.len()
+            && !matches!(
+                bytes[index],
+                b' ' | b'\t'
+                    | b'\n'
+                    | b'\r'
+                    | b'"'
+                    | b'\''
+                    | b'<'
+                    | b'>'
+                    | b','
+                    | b'}'
+                    | b']'
+                    | b')'
+            )
+        {
+            index += 1;
+        }
+        // Idempotency: a value that is itself an already-redacted marker (e.g.
+        // a text-redacted `name=[REDACTED:observed_text_secret]`) is not a
+        // secret and must not be reclassified or re-redacted.
+        if text[value_start..].starts_with("[REDACTED") {
+            continue;
+        }
+        // Value must be at least 8 bytes and not look like a bare path.
+        if index < value_start + 8 {
+            continue;
+        }
+        if text.as_bytes()[value_start..value_start + 8].contains(&b'/') {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+fn is_value_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
+}
+
+/// Low-confidence: a contiguous run of >= 40 base64/JWT-like characters
+/// (`[A-Za-z0-9+/=_-]`) that is not itself a JWT. Genuinely ambiguous (could
+/// be a hash, an image payload, or a secret), so it is observed-and-flagged
+/// rather than silently redacted by default. Bearer/PEM/JWT shapes are caught
+/// as [`ValueSecretClass::High`] first, so they never reach here.
+fn contains_ambiguous_long_blob(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if !is_blob_byte(bytes[index]) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_blob_byte(bytes[index]) {
+            index += 1;
+        }
+        if index - start >= 40 {
+            let run = &text[start..index];
+            if !contains_jwt(run) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_blob_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=' | b'_' | b'-')
 }
 
 fn contains_bearer_token(text: &str) -> bool {
@@ -538,4 +772,208 @@ fn contains_sensitive_url_param(text: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn name_value_pair_detects_equals_form() {
+        assert!(contains_sensitive_name_value_pair(
+            "accessToken=topsecretvalue1234"
+        ));
+    }
+
+    #[test]
+    fn name_value_pair_detects_colon_form() {
+        assert!(contains_sensitive_name_value_pair(
+            "password: hunter2xxxxxxx"
+        ));
+    }
+
+    #[test]
+    fn name_value_pair_rejects_benign_name() {
+        assert!(!contains_sensitive_name_value_pair("username=johndoe12345"));
+    }
+
+    #[test]
+    fn name_value_pair_rejects_short_value() {
+        assert!(!contains_sensitive_name_value_pair("token=abc"));
+    }
+
+    #[test]
+    fn name_value_pair_rejects_path_value() {
+        // Bare path under a sensitive name is not a secret (mirrors bearer-path
+        // exclusion): no `/` in the value's first segment.
+        assert!(!contains_sensitive_name_value_pair(
+            "key=/usr/local/bin/tool"
+        ));
+    }
+
+    #[test]
+    fn classify_high_for_known_shapes() {
+        assert_eq!(
+            classify_value_secret("Authorization: Bearer mF_9.B5f-4.1Zxoqw"),
+            ValueSecretClass::High
+        );
+        assert_eq!(
+            classify_value_secret("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----"),
+            ValueSecretClass::High
+        );
+        assert_eq!(
+            classify_value_secret("eyJhbGci.eyJzdWI.signatureabcd"),
+            ValueSecretClass::High
+        );
+        assert_eq!(
+            classify_value_secret("https://api.example.com/data?api_key=sk-live-1234"),
+            ValueSecretClass::High
+        );
+        assert_eq!(
+            classify_value_secret("config: accessToken=topsecretvalue1234"),
+            ValueSecretClass::High
+        );
+    }
+
+    #[test]
+    fn classify_low_for_ambiguous_long_blob() {
+        // 46 base64-like chars, no jwt/bearer/pem shape.
+        let blob = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        assert_eq!(classify_value_secret(blob), ValueSecretClass::Low);
+    }
+
+    #[test]
+    fn classify_none_for_benign_long_sentence() {
+        assert_eq!(
+            classify_value_secret("the quick brown fox jumps over the lazy dog again and again"),
+            ValueSecretClass::None
+        );
+    }
+
+    #[test]
+    fn redaction_markers_are_not_reclassified() {
+        // I4 extension: an already-redacted marker is never itself reclassified
+        // as a secret, so redaction is idempotent.
+        assert_eq!(
+            classify_value_secret("[REDACTED:value_secret]"),
+            ValueSecretClass::None
+        );
+        assert_eq!(
+            classify_value_secret("[REDACTED:value_secret_low_confidence]"),
+            ValueSecretClass::None
+        );
+        assert_eq!(
+            classify_value_secret("[REDACTED:secret_field]"),
+            ValueSecretClass::None
+        );
+        // A text-redacted `name=[REDACTED:observed_text_secret]` line must not
+        // be re-caught by the name=secret value matcher (idempotency).
+        assert_eq!(
+            classify_value_secret("token=[REDACTED:observed_text_secret]"),
+            ValueSecretClass::None
+        );
+        assert!(!contains_sensitive_name_value_pair(
+            "api-key: [REDACTED:observed_text_secret]"
+        ));
+    }
+
+    #[test]
+    fn apply_persistence_detailed_counts_high_and_low_separately() {
+        let policy = RedactionPolicy::default();
+        let value = json!({
+            "note": "accessToken=topsecretvalue1234",                          // high: name pair
+            "blob": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",          // low: ambiguous blob
+            "benign": "the quick brown fox jumps over"
+        });
+        let detail = policy.apply_persistence_detailed(&value);
+        assert_eq!(detail.value_scan.high_confidence_redactions, 1);
+        assert_eq!(detail.value_scan.low_confidence_observations, 1);
+        assert!(detail.value_scan.lossy());
+        assert_eq!(detail.redacted_paths, vec!["/note".to_string()]);
+        assert_eq!(detail.low_confidence_paths, vec!["/blob".to_string()]);
+        // Low-confidence is preserved verbatim by default; high is redacted.
+        assert_eq!(
+            detail.value["blob"],
+            json!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        );
+        assert_eq!(detail.value["note"], json!("[REDACTED:value_secret]"));
+    }
+
+    #[test]
+    fn low_confidence_blob_redacted_when_flag_set() {
+        let policy = RedactionPolicy {
+            redact_low_confidence_values: true,
+            ..RedactionPolicy::default()
+        };
+        let value = json!({ "blob": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" });
+        let detail = policy.apply_persistence_detailed(&value);
+        assert_eq!(detail.value_scan.low_confidence_observations, 1);
+        assert!(detail.redacted_paths.contains(&"/blob".to_string()));
+        assert_eq!(
+            detail.value["blob"],
+            json!("[REDACTED:value_secret_low_confidence]")
+        );
+    }
+
+    #[test]
+    fn lossy_flag_false_when_only_high_confidence_hits() {
+        let policy = RedactionPolicy::default();
+        let detail = policy.apply_persistence_detailed(&json!({
+            "note": "accessToken=topsecretvalue1234"
+        }));
+        assert!(!detail.value_scan.lossy());
+        assert_eq!(detail.value_scan.high_confidence_redactions, 1);
+    }
+
+    #[test]
+    fn default_config_keeps_low_confidence_flag_false() {
+        assert!(!RedactionConfig::default().redact_low_confidence_values);
+        assert!(!RedactionPolicy::default().redact_low_confidence_values);
+    }
+
+    #[test]
+    fn config_round_trips_low_confidence_flag() {
+        let config = RedactionConfig {
+            extra_keywords: Vec::new(),
+            allowlist: Vec::new(),
+            keywords: None,
+            scan_values: true,
+            redact_low_confidence_values: true,
+            extra: Extra::new(),
+        };
+        let serialized = serde_json::to_string(&config).unwrap();
+        let back: RedactionConfig = serde_json::from_str(&serialized).unwrap();
+        assert!(back.redact_low_confidence_values);
+        // Backward compat: `{}` deserializes with the flag defaulted to false.
+        let empty: RedactionConfig = serde_json::from_str("{}").unwrap();
+        assert!(!empty.redact_low_confidence_values);
+    }
+
+    #[test]
+    fn name_value_pair_composes_with_key_name_redaction() {
+        let policy = RedactionPolicy::default();
+        let value = json!({
+            "password": "x",                       // key-name redaction
+            "note": "password: hunter2xxxxxxx"     // value name-pair redaction
+        });
+        let (redacted, paths) = policy.apply_persistence(&value);
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&"/password".to_string()));
+        assert!(paths.contains(&"/note".to_string()));
+        assert_eq!(redacted["password"], json!("[REDACTED:secret_field]"));
+        assert_eq!(redacted["note"], json!("[REDACTED:value_secret]"));
+    }
+
+    #[test]
+    fn apply_persistence_detailed_is_pure_and_idempotent() {
+        let policy = RedactionPolicy::default();
+        let value = json!({ "note": "accessToken=topsecretvalue1234" });
+        let first = policy.apply_persistence_detailed(&value);
+        let second = policy.apply_persistence_detailed(&first.value);
+        // Re-applying to the already-redacted value changes nothing and observes
+        // no further secrets (markers are not reclassified).
+        assert_eq!(second.value, first.value);
+        assert_eq!(second.value_scan, ValueScanReport::ZERO);
+    }
 }
