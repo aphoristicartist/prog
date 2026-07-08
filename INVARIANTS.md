@@ -14,6 +14,7 @@ This table maps the RFC 0002 invariant set to executable tests. Property tests r
 | I8 | Non-cacheable or sensitive results are never persisted. | `crates/prog-core/tests/store.rs::entries_respect_ttl_and_non_cacheable_sensitive_results_are_not_persisted`; `crates/prog-core/tests/policy.rs::cache_policy_respects_enabled_cacheable_and_sensitive_flags` |
 | I9 | Stale, foreign, or incompatible cursors fail actionably and never return wrong data. | `crates/prog-core/tests/store.rs::cursors_fail_closed_for_missing_expired_and_redaction_mismatch`; CLI missing cursor coverage in `crates/prog-cli/tests/cli.rs::missing_call_and_expand_inputs_return_structured_errors` |
 | I10 | Findings ranking is pure, deterministic, and order-independent of input key order. | `crates/prog-core/tests/findings_proptest.rs::{ranked_findings_is_pure_and_deterministic,ranking_is_order_independent_of_key_order,ranks_are_contiguous_and_confidences_bounded}`; golden snapshots in `crates/prog-core/tests/fixtures/findings/*.expected.json` |
+| I11 | Auto-pagination never escapes the effect policy or the envelope budget: only read-only/GET operations are followed; PageCaps (pages/bytes/wall) always stop with a continuation; every page is redacted -> inferred -> stored -> projected; the final envelope stays within `max_envelope_bytes`. | `crates/prog-core/tests/pagination.rs::pagination_respects_effect_policy_and_envelope_budget`; CLI end-to-end in `crates/prog-cli/tests/cli.rs::pagination_follows_readonly_and_stops_at_caps`; effect gate in `crates/prog-cli/tests/cli.rs::prog_call_pages_skipped_for_mutating_operation_emits_warning`; page-cursor fail-closed reuse in `crates/prog-core/tests/pagination.rs::page_cursors_fail_closed_on_redaction_mismatch_and_foreign_source` |
 
 ## Property strategy
 
@@ -43,5 +44,6 @@ The pure functions targeted for future model checking are:
 - `prog_core::redaction::RedactionPolicy::apply_persistence`
 - `prog_core::redaction::RedactionPolicy::apply_persistence_detailed`
 - `prog_core::shape::join`
+- `prog_core::pagination::{extract_pagination_hints,next_args_from_hints,merge_page_shapes}`
 
 Kani harnesses are not enabled in this PR because the repository has no pinned Kani toolchain or CI install path; adding one would make the standard gate depend on a non-Cargo setup. The proptest harnesses are intentionally written against pure, dependency-free core functions so they can be moved to feature-gated Kani/PropProof harnesses without rewriting the laws.

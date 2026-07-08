@@ -9,7 +9,7 @@ use std::{
 use serde_json::{Value, json};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path},
+    matchers::{method, path, query_param},
 };
 
 fn prog(args: &[&str]) -> Output {
@@ -3541,6 +3541,395 @@ fn write_seed(dir: &Path, name: &str, contents: &str) -> std::path::PathBuf {
     let path = dir.join(name);
     fs::write(&path, contents).unwrap();
     path
+}
+
+// --- Auto-pagination gap-closure (issue #69 / invariant I10) ---
+
+const READ_ONLY_EFFECT: &str = r#""effect":{"read_only":true,"mutating":false,"network":true,"shell":false,"sensitive":false,"cacheable":true,"requires_confirmation":false}"#;
+const MUTATING_EFFECT: &str = r#""effect":{"read_only":false,"mutating":true,"network":true,"shell":false,"sensitive":false,"cacheable":true,"requires_confirmation":false}"#;
+
+/// A cursor-paginated chain: page_token=start -> tok_2 -> tok_3 (end).
+async fn mount_cursor_chain(server: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page_token", "tok_2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "items": [{"id": 2, "label": "b"}],
+            "next_cursor": "tok_3"
+        })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page_token", "tok_3"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "items": [{"id": 3, "extra": {"k": 1}}],
+            "has_more": false
+        })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page_token", "start"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "items": [{"id": 1, "name": "a"}],
+            "next_cursor": "tok_2"
+        })))
+        .mount(server)
+        .await;
+}
+
+fn cursor_chain_seed(server_uri: &str) -> String {
+    format!(
+        r#"{{
+          "kind": "http",
+          "base_url": "{server_uri}",
+          "operations": [{{
+            "name": "list",
+            "method": "GET",
+            "path": "/items",
+            "query": {{"page_token": "{{page_token}}"}},
+            "args": {{"page_token": "string"}},
+            {READ_ONLY_EFFECT}
+          }}]
+        }}"#
+    )
+}
+
+#[tokio::test]
+async fn pagination_fixtures_round_trip_across_conventions() {
+    // Golden fixtures covering the three pagination conventions prog must
+    // detect: RFC 5988 Link rel="next", opaque cursor tokens, and offset/limit.
+    // Each fixture pins both extract_pagination_hints and next_args_from_hints
+    // against a frozen canonical expectation.
+    let fixtures_dir = repo_root().join("crates/prog-cli/tests/fixtures/pagination");
+    let cases = ["link-header", "cursor-token", "offset-limit"];
+    for name in cases {
+        let path = fixtures_dir.join(format!("{name}.json"));
+        let fixture: Value =
+            serde_json::from_slice(&fs::read(&path).unwrap_or_else(|e| panic!("{name}: {e}")))
+                .unwrap();
+        let body = &fixture["body"];
+        let link = fixture["link_header"].as_str();
+        let args = &fixture["args"];
+        let expect = &fixture["expect"];
+        let hints = prog_core::extract_pagination_hints(body, link)
+            .unwrap_or_else(|| panic!("{name}: hints"));
+        match expect["next_target"].as_str().unwrap_or("args") {
+            "url" => {
+                let target =
+                    prog_core::next_args_from_hints(&hints, args).expect("{name}: url target");
+                match target {
+                    prog_core::PageTarget::Url(url) => {
+                        assert!(
+                            url.contains(expect["next_url_contains"].as_str().unwrap()),
+                            "{name}: url {url}"
+                        );
+                    }
+                    other => panic!("{name}: expected Url target, got {other:?}"),
+                }
+            }
+            "args" => {
+                let target =
+                    prog_core::next_args_from_hints(&hints, args).expect("{name}: args target");
+                match target {
+                    prog_core::PageTarget::Args(out) => {
+                        if let Some(param) = expect["written_param"].as_str() {
+                            assert_eq!(
+                                out[param],
+                                *expect.get("next_cursor").unwrap_or(&json!(null)),
+                                "{name}: written param {param}"
+                            );
+                        }
+                        if let Some(offset) = expect["next_offset"].as_u64() {
+                            assert_eq!(out["offset"].as_u64(), Some(offset), "{name}: offset");
+                            assert_eq!(out["limit"].as_u64(), expect["preserved_limit"].as_u64());
+                        }
+                    }
+                    other => panic!("{name}: expected Args target, got {other:?}"),
+                }
+            }
+            other => panic!("{name}: unknown expect.next_target {other}"),
+        }
+        // Convention-specific canonical-field checks.
+        if let Some(want) = expect["next_cursor"].as_str() {
+            assert_eq!(hints["next_cursor"], json!(want), "{name}: next_cursor");
+        }
+        if let Some(want) = expect["cursor_param"].as_str() {
+            assert_eq!(hints["cursor_param"], json!(want), "{name}: cursor_param");
+        }
+        if let Some(want) = expect["page_strategy"].as_str() {
+            assert_eq!(hints["page_strategy"], json!(want), "{name}: page_strategy");
+        }
+        if let Some(needle) = expect["link_rel_next_contains"].as_str() {
+            assert!(
+                hints["link_rel_next"].as_str().unwrap().contains(needle),
+                "{name}: link_rel_next"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn prog_call_pages_projects_each_page_and_merges_shapes() {
+    let server = MockServer::start().await;
+    mount_cursor_chain(&server).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let seed = write_seed(dir.path(), "http.json", &cursor_chain_seed(&server.uri()));
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stderr(&discover));
+
+    let call = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "api",
+        "list",
+        "--args",
+        r#"{"page_token":"start"}"#,
+        "--pages",
+        "3",
+    ]);
+    assert!(call.status.success(), "{}", stdout(&call));
+    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    let pagination = &envelope["pagination"];
+    assert_eq!(pagination["pages_fetched"], json!(3));
+    assert_eq!(pagination["stop_reason"], json!("no_more"));
+    assert_eq!(pagination["max_pages"], json!(3));
+    // Per-page summaries, each with its own pc1_ cursor.
+    let pages = pagination["pages"].as_array().unwrap();
+    assert_eq!(pages.len(), 3);
+    for page in pages {
+        assert!(page["cache_key"].as_str().unwrap().starts_with("sha256:"));
+        if page["page"].as_u64() >= Some(2) {
+            assert!(page["cursor"].as_str().unwrap().starts_with("pc1_"));
+        }
+    }
+    // The merged shape is the monotone union of all three pages (I5): the
+    // items element object gained `name`, then `label`, then `extra`.
+    assert!(pagination["merged_shape"].is_object());
+}
+
+#[tokio::test]
+async fn prog_call_surfaces_next_actions_resume_with_page_args() {
+    let server = MockServer::start().await;
+    mount_cursor_chain(&server).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let seed = write_seed(dir.path(), "http.json", &cursor_chain_seed(&server.uri()));
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stderr(&discover));
+
+    // --pages 2 stops at the page cap while tok_3 is still available: a resume
+    // NextAction must be surfaced with the page-3 args.
+    let call = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "api",
+        "list",
+        "--args",
+        r#"{"page_token":"start"}"#,
+        "--pages",
+        "2",
+    ]);
+    assert!(call.status.success(), "{}", stdout(&call));
+    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    assert_eq!(envelope["pagination"]["stop_reason"], json!("page_cap"));
+    let resume = envelope["next_actions"]
+        .as_array()
+        .expect("next_actions present")
+        .iter()
+        .find(|action| action["kind"] == "call")
+        .expect("a call resume action");
+    assert_eq!(resume["operation"], json!("list"));
+    assert_eq!(resume["args"]["page_token"], json!("tok_3"));
+    assert_eq!(resume["source_id"], json!("api"));
+}
+
+#[tokio::test]
+async fn prog_call_pages_skipped_for_mutating_operation_emits_warning() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [1]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    // Mutating (not read-only) operation: auto-pagination must refuse and fetch
+    // a single page (effect policy I6/I7, I10).
+    let seed = write_seed(
+        dir.path(),
+        "http.json",
+        &format!(
+            r#"{{
+              "kind": "http",
+              "base_url": "{base}",
+              "operations": [{{
+                "name": "list",
+                "method": "GET",
+                "path": "/items",
+                {MUTATING_EFFECT}
+              }}]
+            }}"#,
+            base = server.uri()
+        ),
+    );
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stderr(&discover));
+
+    let call = prog(&[
+        "--dir", dir_arg, "call", "api", "list", "--args", "{}", "--pages", "5", "--yes",
+    ]);
+    assert!(call.status.success(), "{}", stdout(&call));
+    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    assert!(
+        envelope["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("not auto-pagination-safe"))
+    );
+    // No pagination block was added: a single page was fetched.
+    assert!(envelope.get("pagination").is_none());
+}
+
+#[tokio::test]
+async fn prog_call_url_continuation_end_to_end_via_link_header() {
+    let server = MockServer::start().await;
+    let page2 = format!("{}/items?page=2", server.uri());
+    // Page 2 (specific matcher first).
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page", "2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [2]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // Page 1 advertises Link rel="next" to the same host.
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("link", format!("<{page2}>; rel=\"next\""))
+                .set_body_json(json!({"items": [1]})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let seed = write_seed(
+        dir.path(),
+        "http.json",
+        &format!(
+            r#"{{
+              "kind": "http",
+              "base_url": "{base}",
+              "operations": [{{
+                "name": "list",
+                "method": "GET",
+                "path": "/items",
+                {READ_ONLY_EFFECT}
+              }}]
+            }}"#,
+            base = server.uri()
+        ),
+    );
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stderr(&discover));
+
+    let call = prog(&[
+        "--dir", dir_arg, "call", "api", "list", "--args", "{}", "--pages", "3",
+    ]);
+    assert!(call.status.success(), "{}", stdout(&call));
+    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    let pagination = &envelope["pagination"];
+    assert_eq!(pagination["pages_fetched"], json!(2));
+}
+
+#[tokio::test]
+async fn pagination_follows_readonly_and_stops_at_caps() {
+    // I10 (envelope-budget half): a read-only operation follows the chain up
+    // to the --pages cap, and the final serialized envelope stays within the
+    // 16 KiB disclosure budget even after multiple prefetched pages.
+    let server = MockServer::start().await;
+    mount_cursor_chain(&server).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let seed = write_seed(dir.path(), "http.json", &cursor_chain_seed(&server.uri()));
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stderr(&discover));
+
+    let call = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "api",
+        "list",
+        "--args",
+        r#"{"page_token":"start"}"#,
+        "--pages",
+        "2",
+    ]);
+    assert!(call.status.success(), "{}", stdout(&call));
+    let envelope_bytes = call.stdout.len();
+    assert!(
+        envelope_bytes <= 16 * 1024 + 16,
+        "envelope must stay within the 16 KiB budget after prefetch, got {envelope_bytes}"
+    );
+    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    assert_eq!(envelope["pagination"]["stop_reason"], json!("page_cap"));
+    assert_eq!(envelope["pagination"]["pages_fetched"], json!(2));
 }
 
 fn read_profile(dir: &Path, id: &str) -> Value {

@@ -487,6 +487,243 @@ async fn auth_header_is_injected_but_never_lands_in_provenance_or_store() {
     assert!(!String::from_utf8_lossy(&stored).contains(secret));
 }
 
+#[tokio::test]
+async fn extract_pagination_hints_covers_all_conventions_via_adapter() {
+    // One response advertises pagination three ways at once: a cursor token in
+    // the body, an echoed page/per_page pair, and a Link rel="next" header. The
+    // adapter (a one-line caller over core::extract_pagination_hints) must
+    // surface the normalized next_cursor + cursor_param, the page_strategy, and
+    // the link_rel_next raw header.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header(
+                    "link",
+                    format!("<{}/items?page=2>; rel=\"next\"", server.uri()),
+                )
+                .set_body_json(json!({
+                    "items": [1],
+                    "next_cursor": "CURSOR-2",
+                    "page": 1,
+                    "per_page": 25
+                })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "items".to_string(),
+            method: "GET".to_string(),
+            path: "/items".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: Some(2_000),
+            max_response_bytes: Some(64 * 1024),
+            sensitive_args: Vec::new(),
+        },
+    );
+
+    let result = source
+        .execute_with_env("items", &json!({}), &|_| None)
+        .await
+        .unwrap();
+
+    let pagination = result.pagination.as_ref().unwrap();
+    assert_eq!(pagination["next_cursor"], json!("CURSOR-2"));
+    assert_eq!(pagination["cursor_param"], json!("next_cursor"));
+    assert_eq!(pagination["page_strategy"], json!("page_number"));
+    assert!(
+        pagination["link_rel_next"]
+            .as_str()
+            .unwrap()
+            .contains("rel=\"next\"")
+    );
+}
+
+#[tokio::test]
+async fn execute_url_follows_link_rel_next_same_host() {
+    // Page 1 is fetched via the base operation; it advertises a Link rel="next"
+    // pointing at a second page on the SAME mock server (same scheme+host+port).
+    // execute_url must follow it, forcing GET, and return page 2's body.
+    let server = MockServer::start().await;
+    let next_url = format!("{}/items?page=2", server.uri());
+    // wiremock checks the first matching mock, so register the more specific
+    // page-2 matcher first; the bare /items page-1 matcher is the fallback.
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page", "2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [2, 3]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("link", format!("<{next_url}>; rel=\"next\""))
+                .set_body_json(json!({"items": [1]})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "items".to_string(),
+            method: "GET".to_string(),
+            path: "/items".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: Some(2_000),
+            max_response_bytes: Some(64 * 1024),
+            sensitive_args: Vec::new(),
+        },
+    );
+
+    // Base call returns page 1 + the Link header hint.
+    let first = source
+        .execute_with_env("items", &json!({}), &|_| None)
+        .await
+        .unwrap();
+    assert!(
+        first.pagination.unwrap()["link_rel_next"]
+            .as_str()
+            .unwrap()
+            .contains("page=2")
+    );
+
+    // URL continuation follows the same-host Link target.
+    let second = source
+        .execute_url("items", &next_url, &json!({}))
+        .await
+        .unwrap();
+    assert_eq!(second.data["items"], json!([2, 3]));
+    assert_eq!(second.provenance.method, "GET");
+}
+
+#[tokio::test]
+async fn execute_url_refuses_cross_host() {
+    // SSRF guard: an attacker-controlled Link rel="next" pointing at a
+    // different host must be refused before any connection is made.
+    let server = MockServer::start().await;
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "items".to_string(),
+            method: "GET".to_string(),
+            path: "/items".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: Some(2_000),
+            max_response_bytes: Some(64 * 1024),
+            sensitive_args: Vec::new(),
+        },
+    );
+
+    let err = source
+        .execute_url("items", "https://evil.example.com/leak", &json!({}))
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), "bad_args");
+    assert!(err.to_string().contains("cross-host"));
+}
+
+#[tokio::test]
+async fn execute_url_same_origin_guard_blocks_bypass_classes() {
+    // The SSRF same-origin guard must reject every common bypass class BEFORE any
+    // connection is made. Base is http://<host>:<port>.
+    let server = MockServer::start().await;
+    let base = reqwest::Url::parse(&server.uri()).unwrap();
+    let host = base.host_str().unwrap();
+    let port = base.port().unwrap();
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "items".to_string(),
+            method: "GET".to_string(),
+            path: "/items".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: Some(2_000),
+            max_response_bytes: Some(64 * 1024),
+            sensitive_args: Vec::new(),
+        },
+    );
+    // Each of these must be rejected as bad_args without contacting the server:
+    let bypasses = [
+        format!("http://{host}:{port}@evil.example.com/leak"), // userinfo -> real host is evil
+        format!("https://{host}:{port}/leak"),                 // scheme change (base is http)
+        format!("http://{host}/leak"), // default-port (80) vs the base's custom port
+        "//evil.example.com/leak".to_string(), // protocol-relative (no base -> parse error)
+        "/leak".to_string(),           // path-only (no base -> parse error)
+    ];
+    for url in &bypasses {
+        let err = source
+            .execute_url("items", url, &json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            "bad_args",
+            "SSRF bypass should be rejected: {url}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn execute_url_forces_get_even_for_non_get_base_operation() {
+    // Defensive: the base operation may be POST, but URL continuation always
+    // issues a GET. The mock only matches GET, so a POST would never hit it.
+    let server = MockServer::start().await;
+    let next_url = format!("{}/items?page=2", server.uri());
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page", "2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [9]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // A POST matcher that should NEVER be hit.
+    Mock::given(method("POST"))
+        .and(path("/items"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"would_be": "post"})))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "create".to_string(),
+            method: "POST".to_string(),
+            path: "/items".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: Some(json!({})),
+            timeout_ms: Some(2_000),
+            max_response_bytes: Some(64 * 1024),
+            sensitive_args: Vec::new(),
+        },
+    );
+
+    let result = source
+        .execute_url("create", &next_url, &json!({}))
+        .await
+        .unwrap();
+    assert_eq!(result.data["items"], json!([9]));
+    assert_eq!(result.provenance.method, "GET");
+}
+
 fn source(server: &MockServer, operation: HttpOperation) -> HttpSource {
     HttpSource {
         id: "test-http".to_string(),

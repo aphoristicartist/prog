@@ -158,6 +158,33 @@ impl Store {
         redaction_version: u32,
         ttl_seconds: i64,
     ) -> Result<String> {
+        self.create_cursor_with_extra(
+            cache_key,
+            source_id,
+            operation,
+            root_path,
+            redaction_version,
+            ttl_seconds,
+            serde_json::Map::new(),
+        )
+    }
+
+    /// Mint a `pc1_` cursor carrying extra metadata in its `CursorRecord`.
+    /// Used by auto-pagination to stamp each page cursor with
+    /// `{kind:"page", page:N, args:...}` so the page cursors are observably
+    /// distinct from a normal expand cursor while reusing the exact same
+    /// fail-closed validation path (I9: stale/foreign/redaction-mismatch).
+    #[allow(clippy::too_many_arguments)] // one more than create_cursor's 7-arg limit, for the page metadata map
+    pub fn create_cursor_with_extra(
+        &self,
+        cache_key: &str,
+        source_id: &str,
+        operation: &str,
+        root_path: &str,
+        redaction_version: u32,
+        ttl_seconds: i64,
+        extra: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<String> {
         let token = format!("pc1_{}", Uuid::new_v4().simple());
         let now = Utc::now();
         let record = CursorRecord {
@@ -168,7 +195,7 @@ impl Store {
             redaction_version,
             created_at: format_time(now),
             expires_at: format_time(now + chrono::Duration::seconds(ttl_seconds)),
-            extra: serde_json::Map::new(),
+            extra,
         };
         self.put_cursor(&token, &record)?;
         Ok(token)

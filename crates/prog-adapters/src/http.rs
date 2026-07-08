@@ -169,7 +169,10 @@ impl HttpSource {
             read_bounded_body(response, max_response_bytes, timeout_ms, &operation.id).await?;
         let duration_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
         let data = normalize_body(&bytes, content_type.as_deref(), truncated)?;
-        let pagination = pagination_hints(link_header.as_deref(), &data);
+        // Pagination-shape detection lives in core (`extract_pagination_hints`)
+        // so it is unit-testable independent of any transport. The adapter is a
+        // one-line caller: body + Link header in, canonical hint shape out.
+        let pagination = prog_core::extract_pagination_hints(&data, link_header.as_deref());
         let mut warnings = Vec::new();
         if truncated {
             warnings.push(format!(
@@ -188,6 +191,154 @@ impl HttpSource {
             response_bytes: bytes.len(),
             truncated,
             args: redacted_args(args, &operation.sensitive_args),
+        };
+
+        if !status.is_success() {
+            let projection = bounded_preview(&data)?;
+            return Err(CoreError::HttpStatus {
+                operation: operation.id.clone(),
+                status: status.as_u16(),
+                body_preview: projection.preview,
+            });
+        }
+
+        Ok(HttpCallResult {
+            data,
+            provenance,
+            pagination,
+            warnings,
+        })
+    }
+
+    /// Follow a literal next-page URL (RFC 5988 `Link: rel="next"` or a URL
+    /// field) reusing the base operation's auth headers, timeout,
+    /// `max_response_bytes`, and reqwest client, but forcing method `GET`.
+    ///
+    /// SSRF guard (I10): the target URL's scheme + host + port MUST match the
+    /// source's `base_url`. An attacker-controlled `Link: rel="next"` header
+    /// cannot redirect page chasing to an internal or third-party host. The
+    /// redirect policy stays reqwest's `limited(10)`, so a same-origin
+    /// redirect chain still resolves but a cross-origin one is refused here
+    /// before any connection.
+    pub async fn execute_url(
+        &self,
+        base_operation_id: &str,
+        url: &str,
+        args: &Value,
+    ) -> Result<HttpCallResult> {
+        let operation = self
+            .operations
+            .iter()
+            .find(|operation| operation.id == base_operation_id)
+            .ok_or_else(|| CoreError::UnknownOperation {
+                source_id: self.id.clone(),
+                operation: base_operation_id.to_string(),
+            })?;
+
+        let args = match args {
+            Value::Object(map) => map.clone(),
+            _ => Map::new(),
+        };
+        let timeout_ms = operation.timeout_ms.unwrap_or(self.timeout_ms);
+        let max_response_bytes = operation
+            .max_response_bytes
+            .unwrap_or(self.max_response_bytes);
+
+        let target = reqwest::Url::parse(url).map_err(|error| CoreError::BadArgs {
+            operation: operation.id.clone(),
+            reason: format!("invalid pagination url: {error}"),
+        })?;
+        let base = reqwest::Url::parse(&self.base_url).map_err(|error| CoreError::BadArgs {
+            operation: operation.id.clone(),
+            reason: format!("invalid base_url: {url} {error}"),
+        })?;
+        // Same-origin guard: scheme + host + port must all match the base.
+        let same_origin = target.scheme() == base.scheme()
+            && target.host_str() == base.host_str()
+            && target.port_or_known_default() == base.port_or_known_default();
+        if !same_origin {
+            return Err(CoreError::BadArgs {
+                operation: operation.id.clone(),
+                reason:
+                    "cross-host pagination continuation refused: Link rel=\"next\" target must match the source base scheme+host"
+                        .to_string(),
+            });
+        }
+
+        let sensitive_names = sensitive_arg_names(operation, &args);
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+            .map_err(|error| CoreError::HttpTransport {
+                operation: operation.id.clone(),
+                message: error.to_string(),
+            })?;
+
+        // Forced GET: URL continuation never carries the base operation's
+        // request body, even if the base operation was POST.
+        let mut request = client.request(Method::GET, target.clone());
+        for (name, value) in self.default_headers.iter().chain(operation.headers.iter()) {
+            request = request.header(name, substitute_template(value, &args, false)?);
+        }
+        for auth in &self.auth {
+            if let (Some(header), Some(secret)) = (&auth.header, std::env::var(&auth.env).ok()) {
+                let value = auth
+                    .format
+                    .as_deref()
+                    .unwrap_or("{value}")
+                    .replace("{value}", &secret);
+                request = request.header(header, value);
+            }
+        }
+
+        let started = Instant::now();
+        let response = tokio::time::timeout(Duration::from_millis(timeout_ms), request.send())
+            .await
+            .map_err(|_| CoreError::HttpTimeout {
+                operation: operation.id.clone(),
+                timeout_ms,
+            })?
+            .map_err(|error| CoreError::HttpTransport {
+                operation: operation.id.clone(),
+                message: error.to_string(),
+            })?;
+
+        let status = response.status();
+        let selected_headers = selected_headers(response.headers(), self);
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let link_header = response
+            .headers()
+            .get(reqwest::header::LINK)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let (bytes, truncated) =
+            read_bounded_body(response, max_response_bytes, timeout_ms, &operation.id).await?;
+        let duration_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+        let data = normalize_body(&bytes, content_type.as_deref(), truncated)?;
+        let pagination = prog_core::extract_pagination_hints(&data, link_header.as_deref());
+        let mut warnings = Vec::new();
+        if truncated {
+            warnings.push(format!(
+                "response exceeded max_response_bytes ({max_response_bytes}); body was truncated"
+            ));
+        }
+
+        let redacted_target = redact_url(url, &args, &sensitive_names);
+        let provenance = HttpProvenance {
+            source_id: self.id.clone(),
+            operation: operation.id.clone(),
+            method: "GET".to_string(),
+            final_url: redacted_target,
+            status: status.as_u16(),
+            selected_headers,
+            duration_ms,
+            response_bytes: bytes.len(),
+            truncated,
+            args: redacted_args(&args, &operation.sensitive_args),
         };
 
         if !status.is_success() {
@@ -476,29 +627,6 @@ fn normalize_body(bytes: &[u8], content_type: Option<&str>, truncated: bool) -> 
         "byte_count": bytes.len(),
         "truncated": truncated
     }))
-}
-
-fn pagination_hints(link_header: Option<&str>, body: &Value) -> Option<Value> {
-    let mut hints = Map::new();
-    if let Some(link) = link_header
-        && link.to_ascii_lowercase().contains("rel=\"next\"")
-    {
-        hints.insert("link_rel_next".to_string(), Value::String(link.to_string()));
-    }
-
-    if let Value::Object(map) = body {
-        for key in ["next", "next_page", "nextPageToken", "has_more"] {
-            if let Some(value) = map.get(key) {
-                hints.insert(key.to_string(), value.clone());
-            }
-        }
-    }
-
-    if hints.is_empty() {
-        None
-    } else {
-        Some(Value::Object(hints))
-    }
 }
 
 fn selected_headers(

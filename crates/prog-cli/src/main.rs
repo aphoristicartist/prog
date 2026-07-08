@@ -1542,7 +1542,7 @@ async fn call_source(
             operation: args.operation.clone(),
             source_kind: Some(profile_source_kind_name(profile.kind).to_string()),
             payload,
-            root_path,
+            root_path: root_path.clone(),
             slice: view,
             payload_bytes,
             provenance: Some(provenance),
@@ -1561,9 +1561,11 @@ async fn call_source(
     )?;
 
     // Auto-pagination: when --pages > 1 on a read-only operation, prefetch up
-    // to N pages into the cache under hard page/byte/time caps. The envelope
-    // stays the bounded view of page 1; the additional pages are reachable via
-    // `prog call` with their args or `prog expand` on their cursors.
+    // to N pages into the cache under hard page/byte/time caps (I10). The
+    // envelope stays the bounded view of page 1; additional pages are each
+    // redacted -> inferred -> stored -> projected (I2/I8), their shapes merged
+    // monotonically (I5), and each is reachable via its own pc1_ page cursor
+    // (I9) or the surfaced continuation NextAction.
     if args.pages > 1 {
         if prog_core::pagination_allowed(&operation.effects) {
             let caps = prog_core::PageCaps {
@@ -1571,12 +1573,31 @@ async fn call_source(
                 ..prog_core::PageCaps::default()
             };
             let mut current_args = call_args.clone();
-            let mut hints = first_pagination;
+            // Live hints win; fall back to the discover-time pagination shape
+            // stored on the operation profile when the live response carries none.
+            let mut hints = first_pagination
+                .clone()
+                .or_else(|| operation.pagination.clone());
             let mut pages_fetched = 1usize;
             let mut total_bytes = payload_bytes;
             let mut stop = prog_core::StopReason::NoMore;
             let started = std::time::Instant::now();
             let mut prefetch_warnings: Vec<String> = Vec::new();
+            // Per-page shape accumulation (I5) seeded with page 1.
+            let mut merged_shape = observed.clone();
+            // Page summaries (page 1 first). `envelope.omitted` stays page-1
+            // scoped so an expand against the page-1 cursor can never reach a
+            // page-2 path (I3 containment / I9 fail-closed).
+            let mut page_summaries: Vec<Value> = Vec::new();
+            page_summaries.push(json!({
+                "page": 1,
+                "cache_key": cache_key.clone(),
+                "cursor": envelope.cursor.clone(),
+                "bytes": payload_bytes,
+                "omitted_count": envelope.omitted.len(),
+                "omitted_paths": envelope.omitted.iter().take(8)
+                    .map(|region| region.path.clone()).collect::<Vec<_>>(),
+            }));
             while pages_fetched < caps.max_pages {
                 let Some(target) = hints
                     .as_ref()
@@ -1589,37 +1610,53 @@ async fn call_source(
                     stop = prog_core::StopReason::TimeCap;
                     break;
                 }
-                let page_args = match target {
-                    prog_core::PageTarget::Args(args) => args,
-                    prog_core::PageTarget::Url(_) => {
-                        // URL continuation (Link rel="next") needs an adapter
-                        // execute_url path that is not yet wired. Cursor/page
-                        // targets are tried first, so reaching here means no
-                        // followable cursor existed; warn and stop rather than
-                        // silently report "no_more".
-                        prefetch_warnings.push(
-                            "pagination prefetch stopped: the next page is a URL continuation \
-                             (Link rel=\"next\") which requires an adapter execute_url path not \
-                             yet wired"
-                                .to_string(),
-                        );
-                        stop = prog_core::StopReason::NoMore;
-                        break;
+                // Resolve the target into a fetched page + the args used for
+                // the cache key. URL continuation (Link rel="next") now follows
+                // the same-host guard inside HttpSource::execute_url.
+                let (page_call, page_key_args) = match target {
+                    prog_core::PageTarget::Args(page_args) => {
+                        let call = match execute_callable(&source, &operation, &page_args).await {
+                            Ok(call) => call,
+                            Err(error) => {
+                                prefetch_warnings.push(format!(
+                                    "pagination prefetch stopped at page {}: {error}",
+                                    pages_fetched + 1
+                                ));
+                                stop = prog_core::StopReason::NoMore;
+                                break;
+                            }
+                        };
+                        let key_args = page_args.clone();
+                        (call, key_args)
+                    }
+                    prog_core::PageTarget::Url(url) => {
+                        match execute_callable_url(&source, &operation, &url, &current_args).await {
+                            Ok(Some(call)) => {
+                                // Distinct, deterministic cache key per URL page.
+                                (call, json!({ "__url__": url }))
+                            }
+                            Ok(None) => {
+                                prefetch_warnings.push(
+                                    "pagination prefetch stopped: the next page is a URL \
+                                     continuation (Link rel=\"next\") but this source kind has no \
+                                     URL model"
+                                        .to_string(),
+                                );
+                                stop = prog_core::StopReason::NoMore;
+                                break;
+                            }
+                            Err(error) => {
+                                prefetch_warnings.push(format!(
+                                    "pagination prefetch stopped at page {}: {error}",
+                                    pages_fetched + 1
+                                ));
+                                stop = prog_core::StopReason::NoMore;
+                                break;
+                            }
+                        }
                     }
                 };
-                // Page N (N>=2) fetches are best-effort: an upstream failure on
-                // a later page must not void the already-built page-1 envelope.
-                let page_call = match execute_callable(&source, &operation, &page_args).await {
-                    Ok(call) => call,
-                    Err(error) => {
-                        prefetch_warnings.push(format!(
-                            "pagination prefetch stopped at page {}: {error}",
-                            pages_fetched + 1
-                        ));
-                        stop = prog_core::StopReason::NoMore;
-                        break;
-                    }
-                };
+                // redact -> infer -> store -> project, per page (I2/I8).
                 let page_payload = RawPayload::new(page_call.data).redact(&redaction).payload;
                 let page_bytes = json_len_u64(page_payload.as_value())?;
                 if total_bytes + page_bytes > caps.max_total_bytes {
@@ -1628,9 +1665,27 @@ async fn call_source(
                 }
                 total_bytes += page_bytes;
                 prefetch_warnings.extend(page_call.warnings);
-                if may_cache {
-                    let page_cache_key =
-                        Store::cache_key(&args.source_id, &args.operation, &page_args)?;
+
+                let page_shape = infer(page_payload.as_value());
+                merged_shape = prog_core::merge_page_shapes(Some(&merged_shape), &page_shape);
+                // Project with a coarsened policy to obtain THIS page's omitted
+                // regions; previews for N>=2 never enter envelope.data_preview
+                // (page 1 stays the bounded view), only counts + top-K paths.
+                let page_projection = project(
+                    page_payload.as_value(),
+                    &shrink_policy(&PreviewPolicy::default()),
+                    "",
+                );
+                let omitted_paths: Vec<String> = page_projection
+                    .omitted
+                    .iter()
+                    .take(8)
+                    .map(|region| region.path.clone())
+                    .collect();
+
+                let page_cache_key =
+                    Store::cache_key(&args.source_id, &args.operation, &page_key_args)?;
+                let page_cursor = if may_cache {
                     let page_hash = store.put_payload(&page_payload)?;
                     let ttl = ttl_seconds(&effective_cache);
                     let mut entry = new_cache_entry(
@@ -1648,14 +1703,116 @@ async fn call_source(
                         page_call.provenance.clone(),
                     ));
                     store.put_entry(&page_cache_key, &entry)?;
+                    // Mint a pc1_ cursor carrying page metadata (I9 fail-closed
+                    // reuse; extra is observability only).
+                    let mut cursor_extra = Map::new();
+                    cursor_extra.insert("kind".to_string(), json!("page"));
+                    cursor_extra.insert("page".to_string(), json!(pages_fetched + 1));
+                    cursor_extra.insert(
+                        "args".to_string(),
+                        redacted_profile_args(&operation, &page_key_args),
+                    );
+                    Some(store.create_cursor_with_extra(
+                        &page_cache_key,
+                        &args.source_id,
+                        &args.operation,
+                        &root_path,
+                        RedactionPolicy::default().version,
+                        ttl,
+                        cursor_extra,
+                    )?)
+                } else {
+                    None
+                };
+
+                // Profile learning: each page's shape joins the operation's
+                // output_shape (monotonic via the store, same as across calls).
+                if !args.no_cache && !operation.effects.sensitive {
+                    update_profile_from_call(
+                        store,
+                        &profile,
+                        &args.operation,
+                        &page_key_args,
+                        page_payload.as_value(),
+                        &page_shape,
+                    )?;
                 }
+
+                page_summaries.push(json!({
+                    "page": pages_fetched + 1,
+                    "cache_key": page_cache_key,
+                    "cursor": page_cursor,
+                    "bytes": page_bytes,
+                    "omitted_count": page_projection.omitted.len(),
+                    "omitted_paths": omitted_paths,
+                }));
+
                 pages_fetched += 1;
-                current_args = page_args;
+                current_args = page_key_args;
                 hints = page_call.pagination.clone();
             }
             if pages_fetched >= caps.max_pages {
                 stop = prog_core::StopReason::PageCap;
             }
+
+            // Reconcile the stop reason with reality: the next-page target is
+            // computed from the LAST fetched page's hints. If no next page
+            // remains, the chain ended naturally (NoMore) regardless of which
+            // exit path the loop took (a page cap reached exactly at the end of
+            // a finite chain is NoMore, not PageCap). This target is also the
+            // resume point surfaced below when paused at a real cap.
+            let resume_target = hints
+                .as_ref()
+                .and_then(|value| prog_core::next_args_from_hints(value, &current_args));
+            if resume_target.is_none() {
+                stop = prog_core::StopReason::NoMore;
+            }
+
+            // Continuation: when paused at a cap (not NoMore) with a concrete
+            // next target, surface a resume NextAction. NoMore never surfaces one.
+            if !stop.is_terminal()
+                && let Some(resume) = resume_target
+            {
+                let reason = format!(
+                    "pagination paused at {}; {} page(s) fetched; resume with the next page",
+                    stop.as_str(),
+                    pages_fetched
+                );
+                let next_action = match resume {
+                    prog_core::PageTarget::Args(resume_args) => NextAction {
+                        kind: "call".to_string(),
+                        operation: Some(args.operation.clone()),
+                        path: None,
+                        reason: Some(reason),
+                        extra: {
+                            let mut map = Map::new();
+                            map.insert("args".to_string(), resume_args);
+                            map.insert(
+                                "source_id".to_string(),
+                                Value::String(args.source_id.clone()),
+                            );
+                            map
+                        },
+                    },
+                    prog_core::PageTarget::Url(url) => NextAction {
+                        kind: "call_url".to_string(),
+                        operation: Some(args.operation.clone()),
+                        path: None,
+                        reason: Some(reason),
+                        extra: {
+                            let mut map = Map::new();
+                            map.insert("url".to_string(), Value::String(url));
+                            map.insert(
+                                "source_id".to_string(),
+                                Value::String(args.source_id.clone()),
+                            );
+                            map
+                        },
+                    },
+                };
+                envelope.next_actions.push(next_action);
+            }
+
             envelope.warnings.extend(prefetch_warnings);
             envelope.extra.insert(
                 "pagination".to_string(),
@@ -1664,8 +1821,15 @@ async fn call_source(
                     "total_bytes": total_bytes,
                     "stop_reason": stop.as_str(),
                     "max_pages": caps.max_pages,
+                    "merged_shape": serde_json::to_value(&merged_shape)?,
+                    "pages": page_summaries,
                 }),
             );
+            // The pagination extra (uncapped `merged_shape` + per-page `pages[]`)
+            // is appended AFTER `envelope_for_payload`'s budget loop, so re-enforce
+            // `max_envelope_bytes` here: compact the pagination metadata if the
+            // final envelope would otherwise exceed the budget (invariant I11).
+            compact_pagination_extra_to_budget(&mut envelope)?;
         } else {
             envelope.warnings.push(
                 "--pages requested but the operation is not auto-pagination-safe \
@@ -5638,6 +5802,33 @@ async fn execute_callable(
     }
 }
 
+/// Follow a literal next-page URL (Link `rel="next"`). Returns `Ok(None)` for
+/// source kinds with no URL model (CLI/MCP) so the caller can fall back to
+/// warn-and-stop; returns `Ok(Some(_))` only for HTTP sources. The HTTP path
+/// enforces the same-origin SSRF guard (see `HttpSource::execute_url`).
+async fn execute_callable_url(
+    source: &CallableSource,
+    operation: &OperationProfile,
+    url: &str,
+    args: &Value,
+) -> Result<Option<AdapterCall>> {
+    match source {
+        CallableSource::Http(http) => {
+            let result = http.execute_url(&operation.id, url, args).await?;
+            Ok(Some(AdapterCall {
+                data: result.data,
+                provenance: serde_json::to_value(result.provenance.clone())?,
+                status: Some(result.provenance.status.to_string()),
+                duration_ms: Some(result.provenance.duration_ms),
+                pagination: result.pagination,
+                warnings: result.warnings,
+            }))
+        }
+        // CLI and MCP sources have no URL continuation model.
+        CallableSource::Cli(_) | CallableSource::Mcp(_) => Ok(None),
+    }
+}
+
 fn adapter_config<'a>(profile: &'a SourceProfile, kind: &str) -> Option<&'a Map<String, Value>> {
     profile
         .extra
@@ -6134,6 +6325,46 @@ fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Result<usize> {
     Ok(second)
 }
 
+/// Re-enforce `max_envelope_bytes` after the pagination `extra` block is
+/// appended. The per-page `pages[]` index and the `merged_shape` grow with page
+/// count and schema width, so a many-page or wide-shape call could push the
+/// final envelope past the 16 KiB ceiling even though page 1 was bounded.
+/// Progressively drop `pages[]` then `merged_shape` (keeping the tiny scalar
+/// counters) until the serialized envelope fits, recording a warning each time
+/// (invariant I11: pagination never escapes the envelope budget).
+fn compact_pagination_extra_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
+    let budget = PreviewPolicy::default().max_envelope_bytes;
+    if serde_json::to_vec(envelope)?.len() <= budget {
+        return Ok(());
+    }
+    let dropped_pages = envelope
+        .extra
+        .get_mut("pagination")
+        .and_then(Value::as_object_mut)
+        .is_some_and(|pagination| pagination.remove("pages").is_some());
+    if dropped_pages {
+        envelope
+            .warnings
+            .push("pagination page index compacted to enforce max_envelope_bytes".to_string());
+    }
+    if serde_json::to_vec(envelope)?.len() <= budget {
+        finalize_envelope_bytes(envelope)?;
+        return Ok(());
+    }
+    let dropped_shape = envelope
+        .extra
+        .get_mut("pagination")
+        .and_then(Value::as_object_mut)
+        .is_some_and(|pagination| pagination.remove("merged_shape").is_some());
+    if dropped_shape {
+        envelope
+            .warnings
+            .push("pagination merged shape compacted to enforce max_envelope_bytes".to_string());
+    }
+    finalize_envelope_bytes(envelope)?;
+    Ok(())
+}
+
 fn shrink_policy(policy: &PreviewPolicy) -> PreviewPolicy {
     PreviewPolicy {
         array_items: halve_to_zero(policy.array_items),
@@ -6365,6 +6596,14 @@ fn learn_from_probe(operation: &mut OperationProfile, args: &Value, data: &Value
         Some(current) => join(current, &observed),
         None => observed,
     });
+    // Infer the pagination shape from the probe response body and record it as
+    // a capability hint on the operation (discover never auto-fetches, per I6).
+    // `call` reads live hints first and falls back to this stored hint.
+    if operation.pagination.is_none()
+        && let Some(hint) = prog_core::extract_pagination_hints(redacted.as_value(), None)
+    {
+        operation.pagination = Some(hint);
+    }
     let projection = project(redacted.as_value(), &PreviewPolicy::default(), "");
     let redacted_args = redacted_profile_args(operation, args);
     let examples = operation

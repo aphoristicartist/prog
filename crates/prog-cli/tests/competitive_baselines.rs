@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path},
+    matchers::{method, path, query_param},
 };
 
 const ITEM_COUNT: usize = 220;
@@ -127,6 +127,127 @@ async fn competitive_baseline_eval_smoke() {
             repo_root()
                 .join("fixtures/evals/competitive-baseline-metrics.json")
                 .exists()
+        );
+    }
+}
+
+/// Competitive baseline for upstream auto-pagination (issue #69). prog
+/// prefetches N pages under one bounded envelope while raw page-by-page
+/// fetching pays the full input cost of every page. Asserts the two things
+/// that matter for the envelope-budget story: (1) prog's single envelope is
+/// cheaper (in approx tokens) than the raw concatenation of all pages, and
+/// (2) correctness is equal — every page's evidence is recoverable via its
+/// own per-page cursor (no data is lost to the budget).
+#[tokio::test]
+async fn pagination_competitive_baseline_vs_raw_page_by_page() {
+    let root = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    // 5-page cursor chain. Each page carries a large body so the raw
+    // aggregate is clearly more expensive than one bounded envelope.
+    let page_tokens = ["start", "t2", "t3", "t4", "t5"];
+    let mut raw_total_bytes = 0usize;
+    for (index, token) in page_tokens.iter().enumerate() {
+        let is_last = index + 1 == page_tokens.len();
+        let body = json!({
+            "items": [{
+                "id": index + 1,
+                "marker": format!("page-{}-marker", index + 1),
+                "body": "x".repeat(1024)
+            }],
+            "next_cursor": if is_last { Value::Null } else { json!(page_tokens[index + 1]) },
+            "has_more": !is_last
+        });
+        // Drop the null next_cursor on the last page for realism.
+        let body = if is_last {
+            let mut b = body;
+            b["next_cursor"].take();
+            b
+        } else {
+            body
+        };
+        raw_total_bytes += serde_json::to_vec(&body).unwrap().len();
+        Mock::given(method("GET"))
+            .and(path("/issues"))
+            .and(query_param("page_token", *token))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+    }
+
+    let seed = root.path().join("pag.json");
+    fs::write(
+        &seed,
+        serde_json::to_vec_pretty(&json!({
+            "kind": "http",
+            "base_url": server.uri(),
+            "operations": [{
+                "name": "list",
+                "method": "GET",
+                "path": "/issues",
+                "query": {"page_token": "{page_token}"},
+                "args": {"page_token": "string"},
+                "effect": {
+                    "read_only": true, "mutating": false, "network": true,
+                    "shell": false, "sensitive": false, "cacheable": true,
+                    "requires_confirmation": false
+                }
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    discover(root.path(), "pag", "http", &seed);
+
+    // prog: one bounded envelope prefetching all 5 pages.
+    let prog_call = timed_prog(
+        root.path(),
+        &[
+            "call",
+            "pag",
+            "list",
+            "--args",
+            r#"{"page_token":"start"}"#,
+            "--pages",
+            "5",
+        ],
+        None,
+    );
+    assert_success(&prog_call.output);
+    let envelope: Value = serde_json::from_slice(&prog_call.output.stdout).unwrap();
+    let pagination = &envelope["pagination"];
+    assert_eq!(pagination["pages_fetched"], json!(5));
+    let prog_bytes = prog_call.output.stdout.len();
+
+    // Raw: the concatenation of all 5 page bodies (what page-by-page fetching
+    // would feed a model in aggregate).
+    let prog_tokens = approx_tokens(prog_bytes);
+    let raw_tokens = approx_tokens(raw_total_bytes);
+    assert!(
+        prog_tokens < raw_tokens,
+        "prog envelope ({prog_tokens} tok / {prog_bytes} B) must be cheaper than raw page-by-page ({raw_tokens} tok / {raw_total_bytes} B)"
+    );
+
+    // Correctness parity: every page's marker is recoverable via its own
+    // per-page cursor, so no evidence was lost to the envelope budget.
+    let pages = pagination["pages"].as_array().unwrap();
+    assert_eq!(pages.len(), 5);
+    for page in pages.iter().filter(|p| p["page"].as_u64() >= Some(2)) {
+        let cursor = page["cursor"].as_str().expect("page cursor");
+        let expanded = timed_prog(
+            root.path(),
+            &["expand", cursor, "--path", "/items/0/marker"],
+            None,
+        );
+        assert_success(&expanded.output);
+        let value: Value = serde_json::from_slice(&expanded.output.stdout).unwrap();
+        let marker = value["data_preview"]
+            .as_str()
+            .or_else(|| value["data_preview"]["value"].as_str())
+            .unwrap_or("");
+        let page_no = page["page"].as_u64().unwrap();
+        assert!(
+            marker.contains(&format!("page-{page_no}-marker")),
+            "page {page_no} marker recoverable via its cursor, got {marker}"
         );
     }
 }
