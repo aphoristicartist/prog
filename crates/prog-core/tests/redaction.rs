@@ -487,11 +487,12 @@ proptest! {
     }
 
     #[test]
-    fn value_scan_does_not_corrupt_benign_long_strings(text in "[a-zA-Z0-9 .,]{8,60}") {
-        // The charset excludes '=' and ':' so no name=secret pair can form; a
-        // value with no high-confidence secret shape is preserved verbatim with
-        // no redacted paths (a low-confidence blob, if it forms, is also
-        // preserved-and-flagged, never mutated, under the default policy).
+    fn value_scan_does_not_corrupt_benign_long_strings(text in "[a-zA-Z0-9]{8,60}") {
+        // Pure alphanumeric so NO high-confidence secret shape can form (Bearer
+        // needs a space, JWT needs dots, PEM needs dashes, URL params need ?/&,
+        // name=secret needs =/:) — making the "no corruption" assertion provably
+        // sound. A 40+ alphanumeric run, if it forms, is a low-confidence
+        // ambiguous blob that is preserved-and-flagged (never mutated) by default.
         let value = json!({ "note": text });
         let (redacted, paths) = RedactionPolicy::default().apply_persistence(&value);
         prop_assert_eq!(&redacted["note"], &json!(text));
@@ -499,13 +500,20 @@ proptest! {
     }
 
     #[test]
-    fn value_scan_is_idempotent(payload in "[a-zA-Z0-9_=]{8,80}") {
+    fn value_scan_is_idempotent(
+        name in prop::sample::select(vec!["token", "secret", "password", "apikey"]),
+        tail in "[a-zA-Z0-9_-]{8,40}"
+    ) {
+        // Always embed a sensitive name=value so redaction fires on the first
+        // pass; the second pass must then be a no-op (the redaction marker is
+        // never reclassified as a secret — the meaningful idempotency check).
+        let payload = format!("{name}={tail}");
         let policy = RedactionPolicy::default();
         let value = json!({ "k": payload });
-        let (first, _) = policy.apply_persistence(&value);
-        let (second, _) = policy.apply_persistence(&first);
-        // Re-applying redaction to an already-redacted value changes nothing:
-        // redaction markers are never reclassified as secrets (I4 extension).
+        let (first, first_paths) = policy.apply_persistence(&value);
+        prop_assert!(!first_paths.is_empty(), "redaction should fire for {payload}");
+        let (second, second_paths) = policy.apply_persistence(&first);
+        prop_assert!(second_paths.is_empty(), "second pass redacted again: {second:?}");
         prop_assert_eq!(first, second);
     }
 }

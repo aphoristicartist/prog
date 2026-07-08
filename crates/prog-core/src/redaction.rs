@@ -588,6 +588,12 @@ pub(crate) fn classify_value_secret(text: &str) -> ValueSecretClass {
 /// value quoting `Authorization: Bearer …`, or a `config` blob
 /// `accessToken=…`). Reuses [`is_sensitive_name`] so this stays in lockstep
 /// with key-name matching.
+///
+/// Limitation (shared with [`contains_sensitive_url_param`]): [`is_sensitive_name`]
+/// checks the built-in default keyword set + allowlist, NOT a source's custom
+/// `RedactionConfig.extra_keywords`/`allowlist`. A name allowlisted via config is
+/// therefore still redacted when it appears inside a value string. Threading the
+/// policy allowlist into the value matchers is follow-on work.
 fn contains_sensitive_name_value_pair(text: &str) -> bool {
     let bytes = text.as_bytes();
     let mut index = 0usize;
@@ -644,7 +650,7 @@ fn contains_sensitive_name_value_pair(text: &str) -> bool {
         if index < value_start + 8 {
             continue;
         }
-        if text.as_bytes()[value_start..value_start + 8].contains(&b'/') {
+        if text.as_bytes()[value_start..index].contains(&b'/') {
             continue;
         }
         return true;
