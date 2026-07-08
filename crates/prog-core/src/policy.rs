@@ -10,24 +10,31 @@ pub struct CallFlags {
     pub yes: bool,
 }
 
-pub fn check_discovery(operation: &OperationProfile) -> Result<()> {
-    let effects = &operation.effects;
+/// Gate a discovery probe on the EFFECTIVE effect set (after trust
+/// auto-upgrade). Under default `trust.auto_upgrade=true`, a *proven*
+/// read-only operation may be probed (its confirmation is relaxed at discovery
+/// time); flipping `trust.auto_upgrade=false` re-gates it and the operation is
+/// skipped with the I6 warning. Mutating, non-read-only, shell-backed, and
+/// sensitive operations are refused regardless of grade or trust (I6
+/// preserved).
+pub fn check_discovery(operation: &OperationProfile, trust: &TrustSettings) -> Result<()> {
+    let (effects, _audit) = effective_effects(&operation.effects, trust);
     if !effects.read_only {
         return Err(CoreError::DiscoveryNotReadOnly {
             operation: operation.id.clone(),
-            effects: describe_effects(effects),
+            effects: describe_effects(&effects),
         });
     }
     if effects.mutating {
         return Err(CoreError::DiscoveryMutating {
             operation: operation.id.clone(),
-            effects: describe_effects(effects),
+            effects: describe_effects(&effects),
         });
     }
     if effects.requires_confirmation {
         return Err(CoreError::DiscoveryRequiresConfirmation {
             operation: operation.id.clone(),
-            effects: describe_effects(effects),
+            effects: describe_effects(&effects),
         });
     }
     Ok(())
@@ -69,13 +76,28 @@ impl EvidenceGrade {
     }
 }
 
+/// Stamp `extra["evidence_grade"]` with the given grade. Importers call this at
+/// derivation time so the strength of the evidence (explicit declaration vs
+/// inferred vs ambiguous) is recorded on the stored profile and inspectable
+/// later. Used by every importer site.
+pub fn stamp_evidence_grade(effects: &mut EffectSet, grade: EvidenceGrade) {
+    effects.extra.insert(
+        "evidence_grade".to_string(),
+        Value::String(grade.as_str().to_string()),
+    );
+}
+
 /// Apply trust auto-upgrade to an operation's effects. A *proven* read-only
 /// operation on a source with `trust.auto_upgrade` has its
 /// `requires_confirmation` cleared. Mutating, shell-backed, and sensitive
 /// operations are never relaxed (I7 preserved); non-proven grades are never
 /// relaxed. Returns the (possibly relaxed) effects and, when a change was made,
 /// a human-readable note for the audit trail.
-pub fn apply_auto_upgrade(
+///
+/// This is the canonical runtime evaluator invoked by both `check_call` and
+/// `check_discovery`. `apply_auto_upgrade` is retained as a thin alias for
+/// backward compatibility.
+pub fn effective_effects(
     effects: &EffectSet,
     trust: &TrustSettings,
 ) -> (EffectSet, Option<String>) {
@@ -106,17 +128,26 @@ pub fn apply_auto_upgrade(
     }
 }
 
+/// Backward-compatible alias for [`effective_effects`].
+pub fn apply_auto_upgrade(
+    effects: &EffectSet,
+    trust: &TrustSettings,
+) -> (EffectSet, Option<String>) {
+    effective_effects(effects, trust)
+}
+
+/// Enforce the call effect policy on the EFFECTIVE effect set (after trust
+/// auto-upgrade) and return the relaxed effects plus the audit note so the
+/// caller can surface the upgrade in observation metadata without re-evaluating.
+/// I7 is preserved: mutating/confirmation-gated ops still require `--yes` unless
+/// they were *proven* read-only and relaxed, and shell-backed ops still require
+/// `trust.allow_shell`.
 pub fn check_call(
     operation: &OperationProfile,
     flags: CallFlags,
     trust: &TrustSettings,
-) -> Result<()> {
-    // apply_auto_upgrade also returns an audit note and stamps
-    // extra["auto_upgrade"] on the relaxed effects; that audit trail is
-    // computed (and unit-tested on apply_auto_upgrade directly) but is not
-    // surfaced from this call site to the persisted envelope. Wiring it
-    // through call_source is future work.
-    let effects = apply_auto_upgrade(&operation.effects, trust).0;
+) -> Result<(EffectSet, Option<String>)> {
+    let (effects, audit) = effective_effects(&operation.effects, trust);
     if (effects.mutating || effects.requires_confirmation) && !flags.yes {
         return Err(CoreError::RequiresConfirmation {
             operation: operation.id.clone(),
@@ -129,7 +160,7 @@ pub fn check_call(
             operation: operation.id.clone(),
         });
     }
-    Ok(())
+    Ok((effects, audit))
 }
 
 pub fn cache_allowed(operation: &OperationProfile, policy: &CachePolicy) -> bool {
@@ -215,16 +246,52 @@ pub fn cli_hardening_effects(shell: bool) -> EffectSet {
     effects
 }
 
+/// Derive the STORED effect set for an MCP tool from its hint annotations and
+/// stamp the graded evidence. A tool is *proven* read-only only when
+/// `readOnlyHint` is explicitly `true` AND `destructiveHint` is not
+/// contradictory (`Some(true)`). A contradictory or absent read declaration
+/// tightens to *unproven* and stays mutating/gated (monotone tightening via
+/// [`tighten_effects`]).
+///
+/// Proven read-only tools are stored confirmation-gated and relaxed to
+/// `requires_confirmation=false` at call/discovery time under
+/// `trust.auto_upgrade`, which keeps `trust.auto_upgrade` a live post-import
+/// knob on committed profiles.
 pub fn mcp_tool_annotation_effects(
     read_only_hint: Option<bool>,
     destructive_hint: Option<bool>,
 ) -> EffectSet {
-    let read_only = read_only_hint.unwrap_or(false) && destructive_hint != Some(true);
-    if read_only {
-        read_effects(false, false)
+    let declared_read_only = read_only_hint.unwrap_or(false);
+    let contradictory = declared_read_only && destructive_hint == Some(true);
+    let read_only = declared_read_only && !contradictory;
+    let grade = if read_only {
+        EvidenceGrade::Proven
+    } else {
+        EvidenceGrade::Unproven
+    };
+    let mut effects = if read_only {
+        // Stored gated; effective_effects relaxes under trust.auto_upgrade.
+        EffectSet {
+            read_only: true,
+            mutating: false,
+            network: false,
+            shell: false,
+            sensitive: false,
+            cacheable: true,
+            requires_confirmation: true,
+            extra: Extra::new(),
+        }
     } else {
         unsafe_effects(false, false)
+    };
+    // Reinforce monotone tightening: a contradictory destructiveHint never
+    // relaxes a stricter mutating fact even if a future caller widens the
+    // read branch above.
+    if contradictory {
+        effects = tighten_effects(&effects, &unsafe_effects(false, false));
     }
+    stamp_evidence_grade(&mut effects, grade);
+    effects
 }
 
 pub fn mcp_read_effects() -> EffectSet {

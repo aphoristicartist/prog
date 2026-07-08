@@ -19,16 +19,16 @@ use prog_core::importers::{
 };
 use prog_core::{
     AuthRef, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance, CoreError,
-    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, EvidenceRef, ExpansionScope, Extra,
-    LensManifest, NextAction, ObservationCompleteness, ObservationFreshness, ObservationMetadata,
-    ObservationPayloadStatus, ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion,
-    OperationProfile, PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, Result,
-    SOURCE_PROFILE_VERSION, ScopedSlice, SliceRequest, SourceProfile, Store, Summary,
-    TrustSettings, ValueScanReport, cache_allowed, call_effect_warnings, canonical_json,
-    check_call, check_discovery, cli_adapter_effects, cli_hardening_effects, expand,
-    http_adapter_effects, http_hardening_effects, infer, join, lens_slice_request, new_cache_entry,
-    project, project_with_lens, public_contract_schemas, render_hints, slice_value,
-    tighten_effects, validate_lens_manifest,
+    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, EvidenceGrade, EvidenceRef, ExpansionScope,
+    Extra, LensManifest, NextAction, ObservationCompleteness, ObservationFreshness,
+    ObservationMetadata, ObservationPayloadStatus, ObservationSafety, ObservationTrust,
+    OmissionReason, OmittedRegion, OperationProfile, PreviewPolicy, RawPayload, RedactedPayload,
+    RedactionPolicy, Result, SOURCE_PROFILE_VERSION, ScopedSlice, SliceRequest, SourceProfile,
+    Store, Summary, TrustSettings, ValueScanReport, cache_allowed, call_effect_warnings,
+    canonical_json, check_call, check_discovery, cli_adapter_effects, cli_hardening_effects,
+    expand, http_adapter_effects, http_hardening_effects, infer, join, lens_slice_request,
+    new_cache_entry, project, project_with_lens, public_contract_schemas, render_hints,
+    slice_value, tighten_effects, validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -628,6 +628,11 @@ struct EnvelopeInput {
     provenance: Option<CallProvenance>,
     cache: Option<CacheInfo>,
     effects: Option<EffectSet>,
+    /// Audit note recorded when trust auto-upgrade relaxed a *proven* read-only
+    /// op's `requires_confirmation` for this call. When `Some`, the observation
+    /// metadata surfaces the evidence chain (grade + reason) under
+    /// `observation.trust.extra["auto_upgrade"]`.
+    auto_upgrade_audit: Option<String>,
     redacted_paths: usize,
     cache_disabled_reason: Option<String>,
     warnings: Vec<String>,
@@ -1365,7 +1370,12 @@ async fn call_source(
     let operation = profile_operation(&profile, &args.operation)?.clone();
     let call_args = parse_json_argument(&args.args, "call --args")?;
     validate_call_args(&operation, &call_args)?;
-    check_call(&operation, CallFlags { yes: args.yes }, &profile.trust)?;
+    // check_call runs trust auto-upgrade internally and returns the EFFECTIVE
+    // (possibly relaxed) effect set plus the audit note; both flow into the
+    // envelope so the recorded observation reflects the policy actually applied
+    // and the upgrade is inspectable.
+    let (effective_effects, auto_upgrade_audit) =
+        check_call(&operation, CallFlags { yes: args.yes }, &profile.trust)?;
     let requested_view = parse_view(args.view.as_deref())?;
     let lens = match &args.lens {
         Some(id) => {
@@ -1424,7 +1434,8 @@ async fn call_source(
                 payload_bytes: entry.payload_bytes,
                 provenance: entry.provenance.clone(),
                 cache: Some(cache_info),
-                effects: Some(operation.effects.clone()),
+                effects: Some(effective_effects.clone()),
+                auto_upgrade_audit: auto_upgrade_audit.clone(),
                 redacted_paths: 0,
                 cache_disabled_reason: None,
                 warnings: Vec::new(),
@@ -1547,7 +1558,8 @@ async fn call_source(
             payload_bytes,
             provenance: Some(provenance),
             cache: cache_status,
-            effects: Some(operation.effects.clone()),
+            effects: Some(effective_effects),
+            auto_upgrade_audit,
             redacted_paths: redacted_paths.len(),
             cache_disabled_reason,
             warnings,
@@ -1939,6 +1951,7 @@ fn observe_artifact(
             provenance: entry.provenance.clone(),
             cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
             effects: None,
+            auto_upgrade_audit: None,
             redacted_paths: redacted_paths.len(),
             cache_disabled_reason: None,
             warnings,
@@ -2147,6 +2160,7 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
             provenance: Some(provenance),
             cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
             effects: Some(run_effects()),
+            auto_upgrade_audit: None,
             redacted_paths,
             cache_disabled_reason: None,
             warnings,
@@ -3928,6 +3942,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
                 provenance: entry.provenance.clone(),
                 cache: Some(cache),
                 effects: None,
+                auto_upgrade_audit: None,
                 redacted_paths: 0,
                 cache_disabled_reason: None,
                 warnings,
@@ -3955,6 +3970,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
             provenance: entry.provenance.clone(),
             cache: Some(cache_info(CacheStatus::Hit, &entry, Some(age))),
             effects: None,
+            auto_upgrade_audit: None,
             redacted_paths: 0,
             cache_disabled_reason: None,
             warnings,
@@ -4029,6 +4045,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
             provenance: entry.provenance.clone(),
             cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
             effects: None,
+            auto_upgrade_audit: None,
             redacted_paths: 0,
             cache_disabled_reason: None,
             warnings: Vec::new(),
@@ -6295,7 +6312,30 @@ fn observation_metadata(
                 .provenance
                 .as_ref()
                 .and_then(|provenance| provenance.status.clone()),
-            extra: Extra::new(),
+            extra: {
+                let mut trust_extra = Extra::new();
+                // Surface the graded-evidence auto-upgrade provenance: when a
+                // *proven* read-only op had its confirmation relaxed for this
+                // call, record the evidence chain (grade + reason) so the
+                // decision is inspectable. The relaxed EffectSet (carrying its
+                // own extra["auto_upgrade"] stamp) flows to safety.effects.
+                if let Some(reason) = &input.auto_upgrade_audit {
+                    let grade = input
+                        .effects
+                        .as_ref()
+                        .map(|effects| EvidenceGrade::from_extra(&effects.extra).as_str())
+                        .unwrap_or("proven");
+                    trust_extra.insert(
+                        "auto_upgrade".to_string(),
+                        json!({
+                            "grade": grade,
+                            "relaxed_requires_confirmation": true,
+                            "reason": reason,
+                        }),
+                    );
+                }
+                trust_extra
+            },
         },
         safety: ObservationSafety {
             redacted_before_persistence: redacted_count > 0,
@@ -6535,7 +6575,11 @@ async fn probe_profile(
 ) {
     for index in 0..profile.operations.len() {
         let operation = &profile.operations[index];
-        if let Err(error) = check_discovery(operation) {
+        // Discovery now evaluates the EFFECTIVE effect set: under default
+        // trust a *proven* read-only op is probeable (its confirmation is
+        // relaxed); flipping trust.auto_upgrade=false re-gates it and the I6
+        // skip fires (strict-when-disabled).
+        if let Err(error) = check_discovery(operation, &profile.trust) {
             warnings.push(format!("I6: skipped probe for '{}': {error}", operation.id));
             continue;
         }

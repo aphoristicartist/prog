@@ -1,7 +1,8 @@
 use prog_core::{
     CachePolicy, CallFlags, EffectSet, EvidenceGrade, Extra, OperationProfile, TrustSettings,
     apply_auto_upgrade, cache_allowed, call_effect_warnings, check_call, check_discovery,
-    cli_adapter_effects, http_adapter_effects, http_hardening_effects, tighten_effects,
+    cli_adapter_effects, effective_effects, http_adapter_effects, http_hardening_effects,
+    stamp_evidence_grade, tighten_effects,
 };
 use proptest::prelude::*;
 use serde_json::{Value, json};
@@ -18,7 +19,9 @@ fn absent_effect_metadata_fails_closed_for_policy_checks() {
     assert!(operation.effects.requires_confirmation);
 
     assert_eq!(
-        check_discovery(&operation).unwrap_err().kind(),
+        check_discovery(&operation, &TrustSettings::default())
+            .unwrap_err()
+            .kind(),
         "discovery_not_read_only"
     );
     assert_eq!(
@@ -59,7 +62,9 @@ fn discovery_refuses_each_unsafe_effect_independently() {
         },
     );
     assert_eq!(
-        check_discovery(&not_read_only).unwrap_err().kind(),
+        check_discovery(&not_read_only, &TrustSettings::default())
+            .unwrap_err()
+            .kind(),
         "discovery_not_read_only"
     );
 
@@ -77,7 +82,9 @@ fn discovery_refuses_each_unsafe_effect_independently() {
         },
     );
     assert_eq!(
-        check_discovery(&mutating).unwrap_err().kind(),
+        check_discovery(&mutating, &TrustSettings::default())
+            .unwrap_err()
+            .kind(),
         "discovery_mutating"
     );
 
@@ -95,7 +102,9 @@ fn discovery_refuses_each_unsafe_effect_independently() {
         },
     );
     assert_eq!(
-        check_discovery(&confirmation).unwrap_err().kind(),
+        check_discovery(&confirmation, &TrustSettings::default())
+            .unwrap_err()
+            .kind(),
         "discovery_requires_confirmation"
     );
 }
@@ -370,6 +379,93 @@ fn check_call_still_requires_confirmation_without_proven_grade() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn auto_upgrade_escape_hatch_re_gates_proven_read_only() {
+    // trust.auto_upgrade=false is the per-source escape hatch to keep strict V1
+    // behavior: even a Proven read-only op stays gated for both call and
+    // discovery.
+    let mut effects = gated_read_only();
+    stamp_evidence_grade(&mut effects, EvidenceGrade::Proven);
+    let operation = operation_with_effects(effects);
+    let strict = TrustSettings {
+        auto_upgrade: false,
+        ..TrustSettings::default()
+    };
+    // Call requires --yes again.
+    assert!(check_call(&operation, CallFlags { yes: false }, &strict).is_err());
+    // Discovery refuses (I6 skip fires), where it would probe under default trust.
+    assert_eq!(
+        check_discovery(&operation, &strict).unwrap_err().kind(),
+        "discovery_requires_confirmation"
+    );
+    // Under default trust the same op is probeable and callable without --yes.
+    assert!(check_discovery(&operation, &TrustSettings::default()).is_ok());
+    assert!(
+        check_call(
+            &operation,
+            CallFlags { yes: false },
+            &TrustSettings::default()
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn check_call_surfaces_effective_effects_and_audit_for_proven_upgrade() {
+    let mut effects = gated_read_only();
+    stamp_evidence_grade(&mut effects, EvidenceGrade::Proven);
+    let operation = operation_with_effects(effects);
+    let (effective, audit) = check_call(
+        &operation,
+        CallFlags { yes: false },
+        &TrustSettings::default(),
+    )
+    .expect("proven read-only call succeeds under default trust");
+    assert!(!effective.requires_confirmation);
+    assert!(audit.is_some());
+    // The relaxed set carries its own auto_upgrade stamp.
+    assert!(effective.extra.get("auto_upgrade").is_some());
+}
+
+proptest! {
+    /// Law: effective_effects relaxes requires_confirmation IFF
+    /// (auto_upgrade && grade==proven && read_only && !mutating && !shell &&
+    /// !sensitive). Otherwise the returned set equals the input on every flag,
+    /// and a relaxation differs ONLY in requires_confirmation.
+    #[test]
+    fn effective_effects_relaxes_only_proven_read_only_under_auto_upgrade(
+        auto_upgrade in any::<bool>(),
+        grade_kind in 0u8..3,
+    ) {
+        let mut effects = gated_read_only();
+        let grade = match grade_kind {
+            0 => EvidenceGrade::Proven,
+            1 => EvidenceGrade::Assumed,
+            _ => EvidenceGrade::Unproven,
+        };
+        stamp_evidence_grade(&mut effects, grade);
+        let trust = TrustSettings { auto_upgrade, ..TrustSettings::default() };
+        let (out, note) = effective_effects(&effects, &trust);
+        let should_relax = auto_upgrade
+            && grade == EvidenceGrade::Proven
+            && effects.read_only
+            && !effects.mutating
+            && !effects.shell
+            && !effects.sensitive;
+        prop_assert_eq!(!out.requires_confirmation, should_relax);
+        prop_assert_eq!(note.is_some(), should_relax);
+        // No other flag moves.
+        prop_assert_eq!(out.read_only, effects.read_only);
+        prop_assert_eq!(out.mutating, effects.mutating);
+        prop_assert_eq!(out.shell, effects.shell);
+        prop_assert_eq!(out.sensitive, effects.sensitive);
+        prop_assert_eq!(out.cacheable, effects.cacheable);
+        // Idempotent and never tightens: re-applying is a fixed point.
+        let (again, _) = effective_effects(&out, &trust);
+        prop_assert_eq!(again.requires_confirmation, out.requires_confirmation);
+    }
 }
 
 fn gated_read_only() -> EffectSet {

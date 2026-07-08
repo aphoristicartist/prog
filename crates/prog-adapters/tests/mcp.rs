@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, time::Instant};
 
 use prog_adapters::mcp::McpSource;
-use prog_core::{PreviewPolicy, project};
+use prog_core::{CallFlags, PreviewPolicy, TrustSettings, check_call, check_discovery, project};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -196,7 +196,14 @@ async fn discovers_tools_resources_prompts_and_declared_output_schema() {
     );
     assert!(search.effects.read_only);
     assert!(!search.effects.mutating);
-    assert!(!search.effects.requires_confirmation);
+    // Stored-default shift: a Proven read-only MCP tool is stored
+    // confirmation-gated and graded "proven"; trust policy relaxes it to
+    // requires_confirmation=false at call time under trust.auto_upgrade.
+    assert!(search.effects.requires_confirmation);
+    assert_eq!(
+        search.effects.extra["evidence_grade"].as_str(),
+        Some("proven")
+    );
 
     let danger = operation(&discovery.profile, "danger");
     assert!(!danger.effects.read_only);
@@ -375,6 +382,33 @@ async fn crashing_server_returns_actionable_error_not_hang() {
 struct Fixture {
     _tempdir: TempDir,
     source: McpSource,
+}
+
+#[tokio::test]
+async fn trust_auto_upgrade_is_a_live_post_import_knob_on_committed_mcp_profile() {
+    let fixture = fixture("normal");
+    let discovery = fixture.source.discover().await.unwrap();
+    let search = operation(&discovery.profile, "search_docs");
+    assert!(search.effects.requires_confirmation); // stored gated, Proven
+
+    // Under default trust (auto_upgrade=true) a Proven read-only MCP tool is
+    // callable without --yes and probeable.
+    assert!(check_call(search, CallFlags { yes: false }, &TrustSettings::default()).is_ok());
+    assert!(check_discovery(search, &TrustSettings::default()).is_ok());
+
+    // Flipping trust.auto_upgrade=false re-gates it: call now needs --yes and
+    // discovery refuses (I6 skip). This proves the knob is live on a committed
+    // profile without re-importing.
+    let strict = TrustSettings {
+        auto_upgrade: false,
+        ..TrustSettings::default()
+    };
+    assert!(check_call(search, CallFlags { yes: false }, &strict).is_err());
+    assert!(check_call(search, CallFlags { yes: true }, &strict).is_ok());
+    assert_eq!(
+        check_discovery(search, &strict).unwrap_err().kind(),
+        "discovery_requires_confirmation"
+    );
 }
 
 fn fixture(mode: &str) -> Fixture {

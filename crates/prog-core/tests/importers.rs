@@ -84,7 +84,10 @@ fn openapi_import_builds_callable_profile_without_observed_shape() {
     assert!(get.output_shape.is_none());
     assert!(get.declared_output_schema.is_some());
     assert!(get.effects.read_only);
-    assert!(!get.effects.requires_confirmation);
+    // GET is graded Proven and stored confirmation-gated; trust policy relaxes
+    // it to requires_confirmation=false at call time under trust.auto_upgrade.
+    assert!(get.effects.requires_confirmation);
+    assert_eq!(get.effects.extra["evidence_grade"].as_str(), Some("proven"));
     assert_eq!(get.extra["invocation"]["http"]["path"], "/issues/{id}");
     assert_eq!(
         get.extra["invocation"]["http"]["query"]["include"],
@@ -98,6 +101,11 @@ fn openapi_import_builds_callable_profile_without_observed_shape() {
     let post = operation(&profile.operations, "updateissue");
     assert!(!post.effects.read_only);
     assert!(post.effects.requires_confirmation);
+    // Non-GET methods are Unproven and stay gated (current behavior preserved).
+    assert_eq!(
+        post.effects.extra["evidence_grade"].as_str(),
+        Some("unproven")
+    );
     assert_eq!(post.extra["invocation"]["http"]["json_body"], "{body}");
     assert_eq!(
         post.declared_output_schema.as_ref().unwrap()["x-prog-ref_status"],
@@ -154,6 +162,7 @@ fn mcp_import_keeps_declared_schema_prior_and_fails_closed_without_read_hint() {
                 json!({"type": "object", "properties": {"hits": {"type": "array"}}}),
             ),
             read_only_hint: Some(true),
+            destructive_hint: None,
             annotations: None,
         },
         McpTool {
@@ -162,6 +171,7 @@ fn mcp_import_keeps_declared_schema_prior_and_fails_closed_without_read_hint() {
             input_schema: json!({"type": "object"}),
             output_schema: None,
             read_only_hint: None,
+            destructive_hint: None,
             annotations: None,
         },
     ];
@@ -174,11 +184,21 @@ fn mcp_import_keeps_declared_schema_prior_and_fails_closed_without_read_hint() {
     assert!(search.declared_output_schema.is_some());
     assert_eq!(search.extra["schema_prior"]["observed"], false);
     assert!(search.effects.read_only);
+    // readOnlyHint=true (no contradiction) is Proven and stored gated.
+    assert!(search.effects.requires_confirmation);
+    assert_eq!(
+        search.effects.extra["evidence_grade"].as_str(),
+        Some("proven")
+    );
 
     let delete = operation(&profile.operations, "delete_doc");
     assert!(!delete.effects.read_only);
     assert!(delete.effects.mutating);
     assert!(delete.effects.requires_confirmation);
+    assert_eq!(
+        delete.effects.extra["evidence_grade"].as_str(),
+        Some("unproven")
+    );
     assert!(
         report
             .warnings
@@ -269,4 +289,103 @@ fn operation<'a>(
         .iter()
         .find(|operation| operation.id == id)
         .expect("operation should be imported")
+}
+
+#[test]
+fn mcp_destructive_contradiction_tightens_to_unproven_and_gated() {
+    // readOnlyHint=true AND destructiveHint=true is contradictory: it must
+    // tighten to Unproven/mutating/gated (monotone tightening) and never relax.
+    let tools = vec![McpTool {
+        name: "conflicting".to_string(),
+        description: None,
+        input_schema: json!({"type": "object"}),
+        output_schema: None,
+        read_only_hint: Some(true),
+        destructive_hint: Some(true),
+        annotations: None,
+    }];
+    let (profile, _) =
+        import_mcp_schemas("docs".to_string(), &tools, &[], &ImportContext::default()).unwrap();
+    let op = operation(&profile.operations, "conflicting");
+    assert!(!op.effects.read_only);
+    assert!(op.effects.mutating);
+    assert!(op.effects.requires_confirmation);
+    assert_eq!(
+        op.effects.extra["evidence_grade"].as_str(),
+        Some("unproven")
+    );
+}
+
+#[test]
+fn mcp_resource_is_proven_and_stored_gated() {
+    let tools = vec![McpTool {
+        name: "search".to_string(),
+        description: None,
+        input_schema: json!({"type": "object"}),
+        output_schema: None,
+        read_only_hint: Some(true),
+        destructive_hint: None,
+        annotations: None,
+    }];
+    let resources = vec![prog_core::importers::McpResource {
+        name: "doc".to_string(),
+        description: None,
+        mime_type: Some("application/json".to_string()),
+    }];
+    let (profile, _) = import_mcp_schemas(
+        "docs".to_string(),
+        &tools,
+        &resources,
+        &ImportContext::default(),
+    )
+    .unwrap();
+    let resource = operation(&profile.operations, "resource_doc");
+    assert!(resource.effects.read_only);
+    // MCP resource is spec-defined read-only -> Proven, stored gated.
+    assert!(resource.effects.requires_confirmation);
+    assert_eq!(
+        resource.effects.extra["evidence_grade"].as_str(),
+        Some("proven")
+    );
+}
+
+#[test]
+fn json_schema_synthesized_op_is_assumed_and_gated() {
+    // JSON Schema synthesized ops have no explicit effect descriptor: the
+    // importer only infers read-only, so they are graded Assumed and HARD-fenced
+    // — Assumed NEVER relaxes, so storing them gated keeps them callable only
+    // with --yes even under trust.auto_upgrade=true.
+    let schema = json!({"type": "object", "properties": {"id": {"type": "integer"}}});
+    let (profile, _) =
+        import_json_schema("items".to_string(), &schema, &ImportContext::default()).unwrap();
+    let op = &profile.operations[0];
+    assert!(op.effects.read_only);
+    assert!(op.effects.requires_confirmation);
+    assert_eq!(op.effects.extra["evidence_grade"].as_str(), Some("assumed"));
+}
+
+#[test]
+fn cli_help_ops_are_unproven_and_gated() {
+    let help = "\
+Commands:
+  list      list tasks
+  delete    delete a task
+
+Options:
+  -h, --help
+";
+    let (profile, _) = import_cli_help(
+        "taskctl".to_string(),
+        help,
+        "taskctl",
+        &ImportContext::default(),
+    )
+    .unwrap();
+    for op in &profile.operations {
+        assert_eq!(
+            op.effects.extra["evidence_grade"].as_str(),
+            Some("unproven")
+        );
+        assert!(op.effects.requires_confirmation);
+    }
 }

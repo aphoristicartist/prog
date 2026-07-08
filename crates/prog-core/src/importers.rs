@@ -17,6 +17,7 @@ use crate::{
         AuthRef, CachePolicy, EffectSet, OperationProfile, SourceKind, SourceProfile, TrustSettings,
     },
     error::{CoreError, Result},
+    policy::{EvidenceGrade, mcp_tool_annotation_effects, stamp_evidence_grade},
     redaction::RedactionPolicy,
     shape::{infer, join},
 };
@@ -235,15 +236,23 @@ pub fn import_json_schema(
         }),
         output_shape: None,
         declared_output_schema: Some(declared_output_schema),
-        effects: EffectSet {
-            read_only: true,
-            mutating: false,
-            network: false,
-            shell: false,
-            sensitive: false,
-            cacheable: true,
-            requires_confirmation: false,
-            extra: Map::new(),
+        effects: {
+            // The synthesized op is read-only by INFERENCE from the JSON Schema
+            // shape, not by an explicit descriptor declaration, so it is graded
+            // Assumed. Assumed evidence NEVER relaxes confirmation (hard fence),
+            // and the op is stored gated regardless of trust.auto_upgrade.
+            let mut effects = EffectSet {
+                read_only: true,
+                mutating: false,
+                network: false,
+                shell: false,
+                sensitive: false,
+                cacheable: true,
+                requires_confirmation: true,
+                extra: Map::new(),
+            };
+            stamp_evidence_grade(&mut effects, EvidenceGrade::Assumed);
+            effects
         },
         cache: CachePolicy {
             enabled: true,
@@ -338,25 +347,20 @@ pub fn import_mcp_schemas(
             extra.insert("mcp_annotations".to_string(), json!(annotations));
         }
 
+        let effects = mcp_tool_annotation_effects(tool.read_only_hint, tool.destructive_hint);
+        // Cache eligibility follows the contradiction-aware read-only fact so a
+        // contradictory destructiveHint never produces a cacheable mutating op.
+        let cacheable_read_only = effects.read_only;
         operations.push(OperationProfile {
             id: sanitize_id(&tool.name),
             description: tool.description.clone(),
             input_schema: bounded_schema(&tool.input_schema, ctx, &mut warnings),
             output_shape: None,
             declared_output_schema,
-            effects: EffectSet {
-                read_only,
-                mutating: !read_only,
-                network: false,
-                shell: false,
-                sensitive: false,
-                cacheable: read_only,
-                requires_confirmation: !read_only,
-                extra: Map::new(),
-            },
+            effects,
             cache: CachePolicy {
-                enabled: read_only,
-                ttl_seconds: read_only.then_some(3600),
+                enabled: cacheable_read_only,
+                ttl_seconds: cacheable_read_only.then_some(3600),
                 refresh_after_seconds: None,
                 extra: Map::new(),
             },
@@ -388,15 +392,22 @@ pub fn import_mcp_schemas(
             }),
             output_shape: None,
             declared_output_schema: None,
-            effects: EffectSet {
-                read_only: true,
-                mutating: false,
-                network: false,
-                shell: false,
-                sensitive: false,
-                cacheable: true,
-                requires_confirmation: false,
-                extra: Map::new(),
+            effects: {
+                // An MCP resource is spec-defined read-only, so it is graded
+                // Proven; stored gated and relaxed at call time under
+                // trust.auto_upgrade.
+                let mut effects = EffectSet {
+                    read_only: true,
+                    mutating: false,
+                    network: false,
+                    shell: false,
+                    sensitive: false,
+                    cacheable: true,
+                    requires_confirmation: true,
+                    extra: Map::new(),
+                };
+                stamp_evidence_grade(&mut effects, EvidenceGrade::Proven);
+                effects
             },
             cache: CachePolicy {
                 enabled: true,
@@ -654,6 +665,15 @@ fn import_openapi_operation(
         build_request_contract(&parameters, operation.request_body.as_ref(), ctx, warnings);
     let declared_output_schema = response_schema(&operation.responses, ctx, warnings);
     let read_only = is_read_only_method(method);
+    // HTTP method is a normative, machine-readable read-declaration: GET/HEAD/
+    // OPTIONS explicitly declare read-only, so read-only ops are graded Proven
+    // and stored confirmation-gated (relaxed at call time under
+    // trust.auto_upgrade). Non-read-only methods are Unproven and stay gated.
+    let grade = if read_only {
+        EvidenceGrade::Proven
+    } else {
+        EvidenceGrade::Unproven
+    };
     let mut extra = Map::new();
     extra.insert(
         "invocation".to_string(),
@@ -681,15 +701,21 @@ fn import_openapi_operation(
             input_schema,
             output_shape: None,
             declared_output_schema: declared_output_schema.clone(),
-            effects: EffectSet {
-                read_only,
-                mutating: !read_only,
-                network: true,
-                shell: false,
-                sensitive: false,
-                cacheable: read_only,
-                requires_confirmation: !read_only,
-                extra: Map::new(),
+            effects: {
+                // Stored gated for read-only (Proven) ops so trust.auto_upgrade
+                // is a live runtime knob; non-read-only ops are already gated.
+                let mut effects = EffectSet {
+                    read_only,
+                    mutating: !read_only,
+                    network: true,
+                    shell: false,
+                    sensitive: false,
+                    cacheable: read_only,
+                    requires_confirmation: true,
+                    extra: Map::new(),
+                };
+                stamp_evidence_grade(&mut effects, grade);
+                effects
             },
             cache: CachePolicy {
                 enabled: read_only,
@@ -1048,15 +1074,21 @@ fn cli_operation(
         }),
         output_shape: None,
         declared_output_schema: None,
-        effects: EffectSet {
-            read_only: false,
-            mutating: true,
-            network: false,
-            shell: false,
-            sensitive: false,
-            cacheable: false,
-            requires_confirmation: true,
-            extra: Map::new(),
+        effects: {
+            // CLI help text is ambiguous: "list" could mutate, so parsed
+            // commands are graded Unproven and stay confirmation-gated.
+            let mut effects = EffectSet {
+                read_only: false,
+                mutating: true,
+                network: false,
+                shell: false,
+                sensitive: false,
+                cacheable: false,
+                requires_confirmation: true,
+                extra: Map::new(),
+            };
+            stamp_evidence_grade(&mut effects, EvidenceGrade::Unproven);
+            effects
         },
         cache: CachePolicy::default(),
         pagination: None,
@@ -1263,6 +1295,11 @@ pub struct McpTool {
     pub output_schema: Option<Value>,
     #[serde(rename = "readOnlyHint", default)]
     pub read_only_hint: Option<bool>,
+    /// Destructive hint. When `Some(true)` it contradicts a `readOnlyHint` of
+    /// `true` and tightens the tool to *unproven*/mutating (monotone tightening)
+    /// so a contradictory annotation can never silently relax confirmation.
+    #[serde(rename = "destructiveHint", default)]
+    pub destructive_hint: Option<bool>,
     #[serde(default)]
     pub annotations: Option<BTreeMap<String, Value>>,
 }

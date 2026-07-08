@@ -6,9 +6,9 @@ use std::{
 };
 
 use prog_core::{
-    CachePolicy, CoreError, EffectSet, Extra, OperationProfile, PreviewPolicy, Result,
-    SOURCE_PROFILE_VERSION, SourceKind, SourceProfile, TrustSettings, mcp_read_effects,
-    mcp_tool_annotation_effects, project, redact_sensitive_text,
+    CachePolicy, CoreError, EffectSet, EvidenceGrade, Extra, OperationProfile, PreviewPolicy,
+    Result, SOURCE_PROFILE_VERSION, SourceKind, SourceProfile, TrustSettings, mcp_read_effects,
+    mcp_tool_annotation_effects, project, redact_sensitive_text, stamp_evidence_grade,
 };
 use rmcp::{
     RoleClient, ServiceError,
@@ -573,10 +573,6 @@ fn tool_effects(annotations: Option<&ToolAnnotations>) -> EffectSet {
     mcp_tool_annotation_effects(read_only_hint, destructive_hint)
 }
 
-fn read_effects() -> EffectSet {
-    mcp_read_effects()
-}
-
 fn resource_operation(resource: Resource) -> OperationProfile {
     let mut extra = Extra::new();
     extra.insert(
@@ -601,7 +597,14 @@ fn resource_operation(resource: Resource) -> OperationProfile {
         }),
         output_shape: None,
         declared_output_schema: None,
-        effects: read_effects(),
+        effects: {
+            // An MCP resource is spec-defined read-only: graded Proven and
+            // stored gated so trust.auto_upgrade is a live runtime knob.
+            let mut effects = mcp_read_effects();
+            effects.requires_confirmation = true;
+            stamp_evidence_grade(&mut effects, EvidenceGrade::Proven);
+            effects
+        },
         cache: CachePolicy::default(),
         pagination: None,
         extra,
