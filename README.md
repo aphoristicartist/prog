@@ -142,6 +142,7 @@ PROG_TOKEN_EVAL_UPDATE=1 cargo test -p prog-cli --test eval -- --nocapture
 | Observation lenses | [`docs/lenses.md`](docs/lenses.md) · [`docs/lens-packs.md`](docs/lens-packs.md) |
 | `observe` reference | [`docs/observe.md`](docs/observe.md) |
 | `run` reference | [`docs/run.md`](docs/run.md) |
+| Findings ranking | [`docs/findings.md`](docs/findings.md) |
 | Expandable pointers | [`docs/paths.md`](docs/paths.md) |
 | Cost modeling | [`docs/cost.md`](docs/cost.md) |
 | Agent integration model | [`docs/integrations.md`](docs/integrations.md) |

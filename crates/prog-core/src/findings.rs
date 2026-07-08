@@ -2,7 +2,10 @@ use std::{cmp::Ordering, collections::BTreeMap};
 
 use serde_json::{Map, Value, json};
 
-use crate::{Extra, Finding, FindingCommandHints, LineRange, RedactionState, Result, pointer};
+use crate::{
+    Extra, Finding, FindingCommandHints, INSPECT_VERSION, InspectResponse, LineRange,
+    RedactionState, Result, pointer,
+};
 
 const DEFAULT_LIMIT: usize = 10;
 const MAX_REASON_CHARS: usize = 180;
@@ -13,6 +16,7 @@ pub struct FindingOptions {
     pub cursor: Option<String>,
     pub scope_path: Option<String>,
     pub limit: usize,
+    pub hints: CommandHintConfig,
 }
 
 impl Default for FindingOptions {
@@ -22,7 +26,120 @@ impl Default for FindingOptions {
             cursor: None,
             scope_path: None,
             limit: DEFAULT_LIMIT,
+            hints: CommandHintConfig::NAV_EXPAND_ONLY,
         }
+    }
+}
+
+/// Which navigation command hints `command_hints` should emit on each [`Finding`].
+///
+/// `prog expand` is the only working navigation command today, so the default
+/// ([`CommandHintConfig::NAV_EXPAND_ONLY`]) emits just that hint and leaves
+/// `FindingCommandHints::evidence` as `None` — honest about the not-yet-existing
+/// `prog evidence` subcommand until #92 ships. Callers flip to
+/// [`CommandHintConfig::NAV_ALL`] once `prog inspect` / `prog evidence` /
+/// `prog search` (#90/#92) land.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandHintConfig {
+    pub expand: bool,
+    pub inspect: bool,
+    pub evidence: bool,
+    pub search: bool,
+}
+
+impl CommandHintConfig {
+    /// Default: only `prog expand` is a runnable navigation command today.
+    pub const NAV_EXPAND_ONLY: Self = Self {
+        expand: true,
+        inspect: false,
+        evidence: false,
+        search: false,
+    };
+
+    /// Opt-in: emit every navigation hint. Use once inspect/evidence/search ship.
+    pub const NAV_ALL: Self = Self {
+        expand: true,
+        inspect: true,
+        evidence: true,
+        search: true,
+    };
+}
+
+impl Default for CommandHintConfig {
+    fn default() -> Self {
+        Self::NAV_EXPAND_ONLY
+    }
+}
+
+/// Input boundary for [`build_inspect_response`].
+///
+/// This is NOT a contract type and is NOT serialized as part of
+/// [`InspectResponse`]; it lives at the request edge so the required `cursor`
+/// (the response field is a non-optional `String`) is enforced before assembly
+/// rather than panic-recovered later. The engine never fabricates cursors
+/// (fail-closed `pc1_` cursors, I9); cursor existence/freshness is validated by
+/// the CLI layer (#90) before calling [`build_inspect_response`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectRequest {
+    pub goal: Option<String>,
+    pub cursor: String,
+    pub scope_path: Option<String>,
+    pub limit: usize,
+    pub hints: CommandHintConfig,
+}
+
+impl Default for InspectRequest {
+    fn default() -> Self {
+        Self {
+            goal: None,
+            cursor: String::new(),
+            scope_path: None,
+            limit: DEFAULT_LIMIT,
+            hints: CommandHintConfig::NAV_EXPAND_ONLY,
+        }
+    }
+}
+
+impl InspectRequest {
+    /// Begin a builder, pinning the required `cursor` at construction time.
+    pub fn builder(cursor: impl Into<String>) -> InspectRequestBuilder {
+        InspectRequestBuilder {
+            request: Self {
+                cursor: cursor.into(),
+                ..Self::default()
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct InspectRequestBuilder {
+    request: InspectRequest,
+}
+
+impl InspectRequestBuilder {
+    pub fn goal(mut self, goal: impl Into<String>) -> Self {
+        self.request.goal = Some(goal.into());
+        self
+    }
+
+    pub fn scope_path(mut self, scope_path: impl Into<String>) -> Self {
+        self.request.scope_path = Some(scope_path.into());
+        self
+    }
+
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.request.limit = limit;
+        self
+    }
+
+    pub fn hints(mut self, hints: CommandHintConfig) -> Self {
+        self.request.hints = hints;
+        self
+    }
+
+    pub fn build(self) -> InspectRequest {
+        self.request
     }
 }
 
@@ -69,6 +186,43 @@ pub fn ranked_findings(payload: &Value, options: &FindingOptions) -> Result<Vec<
         .enumerate()
         .map(|(index, candidate)| candidate.into_finding(index as u64 + 1, options))
         .collect())
+}
+
+/// Assemble a full [`InspectResponse`] over an already-redacted, stored payload.
+///
+/// This is the single boundary the future `prog inspect` CLI command (#90) calls.
+/// The engine is pure and store-less: it projects a ranked view over `payload`
+/// (consumed AFTER redact -> infer -> store -> project), stamps `schema_version`
+/// from [`INSPECT_VERSION`], and derives `normalized_goal` via
+/// [`normalized_goal`]. `omitted` / `cache` / `warnings` are left default; the
+/// bounded 16 KiB envelope is preserved via `request.limit` (default
+/// [`DEFAULT_LIMIT`]) and [`MAX_REASON_CHARS`] truncation. Each [`Finding`]
+/// carries `redaction_state` derived from the projected payload, preserving
+/// redaction visibility (I2/I4).
+pub fn build_inspect_response(
+    payload: &Value,
+    request: &InspectRequest,
+) -> Result<InspectResponse> {
+    let options = FindingOptions {
+        goal: request.goal.clone(),
+        cursor: Some(request.cursor.clone()),
+        scope_path: request.scope_path.clone(),
+        limit: request.limit,
+        hints: request.hints,
+    };
+    let findings = ranked_findings(payload, &options)?;
+    Ok(InspectResponse {
+        schema_version: INSPECT_VERSION.to_string(),
+        cursor: request.cursor.clone(),
+        goal: request.goal.clone().unwrap_or_default(),
+        normalized_goal: normalized_goal(request.goal.as_deref()),
+        scope_path: request.scope_path.clone(),
+        findings,
+        omitted: Vec::new(),
+        cache: None,
+        warnings: Vec::new(),
+        extra: Extra::new(),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -118,7 +272,7 @@ impl Candidate {
             line_range: self.line_range,
             byte_range: None,
             redaction_state: self.redaction_state,
-            commands: command_hints(options.cursor.as_deref(), &self.path),
+            commands: command_hints(options.cursor.as_deref(), &self.path, options.hints),
             extra: self.extra,
         }
     }
@@ -354,6 +508,26 @@ fn failure_section_signal(kind: &str, text: &str) -> Signal {
             severity: Some("error"),
             source: "generic.run.failure_sections",
         }
+    } else if is_compile_error(&lower) {
+        // Generic build/compile framing (cargo/rustc/gmake/ninja). Placed AFTER
+        // rust_compile_error so an `error[E0308]` diagnostic is not double-counted.
+        Signal {
+            kind: "compile_error",
+            confidence: 0.9,
+            reason: "run failure section contains a build or compile error",
+            title: "compile error",
+            severity: Some("error"),
+            source: "generic.run.failure_sections",
+        }
+    } else if is_test_name(&lower) {
+        Signal {
+            kind: "test_name",
+            confidence: 0.82,
+            reason: "run failure section references a failing test",
+            title: "failing test",
+            severity: Some("error"),
+            source: "generic.run.failure_sections",
+        }
     } else if lower.contains("exception") {
         Signal {
             kind: "exception",
@@ -516,6 +690,21 @@ fn key_signal(key: &str, value: &Value) -> Option<Signal> {
             severity: Some("warning"),
             source: "generic.field_name",
         })
+    } else if (normalized.contains("diff")
+        || normalized.contains("patch")
+        || normalized.contains("hunks"))
+        && value.as_str().is_some_and(is_diff_hunk)
+    {
+        // Field name + value shape together indicate a unified diff hunk; a diff
+        // is evidence to review, not an error, so severity stays None.
+        value.as_str().map(|_| Signal {
+            kind: "diff_hunk",
+            confidence: 0.6,
+            reason: "field name and value indicate a unified diff hunk",
+            title: "diff hunk",
+            severity: None,
+            source: "generic.field_name",
+        })
     } else if matches!(normalized.as_str(), "message" | "reason" | "summary") {
         value.as_str().and_then(string_signal)
     } else {
@@ -561,6 +750,27 @@ fn string_signal(text: &str) -> Option<Signal> {
             severity: Some("error"),
             source: "generic.string_pattern",
         })
+    } else if is_compile_error(&normalized) {
+        // Generic build/compile framing (cargo/rustc/gmake/ninja). Placed AFTER
+        // rust_compile_error (`error[`) so a rustc diagnostic is not double-counted,
+        // and BEFORE the generic `error:`/` failed` stderr branch.
+        Some(Signal {
+            kind: "compile_error",
+            confidence: 0.82,
+            reason: "string contains a build or compile error marker",
+            title: "compile error",
+            severity: Some("error"),
+            source: "generic.string_pattern",
+        })
+    } else if is_test_name(&normalized) {
+        Some(Signal {
+            kind: "test_name",
+            confidence: 0.74,
+            reason: "string references a failing test",
+            title: "failing test",
+            severity: Some("error"),
+            source: "generic.string_pattern",
+        })
     } else if normalized.contains("exception") {
         Some(Signal {
             kind: "exception",
@@ -580,6 +790,17 @@ fn string_signal(text: &str) -> Option<Signal> {
             reason: "string contains generic error text",
             title: "error text",
             severity: Some("error"),
+            source: "generic.string_pattern",
+        })
+    } else if is_diff_hunk(text) {
+        // Unified-diff hunk markers. Diffs are evidence to review, not errors,
+        // so severity stays None and confidence is intentionally moderate.
+        Some(Signal {
+            kind: "diff_hunk",
+            confidence: 0.6,
+            reason: "string contains unified diff hunk markers",
+            title: "diff hunk",
+            severity: None,
             source: "generic.string_pattern",
         })
     } else if normalized.contains("warning:") || normalized.contains(" warning") {
@@ -617,17 +838,22 @@ fn kind_bonus(kind: &str, intent: GoalIntent) -> f64 {
     match intent {
         GoalIntent::RootCause => match kind {
             "rust_compile_error"
+            | "compile_error"
             | "rust_panic"
             | "python_traceback"
             | "command_timeout"
             | "command_spawn_error"
             | "test_failure" => 0.12,
+            "test_name" => 0.04,
+            "diff_hunk" => -0.05,
             "nonzero_exit" => 0.02,
             "warning" => -0.08,
             _ => 0.04,
         },
         GoalIntent::TestFailure => match kind {
-            "test_failure" | "rust_panic" | "python_traceback" | "rust_compile_error" => 0.14,
+            "test_failure" | "rust_panic" | "python_traceback" | "rust_compile_error"
+            | "compile_error" => 0.14,
+            "test_name" => 0.10,
             "warning" => -0.08,
             _ => 0.02,
         },
@@ -644,6 +870,7 @@ fn kind_bonus(kind: &str, intent: GoalIntent) -> f64 {
             _ => 0.0,
         },
         GoalIntent::DiffReview => match kind {
+            "diff_hunk" => 0.14,
             "diagnostic" | "warning" => 0.04,
             _ => 0.0,
         },
@@ -666,17 +893,29 @@ fn compare_candidates(left: &Candidate, right: &Candidate) -> Ordering {
         .then_with(|| left.kind.cmp(&right.kind))
 }
 
-fn command_hints(cursor: Option<&str>, path: &str) -> FindingCommandHints {
+fn command_hints(
+    cursor: Option<&str>,
+    path: &str,
+    hints: CommandHintConfig,
+) -> FindingCommandHints {
     let Some(cursor) = cursor else {
         return FindingCommandHints::default();
     };
     let cursor = shell_arg(cursor);
     let path = shell_arg(path);
     FindingCommandHints {
-        inspect: None,
-        expand: Some(format!("prog expand {cursor} --path {path}")),
-        evidence: Some(format!("prog evidence {cursor} --path {path}")),
-        search: None,
+        inspect: hints
+            .inspect
+            .then(|| format!("prog inspect {cursor} --path {path}")),
+        expand: hints
+            .expand
+            .then(|| format!("prog expand {cursor} --path {path}")),
+        evidence: hints
+            .evidence
+            .then(|| format!("prog evidence {cursor} --path {path}")),
+        search: hints
+            .search
+            .then(|| format!("prog search {cursor} --path {path}")),
         extra: Extra::new(),
     }
 }
@@ -730,6 +969,60 @@ fn normalize_key(key: &str) -> String {
 
 fn normalize_text(text: &str) -> String {
     text.to_ascii_lowercase().replace(['_', '-'], " ")
+}
+
+/// Detect generic build/compile error framing (cargo, rustc, gmake, ninja).
+/// `error[E0nnn]` rustc diagnostics are matched earlier as `rust_compile_error`
+/// so a real rustc diagnostic is never double-counted here.
+fn is_compile_error(normalized: &str) -> bool {
+    normalized.contains("could not compile")
+        || normalized.contains("cargo: error")
+        || normalized.contains("rustc: error")
+        || (normalized.contains("gmake") && normalized.contains("error"))
+        || (normalized.contains("ninja") && normalized.contains("error"))
+}
+
+/// Detect a reference to a failing test: pytest nodeids (`test_x.py::test_case`),
+/// cargo result lines (`test foo ... FAILED`), gtest filters, and mocha/jest
+/// summary counts (`2 passing`, `1 failing`).
+fn is_test_name(normalized: &str) -> bool {
+    normalized.contains(".py::")
+        || normalized.contains("::test")
+        // "test filter" catches both `--gtest_filter` (underscore -> space) and
+        // the runtime banner "Google Test filter = ...".
+        || normalized.contains("test filter")
+        || (normalized.contains("test ") && normalized.contains("... failed"))
+        || has_counted_label(normalized, "passing")
+        || has_counted_label(normalized, "failing")
+}
+
+/// True when `label` (`"passing"`/`"failing"`) is preceded by a decimal count,
+/// matching mocha/jest summary lines like `"  2 passing (3s)"`.
+fn has_counted_label(normalized: &str, label: &str) -> bool {
+    let mut start = 0;
+    while let Some(rel) = normalized[start..].find(label) {
+        let pos = start + rel;
+        let before = normalized[..pos].trim_end();
+        if before
+            .bytes()
+            .next_back()
+            .is_some_and(|byte| byte.is_ascii_digit())
+        {
+            return true;
+        }
+        start = pos + label.len();
+    }
+    false
+}
+
+/// Detect unified-diff hunk markers on the raw (un-normalized) text. Normalization
+/// would erase the leading `+`/`-` runes, so `@@` hunk headers and the git header
+/// are the load-bearing signals.
+fn is_diff_hunk(text: &str) -> bool {
+    text.contains("@@")
+        || text.contains("diff --git")
+        || text.contains("\n+++ ")
+        || text.contains("\n--- ")
 }
 
 fn shell_arg(value: &str) -> String {

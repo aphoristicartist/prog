@@ -4,6 +4,12 @@
 an agent support a conclusion with cursor/path-backed evidence without pasting a
 raw payload into context.
 
+> **Where do the paths in an `EvidenceRef` come from?** The generic findings
+> ranking engine (`prog_core::findings`) projects a deterministic ranked view
+> over an already-redacted payload and is what `prog inspect` (#90) will surface.
+> See [`findings.md`](./findings.md) for the kind/intent scoring table, the
+> tie-break chain, and the command-hint gating policy.
+
 Example citation:
 
 ```text

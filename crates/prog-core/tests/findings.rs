@@ -1,4 +1,4 @@
-use prog_core::{FindingOptions, RedactionPolicy, ranked_findings};
+use prog_core::{CommandHintConfig, FindingOptions, RedactionPolicy, ranked_findings};
 use serde_json::{Value, json};
 
 #[test]
@@ -36,6 +36,10 @@ fn run_failure_sections_rank_first_with_commands_and_line_range() {
         &FindingOptions {
             goal: Some("find the root cause".to_string()),
             cursor: Some("pc1_demo".to_string()),
+            // NAV_ALL so this test still pins the full hint *format* for every
+            // navigation command. The default (NAV_EXPAND_ONLY) honestly leaves
+            // `evidence`/`inspect`/`search` as None until #90/#92 ship.
+            hints: CommandHintConfig::NAV_ALL,
             ..FindingOptions::default()
         },
     )
@@ -56,6 +60,60 @@ fn run_failure_sections_rank_first_with_commands_and_line_range() {
     assert_eq!(
         first.commands.evidence.as_deref(),
         Some("prog evidence pc1_demo --path /failure_sections/0")
+    );
+}
+
+#[test]
+fn default_hints_emit_only_expand_until_navigation_commands_ship() {
+    // The honest default: `prog expand` is the sole runnable navigation command
+    // today, so evidence/inspect/search stay None until #90/#92 land.
+    let payload = json!({
+        "errors": [{"message": "Error: boom"}]
+    });
+    let findings = ranked_findings(
+        &payload,
+        &FindingOptions {
+            cursor: Some("pc1_demo".to_string()),
+            ..FindingOptions::default()
+        },
+    )
+    .unwrap();
+
+    let first = &findings[0];
+    assert_eq!(
+        first.commands.expand.as_deref(),
+        Some("prog expand pc1_demo --path /errors")
+    );
+    assert_eq!(first.commands.evidence, None);
+    assert_eq!(first.commands.inspect, None);
+    assert_eq!(first.commands.search, None);
+
+    // Opting into NAV_ALL surfaces every hint with identical cursor/path framing.
+    let all = ranked_findings(
+        &payload,
+        &FindingOptions {
+            cursor: Some("pc1_demo".to_string()),
+            hints: CommandHintConfig::NAV_ALL,
+            ..FindingOptions::default()
+        },
+    )
+    .unwrap();
+    let first = &all[0];
+    assert_eq!(
+        first.commands.expand.as_deref(),
+        Some("prog expand pc1_demo --path /errors")
+    );
+    assert_eq!(
+        first.commands.inspect.as_deref(),
+        Some("prog inspect pc1_demo --path /errors")
+    );
+    assert_eq!(
+        first.commands.evidence.as_deref(),
+        Some("prog evidence pc1_demo --path /errors")
+    );
+    assert_eq!(
+        first.commands.search.as_deref(),
+        Some("prog search pc1_demo --path /errors")
     );
 }
 
@@ -307,4 +365,268 @@ fn fixture_run_failure_has_failure_section_as_top_finding() {
     assert_eq!(findings[0].path, "/failure_sections/0");
     assert_eq!(findings[0].kind, "python_traceback");
     assert!(findings[0].redaction_state.is_none());
+}
+
+#[test]
+fn rust_compile_error_takes_precedence_over_generic_compile_error() {
+    // A rustc diagnostic (`error[E0308]`) must classify as rust_compile_error,
+    // never double-counted as the generic compile_error kind.
+    let payload = json!({
+        "failure_sections": [{
+            "kind": "rust",
+            "stream": "stderr",
+            "line_start": 1,
+            "line_end": 3,
+            "priority": 80,
+            "lines": [
+                "error[E0308]: mismatched types",
+                "  --> src/lib.rs:10:5",
+                "expected `u32`, found `i32`"
+            ]
+        }],
+        "note": "error: could not compile `crate` due to previous error"
+    });
+
+    let findings = ranked_findings(
+        &payload,
+        &FindingOptions {
+            goal: Some("why did the build fail".to_string()),
+            ..FindingOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(findings[0].kind, "rust_compile_error");
+    assert_eq!(findings[0].path, "/failure_sections/0");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.kind != "compile_error"
+                || finding.path != "/failure_sections/0"),
+        "rustc diagnostic must not also be tagged compile_error at the same path"
+    );
+    // The standalone `could not compile` string still classifies as compile_error.
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.kind == "compile_error" && finding.path == "/note")
+    );
+}
+
+#[test]
+fn compile_error_detects_cargo_rustc_and_build_framing() {
+    for (label, text) in [
+        ("cargo", "cargo: error: could not compile `foo`"),
+        ("rustc", "rustc: error: unresolved import `bar`"),
+        (
+            "generic",
+            "error: could not compile `baz` due to 2 previous errors",
+        ),
+        ("gmake", "gmake: *** [Makefile:4: all] Error 2"),
+        (
+            "ninja",
+            "ninja: build stopped: subcommand failed with error",
+        ),
+    ] {
+        let payload = json!({ "failure_sections": [{
+            "kind": "build",
+            "line_start": 1,
+            "line_end": 1,
+            "priority": 70,
+            "lines": [text]
+        }]});
+        let findings = ranked_findings(
+            &payload,
+            &FindingOptions {
+                goal: Some("find the root cause".to_string()),
+                ..FindingOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            findings[0].kind, "compile_error",
+            "{label} framing should classify as compile_error"
+        );
+        assert_eq!(
+            findings[0].source.as_deref(),
+            Some("generic.run.failure_sections")
+        );
+        assert_eq!(findings[0].severity.as_deref(), Some("error"));
+    }
+
+    // String-signal path (no failure section) lands at the lower confidence.
+    let payload = json!({ "message": "error: could not compile `foo`" });
+    let findings = ranked_findings(
+        &payload,
+        &FindingOptions {
+            goal: Some("find the root cause".to_string()),
+            ..FindingOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(findings[0].kind, "compile_error");
+    assert_eq!(
+        findings[0].source.as_deref(),
+        Some("generic.string_pattern")
+    );
+    assert!((0.80..=0.85).contains(&findings[0].confidence));
+}
+
+#[test]
+fn test_name_detects_pytest_cargo_gtest_and_mocha_summaries() {
+    for (label, text) in [
+        ("pytest", "tests/test_checkout.py::test_total FAILED"),
+        ("cargo", "test foo::bar::tests::test_case ... FAILED"),
+        (
+            "gtest",
+            "Note: Google Test filter = TestSuite.Case\n[  FAILED  ] Suite.Case",
+        ),
+        ("mocha", "  2 passing (3s)\n  1 failing"),
+    ] {
+        let payload = json!({ "failure_sections": [{
+            "kind": "test",
+            "line_start": 1,
+            "line_end": 1,
+            "priority": 70,
+            "lines": [text]
+        }]});
+        let findings = ranked_findings(
+            &payload,
+            &FindingOptions {
+                goal: Some("which test failed".to_string()),
+                ..FindingOptions::default()
+            },
+        )
+        .unwrap();
+        let top = findings
+            .iter()
+            .find(|finding| finding.kind == "test_name")
+            .unwrap_or_else(|| {
+                panic!("{label} framing should classify as test_name: {findings:#?}")
+            });
+        assert_eq!(top.path, "/failure_sections/0");
+        assert_eq!(top.severity.as_deref(), Some("error"));
+    }
+
+    // String-signal path: a bare pytest nodeid is enough to flag a failing test.
+    let payload = json!({ "note": "tests/test_x.py::test_case" });
+    let findings = ranked_findings(&payload, &FindingOptions::default()).unwrap();
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.kind == "test_name" && finding.path == "/note")
+    );
+}
+
+#[test]
+fn diff_hunk_detected_from_string_and_diff_key() {
+    let payload = json!({
+        "review": {
+            "diff": "diff --git a/foo b/foo\nindex 1..2 100644\n--- a/foo\n+++ b/foo\n@@ -1,3 +1,4 @@\n old\n+new\n"
+        }
+    });
+    let findings = ranked_findings(
+        &payload,
+        &FindingOptions {
+            goal: Some("review the diff".to_string()),
+            cursor: Some("pc1_diff".to_string()),
+            ..FindingOptions::default()
+        },
+    )
+    .unwrap();
+
+    let diff = findings
+        .iter()
+        .find(|finding| finding.kind == "diff_hunk")
+        .expect("diff markers should classify as diff_hunk");
+    assert_eq!(diff.path, "/review/diff");
+    assert_eq!(diff.severity, None);
+    assert!((0.55..=0.65).contains(&diff.confidence));
+    // A diff surfaces first under a DiffReview intent.
+    assert_eq!(findings[0].kind, "diff_hunk");
+}
+
+#[test]
+fn build_inspect_response_assembles_ranked_response_and_round_trips_serde() {
+    use prog_core::{InspectRequest, build_inspect_response};
+
+    let payload = json!({
+        "format": "run",
+        "command": {"success": false, "exit_code": 1, "timed_out": false, "spawn_error": null},
+        "failure_sections": [{
+            "kind": "python",
+            "stream": "stderr",
+            "line_start": 1,
+            "line_end": 2,
+            "priority": 90,
+            "lines": ["Traceback (most recent call last):", "ValueError: nope"]
+        }]
+    });
+
+    let request = InspectRequest::builder("pc1_inspect")
+        .goal("why did tests fail")
+        .build();
+    let response = build_inspect_response(&payload, &request).unwrap();
+
+    assert_eq!(response.schema_version, "prog.inspect.v1");
+    assert_eq!(response.cursor, "pc1_inspect");
+    assert_eq!(response.goal, "why did tests fail");
+    assert_eq!(response.normalized_goal.as_deref(), Some("root_cause"));
+    assert_eq!(response.findings[0].rank, 1);
+    assert_eq!(response.findings[0].kind, "python_traceback");
+    assert!(response.omitted.is_empty());
+    assert!(response.cache.is_none());
+    assert!(response.warnings.is_empty());
+
+    // Default hints: only `expand` is populated.
+    assert!(response.findings[0].commands.expand.is_some());
+    assert_eq!(response.findings[0].commands.evidence, None);
+
+    // Serde round-trip: deserialize(reserialize) is identical (contract stable).
+    let serialized = serde_json::to_value(&response).unwrap();
+    let round_tripped: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&serialized).unwrap()).unwrap();
+    assert_eq!(serialized, round_tripped);
+    let _: prog_core::InspectResponse = serde_json::from_value(serialized).unwrap();
+}
+
+#[test]
+fn build_inspect_response_returns_empty_findings_for_limit_zero_and_missing_scope() {
+    use prog_core::{InspectRequest, build_inspect_response};
+
+    let payload = json!({"errors": [{"message": "Error: failed"}]});
+
+    let limited =
+        build_inspect_response(&payload, &InspectRequest::builder("pc1").limit(0).build()).unwrap();
+    assert!(limited.findings.is_empty());
+
+    let scoped = build_inspect_response(
+        &payload,
+        &InspectRequest::builder("pc1")
+            .scope_path("/missing")
+            .build(),
+    )
+    .unwrap();
+    assert!(scoped.findings.is_empty());
+}
+
+#[test]
+fn inspect_request_builder_and_default_cursor_required() {
+    use prog_core::{CommandHintConfig, InspectRequest};
+
+    let default = InspectRequest::default();
+    assert_eq!(default.cursor, "");
+    assert_eq!(default.hints, CommandHintConfig::NAV_EXPAND_ONLY);
+
+    let built = InspectRequest::builder("pc1_build")
+        .goal("summarize the issues")
+        .scope_path("/errors")
+        .limit(3)
+        .hints(CommandHintConfig::NAV_ALL)
+        .build();
+    assert_eq!(built.cursor, "pc1_build");
+    assert_eq!(built.goal.as_deref(), Some("summarize the issues"));
+    assert_eq!(built.scope_path.as_deref(), Some("/errors"));
+    assert_eq!(built.limit, 3);
+    assert_eq!(built.hints, CommandHintConfig::NAV_ALL);
 }

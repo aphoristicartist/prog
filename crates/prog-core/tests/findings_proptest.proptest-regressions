@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7cfba493febd515886e6bf65eb37ec721a5eb985e260412ebb1b9401ee9b571e # shrinks to pairs = [("i", Array [String("error: something failed")]), ("i", Null)]
