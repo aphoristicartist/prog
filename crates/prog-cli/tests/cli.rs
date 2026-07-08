@@ -2295,6 +2295,161 @@ fn discover_imports_openapi_without_upstream_probe() {
     assert_eq!(operation["invocation"]["http"]["path"], "/issues/{id}");
 }
 
+#[tokio::test]
+async fn call_openapi_get_records_auto_upgrade_audit_in_observation_trust() {
+    // An imported OpenAPI GET is graded Proven and stored confirmation-gated.
+    // Under default trust (auto_upgrade=true) it is callable WITHOUT --yes and
+    // the auto-upgrade decision is surfaced as audit metadata in
+    // observation.trust.extra["auto_upgrade"] (acceptance: auditable).
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/issues/1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "1", "title": "ok"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let spec_contents = r#"{
+          "openapi": "3.1.0",
+          "info": {"title": "Issues", "version": "2026-07"},
+          "servers": [{"url": "__BASE__"}],
+          "paths": {
+            "/issues/{id}": {
+              "get": {
+                "operationId": "getIssue",
+                "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+                "responses": {"200": {"content": {"application/json": {"schema": {"type": "object"}}}}}
+              }
+            }
+          }
+        }"#
+    .replace("__BASE__", &server.uri());
+    let spec = write_seed(dir.path(), "openapi.json", &spec_contents);
+    let dir_arg = dir.path().to_str().unwrap();
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        spec.to_str().unwrap(),
+        "--import",
+        "openapi",
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+
+    // Stored gated + Proven grade.
+    let profile = read_profile(dir.path(), "api");
+    assert_eq!(
+        profile["operations"][0]["effects"]["requires_confirmation"],
+        true
+    );
+    assert_eq!(
+        profile["operations"][0]["effects"]["evidence_grade"],
+        "proven"
+    );
+
+    // Callable without --yes (auto-upgrade relaxes confirmation) and the audit
+    // is recorded.
+    let call = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "api",
+        "getissue",
+        "--args",
+        r#"{"id":"1"}"#,
+    ]);
+    assert!(call.status.success(), "{}", stdout(&call));
+    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    let audit = &envelope["observation"]["trust"]["auto_upgrade"];
+    assert_eq!(audit["grade"], "proven");
+    assert_eq!(audit["relaxed_requires_confirmation"], true);
+    assert!(audit["reason"].as_str().unwrap().contains("proven"));
+    // The EFFECTIVE (relaxed) effect set is the one recorded. EffectSet.extra
+    // is flattened, so evidence_grade/auto_upgrade appear at the effects top
+    // level, not under an "extra" key.
+    assert_eq!(
+        envelope["observation"]["safety"]["effects"]["requires_confirmation"],
+        false
+    );
+    assert_eq!(
+        envelope["observation"]["safety"]["effects"]["evidence_grade"],
+        "proven"
+    );
+    assert!(
+        envelope["observation"]["safety"]["effects"]["auto_upgrade"]
+            .as_str()
+            .unwrap()
+            .contains("relaxed")
+    );
+}
+
+#[test]
+fn call_openapi_get_requires_yes_when_auto_upgrade_disabled_on_profile() {
+    // The per-source escape hatch: flipping trust.auto_upgrade=false on the
+    // committed profile re-gates the Proven read-only op, so the agent must
+    // pass --yes again (strict V1 behavior).
+    let dir = tempfile::tempdir().unwrap();
+    let spec = write_seed(
+        dir.path(),
+        "openapi.json",
+        r#"{
+          "openapi": "3.1.0",
+          "info": {"title": "Issues", "version": "2026-07"},
+          "servers": [{"url": "http://127.0.0.1:9"}],
+          "paths": {
+            "/issues/{id}": {
+              "get": {
+                "operationId": "getIssue",
+                "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+                "responses": {"200": {"content": {"application/json": {"schema": {"type": "object"}}}}}
+              }
+            }
+          }
+        }"#,
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        spec.to_str().unwrap(),
+        "--import",
+        "openapi",
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+
+    // Flip the live knob on the stored profile.
+    let profile_path = dir.path().join("profiles/api.json");
+    let mut profile: Value = serde_json::from_slice(&fs::read(&profile_path).unwrap()).unwrap();
+    profile["trust"]["auto_upgrade"] = json!(false);
+    fs::write(&profile_path, serde_json::to_vec(&profile).unwrap()).unwrap();
+
+    // Without --yes the call is refused (would require a live server anyway).
+    let call = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "api",
+        "getissue",
+        "--args",
+        r#"{"id":"1"}"#,
+    ]);
+    assert!(!call.status.success(), "call should require confirmation");
+    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    assert_eq!(envelope["error"]["kind"], "requires_confirmation");
+}
+
 #[test]
 fn discover_imports_cli_help_conservatively() {
     let dir = tempfile::tempdir().unwrap();

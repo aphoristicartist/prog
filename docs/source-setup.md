@@ -69,6 +69,21 @@ CLI help imports are conservative: parsed commands are not marked read-only,
 are not cacheable, and require `--yes`. MCP tools without `readOnlyHint: true`
 follow the same fail-closed rule in the importer API.
 
+### Graded evidence and confirmation
+
+Importers stamp a graded `evidence_grade` on every derived operation:
+*proven* (HTTP `GET`/`HEAD`/`OPTIONS`; an MCP tool with `readOnlyHint: true`
+and no contradictory `destructiveHint`; an MCP resource), *assumed* (a JSON
+Schema synthesized op), or *unproven* (non-GET HTTP, MCP tools without a read
+hint, CLI help). Imported read-only operations are **stored** with
+`requires_confirmation: true` and **relaxed** at call/discovery time when the
+descriptor is *proven* read-only and `trust.auto_upgrade` is enabled (the
+default). So a committed OpenAPI or trusted-MCP source can be explored without
+passing `--yes` on every read-only call, while `assumed`/`unproven` ops stay
+gated. Set `trust.auto_upgrade: false` on a profile to re-gate even *proven*
+read-only ops and restore the strict behavior. See `docs/safety.md` for the
+full grade table and the audit location.
+
 ## Generated Output
 
 Both source-add commands return:
