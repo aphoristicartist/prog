@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added the generic findings ranking engine boundary: a stable `build_inspect_response(payload, &InspectRequest)` assembler plus `InspectRequest`/`CommandHintConfig` input types, honest command hints (`FindingCommandHints.evidence` is `None` by default until `prog evidence` ships; `NAV_ALL` opts back in), three new signal kinds (`compile_error`, `test_name`, `diff_hunk`) with strict rustc precedence, a `docs/findings.md` ranking reference, and determinism/order-independence/contiguity proptests with golden snapshots (#89).
 - Added `prog call --pages N` upstream auto-pagination: follows cursor/page pagination for read-only operations under hard page/byte/time caps, prefetching pages into the local cache (#69).
 - Added semantic table inference in `prog observe` for CSV/TSV (RFC 4180), GitHub markdown tables, and aligned/whitespace tables, exposed as bounded `/rows`-expandable payloads (#70).
 - Added graded-evidence trust auto-upgrade: `TrustSettings.auto_upgrade` plus `EvidenceGrade` let proven read-only importer evidence relax confirmation, never mutating/shell/sensitive operations (#72).

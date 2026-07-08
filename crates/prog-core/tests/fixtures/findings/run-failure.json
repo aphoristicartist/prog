@@ -1,0 +1,31 @@
+{
+  "format": "run",
+  "command": {
+    "argv": ["python3", "-m", "pytest", "tests/test_checkout.py"],
+    "success": false,
+    "exit_code": 1,
+    "timed_out": false,
+    "spawn_error": null
+  },
+  "stderr": {
+    "format": "text",
+    "text": "Traceback (most recent call last):\n  File \"tests/test_checkout.py\", line 42, in test_total\n    assert total == 19\nAssertionError: expected 19 got 21"
+  },
+  "failure_sections": [
+    {
+      "index": 0,
+      "kind": "python",
+      "stream": "stderr",
+      "line_start": 1,
+      "line_end": 4,
+      "reason": "Python traceback",
+      "priority": 90,
+      "lines": [
+        "Traceback (most recent call last):",
+        "  File \"tests/test_checkout.py\", line 42, in test_total",
+        "    assert total == 19",
+        "AssertionError: expected 19 got 21"
+      ]
+    }
+  ]
+}

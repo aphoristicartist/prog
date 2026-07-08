@@ -1,0 +1,9 @@
+{
+  "format": "review",
+  "title": "Add checkout total fixture",
+  "review": {
+    "state": "open",
+    "patch": "diff --git a/src/lib.rs b/src/lib.rs\nindex 1..2 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -10,3 +10,4 @@\n fn total(items: &[u32]) -> u32 {\n-    items.iter().sum()\n+    items.iter().map(|x| x * 2).sum()\n+    // double-counts every item\n }\n"
+  },
+  "notes": "Reviewers flagged the double-counting in the diff."
+}

@@ -1,0 +1,140 @@
+[
+  {
+    "rank": 1,
+    "kind": "rust_compile_error",
+    "path": "/failure_sections/0",
+    "confidence": 0.97,
+    "reason": "run failure section contains a Rust compiler diagnostic; inspect stderr lines 1-3",
+    "title": "Rust compiler diagnostic",
+    "severity": "error",
+    "source": "generic.run.failure_sections",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": {
+      "start": 1,
+      "end": 3
+    },
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /failure_sections/0",
+      "expand": "prog expand pc1_golden --path /failure_sections/0",
+      "evidence": "prog evidence pc1_golden --path /failure_sections/0",
+      "search": "prog search pc1_golden --path /failure_sections/0"
+    },
+    "section_kind": "rust",
+    "stream": "stderr",
+    "priority": 95
+  },
+  {
+    "rank": 2,
+    "kind": "compile_error",
+    "path": "/failure_sections/1",
+    "confidence": 0.9,
+    "reason": "run failure section contains a build or compile error; inspect stderr lines 5-5",
+    "title": "compile error",
+    "severity": "error",
+    "source": "generic.run.failure_sections",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": {
+      "start": 5,
+      "end": 5
+    },
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /failure_sections/1",
+      "expand": "prog expand pc1_golden --path /failure_sections/1",
+      "evidence": "prog evidence pc1_golden --path /failure_sections/1",
+      "search": "prog search pc1_golden --path /failure_sections/1"
+    },
+    "section_kind": "build",
+    "stream": "stderr",
+    "priority": 60
+  },
+  {
+    "rank": 3,
+    "kind": "rust_compile_error",
+    "path": "/failure_sections/0/lines/0",
+    "confidence": 0.86,
+    "reason": "string contains a Rust compiler diagnostic marker",
+    "title": "Rust compiler diagnostic",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /failure_sections/0/lines/0",
+      "expand": "prog expand pc1_golden --path /failure_sections/0/lines/0",
+      "evidence": "prog evidence pc1_golden --path /failure_sections/0/lines/0",
+      "search": "prog search pc1_golden --path /failure_sections/0/lines/0"
+    }
+  },
+  {
+    "rank": 4,
+    "kind": "compile_error",
+    "path": "/failure_sections/1/lines/0",
+    "confidence": 0.82,
+    "reason": "string contains a build or compile error marker",
+    "title": "compile error",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /failure_sections/1/lines/0",
+      "expand": "prog expand pc1_golden --path /failure_sections/1/lines/0",
+      "evidence": "prog evidence pc1_golden --path /failure_sections/1/lines/0",
+      "search": "prog search pc1_golden --path /failure_sections/1/lines/0"
+    }
+  },
+  {
+    "rank": 5,
+    "kind": "generic_error_field",
+    "path": "/command/spawn_error",
+    "confidence": 0.72,
+    "reason": "field name indicates error evidence",
+    "title": "error field",
+    "severity": "error",
+    "source": "generic.field_name",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /command/spawn_error",
+      "expand": "prog expand pc1_golden --path /command/spawn_error",
+      "evidence": "prog evidence pc1_golden --path /command/spawn_error",
+      "search": "prog search pc1_golden --path /command/spawn_error"
+    }
+  },
+  {
+    "rank": 6,
+    "kind": "nonzero_exit",
+    "path": "/command",
+    "confidence": 0.72,
+    "reason": "command metadata reports an unsuccessful exit",
+    "title": "command exited unsuccessfully",
+    "severity": "error",
+    "source": "generic.run.command",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /command",
+      "expand": "prog expand pc1_golden --path /command",
+      "evidence": "prog evidence pc1_golden --path /command",
+      "search": "prog search pc1_golden --path /command"
+    }
+  }
+]

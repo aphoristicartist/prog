@@ -1,0 +1,13 @@
+{
+  "format": "mixed",
+  "errors": [
+    {"message": "Error: request failed", "code": "E_REQ"}
+  ],
+  "diagnostics": [
+    {"severity": "error", "message": "rustc: error: unresolved import `foo`"}
+  ],
+  "review": {
+    "diff": "diff --git a/a b/b\n--- a/a\n+++ b/b\n@@ -1,2 +1,2 @@\n-old\n+new\n"
+  },
+  "log": "warning: deprecated API"
+}

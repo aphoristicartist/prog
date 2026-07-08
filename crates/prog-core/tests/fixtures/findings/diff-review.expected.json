@@ -1,0 +1,23 @@
+[
+  {
+    "rank": 1,
+    "kind": "diff_hunk",
+    "path": "/review/patch",
+    "confidence": 0.6,
+    "reason": "field name and value indicate a unified diff hunk",
+    "title": "diff hunk",
+    "severity": null,
+    "source": "generic.field_name",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /review/patch",
+      "expand": "prog expand pc1_golden --path /review/patch",
+      "evidence": "prog evidence pc1_golden --path /review/patch",
+      "search": "prog search pc1_golden --path /review/patch"
+    }
+  }
+]

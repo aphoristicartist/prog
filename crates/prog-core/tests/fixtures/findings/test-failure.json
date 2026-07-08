@@ -1,0 +1,23 @@
+{
+  "format": "run",
+  "command": {
+    "argv": ["pytest", "-q"],
+    "success": false,
+    "exit_code": 1,
+    "timed_out": false,
+    "spawn_error": null
+  },
+  "summary": "1 failing, 14 passing",
+  "failure_sections": [
+    {
+      "index": 0,
+      "kind": "test",
+      "stream": "stderr",
+      "line_start": 1,
+      "line_end": 1,
+      "reason": "pytest nodeid",
+      "priority": 75,
+      "lines": ["tests/test_checkout.py::test_total FAILED"]
+    }
+  ]
+}

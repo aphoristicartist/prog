@@ -13,6 +13,7 @@ This table maps the RFC 0002 invariant set to executable tests. Property tests r
 | I7 | Mutating, shell-backed, and sensitive operations fail closed without flags/trust. | `crates/prog-core/tests/policy.rs::call_policy_requires_confirmation_and_shell_trust`; CLI integration in `crates/prog-cli/tests/cli.rs::call_validates_args_and_enforces_effect_policy` |
 | I8 | Non-cacheable or sensitive results are never persisted. | `crates/prog-core/tests/store.rs::entries_respect_ttl_and_non_cacheable_sensitive_results_are_not_persisted`; `crates/prog-core/tests/policy.rs::cache_policy_respects_enabled_cacheable_and_sensitive_flags` |
 | I9 | Stale, foreign, or incompatible cursors fail actionably and never return wrong data. | `crates/prog-core/tests/store.rs::cursors_fail_closed_for_missing_expired_and_redaction_mismatch`; CLI missing cursor coverage in `crates/prog-cli/tests/cli.rs::missing_call_and_expand_inputs_return_structured_errors` |
+| I10 | Findings ranking is pure, deterministic, and order-independent of input key order. | `crates/prog-core/tests/findings_proptest.rs::{ranked_findings_is_pure_and_deterministic,ranking_is_order_independent_of_key_order,ranks_are_contiguous_and_confidences_bounded}`; golden snapshots in `crates/prog-core/tests/fixtures/findings/*.expected.json` |
 
 ## Property strategy
 

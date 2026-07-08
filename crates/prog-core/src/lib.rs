@@ -1,6 +1,7 @@
 pub mod contracts;
 pub mod disclosure;
 pub mod error;
+pub mod findings;
 pub mod importers;
 pub mod lens;
 pub mod lifecycle;
@@ -15,6 +16,7 @@ pub mod table;
 pub use contracts::*;
 pub use disclosure::*;
 pub use error::{CoreError, ErrorBody, ErrorEnvelope, Result};
+pub use findings::*;
 pub use lens::*;
 pub use lifecycle::*;
 pub use pagination::*;

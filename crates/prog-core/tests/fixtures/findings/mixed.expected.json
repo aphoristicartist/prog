@@ -1,0 +1,149 @@
+[
+  {
+    "rank": 1,
+    "kind": "compile_error",
+    "path": "/diagnostics/0/message",
+    "confidence": 0.82,
+    "reason": "string contains a build or compile error marker",
+    "title": "compile error",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /diagnostics/0/message",
+      "expand": "prog expand pc1_golden --path /diagnostics/0/message",
+      "evidence": "prog evidence pc1_golden --path /diagnostics/0/message",
+      "search": "prog search pc1_golden --path /diagnostics/0/message"
+    }
+  },
+  {
+    "rank": 2,
+    "kind": "generic_error_field",
+    "path": "/errors",
+    "confidence": 0.72,
+    "reason": "field name indicates error evidence",
+    "title": "error field",
+    "severity": "error",
+    "source": "generic.field_name",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /errors",
+      "expand": "prog expand pc1_golden --path /errors",
+      "evidence": "prog evidence pc1_golden --path /errors",
+      "search": "prog search pc1_golden --path /errors"
+    }
+  },
+  {
+    "rank": 3,
+    "kind": "diagnostic",
+    "path": "/diagnostics/0",
+    "confidence": 0.68,
+    "reason": "object severity indicates an error or failure",
+    "title": "error diagnostic",
+    "severity": "error",
+    "source": "generic.object.severity",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /diagnostics/0",
+      "expand": "prog expand pc1_golden --path /diagnostics/0",
+      "evidence": "prog evidence pc1_golden --path /diagnostics/0",
+      "search": "prog search pc1_golden --path /diagnostics/0"
+    }
+  },
+  {
+    "rank": 4,
+    "kind": "diagnostic",
+    "path": "/diagnostics",
+    "confidence": 0.62,
+    "reason": "field name indicates diagnostic evidence",
+    "title": "diagnostic field",
+    "severity": "error",
+    "source": "generic.field_name",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /diagnostics",
+      "expand": "prog expand pc1_golden --path /diagnostics",
+      "evidence": "prog evidence pc1_golden --path /diagnostics",
+      "search": "prog search pc1_golden --path /diagnostics"
+    }
+  },
+  {
+    "rank": 5,
+    "kind": "stderr_error",
+    "path": "/errors/0/message",
+    "confidence": 0.58,
+    "reason": "string contains generic error text",
+    "title": "error text",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /errors/0/message",
+      "expand": "prog expand pc1_golden --path /errors/0/message",
+      "evidence": "prog evidence pc1_golden --path /errors/0/message",
+      "search": "prog search pc1_golden --path /errors/0/message"
+    }
+  },
+  {
+    "rank": 6,
+    "kind": "diff_hunk",
+    "path": "/review/diff",
+    "confidence": 0.6,
+    "reason": "field name and value indicate a unified diff hunk",
+    "title": "diff hunk",
+    "severity": null,
+    "source": "generic.field_name",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /review/diff",
+      "expand": "prog expand pc1_golden --path /review/diff",
+      "evidence": "prog evidence pc1_golden --path /review/diff",
+      "search": "prog search pc1_golden --path /review/diff"
+    }
+  },
+  {
+    "rank": 7,
+    "kind": "warning",
+    "path": "/log",
+    "confidence": 0.34,
+    "reason": "string contains warning text",
+    "title": "warning text",
+    "severity": "warning",
+    "source": "generic.string_pattern",
+    "lens_id": null,
+    "evidence_ref": null,
+    "line_range": null,
+    "byte_range": null,
+    "redaction_state": null,
+    "commands": {
+      "inspect": "prog inspect pc1_golden --path /log",
+      "expand": "prog expand pc1_golden --path /log",
+      "evidence": "prog evidence pc1_golden --path /log",
+      "search": "prog search pc1_golden --path /log"
+    }
+  }
+]
