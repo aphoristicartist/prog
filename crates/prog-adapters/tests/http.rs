@@ -638,6 +638,49 @@ async fn execute_url_refuses_cross_host() {
 }
 
 #[tokio::test]
+async fn execute_url_same_origin_guard_blocks_bypass_classes() {
+    // The SSRF same-origin guard must reject every common bypass class BEFORE any
+    // connection is made. Base is http://<host>:<port>.
+    let server = MockServer::start().await;
+    let base = reqwest::Url::parse(&server.uri()).unwrap();
+    let host = base.host_str().unwrap();
+    let port = base.port().unwrap();
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "items".to_string(),
+            method: "GET".to_string(),
+            path: "/items".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: Some(2_000),
+            max_response_bytes: Some(64 * 1024),
+            sensitive_args: Vec::new(),
+        },
+    );
+    // Each of these must be rejected as bad_args without contacting the server:
+    let bypasses = [
+        format!("http://{host}:{port}@evil.example.com/leak"), // userinfo -> real host is evil
+        format!("https://{host}:{port}/leak"),                 // scheme change (base is http)
+        format!("http://{host}/leak"), // default-port (80) vs the base's custom port
+        "//evil.example.com/leak".to_string(), // protocol-relative (no base -> parse error)
+        "/leak".to_string(),           // path-only (no base -> parse error)
+    ];
+    for url in &bypasses {
+        let err = source
+            .execute_url("items", url, &json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            "bad_args",
+            "SSRF bypass should be rejected: {url}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn execute_url_forces_get_even_for_non_get_base_operation() {
     // Defensive: the base operation may be POST, but URL continuation always
     // issues a GET. The mock only matches GET, so a POST would never hit it.

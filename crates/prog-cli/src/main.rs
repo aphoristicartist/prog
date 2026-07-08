@@ -1825,6 +1825,11 @@ async fn call_source(
                     "pages": page_summaries,
                 }),
             );
+            // The pagination extra (uncapped `merged_shape` + per-page `pages[]`)
+            // is appended AFTER `envelope_for_payload`'s budget loop, so re-enforce
+            // `max_envelope_bytes` here: compact the pagination metadata if the
+            // final envelope would otherwise exceed the budget (invariant I11).
+            compact_pagination_extra_to_budget(&mut envelope)?;
         } else {
             envelope.warnings.push(
                 "--pages requested but the operation is not auto-pagination-safe \
@@ -6318,6 +6323,46 @@ fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Result<usize> {
     let second = serde_json::to_vec(envelope)?.len();
     envelope.summary.envelope_bytes = Some(second.try_into().unwrap_or(u64::MAX));
     Ok(second)
+}
+
+/// Re-enforce `max_envelope_bytes` after the pagination `extra` block is
+/// appended. The per-page `pages[]` index and the `merged_shape` grow with page
+/// count and schema width, so a many-page or wide-shape call could push the
+/// final envelope past the 16 KiB ceiling even though page 1 was bounded.
+/// Progressively drop `pages[]` then `merged_shape` (keeping the tiny scalar
+/// counters) until the serialized envelope fits, recording a warning each time
+/// (invariant I11: pagination never escapes the envelope budget).
+fn compact_pagination_extra_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
+    let budget = PreviewPolicy::default().max_envelope_bytes;
+    if serde_json::to_vec(envelope)?.len() <= budget {
+        return Ok(());
+    }
+    let dropped_pages = envelope
+        .extra
+        .get_mut("pagination")
+        .and_then(Value::as_object_mut)
+        .is_some_and(|pagination| pagination.remove("pages").is_some());
+    if dropped_pages {
+        envelope
+            .warnings
+            .push("pagination page index compacted to enforce max_envelope_bytes".to_string());
+    }
+    if serde_json::to_vec(envelope)?.len() <= budget {
+        finalize_envelope_bytes(envelope)?;
+        return Ok(());
+    }
+    let dropped_shape = envelope
+        .extra
+        .get_mut("pagination")
+        .and_then(Value::as_object_mut)
+        .is_some_and(|pagination| pagination.remove("merged_shape").is_some());
+    if dropped_shape {
+        envelope
+            .warnings
+            .push("pagination merged shape compacted to enforce max_envelope_bytes".to_string());
+    }
+    finalize_envelope_bytes(envelope)?;
+    Ok(())
 }
 
 fn shrink_policy(policy: &PreviewPolicy) -> PreviewPolicy {

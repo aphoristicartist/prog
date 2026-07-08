@@ -172,6 +172,40 @@ fn page_cursors_fail_closed_on_redaction_mismatch_and_foreign_source() {
     );
 }
 
+/// I9 fail-closed (expiry axis): a page cursor minted with
+/// `create_cursor_with_extra` must fail closed once its `expires_at` has
+/// passed, exactly like a normal expand cursor.
+#[test]
+fn page_cursor_fails_closed_when_expired() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+
+    let mut extra = serde_json::Map::new();
+    extra.insert("kind".to_string(), json!("page"));
+    extra.insert("page".to_string(), json!(2));
+    let token = store
+        .create_cursor_with_extra(
+            "ck_expiring",
+            "api",
+            "list",
+            "",
+            RedactionPolicy::default().version,
+            60,
+            extra,
+        )
+        .unwrap();
+
+    // A `now` well past the cursor's expires_at must fail closed.
+    let future = chrono::Utc::now() + chrono::Duration::seconds(3600);
+    let err = store
+        .get_cursor_at(&token, RedactionPolicy::default().version, future)
+        .unwrap_err();
+    assert!(
+        matches!(err, prog_core::CoreError::CursorExpired(_, _)),
+        "expected CursorExpired, got {err:?}"
+    );
+}
+
 use prog_core::RedactionPolicy;
 
 // --- Property tests: the pure pagination laws ---
