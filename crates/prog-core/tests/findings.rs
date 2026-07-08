@@ -314,6 +314,65 @@ fn findings_do_not_copy_secret_values_into_metadata() {
 }
 
 #[test]
+fn failure_section_stream_and_kind_are_not_echoed_unless_safe() {
+    // A secret placed in a structural field (failure_sections[].stream / .kind)
+    // that the value-redactor does NOT classify as high-confidence survives
+    // persistence verbatim (Low -> preserved-and-flagged by default, or None).
+    // The findings engine must NOT then echo that raw value into the agent-facing
+    // reason/extra — only known-safe stream/kind labels may appear.
+    let secret_blob = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"; // 44 chars -> Low
+    let secret_kind = "ghp_opaquetoken1234567890"; // <40 opaque -> None
+    let payload = json!({
+        "failure_sections": [{
+            "kind": secret_kind,
+            "stream": secret_blob,
+            "text": "error[E0308]: mismatched types",
+            "line_start": 1,
+            "line_end": 2
+        }]
+    });
+    let (redacted, _paths) = RedactionPolicy::default().apply_persistence(&payload);
+    // Redaction preserves both (Low/None), so they survive into the payload...
+    let persisted = serde_json::to_string(&redacted).unwrap();
+    assert!(persisted.contains(secret_blob));
+    assert!(persisted.contains(secret_kind));
+
+    // ...but the findings engine must not echo them into reason/extra.
+    let findings = ranked_findings(
+        &redacted,
+        &FindingOptions {
+            cursor: Some("pc1_section".to_string()),
+            ..FindingOptions::default()
+        },
+    )
+    .unwrap();
+    let rendered = serde_json::to_string(&findings).unwrap();
+    assert!(
+        !rendered.contains(secret_blob),
+        "section stream leaked: {rendered}"
+    );
+    assert!(
+        !rendered.contains(secret_kind),
+        "section kind leaked: {rendered}"
+    );
+    assert!(!findings.is_empty());
+    // A known-safe stream IS still surfaced (regression guard on the allowlist).
+    let safe = json!({
+        "failure_sections": [{
+            "kind": "rust",
+            "stream": "stderr",
+            "text": "error[E0308]: bad",
+            "line_start": 1,
+            "line_end": 2
+        }]
+    });
+    let safe_findings = ranked_findings(&safe, &FindingOptions::default()).unwrap();
+    let safe_rendered = serde_json::to_string(&safe_findings).unwrap();
+    assert!(safe_rendered.contains("stderr"));
+    assert!(safe_rendered.contains("rust"));
+}
+
+#[test]
 fn ranking_is_deterministic() {
     let payload = json!({
         "errors": [{"message": "Error: failed"}],

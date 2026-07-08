@@ -60,6 +60,38 @@ fn signal_string() -> impl Strategy<Value = String> {
     ]
 }
 
+/// Object-key strategy biased toward the realistic signal-bearing field names
+/// the structured detectors actually match (error/failure_sections/severity/
+/// command/diff/...), with a short random fallback for unrelated keys. This
+/// makes the order-independence property exercise key_signal / object-severity
+/// / run-command / failure-sections detectors and their `(path, kind)` dedup,
+/// not just trivial unique-path string leaves.
+fn signal_key() -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just("error".to_string()),
+        Just("errors".to_string()),
+        Just("message".to_string()),
+        Just("reason".to_string()),
+        Just("summary".to_string()),
+        Just("severity".to_string()),
+        Just("level".to_string()),
+        Just("status".to_string()),
+        Just("warning".to_string()),
+        Just("warnings".to_string()),
+        Just("diagnostic".to_string()),
+        Just("diagnostics".to_string()),
+        Just("exception".to_string()),
+        Just("failure".to_string()),
+        Just("failures".to_string()),
+        Just("failure_sections".to_string()),
+        Just("command".to_string()),
+        Just("diff".to_string()),
+        Just("issues".to_string()),
+        Just("detail".to_string()),
+        "[a-z]{1,6}",
+    ]
+}
+
 fn json_value() -> impl Strategy<Value = Value> {
     let leaf = prop_oneof![
         Just(Value::Null),
@@ -70,7 +102,7 @@ fn json_value() -> impl Strategy<Value = Value> {
     leaf.prop_recursive(3, 24, 4, |inner| {
         prop_oneof![
             prop::collection::vec(inner.clone(), 0..3).prop_map(Value::Array),
-            prop::collection::vec(("[a-z]{1,4}", inner.clone()), 0..4).prop_map(|pairs| {
+            prop::collection::vec((signal_key(), inner.clone()), 0..4).prop_map(|pairs| {
                 let mut map = Map::new();
                 for (k, v) in pairs {
                     map.insert(k, v);
@@ -100,7 +132,7 @@ proptest! {
 
     #[test]
     fn ranking_is_order_independent_of_key_order(
-        pairs in prop::collection::vec(("[a-z]{1,4}", json_value()), 1..6)
+        pairs in prop::collection::vec((signal_key(), json_value()), 1..6)
     ) {
         // Collapse any duplicate keys (keeping the first value) so that the
         // forward and reversed maps describe the *same* logical object with the

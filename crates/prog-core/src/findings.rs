@@ -423,6 +423,60 @@ fn collect_command_signals(command: &Map<String, Value>, path: String, out: &mut
     }
 }
 
+/// Known-safe stream identifiers that may be echoed into finding metadata.
+/// Anything else is omitted so a payload-controlled stream value cannot carry
+/// a secret the persistence value-redactor did not classify as high-confidence
+/// into the agent-facing `extra`/`reason`.
+const SAFE_SECTION_STREAMS: &[&str] = &[
+    "stdout",
+    "stderr",
+    "combined",
+    "all",
+    "stdout_head",
+    "stderr_head",
+    "stdout_tail",
+    "stderr_tail",
+    "combined_head",
+    "combined_tail",
+];
+
+/// Known-safe upstream section-kind labels that may be echoed into finding
+/// metadata. Exotic or attacker-controlled kinds are omitted for the same
+/// reason as `SAFE_SECTION_STREAMS`.
+const SAFE_SECTION_KINDS: &[&str] = &[
+    "generic",
+    "timeout",
+    "spawn_error",
+    "build",
+    "compile",
+    "rust_compile",
+    "test",
+    "python",
+    "rust",
+    "go",
+    "c",
+    "cpp",
+    "csharp",
+    "java",
+    "javascript",
+    "typescript",
+    "ruby",
+    "kotlin",
+    "swift",
+    "php",
+    "scala",
+    "exception",
+    "diagnostic",
+    "warning",
+    "error",
+];
+
+/// Return the identifier only when it exactly matches a known-safe label, so
+/// payload-controlled text is never echoed verbatim into agent-facing metadata.
+fn allowlisted_identifier<'a>(value: &'a str, allowed: &[&'static str]) -> Option<&'a str> {
+    allowed.contains(&value).then_some(value)
+}
+
 fn collect_failure_sections(sections: &[Value], path: String, out: &mut Vec<Candidate>) {
     for (index, section) in sections.iter().enumerate() {
         let section_path = pointer::push(&path, &index.to_string());
@@ -439,10 +493,16 @@ fn collect_failure_sections(sections: &[Value], path: String, out: &mut Vec<Cand
         candidate.confidence = confidence;
         candidate.reason = failure_section_reason(map, signal.reason);
         candidate.line_range = line_range(map);
-        candidate
-            .extra
-            .insert("section_kind".to_string(), json!(kind));
-        if let Some(stream) = map.get("stream").and_then(Value::as_str) {
+        if let Some(safe_kind) = allowlisted_identifier(kind, SAFE_SECTION_KINDS) {
+            candidate
+                .extra
+                .insert("section_kind".to_string(), json!(safe_kind));
+        }
+        if let Some(stream) = map
+            .get("stream")
+            .and_then(Value::as_str)
+            .and_then(|s| allowlisted_identifier(s, SAFE_SECTION_STREAMS))
+        {
             candidate.extra.insert("stream".to_string(), json!(stream));
         }
         candidate
@@ -550,7 +610,13 @@ fn failure_section_signal(kind: &str, text: &str) -> Signal {
 }
 
 fn failure_section_reason(section: &Map<String, Value>, fallback: &str) -> String {
-    let stream = section.get("stream").and_then(Value::as_str);
+    // Only interpolate a stream identifier when it is a known-safe label; a
+    // payload-controlled stream value could otherwise echo a secret the value
+    // redactor did not classify as high-confidence into the agent-facing reason.
+    let stream = section
+        .get("stream")
+        .and_then(Value::as_str)
+        .and_then(|s| allowlisted_identifier(s, SAFE_SECTION_STREAMS));
     let line_start = section.get("line_start").and_then(Value::as_u64);
     let line_end = section.get("line_end").and_then(Value::as_u64);
     match (stream, line_start, line_end) {
