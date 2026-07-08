@@ -3,7 +3,7 @@ use std::{marker::PhantomData, ops::Deref};
 use serde_json::Value;
 
 use crate::{
-    CoreError, CursorRecord, RedactionPolicy, Result, SliceRequest,
+    CoreError, CursorRecord, RedactionPolicy, Result, SliceRequest, ValueScanReport,
     pointer::{self, is_within},
 };
 
@@ -30,6 +30,9 @@ pub type PersistedPayload = Payload<Persisted>;
 pub struct RedactionOutcome {
     pub payload: RedactedPayload,
     pub redacted_paths: Vec<String>,
+    /// Value-scan outcome: high-confidence redactions and low-confidence
+    /// observations (the lossy signal surfaced to observation metadata).
+    pub value_scan: ValueScanReport,
 }
 
 impl RawPayload {
@@ -41,10 +44,11 @@ impl RawPayload {
     }
 
     pub fn redact(self, policy: &RedactionPolicy) -> RedactionOutcome {
-        let (value, redacted_paths) = policy.apply_persistence(&self.value);
+        let detail = policy.apply_persistence_detailed(&self.value);
         RedactionOutcome {
-            payload: RedactedPayload::from_redacted_value(value),
-            redacted_paths,
+            payload: RedactedPayload::from_redacted_value(detail.value),
+            redacted_paths: detail.redacted_paths,
+            value_scan: detail.value_scan,
         }
     }
 }
