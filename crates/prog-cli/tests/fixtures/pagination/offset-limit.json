@@ -1,0 +1,17 @@
+{
+  "name": "offset-limit",
+  "convention": "Offset + limit page strategy echoed in the body (database-style pagination)",
+  "body": {
+    "items": [{"id": 1}, {"id": 2}],
+    "offset": 0,
+    "limit": 2
+  },
+  "link_header": null,
+  "args": {"offset": 0, "limit": 2},
+  "expect": {
+    "page_strategy": "offset_limit",
+    "next_target": "args",
+    "next_offset": 2,
+    "preserved_limit": 2
+  }
+}

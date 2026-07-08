@@ -1,0 +1,15 @@
+{
+  "name": "link-header",
+  "convention": "RFC 5988 Link rel=\"next\" header over a bare JSON array (GitHub issues style)",
+  "body": [
+    {"id": 1, "title": "first"},
+    {"id": 2, "title": "second"}
+  ],
+  "link_header": "<https://api.example.com/repos/o/r/issues?page=2>; rel=\"next\", <https://api.example.com/repos/o/r/issues?page=5>; rel=\"last\"",
+  "args": {},
+  "expect": {
+    "link_rel_next_contains": "rel=\"next\"",
+    "next_target": "url",
+    "next_url_contains": "page=2"
+  }
+}

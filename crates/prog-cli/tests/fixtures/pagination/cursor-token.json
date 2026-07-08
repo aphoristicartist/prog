@@ -1,0 +1,18 @@
+{
+  "name": "cursor-token",
+  "convention": "Opaque cursor token in nextPageToken with has_more (Stripe / generic REST style)",
+  "body": {
+    "data": [{"id": "obj_1"}],
+    "has_more": true,
+    "nextPageToken": "tok_2"
+  },
+  "link_header": null,
+  "args": {"page_token": "tok_1", "limit": 5},
+  "expect": {
+    "next_cursor": "tok_2",
+    "cursor_param": "nextPageToken",
+    "has_more": true,
+    "next_target": "args",
+    "written_param": "page_token"
+  }
+}

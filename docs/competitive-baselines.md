@@ -39,3 +39,12 @@ Regenerate this report and the raw metrics with `PROG_BASELINE_EVAL_UPDATE=1 car
 - Caveman-style terse output reduces answer tokens but leaves raw tool input cost unchanged.
 - `prog_envelope_only` intentionally loses when the bounded first view hides required evidence.
 - `prog_paths_expand` and `prog_repeated_cache` solve every scenario here, but the tiny payload counterexample is cheaper as raw context.
+
+## Pagination (auto-fetch under the envelope budget)
+
+A separate, self-contained baseline (`crates/prog-cli/tests/competitive_baselines.rs::pagination_competitive_baseline_vs_raw_page_by_page`) compares `prog call --pages N` against raw page-by-page fetching over a 5-page cursor-paginated endpoint (each page ~1 KiB).
+
+- **Correctness parity**: every page's evidence is recoverable through its own `pc1_` per-page cursor (surfaced in `envelope.pagination.pages[].cursor`), so the envelope budget never hides data — correctness matches raw.
+- **Cost win**: `prog --pages` emits a single bounded envelope (page-1 preview + pagination metadata; pages N>=2 contribute only omitted-region counts), whose approx-token cost is strictly less than the raw concatenation of all page bodies. Raw page-by-page pays the full input cost of every page up front.
+
+This rows is maintained as an executable assertion rather than a regenerated metric because the comparison is structural (cheaper-and-equally-correct), not a dollar figure.
