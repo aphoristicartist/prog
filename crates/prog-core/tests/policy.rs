@@ -438,8 +438,20 @@ proptest! {
     fn effective_effects_relaxes_only_proven_read_only_under_auto_upgrade(
         auto_upgrade in any::<bool>(),
         grade_kind in 0u8..3,
+        read_only in any::<bool>(),
+        mutating in any::<bool>(),
+        shell in any::<bool>(),
+        sensitive in any::<bool>(),
+        requires_confirmation in any::<bool>(),
     ) {
+        // Vary EVERY flag of the EffectSet so the full relaxation condition is
+        // actually pinned (not just auto_upgrade && grade).
         let mut effects = gated_read_only();
+        effects.read_only = read_only;
+        effects.mutating = mutating;
+        effects.shell = shell;
+        effects.sensitive = sensitive;
+        effects.requires_confirmation = requires_confirmation;
         let grade = match grade_kind {
             0 => EvidenceGrade::Proven,
             1 => EvidenceGrade::Assumed,
@@ -453,10 +465,19 @@ proptest! {
             && effects.read_only
             && !effects.mutating
             && !effects.shell
-            && !effects.sensitive;
-        prop_assert_eq!(!out.requires_confirmation, should_relax);
+            && !effects.sensitive
+            && effects.requires_confirmation;
         prop_assert_eq!(note.is_some(), should_relax);
-        // No other flag moves.
+        // Relaxation clears requires_confirmation; otherwise it is unchanged.
+        prop_assert_eq!(
+            out.requires_confirmation,
+            if should_relax {
+                false
+            } else {
+                effects.requires_confirmation
+            }
+        );
+        // No other flag ever moves (mutating/shell/sensitive can NEVER relax).
         prop_assert_eq!(out.read_only, effects.read_only);
         prop_assert_eq!(out.mutating, effects.mutating);
         prop_assert_eq!(out.shell, effects.shell);
