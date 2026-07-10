@@ -1,0 +1,14 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "kubectl-json",
+  "version": 1,
+  "match": {"source_id": "observe", "artifact_kind": "json"},
+  "view": {"root": "/items", "limit": 20, "depth": 5, "fields": {"name": "/metadata/name", "namespace": "/metadata/namespace", "phase": "/status/phase", "reason": "/status/reason", "conditions": "/status/conditions", "containers": "/status/containerStatuses"}},
+  "omit": [{"path": "/items/*/metadata/managedFields", "reason": "deep_object", "detail": "managed fields remain cursor-expandable", "expandable": true}],
+  "findings": [
+    {"kind": "kubernetes_failure", "path": "/items/*/status", "confidence": 0.94, "reason": "Kubernetes resource status contains a failure or unhealthy condition", "title": "unhealthy Kubernetes resource", "severity": "error", "contains_any": ["failed", "error", "crashloopbackoff", "imagepullbackoff", "unschedulable"]}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/items/{index}/status", "reason": "cite the selected resource status"}],
+  "invariants": ["resource_names_and_statuses_come_from_payload", "managed_fields_remain_expandable", "redaction_precedes_lens_projection"],
+  "fixtures": {"positive": ["fixtures/kubectl-pods.json"], "negative": ["fixtures/counterexamples/text-log-normalized.json"]}
+}

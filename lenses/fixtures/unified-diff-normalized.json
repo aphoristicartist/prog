@@ -1,0 +1,14 @@
+{
+  "format": "unified_diff",
+  "files": [
+    {"header": "a/src/auth.rs b/src/auth.rs", "line_start": 1, "line_end": 9, "hunks": [{"header": "@@ -40,7 +40,7 @@ fn authorize", "line_start": 4, "line_end": 8, "lines": ["-    verify_permission(user)?;", "+    let _ = verify_permission(user);", "+    token.unwrap();"]}]},
+    {"header": "a/src/ui.rs b/src/ui.rs", "line_start": 10, "line_end": 16, "hunks": [{"header": "@@ -10,3 +10,3 @@ fn label", "line_start": 12, "line_end": 15, "lines": ["-    label(\"Save\")", "+    label(\"Store\")"]}]}
+  ],
+  "head": ["diff --git a/src/auth.rs b/src/auth.rs", "--- a/src/auth.rs", "+++ b/src/auth.rs"],
+  "tail": ["-    label(\"Save\")", "+    label(\"Store\")"],
+  "text": "diff --git a/src/auth.rs b/src/auth.rs\n--- a/src/auth.rs\n+++ b/src/auth.rs\n@@ -40,7 +40,7 @@ fn authorize\n-    verify_permission(user)?;\n+    let _ = verify_permission(user);\n+    token.unwrap();\nlong unchanged context aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "lines": [{"number": 1, "text": "diff --git a/src/auth.rs b/src/auth.rs"}, {"number": 4, "text": "@@ -40,7 +40,7 @@ fn authorize"}],
+  "line_count": 16,
+  "byte_count": 900,
+  "utf8_valid": true
+}

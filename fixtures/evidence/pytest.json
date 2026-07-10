@@ -1,0 +1,11 @@
+{
+  "name": "pytest_assertion_failure",
+  "goal": "debug the first failing test",
+  "expected_path": "/failure_sections/0",
+  "payload": {
+    "command": {"success": false, "exit_code": 1, "timed_out": false, "spawn_error": null},
+    "failure_sections": [{"kind": "python", "stream": "stderr", "line_start": 1, "line_end": 6, "priority": 92, "lines": ["Traceback (most recent call last):", "  File tests/test_checkout.py, line 42, in test_total", "AssertionError: expected 19 got 21"], "reason": "Python traceback"}],
+    "stdout": {"text": "collected 148 items", "head": ["collected 148 items"], "tail": ["1 failed, 147 passed"]},
+    "stderr": {"text": "Traceback (most recent call last):\nAssertionError: expected 19 got 21", "head": ["Traceback (most recent call last):"], "tail": ["AssertionError: expected 19 got 21"]}
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "format": "run",
+  "command": {"capture_id": "gh_fixture", "argv": ["gh", "issue", "list", "--json", "number,title,state,labels,updatedAt,url"], "argv_count": 6, "cwd": "/repo", "duration_ms": 320, "success": true, "exit_code": 0, "signal": null, "timed_out": false, "spawn_error": null},
+  "failure_sections": [],
+  "stderr": {"head": [], "tail": [], "text": ""},
+  "stdout": {"head": ["[{\"number\":90,\"title\":\"Add inspect\",\"state\":\"OPEN\"}]"], "tail": [], "text": "[{\"number\":90,\"title\":\"Add inspect\",\"state\":\"OPEN\",\"labels\":[{\"name\":\"enhancement\"}],\"updatedAt\":\"2026-07-09T12:00:00Z\",\"url\":\"https://github.com/example/prog/issues/90\",\"body\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"number\":91,\"title\":\"Envelope findings\",\"state\":\"OPEN\",\"labels\":[],\"updatedAt\":\"2026-07-09T13:00:00Z\",\"url\":\"https://github.com/example/prog/issues/91\",\"body\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}]"},
+  "combined": [{"stream": "stdout", "text": "GitHub issue JSON"}]
+}

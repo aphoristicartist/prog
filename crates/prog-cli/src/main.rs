@@ -18,16 +18,19 @@ use prog_core::importers::{
     ImportContext, ImportReport, import_cli_help, import_json_schema, import_openapi,
 };
 use prog_core::{
-    AuthRef, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance, CoreError,
-    DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, EvidenceGrade, EvidenceRef, ExpansionScope,
-    Extra, LensManifest, NextAction, ObservationCompleteness, ObservationFreshness,
-    ObservationMetadata, ObservationPayloadStatus, ObservationSafety, ObservationTrust,
-    OmissionReason, OmittedRegion, OperationProfile, PreviewPolicy, RawPayload, RedactedPayload,
-    RedactionPolicy, Result, SOURCE_PROFILE_VERSION, ScopedSlice, SliceRequest, SourceProfile,
-    Store, Summary, TrustSettings, ValueScanReport, cache_allowed, call_effect_warnings,
-    canonical_json, check_call, check_discovery, cli_adapter_effects, cli_hardening_effects,
-    expand, http_adapter_effects, http_hardening_effects, infer, join, lens_slice_request,
-    new_cache_entry, project, project_with_lens, public_contract_schemas, render_hints,
+    AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance,
+    CommandHintConfig, CoreError, DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, EvidenceBlock,
+    EvidenceGrade, EvidenceRef, ExpansionScope, Extra, FindingOptions, InspectRequest,
+    InspectResponse, LensManifest, NewSessionEvent, NextAction, ObservationCompleteness,
+    ObservationFreshness, ObservationMetadata, ObservationPayloadStatus, ObservationSafety,
+    ObservationTrust, OmissionReason, OmittedRegion, OperationProfile, PersistedPayload,
+    PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, Result, SOURCE_PROFILE_VERSION,
+    ScopedSlice, SearchOptions, SearchResponse, SliceRequest, SourceProfile, Store, Summary,
+    TrustSettings, ValidatedCursor, ValueScanReport, build_inspect_response, cache_allowed,
+    call_effect_warnings, canonical_json, check_call, check_discovery, cli_adapter_effects,
+    cli_hardening_effects, evidence_block, expand, http_adapter_effects, http_hardening_effects,
+    infer, join, lens_slice_request, new_cache_entry, project, project_with_lens,
+    public_contract_schemas, ranked_findings_with_lens, render_hints, search_payload_with_lens,
     slice_value, tighten_effects, validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
@@ -75,9 +78,18 @@ enum Command {
     Call(CallArgs),
     Observe(ObserveArgs),
     Run(RunArgs),
+    Recipe(RecipeArgs),
     Init(InitArgs),
     Cost(CostArgs),
     Paths(PathsArgs),
+    Inspect(InspectArgs),
+    Evidence(EvidenceArgs),
+    Search(SearchArgs),
+    Find(FindArgs),
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
     Expand(ExpandArgs),
     Cache {
         #[command(subcommand)]
@@ -190,6 +202,11 @@ struct SourceAddCliArgs {
     #[arg(long)]
     probe: bool,
 
+    /// Apply a conservatively detected structured-output flag when one is
+    /// known to be valid for this CLI invocation.
+    #[arg(long)]
+    prefer_json: bool,
+
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
     command: Vec<String>,
 }
@@ -277,6 +294,63 @@ struct RunArgs {
     command: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum RecipeKind {
+    CargoTest,
+    Pytest,
+    NpmTest,
+    GoTest,
+    GhIssues,
+    DiffReview,
+    LogsRootCause,
+}
+
+impl RecipeKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CargoTest => "cargo-test",
+            Self::Pytest => "pytest",
+            Self::NpmTest => "npm-test",
+            Self::GoTest => "go-test",
+            Self::GhIssues => "gh-issues",
+            Self::DiffReview => "diff-review",
+            Self::LogsRootCause => "logs-root-cause",
+        }
+    }
+
+    fn default_goal(self) -> &'static str {
+        match self {
+            Self::CargoTest | Self::Pytest | Self::NpmTest | Self::GoTest => {
+                "find the first causal test failure"
+            }
+            Self::GhIssues => "triage the most important issue evidence",
+            Self::DiffReview => "find risky changed hunks",
+            Self::LogsRootCause => "find the root cause in the logs",
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+struct RecipeArgs {
+    #[arg(value_enum)]
+    recipe: RecipeKind,
+
+    #[arg(long)]
+    goal: Option<String>,
+
+    #[arg(long)]
+    file: Option<PathBuf>,
+
+    #[arg(long, default_value_t = 30_000)]
+    timeout_ms: u64,
+
+    #[arg(long, default_value_t = 86_400)]
+    ttl_seconds: u64,
+
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    command: Vec<String>,
+}
+
 #[derive(Debug, Args)]
 struct InitArgs {
     #[arg(long, value_enum)]
@@ -337,6 +411,89 @@ struct PathsArgs {
 
     #[arg(long, default_value_t = 6)]
     depth: usize,
+}
+
+#[derive(Debug, Args)]
+struct InspectArgs {
+    cursor: String,
+
+    #[arg(long)]
+    goal: String,
+
+    #[arg(long, default_value_t = 10)]
+    limit: usize,
+
+    #[arg(long)]
+    kind: Option<String>,
+
+    #[arg(long, default_value = "")]
+    path: String,
+}
+
+#[derive(Debug, Args)]
+struct EvidenceArgs {
+    cursor: String,
+
+    #[arg(long, default_value = "")]
+    path: String,
+}
+
+#[derive(Debug, Args)]
+struct SearchArgs {
+    cursor: String,
+    query: String,
+
+    #[arg(long)]
+    kind: Option<String>,
+
+    #[arg(long, default_value = "")]
+    path: String,
+
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+
+    #[arg(long)]
+    case_sensitive: bool,
+
+    #[arg(long)]
+    regex: bool,
+}
+
+#[derive(Debug, Args)]
+struct FindArgs {
+    cursor: String,
+
+    #[arg(long)]
+    kind: String,
+
+    #[arg(long, default_value = "")]
+    path: String,
+
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+}
+
+#[derive(Debug, Subcommand)]
+enum SessionCommand {
+    Start(SessionStartArgs),
+    Show(SessionShowArgs),
+    Note(SessionNoteArgs),
+}
+
+#[derive(Debug, Args)]
+struct SessionStartArgs {
+    #[arg(long)]
+    goal: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct SessionShowArgs {
+    session_id: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct SessionNoteArgs {
+    note: String,
 }
 
 #[derive(Debug, Args)]
@@ -445,25 +602,35 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
         }
         Command::Call(args) => {
             let store = Store::open(&cli.dir)?;
-            let envelope = call_source(&store, &cli.lens_dir, args).await?;
+            let mut envelope = call_source(&store, &cli.lens_dir, args).await?;
+            record_envelope_event(&store, &mut envelope, "call");
             write_success(&envelope, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Observe(args) => {
             let store = Store::open(&cli.dir)?;
-            let envelope = observe_artifact(&store, &cli.lens_dir, args)?;
+            let mut envelope = observe_artifact(&store, &cli.lens_dir, args)?;
+            record_envelope_event(&store, &mut envelope, "observe");
             write_success(&envelope, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Run(args) => {
             let store = Store::open(&cli.dir)?;
-            let result = run_command(&store, &cli.lens_dir, args).await?;
+            let mut result = run_command(&store, &cli.lens_dir, args).await?;
+            record_envelope_event(&store, &mut result.envelope, "run");
             write_success(&result.envelope, cli.pretty)?;
             Ok(if args.preserve_exit_code {
                 child_exit_code(result.exit_code)
             } else {
                 ExitCode::SUCCESS
             })
+        }
+        Command::Recipe(args) => {
+            let store = Store::open(&cli.dir)?;
+            let mut envelope = run_recipe(&store, &cli.lens_dir, args).await?;
+            record_envelope_event(&store, &mut envelope, "recipe");
+            write_success(&envelope, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
         }
         Command::Init(args) => {
             let report = init_integration(args)?;
@@ -478,12 +645,130 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
         Command::Paths(args) => {
             let store = Store::open(&cli.dir)?;
             let response = paths_cursor(&store, args)?;
+            record_navigation_event(
+                &store,
+                "paths",
+                Some(&args.cursor),
+                Some(&response.prefix),
+                None,
+                Some(format!("listed {} cached path(s)", response.paths.len())),
+            );
             write_success(&response, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Inspect(args) => {
+            let store = Store::open(&cli.dir)?;
+            let response = inspect_cursor(&store, &cli.lens_dir, args)?;
+            record_navigation_event(
+                &store,
+                "inspect",
+                Some(&args.cursor),
+                response.scope_path.as_deref(),
+                None,
+                Some(format!(
+                    "ranked {} finding(s) for {}",
+                    response.findings.len(),
+                    response.goal
+                )),
+            );
+            write_success(&response, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Evidence(args) => {
+            let store = Store::open(&cli.dir)?;
+            let response = evidence_cursor(&store, &cli.lens_dir, args)?;
+            record_navigation_event(
+                &store,
+                "evidence",
+                Some(&args.cursor),
+                Some(&response.path),
+                response
+                    .evidence_ref
+                    .as_ref()
+                    .and_then(|reference| reference.uri.as_deref()),
+                Some(response.summary.clone()),
+            );
+            write_success(&response, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Search(args) => {
+            let store = Store::open(&cli.dir)?;
+            let response = search_cursor(
+                &store,
+                &cli.lens_dir,
+                &args.cursor,
+                Some(args.query.clone()),
+                args.kind.clone(),
+                &args.path,
+                args.limit,
+                args.case_sensitive,
+                args.regex,
+            )?;
+            record_navigation_event(
+                &store,
+                "search",
+                Some(&args.cursor),
+                response.scope_path.as_deref(),
+                None,
+                Some(format!("found {} cached match(es)", response.hits.len())),
+            );
+            write_success(&response, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Find(args) => {
+            let store = Store::open(&cli.dir)?;
+            let response = search_cursor(
+                &store,
+                &cli.lens_dir,
+                &args.cursor,
+                None,
+                Some(args.kind.clone()),
+                &args.path,
+                args.limit,
+                false,
+                false,
+            )?;
+            record_navigation_event(
+                &store,
+                "find",
+                Some(&args.cursor),
+                response.scope_path.as_deref(),
+                None,
+                Some(format!(
+                    "found {} {} match(es)",
+                    response.hits.len(),
+                    args.kind
+                )),
+            );
+            write_success(&response, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Session { command } => {
+            let store = Store::open(&cli.dir)?;
+            match command {
+                SessionCommand::Start(args) => {
+                    let trail = store.start_session(args.goal.clone())?;
+                    write_success(&trail, cli.pretty)?;
+                }
+                SessionCommand::Show(args) => {
+                    let trail = session_show(&store, args)?;
+                    write_success(&trail, cli.pretty)?;
+                }
+                SessionCommand::Note(args) => {
+                    let event = store.record_session_event(NewSessionEvent {
+                        kind: "conclusion".to_string(),
+                        summary: Some(args.note.clone()),
+                        ..NewSessionEvent::default()
+                    })?;
+                    write_success(&event, cli.pretty)?;
+                }
+            }
             Ok(ExitCode::SUCCESS)
         }
         Command::Expand(args) => {
             let store = Store::open(&cli.dir)?;
-            let envelope = expand_cursor(&store, args)?;
+            let mut envelope = expand_cursor(&store, args)?;
+            record_envelope_event(&store, &mut envelope, "expand");
             write_success(&envelope, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
@@ -565,7 +850,16 @@ struct SourceAddReport {
     generated_seed: Value,
     discovery: DiscoverReport,
     next_steps: Vec<String>,
+    structured_output: Vec<StructuredOutputHint>,
     warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StructuredOutputHint {
+    status: &'static str,
+    flag: Vec<String>,
+    confidence: &'static str,
+    reason: String,
 }
 
 #[derive(Serialize)]
@@ -759,7 +1053,7 @@ struct RunPayloadInput<'a> {
 }
 
 struct InitFileSpec {
-    relative_path: &'static str,
+    relative_path: String,
     content: String,
     executable: bool,
 }
@@ -1080,6 +1374,7 @@ async fn source_add_http(
         operation,
         generated_seed: seed,
         next_steps,
+        structured_output: Vec::new(),
         warnings,
         discovery,
     })
@@ -1091,7 +1386,7 @@ async fn source_add_cli(
     args: &SourceAddCliArgs,
 ) -> Result<SourceAddReport> {
     let operation = source_add_operation(&args.operation, "source add-cli")?;
-    let Some((command, command_args)) = args.command.split_first() else {
+    let Some((command, original_command_args)) = args.command.split_first() else {
         return Err(CoreError::BadArgs {
             operation: "source add-cli".to_string(),
             reason: "pass a command after --".to_string(),
@@ -1103,6 +1398,32 @@ async fn source_add_cli(
         warnings.push(format!(
             "generated CLI operation '{}' is confirmation-gated; pass --read-only only for commands safe to invoke automatically",
             operation
+        ));
+    }
+    let mut command_args = original_command_args.to_vec();
+    let mut structured_output = cli_structured_output_hints(command, &command_args);
+    if args.prefer_json {
+        let applicable = structured_output
+            .iter()
+            .find(|hint| hint.status == "suggested" && hint.confidence == "high")
+            .cloned()
+            .ok_or_else(|| CoreError::BadArgs {
+                operation: "source add-cli --prefer-json".to_string(),
+                reason: "no high-confidence structured-output flag is known for this invocation; add the CLI's JSON flag explicitly after --".to_string(),
+            })?;
+        command_args.extend(applicable.flag.clone());
+        structured_output = cli_structured_output_hints(command, &command_args);
+        warnings.push(format!(
+            "applied structured-output flag {} after explicit --prefer-json",
+            applicable.flag.join(" ")
+        ));
+    } else if let Some(hint) = structured_output
+        .iter()
+        .find(|hint| hint.status == "suggested")
+    {
+        warnings.push(format!(
+            "structured output available: add {} after --, or pass --prefer-json when the suggestion is high-confidence",
+            hint.flag.join(" ")
         ));
     }
     let seed = json!({
@@ -1131,9 +1452,113 @@ async fn source_add_cli(
         operation,
         generated_seed: seed,
         next_steps,
+        structured_output,
         warnings,
         discovery,
     })
+}
+
+fn cli_structured_output_hints(command: &str, args: &[String]) -> Vec<StructuredOutputHint> {
+    let program = Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(command)
+        .to_ascii_lowercase();
+    if let Some(flag) = detected_json_flag(args) {
+        return vec![StructuredOutputHint {
+            status: "detected",
+            flag,
+            confidence: "high",
+            reason: "the authored command already requests structured output".to_string(),
+        }];
+    }
+
+    let words = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let hint = match program.as_str() {
+        "kubectl" if words.first().is_some_and(|word| *word == "get") => {
+            Some(StructuredOutputHint {
+                status: "suggested",
+                flag: vec!["-o".to_string(), "json".to_string()],
+                confidence: "high",
+                reason: "kubectl get has a stable JSON output mode".to_string(),
+            })
+        }
+        "gh" if words.starts_with(&["issue", "list"]) => Some(StructuredOutputHint {
+            status: "suggested",
+            flag: vec![
+                "--json".to_string(),
+                "number,title,state,labels,updatedAt,url".to_string(),
+            ],
+            confidence: "high",
+            reason: "gh issue list supports an explicit JSON field set".to_string(),
+        }),
+        "gh" if words.starts_with(&["pr", "list"]) => Some(StructuredOutputHint {
+            status: "suggested",
+            flag: vec![
+                "--json".to_string(),
+                "number,title,state,author,labels,updatedAt,url".to_string(),
+            ],
+            confidence: "high",
+            reason: "gh pr list supports an explicit JSON field set".to_string(),
+        }),
+        "gh" if words.starts_with(&["repo", "list"]) => Some(StructuredOutputHint {
+            status: "suggested",
+            flag: vec![
+                "--json".to_string(),
+                "nameWithOwner,description,isPrivate,updatedAt,url".to_string(),
+            ],
+            confidence: "high",
+            reason: "gh repo list supports an explicit JSON field set".to_string(),
+        }),
+        "cargo"
+            if !words.contains(&"--")
+                && words
+                    .first()
+                    .is_some_and(|word| matches!(*word, "build" | "check" | "clippy" | "test")) =>
+        {
+            Some(StructuredOutputHint {
+                status: "suggested",
+                flag: vec!["--message-format=json".to_string()],
+                confidence: "high",
+                reason: "cargo supports newline-delimited JSON compiler messages".to_string(),
+            })
+        }
+        "npm"
+            if words.first().is_some_and(|word| {
+                matches!(*word, "audit" | "list" | "ls" | "outdated" | "view")
+            }) =>
+        {
+            Some(StructuredOutputHint {
+                status: "suggested",
+                flag: vec!["--json".to_string()],
+                confidence: "high",
+                reason: "this npm command supports JSON output".to_string(),
+            })
+        }
+        _ => None,
+    };
+    hint.into_iter().collect()
+}
+
+fn detected_json_flag(args: &[String]) -> Option<Vec<String>> {
+    for (index, arg) in args.iter().enumerate() {
+        let normalized = arg.to_ascii_lowercase();
+        if matches!(normalized.as_str(), "--json" | "--json=true")
+            || normalized.starts_with("--message-format=json")
+            || normalized.starts_with("--format=json")
+            || normalized.starts_with("--output=json")
+        {
+            return Some(vec![arg.clone()]);
+        }
+        if matches!(normalized.as_str(), "--format" | "--output" | "-o")
+            && args
+                .get(index + 1)
+                .is_some_and(|value| value.eq_ignore_ascii_case("json"))
+        {
+            return Some(vec![arg.clone(), args[index + 1].clone()]);
+        }
+    }
+    None
 }
 
 fn source_add_operation(operation: &str, context: &str) -> Result<String> {
@@ -1922,13 +2347,14 @@ fn observe_artifact(
         None => requested_view,
     };
     let root_path = slice.path.clone().unwrap_or_default();
-    let cursor = Some(store.create_cursor(
+    let cursor = Some(store.create_cursor_with_extra(
         &cache_key,
         "observe",
         &input.name,
         &root_path,
         RedactionPolicy::default().version,
         ttl,
+        cursor_lens_extra(lens.as_ref()),
     )?);
     let mut warnings = normalized.warnings;
     if !redacted_paths.is_empty() {
@@ -2116,13 +2542,14 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
     );
     entry.provenance = Some(provenance.clone());
     store.put_entry(&cache_key, &entry)?;
-    let cursor = Some(store.create_cursor(
+    let cursor = Some(store.create_cursor_with_extra(
         &cache_key,
         "run",
         &operation,
         &root_path,
         RedactionPolicy::default().version,
         ttl,
+        cursor_lens_extra(lens.as_ref()),
     )?);
     provenance.cache_key = Some(cache_key.clone());
 
@@ -2177,6 +2604,150 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         envelope,
         exit_code: run_exit_code(&run.status),
     })
+}
+
+async fn run_recipe(
+    store: &Store,
+    lens_dir: &Path,
+    args: &RecipeArgs,
+) -> Result<DisclosureEnvelope> {
+    let goal = args
+        .goal
+        .clone()
+        .unwrap_or_else(|| args.recipe.default_goal().to_string());
+    if goal.trim().is_empty() {
+        return Err(CoreError::BadArgs {
+            operation: "recipe".to_string(),
+            reason: "--goal must not be empty".to_string(),
+        });
+    }
+
+    let (mut envelope, expanded_commands) = match args.recipe {
+        RecipeKind::DiffReview | RecipeKind::LogsRootCause => {
+            if !args.command.is_empty() {
+                return Err(CoreError::BadArgs {
+                    operation: format!("recipe {}", args.recipe.as_str()),
+                    reason: "file recipes accept --file, not a trailing command".to_string(),
+                });
+            }
+            let file = args.file.clone().ok_or_else(|| CoreError::BadArgs {
+                operation: format!("recipe {}", args.recipe.as_str()),
+                reason: "pass --file <path>".to_string(),
+            })?;
+            let (mime, lens) = match args.recipe {
+                RecipeKind::DiffReview => ("text/x-diff", "unified-diff"),
+                RecipeKind::LogsRootCause => ("text/plain", "logs"),
+                _ => unreachable!(),
+            };
+            let observe = ObserveArgs {
+                file: Some(file.clone()),
+                stdin: false,
+                mime: Some(mime.to_string()),
+                name: Some(args.recipe.as_str().to_string()),
+                lens: Some(lens.to_string()),
+                ttl_seconds: args.ttl_seconds,
+            };
+            (
+                observe_artifact(store, lens_dir, &observe)?,
+                vec![json!([
+                    "prog",
+                    "observe",
+                    "--file",
+                    file.to_string_lossy(),
+                    "--mime",
+                    mime,
+                    "--lens",
+                    lens
+                ])],
+            )
+        }
+        recipe => {
+            if args.file.is_some() {
+                return Err(CoreError::BadArgs {
+                    operation: format!("recipe {}", recipe.as_str()),
+                    reason: "command recipes accept a trailing command, not --file".to_string(),
+                });
+            }
+            let command = if args.command.is_empty() {
+                default_recipe_command(recipe)
+            } else {
+                args.command.clone()
+            };
+            let lens = match recipe {
+                RecipeKind::CargoTest => "cargo-test",
+                RecipeKind::Pytest => "pytest",
+                RecipeKind::NpmTest => "npm-test",
+                RecipeKind::GoTest => "go-test",
+                RecipeKind::GhIssues => "github-issues",
+                RecipeKind::DiffReview | RecipeKind::LogsRootCause => unreachable!(),
+            };
+            let run = RunArgs {
+                timeout_ms: args.timeout_ms,
+                max_stdout_bytes: 1024 * 1024,
+                max_stderr_bytes: 1024 * 1024,
+                ttl_seconds: args.ttl_seconds,
+                preserve_exit_code: false,
+                out: None,
+                lens: Some(lens.to_string()),
+                command: command.clone(),
+            };
+            (
+                run_command(store, lens_dir, &run).await?.envelope,
+                vec![json!(redact_run_argv(&command))],
+            )
+        }
+    };
+
+    if let Some(cursor) = envelope.cursor.clone() {
+        let inspect = inspect_cursor(
+            store,
+            lens_dir,
+            &InspectArgs {
+                cursor,
+                goal: goal.clone(),
+                limit: 5,
+                kind: None,
+                path: String::new(),
+            },
+        )?;
+        envelope.findings = inspect.findings;
+    }
+    let recommended_next = envelope.findings.first().and_then(|finding| {
+        finding
+            .commands
+            .evidence
+            .clone()
+            .or(finding.commands.expand.clone())
+    });
+    envelope.extra.insert(
+        "recipe".to_string(),
+        json!({
+            "id": args.recipe.as_str(),
+            "goal": goal,
+            "expanded_commands": expanded_commands,
+            "recommended_next": recommended_next,
+            "deterministic": true
+        }),
+    );
+    compact_envelope_to_budget(&mut envelope)?;
+    Ok(envelope)
+}
+
+fn default_recipe_command(recipe: RecipeKind) -> Vec<String> {
+    match recipe {
+        RecipeKind::CargoTest => vec!["cargo".to_string(), "test".to_string()],
+        RecipeKind::Pytest => vec!["pytest".to_string()],
+        RecipeKind::NpmTest => vec!["npm".to_string(), "test".to_string()],
+        RecipeKind::GoTest => vec!["go".to_string(), "test".to_string(), "./...".to_string()],
+        RecipeKind::GhIssues => vec![
+            "gh".to_string(),
+            "issue".to_string(),
+            "list".to_string(),
+            "--json".to_string(),
+            "number,title,state,labels,updatedAt,url".to_string(),
+        ],
+        RecipeKind::DiffReview | RecipeKind::LogsRootCause => Vec::new(),
+    }
 }
 
 struct RunProcessResult {
@@ -2599,7 +3170,9 @@ fn run_next_actions(cursor: Option<&str>, sections: &[RunFailureSection]) -> Vec
             let mut extra = Extra::new();
             extra.insert("priority".to_string(), json!(section.priority));
             extra.insert("stream".to_string(), json!(section.stream));
-            extra.insert("kind".to_string(), json!(section.kind));
+            // `extra` is flattened into NextAction; avoid colliding with the
+            // typed `kind` field and producing duplicate JSON object keys.
+            extra.insert("section_kind".to_string(), json!(section.kind));
             extra.insert(
                 "argv".to_string(),
                 json!(["prog", "expand", cursor, "--path", path]),
@@ -2798,22 +3371,12 @@ fn init_integration(args: &InitArgs) -> Result<InitReport> {
                 .to_string(),
         });
     }
-    if args.agent != AgentKind::Codex {
-        return Err(CoreError::BadArgs {
-            operation: "init".to_string(),
-            reason: format!(
-                "agent '{}' is documented in the integration matrix but not implemented yet; supported project agent: codex",
-                args.agent.as_str()
-            ),
-        });
-    }
-
     let root = project_root(&args.root)?;
-    let specs = codex_project_init_files();
+    let specs = agent_project_init_files(args.agent);
     let mut files = Vec::new();
     let mut skipped = 0usize;
     for spec in specs {
-        let full_path = root.join(spec.relative_path);
+        let full_path = root.join(&spec.relative_path);
         let exists = full_path.exists();
         let (action, reason) = if exists {
             skipped = skipped.saturating_add(1);
@@ -2828,7 +3391,7 @@ fn init_integration(args: &InitArgs) -> Result<InitReport> {
             ("created", None)
         };
         files.push(InitFileReport {
-            path: spec.relative_path.to_string(),
+            path: spec.relative_path,
             full_path: full_path.to_string_lossy().to_string(),
             action,
             executable: spec.executable,
@@ -2853,11 +3416,7 @@ fn init_integration(args: &InitArgs) -> Result<InitReport> {
         root: root.to_string_lossy().to_string(),
         dry_run: args.dry_run,
         files,
-        next_steps: vec![
-            "Review .codex/skills/prog/SKILL.md before relying on the generated skill".to_string(),
-            "Route noisy commands through .codex/prog-hooks/prog-run.sh <command...>".to_string(),
-            "After a run/observe/call envelope returns a cursor, inspect with prog paths before expanding exact evidence".to_string(),
-        ],
+        next_steps: agent_init_next_steps(args.agent),
         warnings,
     })
 }
@@ -2883,17 +3442,22 @@ fn project_root(root: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
-fn codex_project_init_files() -> Vec<InitFileSpec> {
-    let manifest_files = [
-        ".codex/skills/prog/SKILL.md",
-        ".codex/prog-hooks/prog-run.sh",
-        ".codex/prog-hooks/README.md",
-        ".codex/prog-hooks/manifest.json",
-        ".codex/prog-hooks/uninstall.sh",
+fn agent_project_init_files(agent: AgentKind) -> Vec<InitFileSpec> {
+    let (skill_path, hook_dir) = agent_integration_paths(agent);
+    let hook_path = format!("{hook_dir}/prog-run.sh");
+    let readme_path = format!("{hook_dir}/README.md");
+    let manifest_path = format!("{hook_dir}/manifest.json");
+    let uninstall_path = format!("{hook_dir}/uninstall.sh");
+    let manifest_files = vec![
+        skill_path.clone(),
+        hook_path.clone(),
+        readme_path.clone(),
+        manifest_path.clone(),
+        uninstall_path.clone(),
     ];
     let manifest = json!({
         "schema_version": "prog.integration.v1",
-        "agent": "codex",
+        "agent": agent.as_str(),
         "scope": "project",
         "mcp": {
             "status": "optional",
@@ -2901,101 +3465,153 @@ fn codex_project_init_files() -> Vec<InitFileSpec> {
         },
         "files": manifest_files,
         "commands": {
-            "wrap_command": ".codex/prog-hooks/prog-run.sh <command...>",
+            "wrap_command": format!("{hook_path} <command...>"),
             "observe_file": "prog observe --file <path>",
-            "inspect_paths": "prog paths <cursor>",
-            "expand_evidence": "prog expand <cursor> --path <json-pointer>"
+            "inspect": "prog inspect <cursor> --goal <goal>",
+            "search": "prog search <cursor> <query>",
+            "evidence": "prog evidence <cursor> --path <json-pointer>",
+            "expand": "prog expand <cursor> --path <json-pointer>"
         },
-        "uninstall": "sh .codex/prog-hooks/uninstall.sh"
+        "uninstall": format!("sh {uninstall_path}")
     });
     vec![
         InitFileSpec {
-            relative_path: ".codex/skills/prog/SKILL.md",
-            content: PROG_AGENT_SKILL.to_string(),
+            relative_path: skill_path,
+            content: agent_skill_content(agent),
             executable: false,
         },
         InitFileSpec {
-            relative_path: ".codex/prog-hooks/prog-run.sh",
-            content: codex_prog_run_hook(),
+            relative_path: hook_path,
+            content: prog_run_hook(hook_dir),
             executable: true,
         },
         InitFileSpec {
-            relative_path: ".codex/prog-hooks/README.md",
-            content: codex_hook_readme(),
+            relative_path: readme_path,
+            content: hook_readme(agent, hook_dir),
             executable: false,
         },
         InitFileSpec {
-            relative_path: ".codex/prog-hooks/manifest.json",
+            relative_path: manifest_path,
             content: format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap()),
             executable: false,
         },
         InitFileSpec {
-            relative_path: ".codex/prog-hooks/uninstall.sh",
-            content: codex_uninstall_hook(),
+            relative_path: uninstall_path,
+            content: uninstall_hook(&manifest_files),
             executable: true,
         },
     ]
 }
 
-fn codex_prog_run_hook() -> String {
-    r#"#!/usr/bin/env sh
+fn agent_integration_paths(agent: AgentKind) -> (String, &'static str) {
+    match agent {
+        AgentKind::Codex => (
+            ".codex/skills/prog/SKILL.md".to_string(),
+            ".codex/prog-hooks",
+        ),
+        AgentKind::ClaudeCode => (
+            ".claude/skills/prog/SKILL.md".to_string(),
+            ".claude/prog-hooks",
+        ),
+        AgentKind::Cursor => (".cursor/rules/prog.mdc".to_string(), ".cursor/prog-hooks"),
+        AgentKind::GeminiCli => (
+            ".gemini/skills/prog/SKILL.md".to_string(),
+            ".gemini/prog-hooks",
+        ),
+    }
+}
+
+fn agent_skill_content(agent: AgentKind) -> String {
+    if agent != AgentKind::Cursor {
+        return PROG_AGENT_SKILL.to_string();
+    }
+    let body = PROG_AGENT_SKILL
+        .strip_prefix("---\n")
+        .and_then(|value| value.split_once("\n---\n"))
+        .map_or(PROG_AGENT_SKILL, |(_, body)| body);
+    format!(
+        "---\ndescription: Use prog for bounded, cached evidence navigation over noisy commands, APIs, and files.\nglobs:\nalwaysApply: false\n---\n{body}"
+    )
+}
+
+fn prog_run_hook(hook_dir: &str) -> String {
+    format!(
+        r#"#!/usr/bin/env sh
 set -eu
 
 if [ "$#" -eq 0 ]; then
-  echo "usage: .codex/prog-hooks/prog-run.sh <command...>" >&2
+  echo "usage: {hook_dir}/prog-run.sh <command...>" >&2
   exit 64
 fi
 
 exec prog run -- "$@"
 "#
-    .to_string()
+    )
 }
 
-fn codex_hook_readme() -> String {
-    r#"# prog Codex hooks
+fn hook_readme(agent: AgentKind, hook_dir: &str) -> String {
+    format!(
+        r#"# prog {agent} hooks
 
 This project-local integration keeps `prog` usable without MCP server mode.
 
 Use the wrapper for noisy commands:
 
 ```bash
-.codex/prog-hooks/prog-run.sh cargo test
+    {hook_dir}/prog-run.sh cargo test
 ```
 
-The wrapper returns a bounded `DisclosureEnvelope`. Inspect the returned
-`cursor` with `prog paths <cursor>` before expanding exact evidence with
-`prog expand <cursor> --path <json-pointer>`.
+The wrapper returns a bounded `DisclosureEnvelope`. Use its ranked findings or
+run `prog inspect <cursor> --goal <goal>`, then cite exact evidence with
+`prog evidence <cursor> --path <json-pointer>`.
 
 For shell aliases or editor tasks, wire the command directly rather than
 rewriting user commands globally:
 
 ```sh
-prog_run() {
-  .codex/prog-hooks/prog-run.sh "$@"
-}
+prog_run() {{
+  {hook_dir}/prog-run.sh "$@"
+}}
 ```
 
 MCP is optional compatibility. Prefer the CLI, this skill, and explicit hooks
 unless the host agent already has a reliable MCP client.
-"#
-    .to_string()
+"#,
+        agent = agent.as_str()
+    )
 }
 
-fn codex_uninstall_hook() -> String {
-    r#"#!/usr/bin/env sh
-set -eu
+fn uninstall_hook(files: &[String]) -> String {
+    let mut script = "#!/usr/bin/env sh\nset -eu\n\n".to_string();
+    for file in files {
+        script.push_str(&format!("rm -f {}\n", shell_quote(file)));
+    }
+    let mut dirs = files
+        .iter()
+        .filter_map(|file| Path::new(file).parent())
+        .flat_map(|path| path.ancestors().take_while(|path| *path != Path::new("")))
+        .map(|path| path.to_string_lossy().to_string())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    dirs.sort_by_key(|path| std::cmp::Reverse(path.matches('/').count()));
+    for dir in dirs {
+        script.push_str(&format!(
+            "rmdir {} 2>/dev/null || true\n",
+            shell_quote(&dir)
+        ));
+    }
+    script
+}
 
-rm -f .codex/skills/prog/SKILL.md
-rm -f .codex/prog-hooks/prog-run.sh
-rm -f .codex/prog-hooks/README.md
-rm -f .codex/prog-hooks/manifest.json
-rm -f .codex/prog-hooks/uninstall.sh
-rmdir .codex/skills/prog 2>/dev/null || true
-rmdir .codex/skills 2>/dev/null || true
-rmdir .codex/prog-hooks 2>/dev/null || true
-rmdir .codex 2>/dev/null || true
-"#
-    .to_string()
+fn agent_init_next_steps(agent: AgentKind) -> Vec<String> {
+    let (skill_path, hook_dir) = agent_integration_paths(agent);
+    vec![
+        format!("Review {skill_path} before relying on the generated integration"),
+        format!("Route noisy commands through {hook_dir}/prog-run.sh <command...>"),
+        "Use prog inspect <cursor> --goal <goal>, then prog evidence <cursor> --path <path>"
+            .to_string(),
+    ]
 }
 
 fn write_init_file(path: &Path, content: &str, executable: bool) -> Result<()> {
@@ -3455,6 +4071,473 @@ fn value_contains_redaction(value: &Value) -> bool {
         Value::Object(map) => map.values().any(value_contains_redaction),
         _ => false,
     }
+}
+
+struct CursorContext {
+    record: ValidatedCursor,
+    entry: CacheEntryMeta,
+    payload: PersistedPayload,
+    target_path: String,
+    age_seconds: u64,
+    cache: CacheInfo,
+}
+
+fn cursor_context(store: &Store, cursor: &str, requested_path: &str) -> Result<CursorContext> {
+    let record = store.get_cursor(cursor, RedactionPolicy::default().version)?;
+    let entry = store
+        .get_entry(&record.cache_key)?
+        .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
+    let payload = store
+        .get_payload(&entry.payload_hash)?
+        .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
+    let target_path = if requested_path.is_empty() {
+        record.root_path.clone()
+    } else {
+        requested_path.to_string()
+    };
+    let scoped = ScopedSlice::new(
+        ExpansionScope::from_cursor(&record)?,
+        SliceRequest {
+            path: Some(target_path.clone()),
+            limit: None,
+            depth: None,
+            fields: Vec::new(),
+            omit: Vec::new(),
+            extra: Extra::new(),
+        },
+    )?;
+    let target_path = scoped.target_path().as_str().to_string();
+    if prog_core::pointer::get(payload.as_value(), &target_path)?.is_none() {
+        return Err(CoreError::PathNotFound {
+            path: target_path,
+            hint: prog_core::pointer::siblings_hint(payload.as_value(), requested_path),
+        });
+    }
+    let age_seconds = age_seconds(&entry.created_at)?;
+    let cache = cache_info(CacheStatus::Hit, &entry, Some(age_seconds));
+    Ok(CursorContext {
+        record,
+        entry,
+        payload,
+        target_path,
+        age_seconds,
+        cache,
+    })
+}
+
+fn inspect_cursor(store: &Store, lens_dir: &Path, args: &InspectArgs) -> Result<InspectResponse> {
+    if args.goal.trim().is_empty() {
+        return Err(CoreError::BadArgs {
+            operation: "inspect".to_string(),
+            reason: "--goal must not be empty".to_string(),
+        });
+    }
+    if args.limit > 100 {
+        return Err(CoreError::BadArgs {
+            operation: "inspect".to_string(),
+            reason: "--limit must be at most 100".to_string(),
+        });
+    }
+    let context = cursor_context(store, &args.cursor, &args.path)?;
+    let request = InspectRequest::builder(args.cursor.clone())
+        .goal(args.goal.clone())
+        .scope_path(context.target_path.clone())
+        .limit(args.limit.saturating_mul(4).min(100))
+        .hints(CommandHintConfig::NAV_ALL)
+        .build();
+    let mut response = build_inspect_response(context.payload.as_value(), &request)?;
+    let lens = cursor_lens(lens_dir, context.record.record(), &mut response.warnings);
+    let options = FindingOptions {
+        goal: Some(args.goal.clone()),
+        cursor: Some(args.cursor.clone()),
+        scope_path: Some(context.target_path.clone()),
+        limit: args.limit.saturating_mul(4).min(100),
+        hints: CommandHintConfig::NAV_ALL,
+    };
+    response.findings =
+        ranked_findings_with_lens(context.payload.as_value(), &options, lens.as_ref())?;
+    if let Some(kind) = &args.kind {
+        let kind = normalize_finding_kind(kind);
+        response
+            .findings
+            .retain(|finding| finding_matches_kind(finding, &kind));
+    }
+    response.findings.truncate(args.limit);
+    for (index, finding) in response.findings.iter_mut().enumerate() {
+        finding.rank = index as u64 + 1;
+        if let Some(value) = prog_core::pointer::get(context.payload.as_value(), &finding.path)? {
+            finding.evidence_ref = Some(evidence_ref(EvidenceRefInput {
+                source_id: &context.record.source_id,
+                operation: &context.record.operation,
+                cursor: Some(&args.cursor),
+                path: &finding.path,
+                value,
+                provenance: context.entry.provenance.as_ref(),
+                cache: Some(&context.cache),
+                omitted: &[],
+                redacted_paths: 0,
+            }));
+        }
+    }
+    response.cache = Some(context.cache);
+    let scoped_value = prog_core::pointer::get(context.payload.as_value(), &context.target_path)?
+        .expect("cursor_context validated the target path");
+    if exceeds_node_budget(scoped_value, 10_000, 64) {
+        response.omitted.push(OmittedRegion {
+            path: context.target_path.clone(),
+            reason: OmissionReason::NodeBudget,
+            detail: Some("inspect finding traversal reached the 10000-node budget".to_string()),
+            extra: Extra::new(),
+        });
+        response.warnings.push(
+            "inspect findings are partial; narrow --path to traverse a smaller subtree".to_string(),
+        );
+    }
+    if context.age_seconds > 0 {
+        response.warnings.push(format!(
+            "cached payload age_seconds={}; inspect did not contact upstream",
+            context.age_seconds
+        ));
+    }
+    bound_inspect_response(&mut response)?;
+    Ok(response)
+}
+
+fn evidence_cursor(store: &Store, lens_dir: &Path, args: &EvidenceArgs) -> Result<EvidenceBlock> {
+    let context = cursor_context(store, &args.cursor, &args.path)?;
+    let value = prog_core::pointer::get(context.payload.as_value(), &context.target_path)?
+        .expect("cursor_context validated the target path");
+    let mut block = evidence_block(
+        context.payload.as_value(),
+        args.cursor.clone(),
+        &context.target_path,
+    )?;
+    let mut lens_warnings = Vec::new();
+    let lens = cursor_lens(lens_dir, context.record.record(), &mut lens_warnings);
+    if let Some(finding) = ranked_findings_with_lens(
+        context.payload.as_value(),
+        &FindingOptions {
+            cursor: Some(args.cursor.clone()),
+            scope_path: Some(context.target_path.clone()),
+            limit: 20,
+            hints: CommandHintConfig::NAV_ALL,
+            ..FindingOptions::default()
+        },
+        lens.as_ref(),
+    )?
+    .into_iter()
+    .find(|finding| finding.path == context.target_path)
+    {
+        block.kind = finding.kind;
+        if let Some(lens_id) = finding.lens_id {
+            block.extra.insert("lens_id".to_string(), json!(lens_id));
+        }
+    }
+    block.warnings.extend(lens_warnings);
+    block.evidence_ref = Some(evidence_ref(EvidenceRefInput {
+        source_id: &context.record.source_id,
+        operation: &context.record.operation,
+        cursor: Some(&args.cursor),
+        path: &context.target_path,
+        value,
+        provenance: context.entry.provenance.as_ref(),
+        cache: Some(&context.cache),
+        omitted: &[],
+        redacted_paths: 0,
+    }));
+    block.source_command = source_command_from_provenance(context.entry.provenance.as_ref());
+    block.provenance = context.entry.provenance;
+    block.cache = Some(context.cache);
+    if context.age_seconds > 0 {
+        block.warnings.push(format!(
+            "cached payload age_seconds={}; evidence did not contact upstream",
+            context.age_seconds
+        ));
+    }
+    bound_evidence_block(&mut block)?;
+    Ok(block)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn search_cursor(
+    store: &Store,
+    lens_dir: &Path,
+    cursor: &str,
+    query: Option<String>,
+    kind: Option<String>,
+    path: &str,
+    limit: usize,
+    case_sensitive: bool,
+    regex: bool,
+) -> Result<SearchResponse> {
+    if limit > 200 {
+        return Err(CoreError::BadArgs {
+            operation: "search".to_string(),
+            reason: "--limit must be at most 200".to_string(),
+        });
+    }
+    let context = cursor_context(store, cursor, path)?;
+    let mut lens_warnings = Vec::new();
+    let lens = cursor_lens(lens_dir, context.record.record(), &mut lens_warnings);
+    let mut response = search_payload_with_lens(
+        context.payload.as_value(),
+        cursor.to_string(),
+        &SearchOptions {
+            query,
+            kind,
+            scope_path: Some(context.target_path),
+            limit,
+            case_sensitive,
+            regex,
+            ..SearchOptions::default()
+        },
+        lens.as_ref(),
+    )?;
+    response.warnings.extend(lens_warnings);
+    response.cache = Some(context.cache);
+    if context.age_seconds > 0 {
+        response.warnings.push(format!(
+            "cached payload age_seconds={}; search did not contact upstream",
+            context.age_seconds
+        ));
+    }
+    bound_search_response(&mut response)?;
+    Ok(response)
+}
+
+fn cursor_lens(
+    lens_dir: &Path,
+    record: &prog_core::CursorRecord,
+    warnings: &mut Vec<String>,
+) -> Option<LensManifest> {
+    let id = record.extra.get("lens_id").and_then(Value::as_str)?;
+    match load_lens(lens_dir, id, "inspect") {
+        Ok(lens) => Some(lens),
+        Err(error) => {
+            warnings.push(format!(
+                "lens '{id}' recorded on the cursor could not be loaded; used generic findings: {error}"
+            ));
+            None
+        }
+    }
+}
+
+fn normalize_finding_kind(kind: &str) -> String {
+    kind.trim().to_ascii_lowercase().replace('-', "_")
+}
+
+fn finding_matches_kind(finding: &prog_core::Finding, kind: &str) -> bool {
+    normalize_finding_kind(&finding.kind) == kind
+        || (kind == "error"
+            && (finding.severity.as_deref() == Some("error")
+                || finding.kind.contains("error")
+                || finding.kind.contains("failure")
+                || finding.kind.contains("exception")
+                || finding.kind.contains("panic")
+                || finding.kind.contains("timeout")))
+        || (kind == "warning" && finding.severity.as_deref() == Some("warning"))
+}
+
+fn source_command_from_provenance(provenance: Option<&CallProvenance>) -> Option<String> {
+    let argv = provenance?
+        .extra
+        .get("run")?
+        .get("argv")?
+        .as_array()?
+        .iter()
+        .map(Value::as_str)
+        .collect::<Option<Vec<_>>>()?;
+    Some(
+        argv.into_iter()
+            .map(shell_quote)
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
+fn bound_inspect_response(response: &mut InspectResponse) -> Result<()> {
+    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let original_len = response.findings.len();
+    while serde_json::to_vec(response)?.len() > budget && !response.findings.is_empty() {
+        response.findings.pop();
+    }
+    if response.findings.len() < original_len
+        && response
+            .omitted
+            .iter()
+            .all(|region| region.reason != OmissionReason::NodeBudget)
+    {
+        response.omitted.push(OmittedRegion {
+            path: response.scope_path.clone().unwrap_or_default(),
+            reason: OmissionReason::NodeBudget,
+            detail: Some("inspect findings were compacted to the disclosure budget".to_string()),
+            extra: Extra::new(),
+        });
+        response.warnings.push(format!(
+            "inspect retained {} of {original_len} findings to enforce the disclosure budget",
+            response.findings.len()
+        ));
+    }
+    while serde_json::to_vec(response)?.len() > budget && !response.findings.is_empty() {
+        response.findings.pop();
+    }
+    if serde_json::to_vec(response)?.len() > budget {
+        response.warnings.truncate(1);
+        response.omitted.truncate(1);
+    }
+    Ok(())
+}
+
+fn bound_search_response(response: &mut SearchResponse) -> Result<()> {
+    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let original_len = response.hits.len();
+    while serde_json::to_vec(response)?.len() > budget && !response.hits.is_empty() {
+        response.hits.pop();
+    }
+    if response.hits.len() < original_len {
+        response.omitted.push(OmittedRegion {
+            path: response.scope_path.clone().unwrap_or_default(),
+            reason: OmissionReason::NodeBudget,
+            detail: Some("search hits were compacted to the disclosure budget".to_string()),
+            extra: Extra::new(),
+        });
+        response.warnings.push(format!(
+            "search retained {} of {original_len} hits to enforce the disclosure budget",
+            response.hits.len()
+        ));
+    }
+    while serde_json::to_vec(response)?.len() > budget && !response.hits.is_empty() {
+        response.hits.pop();
+    }
+    for (index, hit) in response.hits.iter_mut().enumerate() {
+        hit.rank = index as u64 + 1;
+    }
+    Ok(())
+}
+
+fn bound_evidence_block(block: &mut EvidenceBlock) -> Result<()> {
+    let budget = PreviewPolicy::default().max_envelope_bytes;
+    if serde_json::to_vec(block)?.len() > budget {
+        block.citations.truncate(1);
+        if let Some(citation) = block.citations.first_mut() {
+            citation.excerpt = json!("excerpt compacted; use commands.expand");
+        }
+        block.excerpt = json!("excerpt compacted; use commands.expand");
+        block.warnings.truncate(2);
+        block
+            .warnings
+            .push("evidence excerpt compacted to the disclosure budget".to_string());
+    }
+    if serde_json::to_vec(block)?.len() > budget {
+        block.provenance = None;
+        block.citations.clear();
+        block.extra.clear();
+        block.warnings.truncate(1);
+        block.summary = block.summary.chars().take(180).collect();
+        block.commands.inspect = None;
+        block.commands.search = None;
+        block.commands.evidence = None;
+    }
+    Ok(())
+}
+
+fn exceeds_node_budget(value: &Value, max_nodes: usize, max_depth: usize) -> bool {
+    fn visit(
+        value: &Value,
+        depth: usize,
+        max_depth: usize,
+        max_nodes: usize,
+        visited: &mut usize,
+    ) -> bool {
+        if depth > max_depth || *visited >= max_nodes {
+            return true;
+        }
+        *visited += 1;
+        match value {
+            Value::Array(items) => items
+                .iter()
+                .any(|item| visit(item, depth + 1, max_depth, max_nodes, visited)),
+            Value::Object(map) => map
+                .values()
+                .any(|item| visit(item, depth + 1, max_depth, max_nodes, visited)),
+            _ => false,
+        }
+    }
+    let mut visited = 0usize;
+    visit(value, 0, max_depth, max_nodes, &mut visited)
+}
+
+fn record_envelope_event(store: &Store, envelope: &mut DisclosureEnvelope, kind: &str) {
+    let evidence_ref = envelope
+        .extra
+        .get("evidence_ref")
+        .and_then(|reference| reference.get("uri"))
+        .and_then(Value::as_str);
+    record_navigation_event(
+        store,
+        kind,
+        envelope.cursor.as_deref(),
+        None,
+        evidence_ref,
+        Some(format!(
+            "{} {} byte payload; {} finding(s)",
+            envelope.summary.kind,
+            envelope.summary.payload_bytes,
+            envelope.findings.len()
+        )),
+    );
+}
+
+fn record_navigation_event(
+    store: &Store,
+    kind: &str,
+    cursor: Option<&str>,
+    path: Option<&str>,
+    evidence_ref: Option<&str>,
+    summary: Option<String>,
+) {
+    let _ = store.record_session_event(NewSessionEvent {
+        kind: kind.to_string(),
+        cursor: cursor.map(str::to_string),
+        path: path.map(str::to_string),
+        evidence_ref: evidence_ref.map(str::to_string),
+        summary,
+        extra: Extra::new(),
+    });
+}
+
+fn session_show(store: &Store, args: &SessionShowArgs) -> Result<prog_core::SessionTrail> {
+    let mut trail = store
+        .get_session(args.session_id.as_deref())?
+        .ok_or_else(|| CoreError::BadArgs {
+            operation: "session show".to_string(),
+            reason: "no session exists; run `prog session start --goal <goal>`".to_string(),
+        })?;
+    let mut unavailable = 0usize;
+    for event in &mut trail.events {
+        let Some(cursor) = event.cursor.as_deref() else {
+            continue;
+        };
+        match store.get_cursor(cursor, RedactionPolicy::default().version) {
+            Ok(_) => {
+                event
+                    .extra
+                    .insert("cursor_status".to_string(), json!("available"));
+            }
+            Err(error) => {
+                unavailable += 1;
+                event
+                    .extra
+                    .insert("cursor_status".to_string(), json!(error.kind()));
+            }
+        }
+    }
+    if unavailable > 0 {
+        trail.warnings.push(format!(
+            "{unavailable} event cursor(s) are expired, missing, or incompatible with the current redaction policy"
+        ));
+    }
+    Ok(trail)
 }
 
 fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
@@ -5077,16 +6160,45 @@ fn text_prefix(bytes: &[u8]) -> String {
 fn parse_junit_cases(text: &str) -> Vec<Value> {
     text.match_indices("<testcase")
         .map(|(start, _)| {
-            let end = text[start..]
+            let opening_end = text[start..]
                 .find('>')
                 .map(|offset| start + offset)
                 .unwrap_or(text.len());
-            let tag = &text[start..end];
+            let tag = &text[start..opening_end];
+            let self_closing = tag.trim_end().ends_with('/');
+            let case_end = if self_closing {
+                opening_end.saturating_add(1)
+            } else {
+                text[opening_end..]
+                    .find("</testcase>")
+                    .map(|offset| opening_end + offset + "</testcase>".len())
+                    .unwrap_or(opening_end.saturating_add(1))
+            }
+            .min(text.len());
+            let body = &text[opening_end.min(text.len())..case_end];
+            let failure = extract_tag_text(body, "failure")
+                .map(|value| value.chars().take(2_000).collect::<String>());
+            let error = extract_tag_text(body, "error")
+                .map(|value| value.chars().take(2_000).collect::<String>());
+            let skipped = body.to_ascii_lowercase().contains("<skipped");
+            let status = if error.is_some() {
+                "error"
+            } else if failure.is_some() {
+                "failed"
+            } else if skipped {
+                "skipped"
+            } else {
+                "passed"
+            };
             json!({
                 "name": extract_attr(tag, "name"),
                 "classname": extract_attr(tag, "classname"),
                 "time": extract_attr(tag, "time"),
-                "line_start": line_number_at(text, start)
+                "status": status,
+                "failure": failure,
+                "error": error,
+                "line_start": line_number_at(text, start),
+                "line_end": line_number_at(text, case_end)
             })
         })
         .collect()
@@ -5095,27 +6207,53 @@ fn parse_junit_cases(text: &str) -> Vec<Value> {
 fn parse_diff_files(text: &str) -> Vec<Value> {
     let mut files = Vec::new();
     let mut current: Option<Map<String, Value>> = None;
+    let mut hunk: Option<Map<String, Value>> = None;
     for (index, line) in text.lines().enumerate() {
         if let Some(path) = line.strip_prefix("diff --git ") {
+            finish_diff_hunk(&mut current, &mut hunk, index);
             if let Some(file) = current.take() {
                 files.push(Value::Object(file));
             }
             let mut file = Map::new();
             file.insert("header".to_string(), json!(path));
-            file.insert("line_start".to_string(), json!(index));
+            file.insert("line_start".to_string(), json!(index + 1));
             file.insert("hunks".to_string(), Value::Array(Vec::new()));
             current = Some(file);
-        } else if line.starts_with("@@")
-            && let Some(file) = current.as_mut()
-            && let Some(hunks) = file.get_mut("hunks").and_then(Value::as_array_mut)
+        } else if line.starts_with("@@") {
+            finish_diff_hunk(&mut current, &mut hunk, index);
+            let mut next = Map::new();
+            next.insert("header".to_string(), json!(line));
+            next.insert("line_start".to_string(), json!(index + 1));
+            next.insert("lines".to_string(), Value::Array(Vec::new()));
+            hunk = Some(next);
+        } else if let Some(hunk) = hunk.as_mut()
+            && let Some(lines) = hunk.get_mut("lines").and_then(Value::as_array_mut)
         {
-            hunks.push(json!({"header": line, "line_start": index}));
+            lines.push(Value::String(line.to_string()));
         }
     }
+    finish_diff_hunk(&mut current, &mut hunk, text.lines().count());
     if let Some(file) = current {
         files.push(Value::Object(file));
     }
     files
+}
+
+fn finish_diff_hunk(
+    file: &mut Option<Map<String, Value>>,
+    hunk: &mut Option<Map<String, Value>>,
+    end_index: usize,
+) {
+    let Some(mut completed) = hunk.take() else {
+        return;
+    };
+    completed.insert("line_end".to_string(), json!(end_index.max(1)));
+    if let Some(file) = file.as_mut()
+        && let Some(hunks) = file.get_mut("hunks").and_then(Value::as_array_mut)
+    {
+        hunks.push(Value::Object(completed));
+        file.insert("line_end".to_string(), json!(end_index.max(1)));
+    }
 }
 
 fn extract_tag_text(text: &str, tag: &str) -> Option<String> {
@@ -5321,6 +6459,16 @@ fn load_lens_manifests(lens_dir: &Path, context: &str) -> Result<Vec<LensManifes
         let path = entry.path();
         if !path.is_file() || !is_lens_manifest_path(&path) {
             continue;
+        }
+        let bytes = std::fs::metadata(&path)?.len();
+        if bytes > 1024 * 1024 {
+            return Err(CoreError::BadArgs {
+                operation: context.to_string(),
+                reason: format!(
+                    "lens '{}' is {bytes} bytes; manifests are limited to 1 MiB",
+                    path.to_string_lossy()
+                ),
+            });
         }
         let raw = std::fs::read_to_string(&path).map_err(|error| CoreError::BadArgs {
             operation: context.to_string(),
@@ -6026,31 +7174,37 @@ fn call_provenance(
     }
 }
 
+fn cursor_lens_extra(lens: Option<&LensManifest>) -> Extra {
+    let mut extra = Extra::new();
+    if let Some(lens) = lens {
+        extra.insert("lens_id".to_string(), json!(lens.id));
+        extra.insert("lens_version".to_string(), json!(lens.version));
+    }
+    extra
+}
+
 fn cursor_for_projection(store: &Store, input: CursorInput<'_>) -> Result<Option<String>> {
     if !input.may_cache {
         return Ok(None);
     }
-    let lens_projection = project_with_lens(
+    // Validate the projected root before minting the cursor. Cacheable calls
+    // always get a cursor so inspect/search/evidence work even when the first
+    // preview happens to contain the entire small payload.
+    project_with_lens(
         input.payload,
         input.root_path,
         input.slice,
         &PreviewPolicy::default(),
         input.lens,
     )?;
-    let has_expand_action = lens_projection
-        .next_actions
-        .iter()
-        .any(|action| action.kind == "expand" && action.path.is_some());
-    if lens_projection.projection.omitted.is_empty() && !has_expand_action {
-        return Ok(None);
-    }
-    Ok(Some(store.create_cursor(
+    Ok(Some(store.create_cursor_with_extra(
         input.cache_key,
         input.source_id,
         input.operation,
         input.root_path,
         RedactionPolicy::default().version,
         ttl_seconds(input.cache),
+        cursor_lens_extra(input.lens),
     )?))
 }
 
@@ -6061,6 +7215,18 @@ fn envelope_for_payload(
 ) -> Result<DisclosureEnvelope> {
     let mut policy = PreviewPolicy::default();
     let mut last = None;
+    let findings = ranked_findings_with_lens(
+        input.payload.as_value(),
+        &FindingOptions {
+            goal: None,
+            cursor: cursor.clone(),
+            scope_path: Some(input.root_path.clone()),
+            limit: 3,
+            hints: CommandHintConfig::NAV_ALL,
+        },
+        input.lens.as_ref(),
+    )
+    .unwrap_or_default();
     for _ in 0..16 {
         let lens_projection = project_with_lens(
             &input.payload,
@@ -6069,7 +7235,7 @@ fn envelope_for_payload(
             &policy,
             input.lens.as_ref(),
         )?;
-        let mut envelope = make_envelope(&input, lens_projection, cursor.clone());
+        let mut envelope = make_envelope(&input, lens_projection, cursor.clone(), findings.clone());
         let bytes = finalize_envelope_bytes(&mut envelope)?;
         if bytes <= policy.max_envelope_bytes {
             return Ok(envelope);
@@ -6085,6 +7251,7 @@ fn envelope_for_payload(
     if serde_json::to_vec(&envelope)?.len() > PreviewPolicy::default().max_envelope_bytes {
         envelope.schema_hints.clear();
         envelope.provenance = None;
+        envelope.findings.truncate(1);
         envelope.next_actions.truncate(4);
         envelope.omitted.truncate(8);
         envelope.warnings.truncate(4);
@@ -6108,6 +7275,7 @@ fn make_envelope(
     input: &EnvelopeInput,
     lens_projection: prog_core::LensProjection,
     cursor: Option<String>,
+    findings: Vec<prog_core::Finding>,
 ) -> DisclosureEnvelope {
     let projection = lens_projection.projection;
     let preview = projection.preview;
@@ -6190,6 +7358,7 @@ fn make_envelope(
         data_preview: preview,
         schema_hints: input.schema_hints.clone(),
         omitted,
+        findings,
         cursor,
         next_actions,
         provenance: input.provenance.clone(),
@@ -6363,6 +7532,29 @@ fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Result<usize> {
     let second = serde_json::to_vec(envelope)?.len();
     envelope.summary.envelope_bytes = Some(second.try_into().unwrap_or(u64::MAX));
     Ok(second)
+}
+
+fn compact_envelope_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
+    let budget = PreviewPolicy::default().max_envelope_bytes;
+    while serde_json::to_vec(envelope)?.len() > budget && !envelope.findings.is_empty() {
+        envelope.findings.pop();
+    }
+    if serde_json::to_vec(envelope)?.len() > budget
+        && let Some(recipe) = envelope
+            .extra
+            .get_mut("recipe")
+            .and_then(Value::as_object_mut)
+    {
+        recipe.remove("expanded_commands");
+    }
+    if serde_json::to_vec(envelope)?.len() > budget {
+        envelope.data_preview = json!("preview omitted to enforce envelope budget");
+        envelope.omitted.truncate(4);
+        envelope.next_actions.truncate(4);
+        envelope.warnings.truncate(2);
+    }
+    finalize_envelope_bytes(envelope)?;
+    Ok(())
 }
 
 /// Re-enforce `max_envelope_bytes` after the pagination `extra` block is

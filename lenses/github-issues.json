@@ -1,0 +1,15 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "github-issues",
+  "version": 1,
+  "match": {"source_kind": "cli", "source_id": "run", "operation": "gh", "artifact_kind": "run"},
+  "view": {"limit": 12, "depth": 4, "fields": {"command": "/command", "stdout_head": "/stdout/head", "stderr_head": "/stderr/head", "failures": "/failure_sections"}},
+  "omit": [{"path": "/stdout/text", "reason": "large_string", "detail": "full gh JSON output remains cursor-expandable", "expandable": true}],
+  "findings": [
+    {"kind": "github_issue_data", "path": "/stdout/text", "confidence": 0.82, "reason": "gh issue list returned structured issue data", "title": "GitHub issue list", "contains_any": ["title", "number"]},
+    {"kind": "github_command_error", "path": "/failure_sections/*", "confidence": 0.96, "reason": "gh command emitted failure evidence", "title": "GitHub command failure", "severity": "error"}
+  ],
+  "next_actions": [{"kind": "search", "path": "/stdout/text", "reason": "search the cached issue JSON before expanding it"}],
+  "invariants": ["issue_output_is_cached_before_navigation", "command_failures_rank_above_issue_data", "redaction_precedes_lens_projection"],
+  "fixtures": {"positive": ["fixtures/github-issues-run.json"], "negative": ["fixtures/counterexamples/json-items.json"]}
+}

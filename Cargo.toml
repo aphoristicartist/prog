@@ -31,6 +31,7 @@ clap = { version = "4", features = ["derive", "env"] }
 proptest = "1"
 tempfile = "3"
 wiremock = "0.6"
+regex = "1"
 
 [workspace.lints.clippy]
 dbg_macro = "warn"

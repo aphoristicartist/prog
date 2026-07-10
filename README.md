@@ -29,6 +29,8 @@ prog --dir /tmp/prog-demo --pretty source add-cli demo_cli --operation list --re
 prog --dir /tmp/prog-demo --pretty call demo_cli list --args '{}'
 CURSOR=$(prog --dir /tmp/prog-demo call demo_cli list --args '{}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["cursor"])')
 prog --dir /tmp/prog-demo --pretty expand "$CURSOR" --path /items --limit 3 --depth 3
+prog --dir /tmp/prog-demo --pretty inspect "$CURSOR" --goal "find important evidence"
+prog --dir /tmp/prog-demo --pretty search "$CURSOR" "Item 2"
 prog --dir /tmp/prog-demo --pretty hints demo_cli list
 prog --dir /tmp/prog-demo --pretty meta SourceProfile
 ```
@@ -102,6 +104,11 @@ prog [GLOBAL OPTIONS] <command> [OPTIONS]
 | `paths` | Enumerate expandable pointers in a cached payload | `--prefix`, `--reason`, `--field`, `--omitted-only`, `--expandable-only`, `--limit`, `--depth` |
 | `observe` | Ingest a file/stdin as a bounded observation | `--file`, `--stdin`, `--mime`, `--name`, `--lens`, `--ttl-seconds` |
 | `run` | Run a one-shot command as a bounded observation | `--timeout-ms`, `--max-stdout-bytes`, `--max-stderr-bytes`, `--ttl-seconds`, `--preserve-exit-code`, `--out`, `--lens` |
+| `inspect` | Rank cached evidence for a goal | `--goal`, `--limit`, `--kind`, `--path` |
+| `evidence` | Emit a compact citation block for a cached path | `--path` |
+| `search` / `find` | Search cached values/keys/paths or semantic kinds | `--path`, `--limit`, `--kind`, `--regex`, `--case-sensitive` |
+| `recipe` | Compose common test, issue, diff, and log workflows | `cargo-test`, `pytest`, `npm-test`, `go-test`, `gh-issues`, `diff-review`, `logs-root-cause` |
+| `session start` / `show` / `note` | Track task-level evidence navigation | `--goal` |
 | `cost` | Estimate token economics of a workflow | `--model-profile`, `--raw-file`, `--mime`, `--expand-path`, `--estimated-output-tokens`, `--repeated-inspections` |
 | `cache list` / `cache get` / `cache purge` | Inspect and manage the local cache | `purge`: `--source`, `--expired`, `--all` |
 | `meta` | Introspect prog's own contracts | — |
@@ -143,6 +150,8 @@ PROG_TOKEN_EVAL_UPDATE=1 cargo test -p prog-cli --test eval -- --nocapture
 | `observe` reference | [`docs/observe.md`](docs/observe.md) |
 | `run` reference | [`docs/run.md`](docs/run.md) |
 | Findings ranking | [`docs/findings.md`](docs/findings.md) |
+| Evidence navigation | [`docs/evidence-navigation.md`](docs/evidence-navigation.md) |
+| Evidence acquisition eval | [`docs/evidence-acquisition.md`](docs/evidence-acquisition.md) |
 | Expandable pointers | [`docs/paths.md`](docs/paths.md) |
 | Cost modeling | [`docs/cost.md`](docs/cost.md) |
 | Agent integration model | [`docs/integrations.md`](docs/integrations.md) |

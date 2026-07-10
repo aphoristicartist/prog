@@ -1503,7 +1503,7 @@ fn init_codex_project_dry_run_reports_reviewable_files_without_writing() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|step| step.as_str().unwrap().contains("prog paths"))
+            .any(|step| step.as_str().unwrap().contains("prog inspect"))
     );
 }
 
@@ -1535,7 +1535,8 @@ fn init_codex_project_creates_hook_skill_manifest_and_preserves_existing_files()
     for expected in [
         "prog run",
         "prog observe",
-        "prog paths",
+        "prog inspect",
+        "prog evidence",
         "EvidenceRef",
         "MCP is optional",
     ] {
@@ -1598,7 +1599,7 @@ fn init_codex_project_creates_hook_skill_manifest_and_preserves_existing_files()
 }
 
 #[test]
-fn init_requires_project_scope_and_rejects_unimplemented_agents() {
+fn init_requires_project_scope_and_supports_each_documented_agent() {
     let project = tempfile::tempdir().unwrap();
     let root = project.path().to_str().unwrap();
     let missing_scope = prog(&["init", "--agent", "codex", "--root", root]);
@@ -1613,18 +1614,79 @@ fn init_requires_project_scope_and_rejects_unimplemented_agents() {
             .contains("--project")
     );
 
-    let unsupported = prog(&["init", "--agent", "cursor", "--project", "--root", root]);
-    assert!(!unsupported.status.success());
-    assert_eq!(stderr(&unsupported), "");
-    let error: Value = serde_json::from_slice(&unsupported.stdout).unwrap();
-    assert_eq!(error["error"]["kind"], "bad_args");
-    assert!(
-        error["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("not implemented yet")
-    );
-    assert!(!project.path().join(".codex").exists());
+    for (agent, expected_skill) in [
+        ("claude-code", ".claude/skills/prog/SKILL.md"),
+        ("cursor", ".cursor/rules/prog.mdc"),
+        ("gemini-cli", ".gemini/skills/prog/SKILL.md"),
+    ] {
+        let output = prog(&[
+            "init",
+            "--agent",
+            agent,
+            "--project",
+            "--dry-run",
+            "--root",
+            root,
+        ]);
+        assert!(output.status.success(), "{}", stdout(&output));
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["agent"], agent);
+        assert!(
+            report["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| file["path"] == expected_skill)
+        );
+    }
+    assert!(!project.path().join(".claude").exists());
+    assert!(!project.path().join(".cursor").exists());
+    assert!(!project.path().join(".gemini").exists());
+}
+
+#[test]
+fn non_codex_integrations_create_valid_agent_files_and_uninstall_cleanly() {
+    for (agent, skill, hook_dir) in [
+        (
+            "claude-code",
+            ".claude/skills/prog/SKILL.md",
+            ".claude/prog-hooks",
+        ),
+        ("cursor", ".cursor/rules/prog.mdc", ".cursor/prog-hooks"),
+        (
+            "gemini-cli",
+            ".gemini/skills/prog/SKILL.md",
+            ".gemini/prog-hooks",
+        ),
+    ] {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path().to_str().unwrap();
+        let output = prog(&["init", "--agent", agent, "--project", "--root", root]);
+        assert!(output.status.success(), "{}", stdout(&output));
+        let skill_path = project.path().join(skill);
+        assert!(skill_path.exists());
+        let skill_text = fs::read_to_string(&skill_path).unwrap();
+        assert!(skill_text.starts_with("---\n"));
+        assert!(skill_text.contains("prog inspect"));
+
+        let manifest_path = project.path().join(hook_dir).join("manifest.json");
+        let manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        assert_eq!(manifest["agent"], agent);
+        assert_eq!(
+            manifest["commands"]["inspect"],
+            "prog inspect <cursor> --goal <goal>"
+        );
+
+        let uninstall = project.path().join(hook_dir).join("uninstall.sh");
+        let result = Command::new("sh")
+            .arg(&uninstall)
+            .current_dir(project.path())
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        assert!(!skill_path.exists());
+        assert!(!project.path().join(hook_dir).exists());
+    }
 }
 
 #[test]
@@ -4154,4 +4216,195 @@ fn parser_errors_use_the_same_json_error_contract() {
             .unwrap()
             .contains("prog --help")
     );
+}
+
+#[test]
+fn evidence_navigation_workflow_is_offline_scoped_bounded_and_session_backed() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "run",
+        "--",
+        "sh",
+        "-c",
+        "echo 'error[E0308]: mismatched types' >&2; exit 1",
+    ]);
+    assert!(run.status.success(), "{}", stdout(&run));
+    let envelope: Value = serde_json::from_slice(&run.stdout).unwrap();
+    assert_eq!(envelope["findings"][0]["path"], "/failure_sections/0");
+    assert!(run.stdout.len() <= 16 * 1024);
+    let cursor = envelope["cursor"].as_str().unwrap();
+
+    let inspect = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "inspect",
+        cursor,
+        "--goal",
+        "find the root cause",
+        "--kind",
+        "error",
+    ]);
+    assert!(inspect.status.success(), "{}", stdout(&inspect));
+    let inspect_value: Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(inspect_value["normalized_goal"], "root_cause");
+    assert_eq!(inspect_value["findings"][0]["path"], "/failure_sections/0");
+    assert!(inspect.stdout.len() <= 16 * 1024);
+
+    let evidence = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "evidence",
+        cursor,
+        "--path",
+        "/failure_sections/0",
+    ]);
+    assert!(evidence.status.success(), "{}", stdout(&evidence));
+    let evidence_value: Value = serde_json::from_slice(&evidence.stdout).unwrap();
+    assert_eq!(evidence_value["schema_version"], "prog.evidence.v1");
+    assert_eq!(evidence_value["line_range"]["start"], 1);
+    assert!(
+        evidence_value["source_command"]
+            .as_str()
+            .unwrap()
+            .contains("sh")
+    );
+
+    let search = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "search",
+        cursor,
+        "mismatched",
+        "--path",
+        "/failure_sections",
+    ]);
+    assert!(search.status.success(), "{}", stdout(&search));
+    let search_value: Value = serde_json::from_slice(&search.stdout).unwrap();
+    assert!(search_value["hits"].as_array().unwrap().iter().all(|hit| {
+        hit["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("/failure_sections")
+    }));
+
+    let escape = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "find",
+        cursor,
+        "--kind",
+        "error",
+        "--path",
+        "/outside",
+    ]);
+    assert!(!escape.status.success());
+    let escape_value: Value = serde_json::from_slice(&escape.stdout).unwrap();
+    assert!(matches!(
+        escape_value["error"]["kind"].as_str(),
+        Some("path_not_found" | "path_outside_boundary")
+    ));
+
+    let session = prog(&["--dir", dir.path().to_str().unwrap(), "session", "show"]);
+    assert!(session.status.success(), "{}", stdout(&session));
+    let session_value: Value = serde_json::from_slice(&session.stdout).unwrap();
+    let kinds = session_value["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["kind"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(kinds.contains(&"run"));
+    assert!(kinds.contains(&"inspect"));
+    assert!(kinds.contains(&"evidence"));
+    assert!(kinds.contains(&"search"));
+}
+
+#[test]
+fn source_add_cli_detects_and_optionally_applies_structured_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let suggested = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "source",
+        "add-cli",
+        "pods",
+        "--operation",
+        "list",
+        "--read-only",
+        "--",
+        "kubectl",
+        "get",
+        "pods",
+    ]);
+    assert!(suggested.status.success(), "{}", stdout(&suggested));
+    let suggested_value: Value = serde_json::from_slice(&suggested.stdout).unwrap();
+    assert_eq!(
+        suggested_value["structured_output"][0]["status"],
+        "suggested"
+    );
+    assert_eq!(
+        suggested_value["structured_output"][0]["flag"],
+        json!(["-o", "json"])
+    );
+
+    let applied = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "source",
+        "add-cli",
+        "pods_json",
+        "--operation",
+        "list",
+        "--read-only",
+        "--prefer-json",
+        "--",
+        "kubectl",
+        "get",
+        "pods",
+    ]);
+    assert!(applied.status.success(), "{}", stdout(&applied));
+    let applied_value: Value = serde_json::from_slice(&applied.stdout).unwrap();
+    assert_eq!(
+        applied_value["generated_seed"]["operations"][0]["args"],
+        json!(["get", "pods", "-o", "json"])
+    );
+    assert_eq!(applied_value["structured_output"][0]["status"], "detected");
+}
+
+#[test]
+fn log_recipe_composes_observe_lens_findings_and_recommended_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("service.log");
+    fs::write(
+        &file,
+        format!(
+            "INFO start\n{}\nERROR checkout failed status=500\nINFO stop\n",
+            "noise".repeat(500)
+        ),
+    )
+    .unwrap();
+    let lens_dir = first_party_lens_dir();
+    let recipe = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--lens-dir",
+        lens_dir.to_str().unwrap(),
+        "recipe",
+        "logs-root-cause",
+        "--file",
+        file.to_str().unwrap(),
+    ]);
+    assert!(recipe.status.success(), "{}", stdout(&recipe));
+    let value: Value = serde_json::from_slice(&recipe.stdout).unwrap();
+    assert_eq!(value["recipe"]["id"], "logs-root-cause");
+    assert_eq!(value["findings"][0]["kind"], "log_error");
+    assert!(
+        value["recipe"]["recommended_next"]
+            .as_str()
+            .unwrap()
+            .contains("prog evidence")
+    );
+    assert!(recipe.stdout.len() <= 16 * 1024);
 }

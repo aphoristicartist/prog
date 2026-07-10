@@ -744,7 +744,7 @@ fn contains_jwt(text: &str) -> bool {
 
 fn contains_sensitive_url_param(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    for sep in [b'?', b'&'] {
+    for sep in *b"?&" {
         for pos in lower
             .bytes()
             .enumerate()

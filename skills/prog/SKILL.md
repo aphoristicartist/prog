@@ -11,7 +11,7 @@ are too large, noisy, expensive to rerun, or need exact evidence.
 Prefer this loop:
 
 ```text
-observe/call/run -> inspect envelope -> paths -> expand exact evidence -> answer with EvidenceRefs
+observe/call/run -> ranked findings -> inspect/search -> evidence exact path -> answer with EvidenceRefs
 ```
 
 ## Commands
@@ -22,8 +22,12 @@ observe/call/run -> inspect envelope -> paths -> expand exact evidence -> answer
   NDJSON, text, logs, and saved tool output.
 - Use `prog call <source> <operation> --args <json>` only when a source profile
   exists and the operation passes safety gates.
-- Use `prog paths <cursor>` before guessing what to expand.
-- Use `prog expand <cursor> --path <json-pointer>` to fetch exact evidence.
+- Follow the envelope's top findings first. Use `prog inspect <cursor> --goal
+  <goal>` when the task needs goal-directed ranking.
+- Use `prog search <cursor> <query>` for a known clue and `prog find <cursor>
+  --kind error|warning|test_failure` for structural evidence.
+- Use `prog evidence <cursor> --path <json-pointer>` for a compact citation
+  block. Use `prog expand` only when the evidence excerpt is insufficient.
 
 ## Source Profiles
 
@@ -64,15 +68,15 @@ are present. Expand the exact path first.
 
 ## Hook Usage
 
-Project-local hooks installed by `prog init --agent codex --project` are explicit
-wrappers, not hidden command rewrites:
+Project-local hooks installed by `prog init --agent <agent> --project` are
+explicit wrappers, not hidden command rewrites:
 
 ```bash
-.codex/prog-hooks/prog-run.sh cargo test
+<agent-dir>/prog-hooks/prog-run.sh cargo test
 ```
 
-The wrapper returns a normal `DisclosureEnvelope`. Inspect `cursor`, then use
-`prog paths` and `prog expand`.
+The wrapper returns a normal `DisclosureEnvelope`. Follow its findings, then use
+`prog inspect` and `prog evidence` for exact cached evidence.
 
 ## MCP Stance
 

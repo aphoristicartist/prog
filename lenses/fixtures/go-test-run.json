@@ -1,0 +1,8 @@
+{
+  "format": "run",
+  "command": {"capture_id": "go_fixture", "argv": ["go", "test", "./..."], "argv_count": 3, "cwd": "/repo", "duration_ms": 730, "success": false, "exit_code": 1, "signal": null, "timed_out": false, "spawn_error": null},
+  "failure_sections": [{"index": 0, "kind": "go", "stream": "stdout", "line_start": 3, "line_end": 8, "reason": "Go test failure", "priority": 88, "lines": ["--- FAIL: TestCheckoutTotal (0.01s)", "checkout_test.go:42: got 21, want 19", "FAIL example/checkout"]}],
+  "stderr": {"head": [], "tail": [], "text": "go diagnostic context xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+  "stdout": {"head": ["=== RUN TestCheckoutTotal", "--- FAIL: TestCheckoutTotal (0.01s)"], "tail": ["FAIL example/checkout"], "text": "=== RUN TestCheckoutTotal\n--- FAIL: TestCheckoutTotal (0.01s)\ncheckout_test.go:42: got 21, want 19\nFAIL example/checkout\npackage detail yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"},
+  "combined": [{"stream": "stdout", "text": "--- FAIL: TestCheckoutTotal"}]
+}

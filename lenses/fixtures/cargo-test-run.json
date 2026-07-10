@@ -1,0 +1,8 @@
+{
+  "format": "run",
+  "command": {"capture_id": "cargo_fixture", "argv": ["cargo", "test"], "argv_count": 2, "cwd": "/repo", "duration_ms": 1250, "success": false, "exit_code": 101, "signal": null, "timed_out": false, "spawn_error": null},
+  "failure_sections": [{"index": 0, "kind": "rust", "stream": "stderr", "line_start": 2, "line_end": 5, "reason": "Rust compiler failure", "priority": 95, "lines": ["error[E0308]: mismatched types", " --> src/lib.rs:42:9", "expected String, found integer"]}],
+  "stderr": {"head": ["error[E0308]: mismatched types", " --> src/lib.rs:42:9"], "tail": ["could not compile checkout"], "text": "error[E0308]: mismatched types\n --> src/lib.rs:42:9\nexpected String, found integer\ncompiler context xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+  "stdout": {"head": ["Compiling checkout"], "tail": [], "text": "Compiling checkout\nbuild detail yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"},
+  "combined": [{"stream": "stderr", "text": "error[E0308]: mismatched types"}]
+}

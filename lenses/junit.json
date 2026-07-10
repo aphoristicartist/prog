@@ -1,0 +1,14 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "junit",
+  "version": 1,
+  "match": {"source_id": "observe", "artifact_kind": "junit_xml"},
+  "view": {"limit": 20, "depth": 4, "fields": {"testcases": "/testcases", "count": "/testcase_count", "head": "/head", "tail": "/tail"}},
+  "omit": [{"path": "/text", "reason": "large_string", "detail": "raw JUnit XML remains cursor-expandable", "expandable": true}],
+  "findings": [
+    {"kind": "junit_failure", "path": "/testcases/*", "confidence": 0.96, "reason": "JUnit testcase contains a failure or error", "title": "JUnit test failure", "severity": "error", "contains_any": ["failed", "error", "failure"]}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/testcases/{index}", "reason": "cite the selected failing testcase"}],
+  "invariants": ["testcase_findings_reference_parsed_cases", "raw_xml_remains_expandable", "missing_failure_details_are_not_fabricated"],
+  "fixtures": {"positive": ["fixtures/junit-normalized.json"], "negative": ["fixtures/counterexamples/json-items.json"]}
+}

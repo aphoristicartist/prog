@@ -1,0 +1,17 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "pytest",
+  "version": 1,
+  "match": {"source_kind": "cli", "source_id": "run", "operation": "pytest", "artifact_kind": "run"},
+  "view": {"limit": 8, "depth": 4, "fields": {"command": "/command", "failures": "/failure_sections", "stderr": "/stderr/head", "stdout": "/stdout/head"}},
+  "omit": [
+    {"path": "/stderr/text", "reason": "large_string", "detail": "full traceback remains cursor-expandable", "expandable": true},
+    {"path": "/stdout/text", "reason": "large_string", "detail": "full pytest output remains cursor-expandable", "expandable": true}
+  ],
+  "findings": [
+    {"kind": "pytest_failure", "path": "/failure_sections/*", "confidence": 0.98, "reason": "pytest failure section contains traceback or assertion evidence", "title": "pytest failure", "severity": "error"}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/failure_sections/0", "reason": "cite the first pytest failure section"}],
+  "invariants": ["test_names_are_not_fabricated", "tracebacks_remain_expandable", "redaction_precedes_lens_projection"],
+  "fixtures": {"positive": ["fixtures/pytest-run.json"], "negative": ["fixtures/counterexamples/json-items.json"]}
+}

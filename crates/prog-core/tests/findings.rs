@@ -36,9 +36,7 @@ fn run_failure_sections_rank_first_with_commands_and_line_range() {
         &FindingOptions {
             goal: Some("find the root cause".to_string()),
             cursor: Some("pc1_demo".to_string()),
-            // NAV_ALL so this test still pins the full hint *format* for every
-            // navigation command. The default (NAV_EXPAND_ONLY) honestly leaves
-            // `evidence`/`inspect`/`search` as None until #90/#92 ship.
+            // NAV_ALL pins the runnable format for every navigation command.
             hints: CommandHintConfig::NAV_ALL,
             ..FindingOptions::default()
         },
@@ -64,9 +62,8 @@ fn run_failure_sections_rank_first_with_commands_and_line_range() {
 }
 
 #[test]
-fn default_hints_emit_only_expand_until_navigation_commands_ship() {
-    // The honest default: `prog expand` is the sole runnable navigation command
-    // today, so evidence/inspect/search stay None until #90/#92 land.
+fn default_hints_remain_minimal_while_nav_all_emits_runnable_commands() {
+    // Low-level callers keep a minimal default; CLI surfaces opt into NAV_ALL.
     let payload = json!({
         "errors": [{"message": "Error: boom"}]
     });
@@ -105,7 +102,7 @@ fn default_hints_emit_only_expand_until_navigation_commands_ship() {
     );
     assert_eq!(
         first.commands.inspect.as_deref(),
-        Some("prog inspect pc1_demo --path /errors")
+        Some("prog inspect pc1_demo --goal 'investigate generic_error_field' --path /errors")
     );
     assert_eq!(
         first.commands.evidence.as_deref(),
@@ -113,7 +110,7 @@ fn default_hints_emit_only_expand_until_navigation_commands_ship() {
     );
     assert_eq!(
         first.commands.search.as_deref(),
-        Some("prog search pc1_demo --path /errors")
+        Some("prog find pc1_demo --kind generic_error_field --path /errors")
     );
 }
 

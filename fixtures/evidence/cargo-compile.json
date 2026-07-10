@@ -1,0 +1,11 @@
+{
+  "name": "cargo_compile_error",
+  "goal": "find the root cause",
+  "expected_path": "/failure_sections/0",
+  "payload": {
+    "command": {"success": false, "exit_code": 101, "timed_out": false, "spawn_error": null},
+    "failure_sections": [{"kind": "rust", "stream": "stderr", "line_start": 1, "line_end": 4, "priority": 95, "lines": ["error[E0308]: mismatched types", " --> src/main.rs:12:5", "expected String, found integer"], "reason": "Rust compiler failure"}],
+    "stderr": {"text": "error[E0308]: mismatched types\n --> src/main.rs:12:5\nexpected String, found integer", "head": ["error[E0308]: mismatched types"], "tail": []},
+    "stdout": {"text": "Compiling checkout", "head": ["Compiling checkout"], "tail": []}
+  }
+}

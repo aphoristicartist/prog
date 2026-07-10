@@ -1,0 +1,14 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "unified-diff",
+  "version": 1,
+  "match": {"source_id": "observe", "artifact_kind": "unified_diff"},
+  "view": {"limit": 20, "depth": 5, "fields": {"files": "/files", "head": "/head", "tail": "/tail", "line_count": "/line_count"}},
+  "omit": [{"path": "/text", "reason": "large_string", "detail": "full unified diff remains cursor-expandable", "expandable": true}],
+  "findings": [
+    {"kind": "risky_diff_hunk", "path": "/files/*/hunks/*", "confidence": 0.86, "reason": "diff hunk changes security-, error-, or deletion-sensitive code", "title": "risky diff hunk", "severity": "warning", "contains_any": ["password", "secret", "unsafe", "unwrap", "delete", "permission", "auth"]}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/files/{file}/hunks/{hunk}", "reason": "cite the selected diff hunk"}],
+  "invariants": ["hunk_lines_come_from_diff", "full_diff_remains_expandable", "risk_terms_do_not_fabricate_conclusions"],
+  "fixtures": {"positive": ["fixtures/unified-diff-normalized.json"], "negative": ["fixtures/counterexamples/json-items.json"]}
+}

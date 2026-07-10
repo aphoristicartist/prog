@@ -12,6 +12,7 @@ pub const LENS_MANIFEST_VERSION: &str = "prog.lens_manifest.v1";
 pub const INSPECT_VERSION: &str = "prog.inspect.v1";
 pub const EVIDENCE_BLOCK_VERSION: &str = "prog.evidence.v1";
 pub const SEARCH_VERSION: &str = "prog.search.v1";
+pub const SESSION_VERSION: &str = "prog.session.v1";
 
 pub type Extra = Map<String, Value>;
 
@@ -190,6 +191,8 @@ pub struct DisclosureEnvelope {
     pub schema_hints: BTreeMap<String, String>,
     #[serde(default)]
     pub omitted: Vec<OmittedRegion>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Finding>,
     #[serde(default)]
     pub cursor: Option<String>,
     #[serde(default)]
@@ -349,21 +352,21 @@ pub struct Finding {
     pub path: String,
     pub confidence: f64,
     pub reason: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub severity: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lens_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_ref: Option<EvidenceRef>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_range: Option<LineRange>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub byte_range: Option<ByteRange>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redaction_state: Option<RedactionState>,
     #[serde(default)]
     pub commands: FindingCommandHints,
@@ -374,13 +377,13 @@ pub struct Finding {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct FindingCommandHints {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inspect: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expand: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub search: Option<String>,
     #[serde(default, flatten)]
     pub extra: Extra,
@@ -431,21 +434,21 @@ pub struct EvidenceBlock {
     pub excerpt: Value,
     #[serde(default)]
     pub citations: Vec<EvidenceCitation>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_ref: Option<EvidenceRef>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_range: Option<LineRange>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub byte_range: Option<ByteRange>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_command: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<CallProvenance>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redaction_state: Option<RedactionState>,
     #[serde(default)]
     pub commands: FindingCommandHints,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache: Option<CacheInfo>,
     #[serde(default)]
     pub warnings: Vec<String>,
@@ -457,15 +460,15 @@ pub struct EvidenceBlock {
 #[serde(rename_all = "snake_case")]
 pub struct EvidenceCitation {
     pub path: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default)]
     pub excerpt: Value,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_range: Option<LineRange>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub byte_range: Option<ByteRange>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redaction_state: Option<RedactionState>,
     #[serde(default, flatten)]
     pub extra: Extra,
@@ -504,15 +507,15 @@ pub struct SearchHit {
     pub match_kind: String,
     #[serde(default)]
     pub preview: Value,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finding_kind: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_range: Option<LineRange>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub byte_range: Option<ByteRange>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redaction_state: Option<RedactionState>,
     #[serde(default)]
     pub commands: FindingCommandHints,
@@ -592,9 +595,72 @@ pub struct LensManifest {
     #[serde(default)]
     pub next_actions: Vec<NextAction>,
     #[serde(default)]
+    pub findings: Vec<LensFindingRule>,
+    #[serde(default)]
     pub invariants: Vec<String>,
     #[serde(default)]
     pub fixtures: LensFixtures,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+/// Declarative, data-only finding provider used by a lens manifest.
+///
+/// `path` may contain `*` wildcard segments. A rule emits findings only for
+/// paths that actually exist in the persisted redacted payload. Optional
+/// `contains_any` terms further restrict matches without executing lens code.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct LensFindingRule {
+    pub kind: String,
+    pub path: String,
+    pub confidence: f64,
+    pub reason: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub severity: Option<String>,
+    #[serde(default)]
+    pub contains_any: Vec<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+/// One compact event in an evidence-navigation session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionEvent {
+    pub id: String,
+    pub session_id: String,
+    pub sequence: u64,
+    pub timestamp: String,
+    pub kind: String,
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub evidence_ref: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+/// Machine-readable task-level trail over cached, redacted evidence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionTrail {
+    pub schema_version: String,
+    pub session_id: String,
+    #[serde(default)]
+    pub goal: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub events: Vec<SessionEvent>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
@@ -775,10 +841,13 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<OmittedRegion>(&mut schemas, "OmittedRegion")?;
     insert_schema::<NextAction>(&mut schemas, "NextAction")?;
     insert_schema::<LensManifest>(&mut schemas, "LensManifest")?;
+    insert_schema::<LensFindingRule>(&mut schemas, "LensFindingRule")?;
     insert_schema::<LensMatch>(&mut schemas, "LensMatch")?;
     insert_schema::<LensView>(&mut schemas, "LensView")?;
     insert_schema::<LensOmission>(&mut schemas, "LensOmission")?;
     insert_schema::<LensFixtures>(&mut schemas, "LensFixtures")?;
+    insert_schema::<SessionEvent>(&mut schemas, "SessionEvent")?;
+    insert_schema::<SessionTrail>(&mut schemas, "SessionTrail")?;
     insert_schema::<SliceRequest>(&mut schemas, "SliceRequest")?;
     insert_schema::<CursorRecord>(&mut schemas, "CursorRecord")?;
     insert_schema::<CacheEntryMeta>(&mut schemas, "CacheEntryMeta")?;

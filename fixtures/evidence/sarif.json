@@ -1,0 +1,9 @@
+{
+  "name": "sarif_security_error",
+  "goal": "find the security error",
+  "expected_path": "/runs/0/results/0",
+  "payload": {
+    "version": "2.1.0",
+    "runs": [{"results": [{"ruleId": "AUTH001", "level": "error", "message": {"text": "authentication bypass allows unsafe access"}, "locations": [{"physicalLocation": {"artifactLocation": {"uri": "src/auth.rs"}, "region": {"startLine": 42}}}]}, {"ruleId": "STYLE001", "level": "warning", "message": {"text": "unused result"}}]}]
+  }
+}

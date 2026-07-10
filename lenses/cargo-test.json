@@ -1,0 +1,17 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "cargo-test",
+  "version": 1,
+  "match": {"source_kind": "cli", "source_id": "run", "operation": "cargo", "artifact_kind": "run"},
+  "view": {"limit": 8, "depth": 4, "fields": {"command": "/command", "failures": "/failure_sections", "stderr": "/stderr/head", "stdout": "/stdout/head"}},
+  "omit": [
+    {"path": "/stderr/text", "reason": "large_string", "detail": "full diagnostics remain cursor-expandable", "expandable": true},
+    {"path": "/stdout/text", "reason": "large_string", "detail": "full test output remains cursor-expandable", "expandable": true}
+  ],
+  "findings": [
+    {"kind": "cargo_test_failure", "path": "/failure_sections/*", "confidence": 0.98, "reason": "cargo failure section contains the first bounded compiler or test diagnostic", "title": "cargo test failure", "severity": "error"}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/failure_sections/0", "reason": "cite the first cargo failure section"}],
+  "invariants": ["findings_reference_existing_failure_sections", "full_streams_remain_expandable", "redaction_precedes_lens_projection"],
+  "fixtures": {"positive": ["fixtures/cargo-test-run.json"], "negative": ["fixtures/counterexamples/json-items.json"]}
+}

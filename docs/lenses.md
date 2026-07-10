@@ -62,6 +62,15 @@ The public contract is exposed through `prog meta LensManifest`.
       "reason": "inspect issue body only when the preview looks relevant"
     }
   ],
+  "findings": [
+    {
+      "kind": "issue_candidate",
+      "path": "/items/*",
+      "confidence": 0.8,
+      "reason": "issue row is available for triage",
+      "title": "issue candidate"
+    }
+  ],
   "invariants": [
     "envelope_under_budget",
     "no_fabricated_values",
@@ -81,6 +90,9 @@ The public contract is exposed through `prog meta LensManifest`.
   objects.
 - `omit` adds explicit omitted regions and reasons to the envelope.
 - `next_actions` adds planner-facing actions before generated omission actions.
+- `findings` declares data-only finding providers. Paths may use `*`; rules
+  emit only for existing redacted payload paths. `contains_any` can
+  conservatively restrict a rule by case-insensitive terms.
 - Expansion still uses the original redacted cached payload, not the synthetic
   preview.
 - The first-party pack lives in `lenses/`; see [First-party lens
@@ -91,8 +103,8 @@ The public contract is exposed through `prog meta LensManifest`.
 - Manifests are declarative. They cannot execute code.
 - Paths must be JSON Pointers. Wildcards are allowed only where the compiler can
   keep them as bounded selectors or display paths.
-- Omission paths outside `view.root` are rejected unless they use wildcard
-  display paths.
+- Omission and finding paths outside `view.root` are rejected. Invalid finding
+  confidence, empty terms, and path escapes fail closed.
 - Redaction happens before lens projection. A lens cannot recover redacted
   content.
 - Envelope budgets still apply.

@@ -9,6 +9,8 @@ use crate::{
 
 const DEFAULT_LIMIT: usize = 10;
 const MAX_REASON_CHARS: usize = 180;
+const MAX_FINDING_NODES: usize = 10_000;
+const MAX_FINDING_DEPTH: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FindingOptions {
@@ -33,12 +35,9 @@ impl Default for FindingOptions {
 
 /// Which navigation command hints `command_hints` should emit on each [`Finding`].
 ///
-/// `prog expand` is the only working navigation command today, so the default
-/// ([`CommandHintConfig::NAV_EXPAND_ONLY`]) emits just that hint and leaves
-/// `FindingCommandHints::evidence` as `None` — honest about the not-yet-existing
-/// `prog evidence` subcommand until #92 ships. Callers flip to
-/// [`CommandHintConfig::NAV_ALL`] once `prog inspect` / `prog evidence` /
-/// `prog search` (#90/#92) land.
+/// The minimal default emits only `prog expand` for compatibility-oriented
+/// library callers. CLI envelopes opt into [`CommandHintConfig::NAV_ALL`] so
+/// every advertised navigation command is directly runnable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandHintConfig {
     pub expand: bool,
@@ -48,7 +47,7 @@ pub struct CommandHintConfig {
 }
 
 impl CommandHintConfig {
-    /// Default: only `prog expand` is a runnable navigation command today.
+    /// Minimal compatibility mode: emit only `prog expand`.
     pub const NAV_EXPAND_ONLY: Self = Self {
         expand: true,
         inspect: false,
@@ -56,7 +55,7 @@ impl CommandHintConfig {
         search: false,
     };
 
-    /// Opt-in: emit every navigation hint. Use once inspect/evidence/search ship.
+    /// Emit every implemented navigation hint.
     pub const NAV_ALL: Self = Self {
         expand: true,
         inspect: true,
@@ -78,7 +77,7 @@ impl Default for CommandHintConfig {
 /// (the response field is a non-optional `String`) is enforced before assembly
 /// rather than panic-recovered later. The engine never fabricates cursors
 /// (fail-closed `pc1_` cursors, I9); cursor existence/freshness is validated by
-/// the CLI layer (#90) before calling [`build_inspect_response`].
+/// the CLI layer before calling [`build_inspect_response`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectRequest {
     pub goal: Option<String>,
@@ -163,7 +162,8 @@ pub fn ranked_findings(payload: &Value, options: &FindingOptions) -> Result<Vec<
     let intent = GoalIntent::from_text(options.goal.as_deref().unwrap_or(""));
     let mut candidates = Vec::new();
     collect_run_signals(scoped, scope_path, &mut candidates);
-    collect_generic_signals(scoped, scope_path, &mut candidates);
+    let mut visited = 0usize;
+    collect_generic_signals(scoped, scope_path, &mut candidates, 0, &mut visited);
 
     let mut best_by_path_kind: BTreeMap<(String, String), Candidate> = BTreeMap::new();
     for mut candidate in candidates {
@@ -190,7 +190,7 @@ pub fn ranked_findings(payload: &Value, options: &FindingOptions) -> Result<Vec<
 
 /// Assemble a full [`InspectResponse`] over an already-redacted, stored payload.
 ///
-/// This is the single boundary the future `prog inspect` CLI command (#90) calls.
+/// This is the single boundary the `prog inspect` CLI command calls.
 /// The engine is pure and store-less: it projects a ranked view over `payload`
 /// (consumed AFTER redact -> infer -> store -> project), stamps `schema_version`
 /// from [`INSPECT_VERSION`], and derives `normalized_goal` via
@@ -258,6 +258,12 @@ impl Candidate {
     }
 
     fn into_finding(self, rank: u64, options: &FindingOptions) -> Finding {
+        let commands = command_hints(
+            options.cursor.as_deref(),
+            &self.path,
+            &self.kind,
+            options.hints,
+        );
         Finding {
             rank,
             kind: self.kind,
@@ -272,7 +278,7 @@ impl Candidate {
             line_range: self.line_range,
             byte_range: None,
             redaction_state: self.redaction_state,
-            commands: command_hints(options.cursor.as_deref(), &self.path, options.hints),
+            commands,
             extra: self.extra,
         }
     }
@@ -478,7 +484,7 @@ fn allowlisted_identifier<'a>(value: &'a str, allowed: &[&'static str]) -> Optio
 }
 
 fn collect_failure_sections(sections: &[Value], path: String, out: &mut Vec<Candidate>) {
-    for (index, section) in sections.iter().enumerate() {
+    for (index, section) in sections.iter().take(MAX_FINDING_NODES).enumerate() {
         let section_path = pointer::push(&path, &index.to_string());
         let Value::Object(map) = section else {
             continue;
@@ -649,7 +655,17 @@ fn line_range(map: &Map<String, Value>) -> Option<LineRange> {
     })
 }
 
-fn collect_generic_signals(value: &Value, path: &str, out: &mut Vec<Candidate>) {
+fn collect_generic_signals(
+    value: &Value,
+    path: &str,
+    out: &mut Vec<Candidate>,
+    depth: usize,
+    visited: &mut usize,
+) {
+    if *visited >= MAX_FINDING_NODES || depth > MAX_FINDING_DEPTH {
+        return;
+    }
+    *visited += 1;
     match value {
         Value::Object(map) => {
             collect_object_level_signal(map, path, value, out);
@@ -658,16 +674,33 @@ fn collect_generic_signals(value: &Value, path: &str, out: &mut Vec<Candidate>) 
                 if let Some(signal) = key_signal(key, child) {
                     out.push(Candidate::from_signal(child_path.clone(), child, signal));
                 }
-                collect_generic_signals(child, &child_path, out);
+                collect_generic_signals(child, &child_path, out, depth + 1, visited);
+                if *visited >= MAX_FINDING_NODES {
+                    break;
+                }
             }
         }
         Value::Array(items) => {
             for (index, child) in items.iter().enumerate() {
-                collect_generic_signals(child, &pointer::push(path, &index.to_string()), out);
+                collect_generic_signals(
+                    child,
+                    &pointer::push(path, &index.to_string()),
+                    out,
+                    depth + 1,
+                    visited,
+                );
+                if *visited >= MAX_FINDING_NODES {
+                    break;
+                }
             }
         }
         Value::String(text) => {
-            if let Some(signal) = string_signal(text) {
+            // Command argv is provenance, not observed output. Treating a
+            // shell snippet containing words like "error" as causal evidence
+            // creates false findings and can outrank the actual stream data.
+            if !is_command_argv_path(path)
+                && let Some(signal) = string_signal(text)
+            {
                 out.push(Candidate::from_signal(path.to_string(), value, signal));
             }
         }
@@ -707,7 +740,7 @@ fn collect_object_level_signal(
 }
 
 fn key_signal(key: &str, value: &Value) -> Option<Signal> {
-    if key == "failure_sections" || is_empty_container(value) {
+    if key == "failure_sections" || is_absent_signal_value(value) {
         return None;
     }
     let normalized = normalize_key(key);
@@ -888,6 +921,20 @@ fn is_empty_container(value: &Value) -> bool {
         || matches!(value, Value::Object(map) if map.is_empty())
 }
 
+fn is_absent_signal_value(value: &Value) -> bool {
+    matches!(value, Value::Null | Value::Bool(false))
+        || value.as_str().is_some_and(str::is_empty)
+        || is_empty_container(value)
+}
+
+fn is_command_argv_path(path: &str) -> bool {
+    pointer::parse(path).is_ok_and(|segments| {
+        segments
+            .windows(2)
+            .any(|window| window[0] == "command" && window[1] == "argv")
+    })
+}
+
 fn score_candidate(candidate: &Candidate, intent: GoalIntent) -> f64 {
     let mut score = candidate.confidence;
     score += kind_bonus(&candidate.kind, intent);
@@ -962,6 +1009,7 @@ fn compare_candidates(left: &Candidate, right: &Candidate) -> Ordering {
 fn command_hints(
     cursor: Option<&str>,
     path: &str,
+    kind: &str,
     hints: CommandHintConfig,
 ) -> FindingCommandHints {
     let Some(cursor) = cursor else {
@@ -969,10 +1017,12 @@ fn command_hints(
     };
     let cursor = shell_arg(cursor);
     let path = shell_arg(path);
+    let goal = shell_arg(&format!("investigate {kind}"));
+    let kind = shell_arg(kind);
     FindingCommandHints {
         inspect: hints
             .inspect
-            .then(|| format!("prog inspect {cursor} --path {path}")),
+            .then(|| format!("prog inspect {cursor} --goal {goal} --path {path}")),
         expand: hints
             .expand
             .then(|| format!("prog expand {cursor} --path {path}")),
@@ -981,13 +1031,14 @@ fn command_hints(
             .then(|| format!("prog evidence {cursor} --path {path}")),
         search: hints
             .search
-            .then(|| format!("prog search {cursor} --path {path}")),
+            .then(|| format!("prog find {cursor} --kind {kind} --path {path}")),
         extra: Extra::new(),
     }
 }
 
 fn redaction_state(value: &Value) -> Option<RedactionState> {
-    let count = count_redacted_values(value);
+    let mut visited = 0usize;
+    let count = count_redacted_values(value, 0, &mut visited);
     (count > 0).then(|| RedactionState {
         redacted: true,
         redacted_paths: count,
@@ -997,15 +1048,25 @@ fn redaction_state(value: &Value) -> Option<RedactionState> {
     })
 }
 
-fn count_redacted_values(value: &Value) -> u64 {
+fn count_redacted_values(value: &Value, depth: usize, visited: &mut usize) -> u64 {
+    if *visited >= MAX_FINDING_NODES || depth > MAX_FINDING_DEPTH {
+        return 0;
+    }
+    *visited += 1;
     match value {
         Value::String(text)
             if text.contains("[REDACTED:") || text.contains("\u{00ab}redacted\u{00bb}") =>
         {
             1
         }
-        Value::Array(items) => items.iter().map(count_redacted_values).sum(),
-        Value::Object(map) => map.values().map(count_redacted_values).sum(),
+        Value::Array(items) => items
+            .iter()
+            .map(|value| count_redacted_values(value, depth + 1, visited))
+            .sum(),
+        Value::Object(map) => map
+            .values()
+            .map(|value| count_redacted_values(value, depth + 1, visited))
+            .sum(),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => 0,
     }
 }

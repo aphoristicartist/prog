@@ -6,7 +6,7 @@ raw payload into context.
 
 > **Where do the paths in an `EvidenceRef` come from?** The generic findings
 > ranking engine (`prog_core::findings`) projects a deterministic ranked view
-> over an already-redacted payload and is what `prog inspect` (#90) will surface.
+> over an already-redacted payload and is surfaced by `prog inspect`.
 > See [`findings.md`](./findings.md) for the kind/intent scoring table, the
 > tie-break chain, and the command-hint gating policy.
 
@@ -34,8 +34,8 @@ cursors fail closed.
 
 ```bash
 prog run -- cargo test
-prog paths pc1_... --prefix /failure_sections
-prog expand pc1_... --path /failure_sections/0
+prog inspect pc1_... --goal "find the root cause"
+prog evidence pc1_... --path /failure_sections/0
 ```
 
 When the answer depends on the expanded failure section, cite the ref:
@@ -44,7 +44,9 @@ When the answer depends on the expanded failure section, cite the ref:
 EvidenceRef: prog://pc1_...#/failure_sections/0
 ```
 
-Do not paste the full stdout/stderr unless the user explicitly needs it. Use
+`prog evidence` returns a bounded `prog.evidence.v1` block with an excerpt,
+line/byte ranges when the parser knows them, safe provenance, redaction state,
+and exact follow-up commands. Do not paste the full stdout/stderr unless the user explicitly needs it. Use
 `prog expand <cursor> --path <path> --out <file>` for bulk evidence that should
 stay out of model context; the receipt includes its own `evidence_ref`.
 

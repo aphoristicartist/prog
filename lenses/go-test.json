@@ -1,0 +1,17 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "go-test",
+  "version": 1,
+  "match": {"source_kind": "cli", "source_id": "run", "operation": "go", "artifact_kind": "run"},
+  "view": {"limit": 8, "depth": 4, "fields": {"command": "/command", "failures": "/failure_sections", "stderr": "/stderr/head", "stdout": "/stdout/head"}},
+  "omit": [
+    {"path": "/stderr/text", "reason": "large_string", "detail": "full Go diagnostics remain cursor-expandable", "expandable": true},
+    {"path": "/stdout/text", "reason": "large_string", "detail": "full go test output remains cursor-expandable", "expandable": true}
+  ],
+  "findings": [
+    {"kind": "go_test_failure", "path": "/failure_sections/*", "confidence": 0.96, "reason": "go test failure section contains captured failing-test evidence", "title": "go test failure", "severity": "error"}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/failure_sections/0", "reason": "cite the first go test failure"}],
+  "invariants": ["package_and_test_names_are_not_fabricated", "full_streams_remain_expandable", "redaction_precedes_lens_projection"],
+  "fixtures": {"positive": ["fixtures/go-test-run.json"], "negative": ["fixtures/counterexamples/json-items.json"]}
+}

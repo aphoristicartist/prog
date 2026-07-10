@@ -3,8 +3,8 @@
 `prog-core` ships a generic evidence-ranking engine
 ([`crates/prog-core/src/findings.rs`](../crates/prog-core/src/findings.rs)) that
 projects a ranked, navigable view over an **already-redacted and stored**
-payload. It is the read-only optic that backs `prog inspect` (#90) and the
-finding-stamping that `prog expand`/`prog evidence` (#91/#92) build on.
+payload. It is the read-only optic behind `prog inspect`, initial envelope
+findings, lens finding providers, and `prog evidence`.
 
 The engine is **pure, store-less, and deterministic**. It never mutates cursor
 state (effect policy I6/I7 are untouched: ranking is a read-only projection),
@@ -20,7 +20,7 @@ persisted or replayed.
 pub fn ranked_findings(payload: &Value, options: &FindingOptions)
     -> Result<Vec<Finding>>;
 
-// Full response assembly for the future `prog inspect` CLI (#90).
+// Full response assembly used by the `prog inspect` CLI.
 pub fn build_inspect_response(payload: &Value, request: &InspectRequest)
     -> Result<InspectResponse>;
 ```
@@ -40,7 +40,8 @@ second version constant to drift.
 1. **Scope.** `options.scope_path` (a JSON Pointer) is resolved with
    `pointer::get`. A missing scope yields no findings; an invalid pointer errors
    `bad_pointer`. An empty `scope_path` (`""`) ranks the whole payload.
-2. **Collect.** Two passes walk the scoped value:
+2. **Collect.** Two passes walk the scoped value under hard 10,000-node and
+   64-level traversal caps:
    - `collect_run_signals` — recognizes the `run` shape (`command` metadata +
      `failure_sections`).
    - `collect_generic_signals` — walks every object/array/string recursively,
@@ -185,16 +186,15 @@ Each `Finding` carries `commands: FindingCommandHints` populated from
 `options.hints: CommandHintConfig`:
 
 - `CommandHintConfig::NAV_EXPAND_ONLY` (the **default**) emits only
-  `prog expand {cursor} --path {path}`. `prog expand` is the sole working
-  navigation command today.
+  `prog expand {cursor} --path {path}` for library callers that want the
+  narrowest compatibility surface.
 - `CommandHintConfig::NAV_ALL` additionally emits `prog inspect`, `prog
-  evidence`, and `prog search` hints.
+  evidence`, and a runnable semantic `prog find --kind ...` hint.
 
-This is an **honest** gate: until `prog inspect` (#90), `prog evidence` (#92),
-and `prog search` ship, the default leaves those hint fields `None` rather than
-advertising dead commands. Callers that want every hint up front flip to
-`NAV_ALL`. The `FindingCommandHints.evidence` field was already an `Option`, so
-this changes no JSON contract surface — only which value the default produces.
+CLI envelopes and `inspect` use `NAV_ALL`; low-level library callers retain the
+minimal default. Every emitted command is runnable: the `search` hint field uses
+`prog find <cursor> --kind <kind> --path <path>` because a text search command
+cannot honestly invent a query.
 
-The evidence-acquisition pipeline that `prog evidence` will drive is documented
+The evidence-acquisition pipeline is documented
 separately in [`evidence.md`](./evidence.md).

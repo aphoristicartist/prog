@@ -16,6 +16,7 @@ sha2.workspace = true
 uuid.workspace = true
 redb.workspace = true
 tracing.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

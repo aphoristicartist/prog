@@ -1,0 +1,80 @@
+{
+  "schema_version": "prog.evidence_acquisition_eval.v1",
+  "scenarios": [
+    {
+      "name": "cargo_compile_error",
+      "expected_path": "/failure_sections/0",
+      "top_finding_path": "/failure_sections/0",
+      "top_finding_rank": 1,
+      "correct": true,
+      "baseline_tool_calls": 3,
+      "findings_tool_calls": 2,
+      "inspect_tool_calls": 3,
+      "baseline_output_tokens": 635,
+      "findings_output_tokens": 679,
+      "inspect_output_tokens": 1341
+    },
+    {
+      "name": "cargo_test_failure",
+      "expected_path": "/failure_sections/0",
+      "top_finding_path": "/failure_sections/0",
+      "top_finding_rank": 1,
+      "correct": true,
+      "baseline_tool_calls": 3,
+      "findings_tool_calls": 2,
+      "inspect_tool_calls": 3,
+      "baseline_output_tokens": 646,
+      "findings_output_tokens": 676,
+      "inspect_output_tokens": 1338
+    },
+    {
+      "name": "noisy_log_root_error",
+      "expected_path": "/lines/40/text",
+      "top_finding_path": "/lines/40/text",
+      "top_finding_rank": 1,
+      "correct": true,
+      "baseline_tool_calls": 3,
+      "findings_tool_calls": 2,
+      "inspect_tool_calls": 3,
+      "baseline_output_tokens": 836,
+      "findings_output_tokens": 471,
+      "inspect_output_tokens": 526
+    },
+    {
+      "name": "pytest_assertion_failure",
+      "expected_path": "/failure_sections/0",
+      "top_finding_path": "/failure_sections/0",
+      "top_finding_rank": 1,
+      "correct": true,
+      "baseline_tool_calls": 3,
+      "findings_tool_calls": 2,
+      "inspect_tool_calls": 3,
+      "baseline_output_tokens": 681,
+      "findings_output_tokens": 716,
+      "inspect_output_tokens": 1392
+    },
+    {
+      "name": "sarif_security_error",
+      "expected_path": "/runs/0/results/0",
+      "top_finding_path": "/runs/0/results/0",
+      "top_finding_rank": 1,
+      "correct": true,
+      "baseline_tool_calls": 3,
+      "findings_tool_calls": 2,
+      "inspect_tool_calls": 3,
+      "baseline_output_tokens": 648,
+      "findings_output_tokens": 624,
+      "inspect_output_tokens": 677
+    }
+  ],
+  "summary": {
+    "scenario_count": 5,
+    "correct_top_findings": 5,
+    "baseline_tool_calls": 15,
+    "findings_tool_calls": 10,
+    "inspect_tool_calls": 15,
+    "baseline_output_tokens": 3446,
+    "findings_output_tokens": 3166,
+    "inspect_output_tokens": 5274
+  }
+}

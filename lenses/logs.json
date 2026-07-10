@@ -1,0 +1,15 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "logs",
+  "version": 1,
+  "match": {"source_id": "observe", "artifact_kind": "text"},
+  "view": {"limit": 20, "depth": 4, "fields": {"head": "/head", "tail": "/tail", "line_count": "/line_count", "byte_count": "/byte_count"}},
+  "omit": [{"path": "/lines", "reason": "long_array", "detail": "all redacted log lines remain cursor-expandable", "expandable": true}],
+  "findings": [
+    {"kind": "log_error", "path": "/lines/*", "confidence": 0.92, "reason": "log line contains an error, fatal, panic, or exception marker", "title": "log error", "severity": "error", "contains_any": [" error ", "fatal", "panic", "exception", "failed"]},
+    {"kind": "log_warning", "path": "/lines/*", "confidence": 0.62, "reason": "log line contains a warning marker", "title": "log warning", "severity": "warning", "contains_any": [" warn ", "warning"]}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/lines/{index}", "reason": "cite the selected log line"}],
+  "invariants": ["findings_reference_existing_lines", "all_lines_remain_expandable", "redaction_precedes_lens_projection"],
+  "fixtures": {"positive": ["fixtures/text-log-normalized.json"], "negative": ["fixtures/counterexamples/json-items.json"]}
+}
