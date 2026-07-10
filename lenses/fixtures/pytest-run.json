@@ -1,0 +1,8 @@
+{
+  "format": "run",
+  "command": {"capture_id": "pytest_fixture", "argv": ["pytest", "-q"], "argv_count": 2, "cwd": "/repo", "duration_ms": 880, "success": false, "exit_code": 1, "signal": null, "timed_out": false, "spawn_error": null},
+  "failure_sections": [{"index": 0, "kind": "python", "stream": "stderr", "line_start": 1, "line_end": 5, "reason": "Python traceback", "priority": 92, "lines": ["Traceback (most recent call last):", "  File tests/test_checkout.py, line 42", "AssertionError: expected 19 got 21"]}],
+  "stderr": {"head": ["Traceback (most recent call last):", "AssertionError: expected 19 got 21"], "tail": ["1 failed"], "text": "Traceback (most recent call last):\n  File tests/test_checkout.py, line 42\nAssertionError: expected 19 got 21\ntrace detail xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+  "stdout": {"head": ["collected 148 items"], "tail": ["147 passed, 1 failed"], "text": "collected 148 items\nprogress yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"},
+  "combined": [{"stream": "stderr", "text": "AssertionError: expected 19 got 21"}]
+}

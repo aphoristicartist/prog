@@ -1,0 +1,8 @@
+{
+  "format": "run",
+  "command": {"capture_id": "npm_fixture", "argv": ["npm", "test"], "argv_count": 2, "cwd": "/repo", "duration_ms": 990, "success": false, "exit_code": 1, "signal": null, "timed_out": false, "spawn_error": null},
+  "failure_sections": [{"index": 0, "kind": "node", "stream": "stderr", "line_start": 8, "line_end": 13, "reason": "Node.js or npm error", "priority": 85, "lines": ["FAIL src/checkout.test.ts", "Expected: 19", "Received: 21", "npm ERR! Test failed"]}],
+  "stderr": {"head": ["FAIL src/checkout.test.ts", "npm ERR! Test failed"], "tail": ["npm ERR! code 1"], "text": "FAIL src/checkout.test.ts\nExpected: 19\nReceived: 21\nnpm ERR! Test failed\nstack xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+  "stdout": {"head": ["> checkout@1.0.0 test"], "tail": ["1 failed, 38 passed"], "text": "> checkout@1.0.0 test\nprogress yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"},
+  "combined": [{"stream": "stderr", "text": "npm ERR! Test failed"}]
+}

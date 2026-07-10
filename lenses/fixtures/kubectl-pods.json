@@ -1,0 +1,10 @@
+{
+  "apiVersion": "v1",
+  "kind": "PodList",
+  "items": [
+    {"metadata": {"name": "api-7d9", "namespace": "prod", "managedFields": [{"manager": "controller", "fieldsV1": {"f:metadata": {"f:labels": {".": {}, "f:app": {}}}}}]}, "status": {"phase": "Running", "containerStatuses": [{"name": "api", "ready": false, "restartCount": 9, "state": {"waiting": {"reason": "CrashLoopBackOff", "message": "back-off restarting failed container"}}}], "conditions": [{"type": "Ready", "status": "False", "reason": "ContainersNotReady"}]}},
+    {"metadata": {"name": "worker-2f1", "namespace": "prod", "managedFields": [{"manager": "controller", "fieldsV1": {"f:metadata": {"f:labels": {".": {}, "f:app": {}}}}}]}, "status": {"phase": "Running", "containerStatuses": [{"name": "worker", "ready": true, "restartCount": 0}], "conditions": [{"type": "Ready", "status": "True"}]}},
+    {"metadata": {"name": "cron-991", "namespace": "ops", "managedFields": [{"manager": "scheduler", "fieldsV1": {"f:spec": {"f:nodeName": {}}}}]}, "status": {"phase": "Pending", "reason": "Unschedulable", "conditions": [{"type": "PodScheduled", "status": "False", "reason": "Unschedulable", "message": "0/3 nodes available"}]}}
+  ],
+  "metadata": {"resourceVersion": "123456789", "continue": ""}
+}

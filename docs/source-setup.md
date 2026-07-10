@@ -45,6 +45,19 @@ prog call local inspect --args '{}' --yes
 The command is stored as argv, not as a shell string. Shell-backed sources still
 require explicit seed/profile editing because shell trust should be reviewed.
 
+`source add-cli` detects existing `--json`, `--format json`, `--output json`,
+`-o json`, and Cargo JSON message flags. For known invocations of `gh`,
+`kubectl`, Cargo, and structured npm commands it returns a conservative
+`structured_output` suggestion. Nothing is changed by default. Pass
+`--prefer-json` to apply only a high-confidence suggestion:
+
+```bash
+prog source add-cli pods --operation list --read-only --prefer-json -- kubectl get pods
+```
+
+Unknown or ambiguous CLIs fail `--prefer-json` with an actionable error instead
+of guessing a flag. Detection never executes help commands.
+
 ## Import Existing Descriptors
 
 `prog discover --import` seeds profiles from descriptors that tools already
@@ -91,6 +104,7 @@ Both source-add commands return:
 - `generated_seed`: the seed JSON used for discovery
 - `discovery`: the same report returned by `prog discover`
 - `next_steps`: copy-pasteable `prog hints` and `prog call` commands
+- `structured_output`: detected or suggested JSON-mode flags with confidence
 - `warnings`: confirmation-gating, probe, or discovery warnings
 
 Use `prog discover --seed` when you need advanced seed features such as auth

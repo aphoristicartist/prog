@@ -2,9 +2,6 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum CoreError {
-    #[error("command '{command}' is not implemented yet")]
-    NotImplemented { command: &'static str },
-
     #[error("invalid command line: {0}")]
     CliUsage(String),
 
@@ -148,7 +145,6 @@ impl CoreError {
 
     pub fn kind(&self) -> &'static str {
         match self {
-            CoreError::NotImplemented { .. } => "not_implemented",
             CoreError::CliUsage(_) => "cli_usage",
             CoreError::UnknownSource(_) => "unknown_source",
             CoreError::UnknownOperation { .. } => "unknown_operation",
@@ -185,11 +181,6 @@ impl CoreError {
 
     pub fn hint(&self) -> String {
         match self {
-            CoreError::NotImplemented { command } => {
-                format!(
-                    "The '{command}' command is scaffolded by issue #1; implement its roadmap issue before using it."
-                )
-            }
             CoreError::CliUsage(_) => {
                 "Run `prog --help` to see the supported command tree.".to_string()
             }

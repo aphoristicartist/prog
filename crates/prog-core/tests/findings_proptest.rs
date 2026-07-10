@@ -215,8 +215,7 @@ fn assert_golden(name: &str, goal: &str) {
     let payload: Value =
         serde_json::from_slice(&std::fs::read(dir.join(format!("{name}.json"))).unwrap()).unwrap();
 
-    // NAV_ALL so every hint field is captured in the snapshot, pinning the full
-    // hint format (including prog evidence, which is off by default until #92).
+    // NAV_ALL captures and pins every runnable hint format in the snapshot.
     let options = FindingOptions {
         goal: Some(goal.to_string()),
         cursor: Some("pc1_golden".to_string()),

@@ -1,0 +1,16 @@
+{
+  "format": "junit_xml",
+  "testcases": [
+    {"name": "checkout_total", "classname": "tests.checkout", "time": "0.14", "status": "failed", "failure": "AssertionError: expected 19 got 21", "line_start": 3},
+    {"name": "checkout_empty", "classname": "tests.checkout", "time": "0.02", "status": "passed", "failure": null, "line_start": 8},
+    {"name": "checkout_tax", "classname": "tests.checkout", "time": "0.04", "status": "passed", "failure": null, "line_start": 9}
+  ],
+  "testcase_count": 3,
+  "head": ["<testsuite tests=\"3\" failures=\"1\">", "<testcase name=\"checkout_total\">"],
+  "tail": ["</testcase>", "</testsuite>"],
+  "text": "<testsuite tests=\"3\" failures=\"1\">\n<testcase name=\"checkout_total\" classname=\"tests.checkout\"><failure>AssertionError: expected 19 got 21</failure></testcase>\n<testcase name=\"checkout_empty\" classname=\"tests.checkout\"/>\n<testcase name=\"checkout_tax\" classname=\"tests.checkout\"/>\n</testsuite> repeated raw XML detail repeated raw XML detail repeated raw XML detail repeated raw XML detail repeated raw XML detail repeated raw XML detail repeated raw XML detail repeated raw XML detail",
+  "lines": [{"number": 1, "text": "<testsuite tests=\"3\" failures=\"1\">"}, {"number": 2, "text": "<testcase name=\"checkout_total\"><failure>AssertionError</failure></testcase>"}],
+  "line_count": 5,
+  "byte_count": 700,
+  "utf8_valid": true
+}

@@ -17,13 +17,13 @@ redaction rules.
 |---|---|---|---|
 | Codex project skill and hooks | implemented | `prog init --agent codex --project` | `.codex/skills/prog/SKILL.md`, `.codex/prog-hooks/*` |
 | Codex dry run | implemented | `prog init --agent codex --project --dry-run` | nothing |
-| Claude Code project skill and hooks | planned | not enabled | nothing |
-| Cursor project rules/hooks | planned | not enabled | nothing |
-| Gemini CLI project hooks | planned | not enabled | nothing |
+| Claude Code project skill and hooks | implemented | `prog init --agent claude-code --project` | `.claude/skills/prog/SKILL.md`, `.claude/prog-hooks/*` |
+| Cursor project rule and hooks | implemented | `prog init --agent cursor --project` | `.cursor/rules/prog.mdc`, `.cursor/prog-hooks/*` |
+| Gemini CLI project skill and hooks | implemented | `prog init --agent gemini-cli --project` | `.gemini/skills/prog/SKILL.md`, `.gemini/prog-hooks/*` |
 | Global shell aliases | planned | not enabled | nothing |
 | MCP server mode | optional future adapter | not enabled | nothing |
 
-## Generated Codex Files
+## Generated Files
 
 `prog init --agent codex --project` creates reviewable, reversible files:
 
@@ -43,8 +43,14 @@ The hook helper is explicit:
 .codex/prog-hooks/prog-run.sh cargo test
 ```
 
-It returns a bounded `DisclosureEnvelope`; use `prog paths <cursor>` before
-expanding exact evidence with `prog expand <cursor> --path <json-pointer>`.
+It returns a bounded `DisclosureEnvelope`; follow its ranked findings or use
+`prog inspect <cursor> --goal <goal>`, then cite exact evidence with
+`prog evidence <cursor> --path <json-pointer>`.
+
+Claude Code and Gemini CLI receive the same canonical `SKILL.md` under their
+documented workspace skill directories. Cursor receives an agent-requested MDC
+rule under `.cursor/rules`. Every agent gets an explicit `prog-run.sh`, manifest,
+README, and uninstall script under its own project directory.
 
 ## Reversal
 
@@ -63,8 +69,8 @@ Use these workflows:
 
 ```bash
 prog run -- cargo test
-prog paths pc1_...
-prog expand pc1_... --path /failure_sections/0
+prog inspect pc1_... --goal "find the root cause"
+prog evidence pc1_... --path /failure_sections/0
 ```
 
 ```bash

@@ -23,6 +23,10 @@ silently producing a misleading preview.
 | `observe.ndjson.records` | Show bounded event records and omit expandable payloads/stacks. |
 | `json.items.triage` | Triage observed JSON objects with an `/items` collection. |
 | `github.issues.triage` | Triage issue-list responses while omitting expandable issue bodies and PR metadata. |
+| `cargo-test`, `pytest`, `npm-test`, `go-test` | Normalize one-shot test runs around existing failure sections and ranked evidence. |
+| `junit`, `sarif` | Rank parsed test failures and static-analysis diagnostics. |
+| `github-issues`, `kubectl-json` | Navigate cached GitHub CLI output and unhealthy Kubernetes resource status. |
+| `unified-diff`, `logs` | Rank risky hunks and error/warning log lines. |
 
 ## Quality Rules
 
@@ -35,6 +39,8 @@ CI validates that:
 - positive fixture projections are smaller than raw fixture payloads
 - positive fixture projections beat a simple 2 KiB truncation baseline
 - projected fixtures do not expose unredacted `plain-secret` counterexamples
+- declarative finding paths cannot escape `view.root`
+- wildcard finding rules emit only for paths that exist in the redacted payload
 
 CLI tests also exercise real `run`, `observe`, and `call` flows with first-party
 lenses and expansion from the redacted cache.

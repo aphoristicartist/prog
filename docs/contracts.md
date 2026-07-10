@@ -46,6 +46,7 @@ The current public contracts include:
 - `OmittedRegion`
 - `NextAction`
 - `LensManifest`
+- `LensFindingRule`
 - `LensMatch`
 - `LensView`
 - `LensOmission`
@@ -57,6 +58,8 @@ The current public contracts include:
 - `CacheInfo`
 - `CacheList`
 - `PurgeSummary`
+- `SessionEvent`
+- `SessionTrail`
 
 ## Forward compatibility
 
@@ -89,12 +92,12 @@ appear on envelopes, expanded slices, path entries, and export receipts. It is
 not a capability; consumers must still call `prog expand` with the cursor and
 path when they need evidence.
 
-Evidence-navigation contracts are the planned machine-readable surface for
+Evidence-navigation contracts are the machine-readable surface for
 ranked evidence workflows. `InspectResponse` contains ranked `Finding` entries,
 `EvidenceBlock` contains compact citation-oriented evidence for one path, and
 `SearchResponse` contains path-backed hits over redacted cached payloads. These
-contracts are public before the corresponding commands are implemented so
-clients and lenses can converge on one shape.
+are returned by `inspect`, `evidence`, `search`, and `find`; `SessionTrail`
+records metadata-only navigation events.
 
 For lens-driven calls, inspect the flattened `lens` metadata on the returned
 envelope before assuming the preview shape is the source's native shape. Lens

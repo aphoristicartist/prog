@@ -1,0 +1,14 @@
+{
+  "schema_version": "prog.lens_manifest.v1",
+  "id": "sarif",
+  "version": 1,
+  "match": {"source_id": "observe", "artifact_kind": "sarif"},
+  "view": {"root": "/runs/0/results", "limit": 20, "depth": 5, "fields": {"rule_id": "/ruleId", "level": "/level", "message": "/message/text", "locations": "/locations"}},
+  "omit": [{"path": "/runs/0/results/*/codeFlows", "reason": "deep_object", "detail": "SARIF code flows remain cursor-expandable", "expandable": true}],
+  "findings": [
+    {"kind": "sarif_error", "path": "/runs/0/results/*", "confidence": 0.95, "reason": "SARIF result has error severity", "title": "SARIF diagnostic", "severity": "error", "contains_any": ["error"]}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/runs/0/results/{index}", "reason": "cite the selected SARIF result"}],
+  "invariants": ["rule_ids_and_locations_come_from_sarif", "code_flows_remain_expandable", "redaction_precedes_lens_projection"],
+  "fixtures": {"positive": ["fixtures/sarif.json"], "negative": ["fixtures/counterexamples/text-log-normalized.json"]}
+}

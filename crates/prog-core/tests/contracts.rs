@@ -2,8 +2,9 @@ use prog_core::{
     AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CallProvenance, CursorRecord,
     DISCLOSURE_VERSION, DisclosureEnvelope, EVIDENCE_BLOCK_VERSION, EffectSet, EvidenceBlock,
     EvidenceRef, Finding, FindingCommandHints, INSPECT_VERSION, InspectResponse,
-    LENS_MANIFEST_VERSION, LensManifest, NextAction, OmittedRegion, SEARCH_VERSION, SearchResponse,
-    SliceRequest, SourceProfile, Summary, TrustSettings, canonical_json, public_contract_schemas,
+    LENS_MANIFEST_VERSION, LensFindingRule, LensManifest, NextAction, OmittedRegion,
+    SEARCH_VERSION, SearchResponse, SessionEvent, SessionTrail, SliceRequest, SourceProfile,
+    Summary, TrustSettings, canonical_json, public_contract_schemas,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -118,6 +119,37 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
         }),
         "x_future",
     );
+    assert_extra_roundtrips::<LensFindingRule>(
+        json!({
+            "kind": "error",
+            "path": "/errors/*",
+            "confidence": 0.9,
+            "reason": "error evidence",
+            "x_future": "kept"
+        }),
+        "x_future",
+    );
+    assert_extra_roundtrips::<SessionEvent>(
+        json!({
+            "id": "pe1_demo",
+            "session_id": "ps1_demo",
+            "sequence": 1,
+            "timestamp": "2026-07-09T00:00:00Z",
+            "kind": "inspect",
+            "x_future": "kept"
+        }),
+        "x_future",
+    );
+    assert_extra_roundtrips::<SessionTrail>(
+        json!({
+            "schema_version": "prog.session.v1",
+            "session_id": "ps1_demo",
+            "created_at": "2026-07-09T00:00:00Z",
+            "updated_at": "2026-07-09T00:00:00Z",
+            "x_future": "kept"
+        }),
+        "x_future",
+    );
     assert_extra_roundtrips::<SliceRequest>(json!({"x_future": "kept"}), "x_future");
     assert_extra_roundtrips::<CursorRecord>(
         json!({
@@ -196,6 +228,14 @@ fn version_fields_are_required_on_versioned_contracts() {
     }))
     .unwrap_err();
     assert!(search_error.to_string().contains("schema_version"));
+
+    let session_error = serde_json::from_value::<SessionTrail>(json!({
+        "session_id": "ps1_demo",
+        "created_at": "2026-07-09T00:00:00Z",
+        "updated_at": "2026-07-09T00:00:00Z"
+    }))
+    .unwrap_err();
+    assert!(session_error.to_string().contains("schema_version"));
 }
 
 #[test]
@@ -289,6 +329,7 @@ fn schemas_generate_for_all_public_contracts() {
         "OmittedRegion",
         "NextAction",
         "LensManifest",
+        "LensFindingRule",
         "LensMatch",
         "LensView",
         "LensOmission",
@@ -300,6 +341,8 @@ fn schemas_generate_for_all_public_contracts() {
         "CacheInfo",
         "CacheList",
         "PurgeSummary",
+        "SessionEvent",
+        "SessionTrail",
     ] {
         assert!(
             schemas.contains_key(expected),

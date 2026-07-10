@@ -1,0 +1,12 @@
+{
+  "version": "2.1.0",
+  "runs": [{
+    "tool": {"driver": {"name": "scanner", "rules": [{"id": "AUTH001", "shortDescription": {"text": "unsafe authentication"}}]}},
+    "results": [
+      {"ruleId": "AUTH001", "level": "error", "message": {"text": "authentication bypass on failure path"}, "locations": [{"physicalLocation": {"artifactLocation": {"uri": "src/auth.rs"}, "region": {"startLine": 42}}}], "codeFlows": [{"threadFlows": [{"locations": [{"location": {"message": {"text": "long flow detail aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}]}]}]},
+      {"ruleId": "STYLE002", "level": "warning", "message": {"text": "unused result"}, "locations": [{"physicalLocation": {"artifactLocation": {"uri": "src/main.rs"}, "region": {"startLine": 9}}}]}
+    ],
+    "artifacts": [{"location": {"uri": "src/auth.rs"}, "contents": {"text": "large source context bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],
+    "invocations": [{"commandLine": "scanner --all", "executionSuccessful": true, "properties": {"diagnosticLog": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}]
+  }]
+}

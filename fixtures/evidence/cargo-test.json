@@ -1,0 +1,11 @@
+{
+  "name": "cargo_test_failure",
+  "goal": "which test failed first",
+  "expected_path": "/failure_sections/0",
+  "payload": {
+    "command": {"success": false, "exit_code": 101, "timed_out": false, "spawn_error": null},
+    "failure_sections": [{"kind": "rust", "stream": "stdout", "line_start": 20, "line_end": 25, "priority": 90, "lines": ["test checkout::total ... FAILED", "thread 'checkout::total' panicked at src/lib.rs:42:9", "assertion failed: left == right"], "reason": "Rust test failure"}],
+    "stdout": {"text": "running 98 tests\ntest checkout::total ... FAILED\nassertion failed: left == right", "head": ["running 98 tests"], "tail": ["test result: FAILED. 97 passed; 1 failed"]},
+    "stderr": {"text": "", "head": [], "tail": []}
+  }
+}

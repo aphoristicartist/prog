@@ -1114,6 +1114,7 @@ dependencies = [
  "chrono",
  "proptest",
  "redb",
+ "regex",
  "schemars",
  "serde",
  "serde_json",

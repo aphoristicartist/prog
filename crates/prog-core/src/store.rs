@@ -14,12 +14,16 @@ use uuid::Uuid;
 
 use crate::{
     CacheEntryMeta, CallProvenance, CoreError, CursorRecord, PersistedPayload, RedactedPayload,
-    Result, SourceProfile, ValidatedCursor, canonical_json,
+    RedactionPolicy, Result, SESSION_VERSION, SessionEvent, SessionTrail, SourceProfile,
+    ValidatedCursor, canonical_json,
 };
 
 const PAYLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("payloads");
 const ENTRIES: TableDefinition<&str, &[u8]> = TableDefinition::new("entries");
 const CURSORS: TableDefinition<&str, &[u8]> = TableDefinition::new("cursors");
+const SESSIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("sessions");
+const STATE: TableDefinition<&str, &[u8]> = TableDefinition::new("state");
+const CURRENT_SESSION_KEY: &str = "current_session";
 
 #[derive(Debug)]
 pub struct Store {
@@ -39,6 +43,18 @@ pub struct PurgeSummary {
     pub purged_entries: usize,
     pub purged_payloads: usize,
     pub purged_cursors: usize,
+    #[serde(default)]
+    pub purged_sessions: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct NewSessionEvent {
+    pub kind: String,
+    pub cursor: Option<String>,
+    pub path: Option<String>,
+    pub evidence_ref: Option<String>,
+    pub summary: Option<String>,
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Store {
@@ -64,6 +80,8 @@ impl Store {
             write.open_table(PAYLOADS).map_err(CoreError::storage)?;
             write.open_table(ENTRIES).map_err(CoreError::storage)?;
             write.open_table(CURSORS).map_err(CoreError::storage)?;
+            write.open_table(SESSIONS).map_err(CoreError::storage)?;
+            write.open_table(STATE).map_err(CoreError::storage)?;
         }
         write.commit().map_err(CoreError::storage)?;
 
@@ -249,6 +267,132 @@ impl Store {
         Ok(ValidatedCursor::new(token.to_string(), record))
     }
 
+    pub fn start_session(&self, goal: Option<String>) -> Result<SessionTrail> {
+        let now = format_time(Utc::now());
+        let session_id = format!("ps1_{}", Uuid::new_v4().simple());
+        let goal = goal.filter(|goal| !goal.trim().is_empty()).map(|goal| {
+            let (redacted, _) = RedactionPolicy::default().apply_persistence(&Value::String(goal));
+            redacted
+                .as_str()
+                .unwrap_or("[REDACTED:session_goal]")
+                .chars()
+                .take(500)
+                .collect::<String>()
+        });
+        let trail = SessionTrail {
+            schema_version: SESSION_VERSION.to_string(),
+            session_id: session_id.clone(),
+            goal,
+            created_at: now.clone(),
+            updated_at: now,
+            events: Vec::new(),
+            warnings: Vec::new(),
+            extra: serde_json::Map::new(),
+        };
+        let bytes = serde_json::to_vec(&trail)?;
+        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        {
+            let mut sessions = write.open_table(SESSIONS).map_err(CoreError::storage)?;
+            let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
+            sessions
+                .insert(session_id.as_str(), bytes.as_slice())
+                .map_err(CoreError::storage)?;
+            state
+                .insert(CURRENT_SESSION_KEY, session_id.as_bytes())
+                .map_err(CoreError::storage)?;
+        }
+        write.commit().map_err(CoreError::storage)?;
+        Ok(trail)
+    }
+
+    pub fn current_session_id(&self) -> Result<Option<String>> {
+        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let state = read.open_table(STATE).map_err(CoreError::storage)?;
+        Ok(state
+            .get(CURRENT_SESSION_KEY)
+            .map_err(CoreError::storage)?
+            .map(|value| String::from_utf8_lossy(value.value()).into_owned()))
+    }
+
+    pub fn get_session(&self, session_id: Option<&str>) -> Result<Option<SessionTrail>> {
+        let owned;
+        let session_id = match session_id {
+            Some(session_id) => session_id,
+            None => {
+                owned = self.current_session_id()?;
+                let Some(session_id) = owned.as_deref() else {
+                    return Ok(None);
+                };
+                session_id
+            }
+        };
+        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let sessions = read.open_table(SESSIONS).map_err(CoreError::storage)?;
+        let Some(value) = sessions.get(session_id).map_err(CoreError::storage)? else {
+            return Ok(None);
+        };
+        Ok(Some(serde_json::from_slice(value.value())?))
+    }
+
+    pub fn record_session_event(&self, input: NewSessionEvent) -> Result<SessionEvent> {
+        if input.kind.trim().is_empty() {
+            return Err(CoreError::BadArgs {
+                operation: "session event".to_string(),
+                reason: "event kind must not be empty".to_string(),
+            });
+        }
+        let mut trail = match self.get_session(None)? {
+            Some(trail) => trail,
+            None => self.start_session(None)?,
+        };
+        let sequence = trail.events.last().map_or(1, |event| event.sequence + 1);
+        let timestamp = format_time(Utc::now());
+        let redaction = RedactionPolicy::default();
+        let summary = input.summary.map(|summary| {
+            let (redacted, _) = redaction.apply_persistence(&Value::String(summary));
+            let summary = redacted.as_str().unwrap_or("[REDACTED:session_summary]");
+            if summary.chars().count() <= 240 {
+                return summary.to_string();
+            }
+            let mut truncated = summary.chars().take(237).collect::<String>();
+            truncated.push_str("...");
+            truncated
+        });
+        let (redacted_extra, _) = redaction.apply_persistence(&Value::Object(input.extra));
+        let extra = redacted_extra.as_object().cloned().unwrap_or_default();
+        let event = SessionEvent {
+            id: format!("pe1_{}", Uuid::new_v4().simple()),
+            session_id: trail.session_id.clone(),
+            sequence,
+            timestamp: timestamp.clone(),
+            kind: input.kind,
+            cursor: input.cursor,
+            path: input.path,
+            evidence_ref: input.evidence_ref,
+            summary,
+            extra,
+        };
+        trail.updated_at = timestamp;
+        trail.events.push(event.clone());
+        if trail.events.len() > 1_000 {
+            let remove = trail.events.len() - 1_000;
+            trail.events.drain(..remove);
+            trail
+                .warnings
+                .push("oldest session events were dropped at the 1000-event cap".to_string());
+        }
+        let bytes = serde_json::to_vec(&trail)?;
+        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        {
+            let mut sessions = write.open_table(SESSIONS).map_err(CoreError::storage)?;
+            sessions
+                .insert(trail.session_id.as_str(), bytes.as_slice())
+                .map_err(CoreError::storage)?;
+        }
+        write.commit().map_err(CoreError::storage)?;
+        Ok(event)
+    }
+
     pub fn purge_all(&self) -> Result<PurgeSummary> {
         let write = self.db.begin_write().map_err(CoreError::storage)?;
         let summary;
@@ -256,11 +400,15 @@ impl Store {
             let mut entries = write.open_table(ENTRIES).map_err(CoreError::storage)?;
             let mut payloads = write.open_table(PAYLOADS).map_err(CoreError::storage)?;
             let mut cursors = write.open_table(CURSORS).map_err(CoreError::storage)?;
+            let mut sessions = write.open_table(SESSIONS).map_err(CoreError::storage)?;
+            let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
             summary = PurgeSummary {
                 purged_entries: retain_none(&mut entries)?,
                 purged_payloads: retain_none(&mut payloads)?,
                 purged_cursors: retain_none(&mut cursors)?,
+                purged_sessions: retain_none(&mut sessions)?,
             };
+            retain_none(&mut state)?;
         }
         write.commit().map_err(CoreError::storage)?;
         Ok(summary)
@@ -398,6 +546,7 @@ impl Store {
                 purged_entries,
                 purged_payloads,
                 purged_cursors,
+                purged_sessions: 0,
             };
         }
         write.commit().map_err(CoreError::storage)?;

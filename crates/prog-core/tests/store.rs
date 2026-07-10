@@ -2,10 +2,54 @@ use std::{sync::Arc, thread};
 
 use chrono::{Duration, SecondsFormat, Utc};
 use prog_core::{
-    CacheEntryMeta, CachePolicy, CursorRecord, EffectSet, ExpansionScope, OperationProfile,
-    PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, ScopedSlice, SliceRequest,
-    SourceKind, SourceProfile, Store, TrustSettings, expand, new_cache_entry,
+    CacheEntryMeta, CachePolicy, CursorRecord, EffectSet, ExpansionScope, NewSessionEvent,
+    OperationProfile, PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, ScopedSlice,
+    SliceRequest, SourceKind, SourceProfile, Store, TrustSettings, expand, new_cache_entry,
 };
+
+#[test]
+fn session_trail_is_persistent_bounded_and_purged_with_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let started = store
+        .start_session(Some("debug failing tests".to_string()))
+        .unwrap();
+    let event = store
+        .record_session_event(NewSessionEvent {
+            kind: "inspect".to_string(),
+            cursor: Some("pc1_demo".to_string()),
+            path: Some("/failure_sections/0".to_string()),
+            summary: Some(format!(
+                "Bearer abcdefghijklmnopqrstuvwxyz {}",
+                "x".repeat(400)
+            )),
+            extra: serde_json::Map::from_iter([(
+                "api_token".to_string(),
+                json!("plain-session-secret"),
+            )]),
+            ..NewSessionEvent::default()
+        })
+        .unwrap();
+    assert_eq!(event.sequence, 1);
+    assert!(event.summary.unwrap().len() <= 240);
+    drop(store);
+
+    let reopened = Store::open(dir.path()).unwrap();
+    let trail = reopened
+        .get_session(Some(&started.session_id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(trail.goal.as_deref(), Some("debug failing tests"));
+    assert_eq!(trail.events.len(), 1);
+    assert!(
+        !serde_json::to_string(&trail)
+            .unwrap()
+            .contains("plain-session-secret")
+    );
+    let purged = reopened.purge_all().unwrap();
+    assert_eq!(purged.purged_sessions, 1);
+    assert!(reopened.get_session(None).unwrap().is_none());
+}
 use proptest::prelude::*;
 use serde_json::{Value, json};
 
