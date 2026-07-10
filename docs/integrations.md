@@ -7,9 +7,8 @@ surface is:
 CLI + agent skill + explicit project hooks
 ```
 
-MCP can be added for hosts that already speak MCP well, but it should reuse the
-same CLI/core semantics, safety gates, cache behavior, cursor expansion, and
-redaction rules.
+MCP tools and resources can already be consumed as upstream sources through the
+MCP adapter. `prog` itself remains a CLI and does not expose an MCP server mode.
 
 ## Matrix
 
@@ -21,7 +20,7 @@ redaction rules.
 | Cursor project rule and hooks | implemented | `prog init --agent cursor --project` | `.cursor/rules/prog.mdc`, `.cursor/prog-hooks/*` |
 | Gemini CLI project skill and hooks | implemented | `prog init --agent gemini-cli --project` | `.gemini/skills/prog/SKILL.md`, `.gemini/prog-hooks/*` |
 | Global shell aliases | planned | not enabled | nothing |
-| MCP server mode | optional future adapter | not enabled | nothing |
+| `prog` as an MCP server | permanent non-goal | not enabled | nothing |
 
 ## Generated Files
 
@@ -79,5 +78,5 @@ prog paths pc1_... --field body
 prog expand pc1_... --path /items/7/body
 ```
 
-Use MCP later only when the host agent makes MCP the lowest-friction path and
-the adapter keeps the same safety and evidence contracts.
+Use the MCP adapter when an upstream already exposes MCP and keep the same
+safety and evidence contracts for the resulting observation.

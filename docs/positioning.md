@@ -39,12 +39,12 @@ observations where conclusions need cursor/path-backed evidence.
 | Alternative | Better When | Weakness | prog Position |
 |---|---|---|---|
 | Native API field selection | The needed fields are known upfront | Does not help exploratory inspection before the query is known | Prefer native filters first; use `prog` after capture when structure is unknown or repeated evidence is needed |
-| Native pagination | The workflow naturally follows pages one at a time | Auto-fetching all pages can become an unbounded cost trap | `prog` records pagination hints but does not auto-follow upstream pagination in V1 |
+| Native pagination | The workflow naturally follows pages one at a time | Auto-fetching all pages can become an unbounded cost trap | Prefer native pagination when it is already precise; `prog call --pages N` follows supported read-only continuations only under page, byte, wall-time, and envelope caps |
 | `jq` and shell filters | The extraction path is known and deterministic | Easy to drop needed context or leak raw secrets into history/context | Use `jq` for known extraction; use `prog paths` when the path is not known yet |
 | Domain-specific CLI commands | The tool has a precise subcommand for the task | Often still emits huge logs/errors around the useful part | Prefer precise commands; wrap noisy results with `prog run` when output is still large |
 | Simple truncation | A rough first glance is enough | Drops data without a recoverable path to exact evidence | `prog` bounds the first view but keeps cursor-backed expansion |
 | RTK-style command interception | Low-friction terminal adoption is the main goal | Filters can be command-specific and lossy unless backed by recoverable storage | `prog` copies the hook ergonomics but keeps redacted payloads expandable |
-| MCP gateways/proxies | The host agent already speaks MCP and needs tool-catalog integration | MCP does not guarantee result-side progressive disclosure | MCP can be an adapter later; CLI + skill + hooks remain the durable contract |
+| MCP gateways/proxies | The host agent already speaks MCP and needs tool-catalog integration | MCP does not guarantee result-side progressive disclosure | `prog` consumes MCP tools and resources as upstream sources; CLI + skill + hooks remain the durable agent-facing contract |
 | Terse-output prompting | Assistant responses are too verbose | Does not reduce oversized tool-result input | Use terse responses on top of `prog`, not instead of result-side disclosure |
 | Large context windows | Raw completeness matters more than cost/privacy/noise | Cost and attention still scale with raw input | Use raw context when it is worth it; use `prog cost` to quantify the tradeoff |
 
