@@ -149,6 +149,104 @@ fn readme_cli_quickstart_commands_stay_copy_pasteable() {
 }
 
 #[test]
+fn readme_loop_engineering_example_stays_executable() {
+    let root = repo_root();
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let source = dir.path().join("prog-loop-demo.rs");
+    let binary = dir.path().join("prog-loop-demo");
+    let source_arg = source.to_str().unwrap();
+    let binary_arg = binary.to_str().unwrap();
+
+    let session = prog(
+        &root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "start",
+            "--goal",
+            "compile the sample program",
+        ],
+    );
+    assert_success(&session);
+
+    std::fs::write(
+        &source,
+        "fn main() { let value: u32 = \"not a number\"; println!(\"{value}\"); }\n",
+    )
+    .unwrap();
+    let failed = prog(
+        &root,
+        &[
+            "--dir", dir_arg, "run", "--", "rustc", source_arg, "-o", binary_arg,
+        ],
+    );
+    assert_success(&failed);
+    let failed_envelope = json(&failed);
+    assert_eq!(failed_envelope["data_preview"]["command"]["success"], false);
+    let cursor = failed_envelope["cursor"].as_str().unwrap();
+    let top_path = failed_envelope["findings"][0]["path"].as_str().unwrap();
+    assert_eq!(top_path, "/failure_sections/0");
+
+    let inspect = prog(
+        &root,
+        &[
+            "--dir",
+            dir_arg,
+            "inspect",
+            cursor,
+            "--goal",
+            "find the compile error",
+            "--limit",
+            "5",
+        ],
+    );
+    assert_success(&inspect);
+    assert_eq!(json(&inspect)["findings"][0]["path"], top_path);
+
+    let evidence = prog(
+        &root,
+        &["--dir", dir_arg, "evidence", cursor, "--path", top_path],
+    );
+    assert_success(&evidence);
+    assert_eq!(json(&evidence)["path"], top_path);
+
+    std::fs::write(
+        &source,
+        "fn main() { let value: u32 = 42; println!(\"{value}\"); }\n",
+    )
+    .unwrap();
+    let compiled = prog(
+        &root,
+        &[
+            "--dir", dir_arg, "run", "--", "rustc", source_arg, "-o", binary_arg,
+        ],
+    );
+    assert_success(&compiled);
+    assert_eq!(json(&compiled)["data_preview"]["command"]["success"], true);
+
+    let executed = prog(&root, &["--dir", dir_arg, "run", "--", binary_arg]);
+    assert_success(&executed);
+    assert_eq!(json(&executed)["data_preview"]["command"]["success"], true);
+
+    let note = prog(
+        &root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "note",
+            "compiled and ran the corrected program",
+        ],
+    );
+    assert_success(&note);
+    let shown = prog(&root, &["--dir", dir_arg, "session", "show"]);
+    assert_success(&shown);
+    assert_eq!(json(&shown)["goal"], "compile the sample program");
+}
+
+#[test]
 fn documented_command_help_surface_stays_real() {
     let root = repo_root();
     let commands: &[&[&str]] = &[
@@ -161,9 +259,18 @@ fn documented_command_help_surface_stays_real() {
         &["call", "--help"],
         &["observe", "--help"],
         &["run", "--help"],
+        &["recipe", "--help"],
         &["init", "--help"],
         &["cost", "--help"],
         &["paths", "--help"],
+        &["inspect", "--help"],
+        &["evidence", "--help"],
+        &["search", "--help"],
+        &["find", "--help"],
+        &["session", "--help"],
+        &["session", "start", "--help"],
+        &["session", "show", "--help"],
+        &["session", "note", "--help"],
         &["expand", "--help"],
         &["cache", "--help"],
         &["cache", "list", "--help"],
@@ -228,6 +335,49 @@ fn documented_command_help_surface_stays_real() {
         assert!(
             run_help.contains(expected),
             "run help should contain {expected}"
+        );
+    }
+
+    let recipe_help = stdout(&prog(&root, &["recipe", "--help"]));
+    for expected in [
+        "cargo-test",
+        "pytest",
+        "npm-test",
+        "go-test",
+        "gh-issues",
+        "diff-review",
+        "logs-root-cause",
+        "--goal",
+        "--file",
+        "--timeout-ms",
+    ] {
+        assert!(
+            recipe_help.contains(expected),
+            "recipe help should contain {expected}"
+        );
+    }
+
+    let inspect_help = stdout(&prog(&root, &["inspect", "--help"]));
+    for expected in ["--goal", "--limit", "--kind", "--path"] {
+        assert!(
+            inspect_help.contains(expected),
+            "inspect help should contain {expected}"
+        );
+    }
+
+    let search_help = stdout(&prog(&root, &["search", "--help"]));
+    for expected in ["--kind", "--path", "--limit", "--case-sensitive", "--regex"] {
+        assert!(
+            search_help.contains(expected),
+            "search help should contain {expected}"
+        );
+    }
+
+    let find_help = stdout(&prog(&root, &["find", "--help"]));
+    for expected in ["--kind", "--path", "--limit"] {
+        assert!(
+            find_help.contains(expected),
+            "find help should contain {expected}"
         );
     }
 
@@ -300,16 +450,17 @@ fn docs_keep_acceptance_topics_visible() {
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
     for expected in [
         "34.5x-162.8x",
-        "Layer 1",
-        "Layer 2",
-        "Layer n+1",
-        // Three former V1 non-goals are now tracked as roadmap goals
-        // (#69, #70, #72); MCP server mode stays a permanent non-goal (#71).
-        "upstream auto-pagination",
-        "table inference",
-        "automatic trust upgrade from imported descriptors",
+        "Built for loop engineering",
+        "fail, inspect, fix, verify",
+        "recipe --timeout-ms 180000 cargo-test",
+        "inspect \"$CURSOR\"",
+        "evidence \"$CURSOR\"",
+        "session start --goal",
+        "prog call --pages N",
+        "Redaction before persistence",
+        "5/5",
         "No MCP server mode",
-        "prog discover",
+        "source add-cli repository",
         "prog --dir /tmp/prog-demo --pretty source add-cli",
         "prog --dir /tmp/prog-demo --pretty meta SourceProfile",
     ] {
@@ -332,6 +483,8 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/run.md",
         "docs/integrations.md",
         "docs/evidence.md",
+        "docs/evidence-navigation.md",
+        "docs/evidence-acquisition.md",
         "docs/cost.md",
         "docs/task-success-eval.md",
         "docs/competitive-baselines.md",
@@ -342,6 +495,7 @@ fn docs_keep_acceptance_topics_visible() {
         "fixtures/evals/task-success-metrics.json",
         "fixtures/evals/competitive-baseline-metrics.json",
         "fixtures/evals/real-world-demo-metrics.json",
+        "fixtures/evals/evidence-acquisition-metrics.json",
         "demos/real-world/README.md",
         "demos/real-world/generate_payload.py",
         "demos/real-world/demo_mcp_server.py",
