@@ -223,7 +223,7 @@ fn is_sensitive_name_reflects_keywords_and_allowlist() {
 #[test]
 fn sensitive_text_values_are_redacted_across_common_formats() {
     let text =
-        "Authorization: Bearer SECRET123\ntoken=abc api-key: def\ncookie: sid=ghi\nprivate_key pem";
+        "Authorization: Bearer SECRET123\ntoken=abc api-key: def\ncookie: sid=ghi\nprivate_key=pem";
     let (redacted, count) = redact_sensitive_text(text);
 
     for secret in ["Bearer SECRET123", "abc", "def", "sid=ghi", "pem"] {
@@ -233,6 +233,25 @@ fn sensitive_text_values_are_redacted_across_common_formats() {
     assert!(redacted.contains("Authorization: [REDACTED:observed_text_secret]"));
     assert!(redacted.contains("token=[REDACTED:observed_text_secret]"));
     assert!(redacted.contains("api-key: [REDACTED:observed_text_secret]"));
+}
+
+#[test]
+fn sensitive_words_in_ordinary_prose_are_not_redacted() {
+    let text = "Evidence navigation: add session trail for observations and conclusions";
+    let (redacted, count) = redact_sensitive_text(text);
+
+    assert_eq!(redacted, text);
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn whitespace_separated_sensitive_cli_flags_are_redacted() {
+    let text = "tool --token secret-value-123 --mode read";
+    let (redacted, count) = redact_sensitive_text(text);
+
+    assert_eq!(count, 1);
+    assert!(!redacted.contains("secret-value-123"));
+    assert!(redacted.contains("--token [REDACTED:observed_text_secret]"));
 }
 
 #[test]

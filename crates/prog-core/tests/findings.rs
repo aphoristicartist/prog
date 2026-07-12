@@ -232,6 +232,27 @@ fn benign_payload_returns_no_findings() {
 }
 
 #[test]
+fn successful_test_summary_is_not_a_failure_finding() {
+    let payload = json!({
+        "stdout": "test tool_is_error_maps_to_structured_error ... ok\ntest result: ok. 17 passed; 0 failed; 0 ignored"
+    });
+
+    let findings = ranked_findings(&payload, &FindingOptions::default()).unwrap();
+    assert!(findings.is_empty(), "unexpected findings: {findings:?}");
+}
+
+#[test]
+fn explicit_log_error_in_scalar_text_is_inspectable() {
+    let payload = json!(
+        "2026-07-10T12:00:00Z WARN retrying request\n2026-07-10T12:00:01Z ERROR database pool exhausted\nroot cause: stale credentials"
+    );
+
+    let findings = ranked_findings(&payload, &FindingOptions::default()).unwrap();
+    assert_eq!(findings[0].kind, "log_error");
+    assert_eq!(findings[0].path, "");
+}
+
+#[test]
 fn scope_path_limits_ranking_to_selected_subtree() {
     let payload = json!({
         "left": {"errors": [{"message": "Error: left failed"}]},

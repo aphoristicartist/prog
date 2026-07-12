@@ -11,6 +11,8 @@ use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+const DEFAULT_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct HttpSource {
@@ -109,13 +111,7 @@ impl HttpSource {
         let sensitive_names = sensitive_arg_names(operation, args);
         let url = build_url(self, operation, args)?;
         let redacted_url = redact_url(url.as_str(), args, &sensitive_names);
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .build()
-            .map_err(|error| CoreError::HttpTransport {
-                operation: operation.id.clone(),
-                message: error.to_string(),
-            })?;
+        let client = http_client(&operation.id)?;
         let method = Method::from_bytes(operation.method.as_bytes()).map_err(|error| {
             CoreError::BadArgs {
                 operation: operation.id.clone(),
@@ -266,13 +262,7 @@ impl HttpSource {
         }
 
         let sensitive_names = sensitive_arg_names(operation, &args);
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .build()
-            .map_err(|error| CoreError::HttpTransport {
-                operation: operation.id.clone(),
-                message: error.to_string(),
-            })?;
+        let client = http_client(&operation.id)?;
 
         // Forced GET: URL continuation never carries the base operation's
         // request body, even if the base operation was POST.
@@ -357,6 +347,17 @@ impl HttpSource {
             warnings,
         })
     }
+}
+
+fn http_client(operation: &str) -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(DEFAULT_USER_AGENT)
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .map_err(|error| CoreError::HttpTransport {
+            operation: operation.to_string(),
+            message: error.to_string(),
+        })
 }
 
 fn args_object<'a>(operation: &HttpOperation, args: &'a Value) -> Result<&'a Map<String, Value>> {

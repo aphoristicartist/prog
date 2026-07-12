@@ -74,6 +74,23 @@ fn projection_marks_strings_arrays_objects_and_redaction() {
 }
 
 #[test]
+fn expand_limit_increases_the_selected_string_preview() {
+    let payload = redacted(json!({"body": "x".repeat(206)}));
+    let request = SliceRequest {
+        path: Some("/body".to_string()),
+        limit: Some(1000),
+        depth: None,
+        fields: Vec::new(),
+        omit: Vec::new(),
+        extra: serde_json::Map::new(),
+    };
+
+    let projection = expand(&payload, &scoped("", request), &PreviewPolicy::default()).unwrap();
+    assert_eq!(projection.preview.as_str().unwrap().len(), 206);
+    assert!(projection.omitted.is_empty());
+}
+
+#[test]
 fn expand_rejects_paths_outside_cursor_boundary_segment_wise() {
     let payload = json!({"a": {"child": 1}, "ab": 2, "a/b": 3});
     let payload = redacted(payload);

@@ -123,6 +123,14 @@ fn lens_findings_resolve_existing_wildcards_and_reject_path_escape() {
         .find(|finding| finding.lens_id.as_deref() == Some("test.failures"))
         .unwrap();
     assert_eq!(lens_finding.path, "/items/1/status");
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|finding| finding.path == "/items/1/status")
+            .count(),
+        1,
+        "the lens classification must supersede generic findings at the same path"
+    );
     let encoded = serde_json::to_string(lens_finding).unwrap();
     assert!(!encoded.contains("abcdefghijklmnopqrstuvwxyz"));
     assert!(!encoded.contains("plain-lens-secret"));

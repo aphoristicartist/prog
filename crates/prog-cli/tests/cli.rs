@@ -113,6 +113,12 @@ fn missing_call_and_expand_inputs_return_structured_errors() {
     assert_eq!(stderr(&expand), "");
     let value: Value = serde_json::from_slice(&expand.stdout).expect("stdout must be JSON");
     assert_eq!(value["error"]["kind"], "cursor_not_found");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("cursor 'pc1_missing':")
+    );
 }
 
 #[test]
@@ -366,6 +372,7 @@ fn evidence_refs_are_stable_refresh_sensitive_and_redaction_safe() {
     assert_eq!(evidence["path"], "/answer");
     assert_eq!(evidence["uri"], format!("prog://{cursor}#/answer"));
     assert_eq!(evidence["cache_status"], "hit");
+    assert_eq!(evidence["stale"], false);
     assert_eq!(evidence["redacted"], false);
     assert_eq!(evidence["lossy"], false);
     let first_hash = evidence["redacted_slice_sha256"].as_str().unwrap();
@@ -1012,6 +1019,127 @@ fn run_success_captures_streams_interleaving_out_file_and_expansion() {
     assert!(expanded.status.success(), "{}", stdout(&expanded));
     let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
     assert_eq!(value["data_preview"], "err-0\nerr-1\nerr-2");
+}
+
+#[test]
+fn successful_test_output_does_not_fabricate_failure_sections_or_findings() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "run",
+        "--",
+        "python3",
+        "-c",
+        "print('test tool_is_error_maps_to_structured_error ... ok')\nprint('test result: ok. 17 passed; 0 failed')",
+    ]);
+
+    assert!(output.status.success(), "{}", stdout(&output));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["data_preview"]["command"]["success"], true);
+    assert!(
+        envelope["data_preview"]["failure_sections"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        envelope
+            .get("findings")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+    );
+}
+
+#[test]
+fn cargo_recipe_centers_evidence_on_the_strongest_diagnostic_without_duplicate_findings() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let lens_dir = first_party_lens_dir();
+    let cargo = dir.path().join("cargo");
+    let script = r#"#!/usr/bin/env python3
+import sys
+print('running 1 test')
+print('test tests::failing_case ... FAILED')
+print('')
+print('failures:')
+print('')
+print('---- tests::failing_case stdout ----')
+print('')
+print("thread 'tests::failing_case' panicked at src/lib.rs:3:5:")
+print("assertion `left == right` failed")
+print('  left: 1')
+print(' right: 2')
+print('note: run with RUST_BACKTRACE=1')
+print('')
+print('failures:')
+print('    tests::failing_case')
+print('')
+print('test result: FAILED. 0 passed; 1 failed')
+sys.exit(101)"#;
+    fs::write(&cargo, script).unwrap();
+    let mut permissions = fs::metadata(&cargo).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&cargo, permissions).unwrap();
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--lens-dir",
+        lens_dir.to_str().unwrap(),
+        "recipe",
+        "cargo-test",
+        "--goal",
+        "identify the exact failing assertion",
+        cargo.to_str().unwrap(),
+    ]);
+
+    assert!(output.status.success(), "{}", stdout(&output));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let findings = envelope["findings"].as_array().unwrap();
+    let unique_paths = findings
+        .iter()
+        .map(|finding| finding["path"].as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(findings.len(), unique_paths.len());
+    assert_eq!(findings[0]["kind"], "cargo_test_failure");
+    assert_eq!(findings[0]["path"], "/failure_sections/0");
+
+    let first_section = &envelope["data_preview"]["failures"][0];
+    assert_eq!(first_section["kind"], "rust");
+    assert!(
+        first_section["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|line| line
+                .as_str()
+                .unwrap()
+                .contains("assertion `left == right` failed"))
+    );
+
+    let evidence = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--lens-dir",
+        lens_dir.to_str().unwrap(),
+        "evidence",
+        envelope["cursor"].as_str().unwrap(),
+        "--path",
+        "/failure_sections/0",
+    ]);
+    assert!(evidence.status.success(), "{}", stdout(&evidence));
+    let evidence: Value = serde_json::from_slice(&evidence.stdout).unwrap();
+    assert!(
+        evidence["excerpt"]["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|line| line
+                .as_str()
+                .unwrap()
+                .contains("assertion `left == right` failed"))
+    );
 }
 
 #[test]
@@ -1956,10 +2084,21 @@ fn envelopes_expose_observation_metadata_for_agent_safety() {
         expanded_value["observation"]["payload"]["cache_status"],
         "hit"
     );
-    assert_eq!(expanded_value["observation"]["freshness"]["stale"], true);
+    assert_eq!(expanded_value["observation"]["freshness"]["stale"], false);
     assert_eq!(
         expanded_value["observation"]["freshness"]["refresh_recommended"],
-        true
+        false
+    );
+    assert_eq!(
+        expanded_value["observation"]["freshness"]["stale_after_seconds"],
+        86_400
+    );
+    assert!(
+        expanded_value["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|warning| !warning.as_str().unwrap().contains("--refresh"))
     );
 
     let script = dir.path().join("emit_metadata.py");
@@ -2132,15 +2271,43 @@ fn paths_filters_and_planner_actions_cover_omission_reasons() {
     let envelope: Value = serde_json::from_slice(&observed.stdout).unwrap();
     let cursor = envelope["cursor"].as_str().unwrap();
     let first_action = &envelope["next_actions"][0];
-    assert_eq!(first_action["kind"], "expand");
+    assert_eq!(first_action["kind"], "evidence");
     assert_eq!(first_action["priority"], 90);
     assert_eq!(first_action["omitted_reason"], "large_string");
     assert_eq!(first_action["argv"][0], "prog");
-    assert_eq!(first_action["argv"][1], "expand");
+    assert_eq!(first_action["argv"][1], "evidence");
     assert_eq!(first_action["argv"][2], cursor);
     assert_eq!(
         first_action["offline"],
         "uses cached redacted payload; does not contact upstream"
+    );
+
+    let expanded_string = prog(&[
+        "--dir", dir_arg, "expand", cursor, "--path", "/large", "--limit", "1000",
+    ]);
+    assert!(
+        expanded_string.status.success(),
+        "{}",
+        stdout(&expanded_string)
+    );
+    let expanded_string: Value = serde_json::from_slice(&expanded_string.stdout).unwrap();
+    assert_eq!(expanded_string["data_preview"].as_str().unwrap().len(), 600);
+    assert!(expanded_string["omitted"].as_array().unwrap().is_empty());
+    assert_eq!(
+        expanded_string["observation"]["completeness"]["status"],
+        "complete"
+    );
+    assert_eq!(
+        expanded_string["observation"]["completeness"]["preview_complete"],
+        true
+    );
+    assert_eq!(
+        expanded_string["observation"]["completeness"]["path_scoped"],
+        true
+    );
+    assert_eq!(
+        expanded_string["observation"]["completeness"]["root_path"],
+        "/large"
     );
 
     for (reason, expected_path) in [
@@ -2416,6 +2583,26 @@ async fn call_openapi_get_records_auto_upgrade_audit_in_observation_trust() {
         "proven"
     );
 
+    let hints = prog(&["--dir", dir_arg, "hints", "api", "getissue"]);
+    assert!(hints.status.success(), "{}", stdout(&hints));
+    let hint_value: Value = serde_json::from_slice(&hints.stdout).unwrap();
+    let hint = &hint_value["hints"]["operations"][0];
+    assert_eq!(hint["effects"]["requires_confirmation"], false);
+    assert_eq!(hint["effects"]["evidence_grade"], "proven");
+    assert!(
+        hint["effects"]["auto_upgrade"]
+            .as_str()
+            .unwrap()
+            .contains("relaxed")
+    );
+    assert!(
+        !hint["risk_notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| note.as_str().unwrap().contains("requires confirmation"))
+    );
+
     // Callable without --yes (auto-upgrade relaxes confirmation) and the audit
     // is recorded.
     let call = prog(&[
@@ -2496,6 +2683,20 @@ fn call_openapi_get_requires_yes_when_auto_upgrade_disabled_on_profile() {
     let mut profile: Value = serde_json::from_slice(&fs::read(&profile_path).unwrap()).unwrap();
     profile["trust"]["auto_upgrade"] = json!(false);
     fs::write(&profile_path, serde_json::to_vec(&profile).unwrap()).unwrap();
+
+    let hints = prog(&["--dir", dir_arg, "hints", "api", "getissue"]);
+    assert!(hints.status.success(), "{}", stdout(&hints));
+    let hint_value: Value = serde_json::from_slice(&hints.stdout).unwrap();
+    let hint = &hint_value["hints"]["operations"][0];
+    assert_eq!(hint["effects"]["requires_confirmation"], true);
+    assert!(hint["effects"].get("auto_upgrade").is_none());
+    assert!(
+        hint["risk_notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| note.as_str().unwrap().contains("requires confirmation"))
+    );
 
     // Without --yes the call is refused (would require a live server anyway).
     let call = prog(&[
@@ -2912,6 +3113,72 @@ fn discover_probe_learns_shape_and_hints_expose_guidance() {
             .is_empty()
     );
     assert_eq!(operation["effects"]["read_only"], true);
+}
+
+#[test]
+fn operation_hints_filter_suggestions_and_show_effective_cache_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let seed = write_seed(
+        dir.path(),
+        "cli.json",
+        r#"{
+          "kind": "cli",
+          "operations": [
+            {
+              "name": "status",
+              "command": "python3",
+              "args": ["-c", "print('{}')"],
+              "effect": {
+                "read_only": true,
+                "mutating": false,
+                "network": false,
+                "shell": false,
+                "sensitive": false,
+                "cacheable": true,
+                "requires_confirmation": false
+              }
+            },
+            {
+              "name": "write",
+              "command": "python3",
+              "args": ["-c", "print('{}')"],
+              "effect": {
+                "read_only": false,
+                "mutating": true,
+                "network": false,
+                "shell": false,
+                "sensitive": false,
+                "cacheable": false,
+                "requires_confirmation": true
+              }
+            }
+          ]
+        }"#,
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "local",
+        "--kind",
+        "cli",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+
+    let hints = prog(&["--dir", dir_arg, "hints", "local", "status"]);
+    assert!(hints.status.success(), "{}", stdout(&hints));
+    let value: Value = serde_json::from_slice(&hints.stdout).unwrap();
+    let operations = value["hints"]["operations"].as_array().unwrap();
+    let suggestions = value["hints"]["suggested_next_calls"].as_array().unwrap();
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0]["id"], "status");
+    assert_eq!(suggestions.len(), 1);
+    assert_eq!(suggestions[0]["operation"], "status");
+    assert_eq!(operations[0]["cache"]["enabled"], true);
+    assert_eq!(operations[0]["cache"]["ttl_seconds"], 86_400);
 }
 
 #[test]
@@ -4147,6 +4414,33 @@ async fn pagination_follows_readonly_and_stops_at_caps() {
     let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
     assert_eq!(envelope["pagination"]["stop_reason"], json!("page_cap"));
     assert_eq!(envelope["pagination"]["pages_fetched"], json!(2));
+
+    let cached = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "api",
+        "list",
+        "--args",
+        r#"{"page_token":"start"}"#,
+        "--pages",
+        "2",
+    ]);
+    assert!(cached.status.success(), "{}", stdout(&cached));
+    let cached_envelope: Value = serde_json::from_slice(&cached.stdout).unwrap();
+    assert_eq!(cached_envelope["cache"]["status"], "hit");
+    assert_eq!(
+        cached_envelope["pagination"]["stop_reason"],
+        json!("page_cap")
+    );
+    assert_eq!(cached_envelope["pagination"]["pages_fetched"], json!(2));
+    assert!(
+        cached_envelope["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action["kind"] == "call")
+    );
 }
 
 fn read_profile(dir: &Path, id: &str) -> Value {

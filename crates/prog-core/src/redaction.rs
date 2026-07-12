@@ -394,7 +394,7 @@ fn next_sensitive_text_value(input: &str, search: usize) -> Option<TextSecretRan
             continue;
         }
 
-        let (separator, after_separator) = match text_secret_separator(input, key_end) {
+        let (separator, after_separator) = match text_secret_separator(input, key, key_end) {
             Some(separator) => separator,
             None => {
                 index = key_end;
@@ -422,12 +422,14 @@ fn next_sensitive_text_value(input: &str, search: usize) -> Option<TextSecretRan
     None
 }
 
-fn text_secret_separator(input: &str, key_end: usize) -> Option<(char, usize)> {
+fn text_secret_separator(input: &str, key: &str, key_end: usize) -> Option<(char, usize)> {
     let after_spaces = skip_horizontal_whitespace(input, key_end);
     let (separator_index, separator) = next_char(input, after_spaces)?;
     match separator {
         '=' | ':' => Some((separator, separator_index + separator.len_utf8())),
-        ch if after_spaces > key_end && !matches!(ch, '\n' | '\r') => Some((' ', after_spaces)),
+        ch if key.starts_with('-') && after_spaces > key_end && !matches!(ch, '\n' | '\r') => {
+            Some((' ', after_spaces))
+        }
         _ => None,
     }
 }

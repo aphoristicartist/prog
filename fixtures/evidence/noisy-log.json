@@ -1,7 +1,7 @@
 {
   "name": "noisy_log_root_error",
   "goal": "find the root cause in the logs",
-  "expected_path": "/lines/40/text",
+  "expected_path": "/lines/39/text",
   "payload": {
     "format": "text",
     "lines": [

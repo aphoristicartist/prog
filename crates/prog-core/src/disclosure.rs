@@ -92,7 +92,12 @@ pub fn expand(
 ) -> Result<Projection> {
     let (target_path, selected) = slice_value(payload, slice)?;
     let request = slice.request();
-    let effective_policy = policy.with_limit_and_depth(request.limit, request.depth);
+    let mut effective_policy = policy.with_limit_and_depth(request.limit, request.depth);
+    if selected.is_string()
+        && let Some(limit) = request.limit
+    {
+        effective_policy.string_chars = limit;
+    }
     Ok(project(&selected, &effective_policy, &target_path))
 }
 

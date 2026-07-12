@@ -115,11 +115,17 @@ pub fn ranked_findings_with_lens(
         }
     }
 
-    let mut best = BTreeMap::<(String, String), Finding>::new();
+    // A lens is the domain-specific classifier for an evidence path. Keep one
+    // diagnosis per path so its finding supersedes a generic classification
+    // instead of presenting the same evidence as multiple root causes.
+    let mut best = BTreeMap::<String, Finding>::new();
     for finding in findings {
-        let key = (finding.path.clone(), finding.kind.clone());
+        let key = finding.path.clone();
         match best.get(&key) {
-            Some(existing) if existing.confidence >= finding.confidence => {}
+            Some(existing)
+                if existing.confidence > finding.confidence
+                    || (existing.confidence == finding.confidence
+                        && existing.lens_id.is_some()) => {}
             _ => {
                 best.insert(key, finding);
             }
