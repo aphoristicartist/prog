@@ -547,6 +547,53 @@ async fn extract_pagination_hints_covers_all_conventions_via_adapter() {
 }
 
 #[tokio::test]
+async fn sends_package_user_agent_for_normal_and_url_continuation_requests() {
+    let server = MockServer::start().await;
+    let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+    let next_url = format!("{}/items?page=2", server.uri());
+
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page", "2"))
+        .and(header("user-agent", user_agent))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [2]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(header("user-agent", user_agent))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [1]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "items".to_string(),
+            method: "GET".to_string(),
+            path: "/items".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: Some(2_000),
+            max_response_bytes: Some(64 * 1024),
+            sensitive_args: Vec::new(),
+        },
+    );
+
+    let first = source.execute("items", &json!({})).await.unwrap();
+    assert_eq!(first.data["items"], json!([1]));
+
+    let second = source
+        .execute_url("items", &next_url, &json!({}))
+        .await
+        .unwrap();
+    assert_eq!(second.data["items"], json!([2]));
+}
+
+#[tokio::test]
 async fn execute_url_follows_link_rel_next_same_host() {
     // Page 1 is fetched via the base operation; it advertises a Link rel="next"
     // pointing at a second page on the SAME mock server (same scheme+host+port).

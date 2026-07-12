@@ -245,10 +245,7 @@ impl Store {
         let read = self.db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(CURSORS).map_err(CoreError::storage)?;
         let Some(bytes) = table.get(token).map_err(CoreError::storage)? else {
-            return Err(CoreError::CursorNotFound(format!(
-                "{token} in {}",
-                self.dir.display()
-            )));
+            return Err(CoreError::CursorNotFound(token.to_string()));
         };
         let record: CursorRecord = serde_json::from_slice(bytes.value())?;
         if parse_time(&record.expires_at)? <= now {

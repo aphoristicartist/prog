@@ -28,10 +28,10 @@ use prog_core::{
     ScopedSlice, SearchOptions, SearchResponse, SliceRequest, SourceProfile, Store, Summary,
     TrustSettings, ValidatedCursor, ValueScanReport, build_inspect_response, cache_allowed,
     call_effect_warnings, canonical_json, check_call, check_discovery, cli_adapter_effects,
-    cli_hardening_effects, evidence_block, expand, http_adapter_effects, http_hardening_effects,
-    infer, join, lens_slice_request, new_cache_entry, project, project_with_lens,
-    public_contract_schemas, ranked_findings_with_lens, render_hints, search_payload_with_lens,
-    slice_value, tighten_effects, validate_lens_manifest,
+    cli_hardening_effects, effective_effects, evidence_block, expand, http_adapter_effects,
+    http_hardening_effects, infer, join, lens_slice_request, new_cache_entry, project,
+    project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
+    search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -1823,59 +1823,75 @@ async fn call_source(
         && !args.refresh
         && let Some(entry) = store.get_entry(&cache_key)?
     {
-        let payload = store
-            .get_payload(&entry.payload_hash)?
-            .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
-            .into_redacted();
-        let cache_info = cache_info(
-            CacheStatus::Hit,
-            &entry,
-            Some(age_seconds(&entry.created_at)?),
-        );
-        let cursor = cursor_for_projection(
-            store,
-            CursorInput {
-                cache_key: &cache_key,
-                source_id: &args.source_id,
-                operation: &args.operation,
-                root_path: &root_path,
-                payload: &payload,
-                slice: &view,
-                cache: &effective_cache,
-                may_cache,
-                lens: lens.as_ref(),
-            },
-        )?;
-        return envelope_for_payload(
-            store,
-            EnvelopeInput {
-                value_scan: None,
-                source_id: args.source_id.clone(),
-                operation: args.operation.clone(),
-                source_kind: Some(profile_source_kind_name(profile.kind).to_string()),
-                payload,
-                root_path: root_path.clone(),
-                slice: view,
-                payload_bytes: entry.payload_bytes,
-                provenance: entry.provenance.clone(),
-                cache: Some(cache_info),
-                effects: Some(effective_effects.clone()),
-                auto_upgrade_audit: auto_upgrade_audit.clone(),
-                redacted_paths: 0,
-                cache_disabled_reason: None,
-                warnings: Vec::new(),
-                schema_hints: operation
-                    .output_shape
-                    .as_ref()
-                    .map(|shape| render_hints(shape, ""))
-                    .unwrap_or_default(),
-                next_action_operation: Some(args.operation.clone()),
-                additional_next_actions: Vec::new(),
-                observation_parser: None,
-                lens,
-            },
-            cursor,
-        );
+        let cached_pagination = entry.extra.get("pagination").cloned();
+        let cache_satisfies_request = args.pages <= 1
+            || cached_pagination
+                .as_ref()
+                .is_some_and(|value| cached_pagination_satisfies(value, args.pages));
+        if cache_satisfies_request {
+            let payload = store
+                .get_payload(&entry.payload_hash)?
+                .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
+                .into_redacted();
+            let cache_info = cache_info(
+                CacheStatus::Hit,
+                &entry,
+                Some(age_seconds(&entry.created_at)?),
+            );
+            let cursor = cursor_for_projection(
+                store,
+                CursorInput {
+                    cache_key: &cache_key,
+                    source_id: &args.source_id,
+                    operation: &args.operation,
+                    root_path: &root_path,
+                    payload: &payload,
+                    slice: &view,
+                    cache: &effective_cache,
+                    may_cache,
+                    lens: lens.as_ref(),
+                },
+            )?;
+            let mut envelope = envelope_for_payload(
+                store,
+                EnvelopeInput {
+                    value_scan: None,
+                    source_id: args.source_id.clone(),
+                    operation: args.operation.clone(),
+                    source_kind: Some(profile_source_kind_name(profile.kind).to_string()),
+                    payload,
+                    root_path: root_path.clone(),
+                    slice: view,
+                    payload_bytes: entry.payload_bytes,
+                    provenance: entry.provenance.clone(),
+                    cache: Some(cache_info),
+                    effects: Some(effective_effects.clone()),
+                    auto_upgrade_audit: auto_upgrade_audit.clone(),
+                    redacted_paths: 0,
+                    cache_disabled_reason: None,
+                    warnings: Vec::new(),
+                    schema_hints: operation
+                        .output_shape
+                        .as_ref()
+                        .map(|shape| render_hints(shape, ""))
+                        .unwrap_or_default(),
+                    next_action_operation: Some(args.operation.clone()),
+                    additional_next_actions: Vec::new(),
+                    observation_parser: None,
+                    lens,
+                },
+                cursor,
+            )?;
+            if let Some(pagination) = cached_pagination {
+                envelope.extra.insert("pagination".to_string(), pagination);
+                if let Some(actions) = entry.extra.get("pagination_next_actions") {
+                    let actions: Vec<NextAction> = serde_json::from_value(actions.clone())?;
+                    envelope.next_actions.extend(actions);
+                }
+                compact_pagination_extra_to_budget(&mut envelope)?;
+            }
+            return Ok(envelope);
+        }
     }
 
     let source = callable_source_from_profile(&profile)?;
@@ -2267,6 +2283,23 @@ async fn call_source(
             // `max_envelope_bytes` here: compact the pagination metadata if the
             // final envelope would otherwise exceed the budget (invariant I11).
             compact_pagination_extra_to_budget(&mut envelope)?;
+            if may_cache
+                && let Some(pagination) = envelope.extra.get("pagination").cloned()
+                && let Some(mut entry) = store.get_entry(&cache_key)?
+            {
+                entry.extra.insert("pagination".to_string(), pagination);
+                let pagination_next_actions = envelope
+                    .next_actions
+                    .iter()
+                    .filter(|action| matches!(action.kind.as_str(), "call" | "call_url"))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                entry.extra.insert(
+                    "pagination_next_actions".to_string(),
+                    serde_json::to_value(pagination_next_actions)?,
+                );
+                store.put_entry(&cache_key, &entry)?;
+            }
         } else {
             envelope.warnings.push(
                 "--pages requested but the operation is not auto-pagination-safe \
@@ -3056,9 +3089,10 @@ fn detect_run_failure_sections(
     stdout: &RunText,
     stderr: &RunText,
 ) -> Vec<RunFailureSection> {
+    let allow_generic = !matches!(status, RunProcessStatus::Exited { success: true, .. });
     let mut sections = Vec::new();
-    collect_failure_sections("stderr", &stderr.text, &mut sections);
-    collect_failure_sections("stdout", &stdout.text, &mut sections);
+    collect_failure_sections("stderr", &stderr.text, allow_generic, &mut sections);
+    collect_failure_sections("stdout", &stdout.text, allow_generic, &mut sections);
     if sections.is_empty() {
         match status {
             RunProcessStatus::Exited { success: false, .. } => {
@@ -3118,6 +3152,7 @@ fn detect_run_failure_sections(
 fn collect_failure_sections(
     stream: &'static str,
     text: &str,
+    allow_generic: bool,
     sections: &mut Vec<RunFailureSection>,
 ) {
     let lines = text.lines().map(str::to_string).collect::<Vec<_>>();
@@ -3132,10 +3167,11 @@ fn collect_failure_sections(
             || line.starts_with("node:")
         {
             Some(("node", 85, "Node.js or npm error"))
-        } else if lower.contains("error")
-            || lower.contains("failed")
-            || lower.contains("exception")
-            || lower.contains("not found")
+        } else if allow_generic
+            && (lower.contains("error")
+                || lower.contains("failed")
+                || lower.contains("exception")
+                || lower.contains("not found"))
         {
             Some(("generic", 60, "generic failure diagnostic"))
         } else {
@@ -3144,6 +3180,24 @@ fn collect_failure_sections(
         if let Some((kind, priority, reason)) = detected {
             let start = index.saturating_sub(2);
             let end = (index + 6).min(lines.len());
+            if let Some(existing) = sections
+                .iter_mut()
+                .rev()
+                .find(|section| section.stream == stream && section.line_end > start)
+            {
+                if priority > existing.priority {
+                    existing.kind = kind;
+                    existing.reason = reason.to_string();
+                    existing.priority = priority;
+                    existing.line_start = start + 1;
+                    existing.line_end = end;
+                    existing.lines = lines[start..end].to_vec();
+                    continue;
+                }
+                existing.line_end = existing.line_end.max(end);
+                existing.lines = lines[existing.line_start - 1..existing.line_end].to_vec();
+                continue;
+            }
             sections.push(RunFailureSection {
                 kind,
                 stream,
@@ -4035,7 +4089,7 @@ fn evidence_ref(input: EvidenceRefInput<'_>) -> EvidenceRef {
         .map(|bytes| hex_sha256(bytes.as_slice()));
     let cache_status = input.cache.map(|cache| cache.status);
     let age_seconds = input.cache.and_then(|cache| cache.age_seconds);
-    let stale = matches!(cache_status, Some(CacheStatus::Hit)) && age_seconds.unwrap_or(0) > 0;
+    let stale = cache_is_stale(input.cache);
     EvidenceRef {
         schema_version: "prog.evidence_ref.v1".to_string(),
         source_id: input.source_id.to_string(),
@@ -4867,6 +4921,11 @@ fn expansion_next_action(
     operation: Option<&str>,
     region: &OmittedRegion,
 ) -> NextAction {
+    let action_kind = if region.reason == OmissionReason::LargeString {
+        "evidence"
+    } else {
+        "expand"
+    };
     let mut extra = Extra::new();
     extra.insert(
         "priority".to_string(),
@@ -4881,14 +4940,19 @@ fn expansion_next_action(
     }
     extra.insert(
         "argv".to_string(),
-        json!(["prog", "expand", cursor, "--path", region.path]),
+        match region.reason {
+            OmissionReason::LargeString => {
+                json!(["prog", "evidence", cursor, "--path", region.path])
+            }
+            _ => json!(["prog", "expand", cursor, "--path", region.path]),
+        },
     );
     extra.insert(
         "offline".to_string(),
         json!("uses cached redacted payload; does not contact upstream"),
     );
     NextAction {
-        kind: "expand".to_string(),
+        kind: action_kind.to_string(),
         operation: operation.map(str::to_string),
         path: Some(region.path.clone()),
         reason: Some(omission_action_reason(region)),
@@ -4921,7 +4985,7 @@ fn omission_reason_name(reason: OmissionReason) -> &'static str {
 fn omission_action_reason(region: &OmittedRegion) -> String {
     match region.reason {
         OmissionReason::LargeString => format!(
-            "{} is a large string; expand to inspect a bounded view of the stored redacted value",
+            "{} is a large string; emit a bounded evidence excerpt, or use expand --out for the full stored redacted value",
             region.path
         ),
         OmissionReason::LongArray => format!(
@@ -4970,8 +5034,9 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
     };
     let scoped = ScopedSlice::new(ExpansionScope::from_cursor(&record)?, slice.clone())?;
     let age = age_seconds(&entry.created_at)?;
+    let cache = cache_info(CacheStatus::Hit, &entry, Some(age));
     let mut warnings = Vec::new();
-    if age > 0 {
+    if cache_is_stale(Some(&cache)) {
         warnings.push(format!(
             "cached payload age_seconds={age}; re-run `prog call {} {} --refresh` to refresh",
             record.source_id, record.operation
@@ -4982,7 +5047,6 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
         let (target_path, selected) = slice_value(&payload, &scoped)?;
         let bytes = serde_json::to_vec_pretty(&selected)?;
         write_private_file(path, &bytes)?;
-        let cache = cache_info(CacheStatus::Hit, &entry, Some(age));
         let evidence_ref = evidence_ref(EvidenceRefInput {
             source_id: &record.source_id,
             operation: &record.operation,
@@ -5051,7 +5115,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
             slice,
             payload_bytes: entry.payload_bytes,
             provenance: entry.provenance.clone(),
-            cache: Some(cache_info(CacheStatus::Hit, &entry, Some(age))),
+            cache: Some(cache),
             effects: None,
             auto_upgrade_audit: None,
             redacted_paths: 0,
@@ -7151,6 +7215,22 @@ fn cache_info(
     }
 }
 
+fn cache_is_stale(cache: Option<&CacheInfo>) -> bool {
+    cache.is_some_and(|cache| {
+        matches!((cache.age_seconds, cache.ttl_seconds), (Some(age), Some(ttl)) if age >= ttl)
+    })
+}
+
+fn cached_pagination_satisfies(pagination: &Value, requested_pages: usize) -> bool {
+    let pages_fetched = pagination
+        .get("pages_fetched")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let requested_pages = requested_pages.min(50) as u64;
+    pagination.get("stop_reason").and_then(Value::as_str) == Some("no_more")
+        || pages_fetched >= requested_pages
+}
+
 fn call_provenance(
     cache_key: &str,
     status: Option<String>,
@@ -7382,14 +7462,18 @@ fn observation_metadata(
     let truncated = omitted
         .iter()
         .any(|region| region.reason != OmissionReason::Redacted);
-    let path_scoped = !input.root_path.is_empty()
+    let effective_root_path = input
+        .slice
+        .path
+        .as_deref()
+        .unwrap_or(&input.root_path)
+        .to_string();
+    let path_scoped = !effective_root_path.is_empty()
         || input.slice.path.is_some()
         || !input.slice.fields.is_empty()
         || !input.slice.omit.is_empty();
-    let preview_complete = omitted.is_empty() && !path_scoped;
-    let completeness_status = if path_scoped {
-        "path_scoped"
-    } else if truncated {
+    let preview_complete = omitted.is_empty();
+    let completeness_status = if truncated {
         "truncated"
     } else if redacted_count > 0 {
         "redacted"
@@ -7401,7 +7485,7 @@ fn observation_metadata(
     let cache_status = input.cache.as_ref().map(|cache| cache.status);
     let cached = matches!(cache_status, Some(CacheStatus::Stored | CacheStatus::Hit));
     let age_seconds = input.cache.as_ref().and_then(|cache| cache.age_seconds);
-    let stale = matches!(cache_status, Some(CacheStatus::Hit)) && age_seconds.unwrap_or(0) > 0;
+    let stale = cache_is_stale(input.cache.as_ref());
     let sensitive_cache_disabled = matches!(cache_status, Some(CacheStatus::Skipped))
         && input
             .effects
@@ -7449,7 +7533,7 @@ fn observation_metadata(
             redacted: redacted_count > 0,
             omitted_count: omitted.len().try_into().unwrap_or(u64::MAX),
             redacted_count: redacted_count.try_into().unwrap_or(u64::MAX),
-            root_path: input.root_path.clone(),
+            root_path: effective_root_path,
             extra: Extra::new(),
         },
         freshness: ObservationFreshness {
@@ -7462,10 +7546,7 @@ fn observation_metadata(
                 .cache
                 .as_ref()
                 .and_then(|cache| cache.expires_at.clone()),
-            stale_after_seconds: match cache_status {
-                Some(CacheStatus::Hit) => Some(0),
-                _ => input.cache.as_ref().and_then(|cache| cache.ttl_seconds),
-            },
+            stale_after_seconds: input.cache.as_ref().and_then(|cache| cache.ttl_seconds),
             stale,
             refresh_recommended: stale,
             extra: Extra::new(),
@@ -7918,8 +7999,10 @@ fn build_hints_document(profile: &SourceProfile, operation_filter: Option<&str>)
         None => profile.operations.iter().collect(),
     };
 
-    for operation in selected {
-        operations.push(operation_hint(operation));
+    for operation in &selected {
+        let (effects, _) = effective_effects(&operation.effects, &profile.trust);
+        let cache = effective_cache_policy(profile, operation);
+        operations.push(operation_hint(operation, &effects, &cache));
     }
 
     Ok(json!({
@@ -7928,13 +8011,13 @@ fn build_hints_document(profile: &SourceProfile, operation_filter: Option<&str>)
         "version": profile.version,
         "operation_count": profile.operations.len(),
         "operations": operations,
-        "suggested_next_calls": profile.operations.iter().take(10).map(|operation| {
+        "suggested_next_calls": selected.iter().take(10).map(|operation| {
             json!({"kind": "call", "operation": operation.id, "reason": "operation is available in the source profile"})
         }).collect::<Vec<_>>()
     }))
 }
 
-fn operation_hint(operation: &OperationProfile) -> Value {
+fn operation_hint(operation: &OperationProfile, effects: &EffectSet, cache: &CachePolicy) -> Value {
     let (required_inputs, optional_inputs) = schema_inputs(&operation.input_schema);
     let declared_fields = operation
         .declared_output_schema
@@ -7979,9 +8062,9 @@ fn operation_hint(operation: &OperationProfile) -> Value {
             "observed": observed_fields
         },
         "expandable_regions": expandable_regions,
-        "effects": operation.effects,
-        "cache": operation.cache,
-        "risk_notes": risk_notes(&operation.effects),
+        "effects": effects,
+        "cache": cache,
+        "risk_notes": risk_notes(effects),
         "next_actions": [
             NextAction {
                 kind: "call".to_string(),

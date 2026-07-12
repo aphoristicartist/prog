@@ -33,6 +33,22 @@
   },
   {
     "rank": 3,
+    "kind": "log_error",
+    "path": "/errors/0/message",
+    "confidence": 0.72,
+    "reason": "string contains an explicit ERROR or FATAL log line",
+    "title": "log error",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_golden --goal 'investigate log_error' --path /errors/0/message",
+      "expand": "prog expand pc1_golden --path /errors/0/message",
+      "evidence": "prog evidence pc1_golden --path /errors/0/message",
+      "search": "prog find pc1_golden --kind log_error --path /errors/0/message"
+    }
+  },
+  {
+    "rank": 4,
     "kind": "diagnostic",
     "path": "/diagnostics/0",
     "confidence": 0.68,
@@ -48,7 +64,7 @@
     }
   },
   {
-    "rank": 4,
+    "rank": 5,
     "kind": "diagnostic",
     "path": "/diagnostics",
     "confidence": 0.62,
@@ -61,22 +77,6 @@
       "expand": "prog expand pc1_golden --path /diagnostics",
       "evidence": "prog evidence pc1_golden --path /diagnostics",
       "search": "prog find pc1_golden --kind diagnostic --path /diagnostics"
-    }
-  },
-  {
-    "rank": 5,
-    "kind": "stderr_error",
-    "path": "/errors/0/message",
-    "confidence": 0.58,
-    "reason": "string contains generic error text",
-    "title": "error text",
-    "severity": "error",
-    "source": "generic.string_pattern",
-    "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate stderr_error' --path /errors/0/message",
-      "expand": "prog expand pc1_golden --path /errors/0/message",
-      "evidence": "prog evidence pc1_golden --path /errors/0/message",
-      "search": "prog find pc1_golden --kind stderr_error --path /errors/0/message"
     }
   },
   {

@@ -37,15 +37,14 @@ prog --dir /tmp/prog-demo call demo_cli list --args '{}' --no-cache
 
 `--no-cache` also means no reusable cursor can be created for later offline expansion.
 
-## Staleness warnings
+## Freshness metadata
 
-`prog expand` reports the age of the cached payload when it is older than the current second:
+Cached envelopes and evidence references report `age_seconds`,
+`stale_after_seconds`, `stale`, and `refresh_recommended`. A cache hit remains
+fresh for its reported TTL; merely being older than one second does not make it
+stale. Expired entries and cursors fail closed instead of returning old data.
 
-```text
-cached payload age_seconds=7; re-run `prog call demo_cli list --refresh` to refresh
-```
-
-The warning is informational. Expansion still uses the exact cached payload associated with the cursor.
+Use `--refresh` when the workflow needs a new observation before the TTL ends.
 
 ## Purge behavior
 

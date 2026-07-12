@@ -870,6 +870,15 @@ fn string_signal(text: &str) -> Option<Signal> {
             severity: Some("error"),
             source: "generic.string_pattern",
         })
+    } else if has_explicit_log_error_line(text) {
+        Some(Signal {
+            kind: "log_error",
+            confidence: 0.72,
+            reason: "string contains an explicit ERROR or FATAL log line",
+            title: "log error",
+            severity: Some("error"),
+            source: "generic.string_pattern",
+        })
     } else if normalized.contains("exception") {
         Some(Signal {
             kind: "exception",
@@ -881,7 +890,7 @@ fn string_signal(text: &str) -> Option<Signal> {
         })
     } else if normalized.starts_with("error:")
         || normalized.contains(" error:")
-        || normalized.contains(" failed")
+        || contains_failure_word(&normalized)
     {
         Some(Signal {
             kind: "stderr_error",
@@ -1121,6 +1130,46 @@ fn is_test_name(normalized: &str) -> bool {
         || (normalized.contains("test ") && normalized.contains("... failed"))
         || has_counted_label(normalized, "passing")
         || has_counted_label(normalized, "failing")
+}
+
+fn contains_failure_word(normalized: &str) -> bool {
+    let mut start = 0;
+    while let Some(relative) = normalized[start..].find("failed") {
+        let position = start + relative;
+        let before = normalized[..position].trim_end();
+        let is_word_boundary = before
+            .chars()
+            .next_back()
+            .is_none_or(|character| !character.is_ascii_alphabetic());
+        let after = &normalized[position + "failed".len()..];
+        let ends_at_boundary = after
+            .chars()
+            .next()
+            .is_none_or(|character| !character.is_ascii_alphabetic());
+        if is_word_boundary && ends_at_boundary {
+            let preceding = before.split_whitespace().next_back().unwrap_or_default();
+            if preceding.parse::<u64>() != Ok(0) {
+                return true;
+            }
+        }
+        start = position + "failed".len();
+    }
+    false
+}
+
+fn has_explicit_log_error_line(text: &str) -> bool {
+    text.lines().any(|line| {
+        let normalized = line.trim_start().to_ascii_lowercase();
+        ["error ", "error:", "fatal ", "fatal:"]
+            .iter()
+            .any(|prefix| normalized.starts_with(prefix))
+            || line.split_whitespace().any(|token| {
+                matches!(
+                    token.trim_matches(|character: char| !character.is_ascii_alphabetic()),
+                    "ERROR" | "FATAL"
+                )
+            })
+    })
 }
 
 /// True when `label` (`"passing"`/`"failing"`) is preceded by a decimal count,

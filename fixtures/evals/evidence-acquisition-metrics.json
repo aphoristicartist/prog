@@ -29,16 +29,16 @@
     },
     {
       "name": "noisy_log_root_error",
-      "expected_path": "/lines/40/text",
-      "top_finding_path": "/lines/40/text",
+      "expected_path": "/lines/39/text",
+      "top_finding_path": "/lines/39/text",
       "top_finding_rank": 1,
       "correct": true,
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 836,
-      "findings_output_tokens": 471,
-      "inspect_output_tokens": 526
+      "baseline_output_tokens": 837,
+      "findings_output_tokens": 474,
+      "inspect_output_tokens": 672
     },
     {
       "name": "pytest_assertion_failure",
@@ -73,8 +73,8 @@
     "baseline_tool_calls": 15,
     "findings_tool_calls": 10,
     "inspect_tool_calls": 15,
-    "baseline_output_tokens": 3446,
-    "findings_output_tokens": 3166,
-    "inspect_output_tokens": 5274
+    "baseline_output_tokens": 3447,
+    "findings_output_tokens": 3169,
+    "inspect_output_tokens": 5420
   }
 }
