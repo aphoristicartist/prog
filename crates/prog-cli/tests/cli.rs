@@ -1267,6 +1267,61 @@ fn run_failure_returns_envelope_and_can_preserve_exit_code() {
     assert_eq!(value["data_preview"]["command"]["exit_code"], 7);
 }
 
+#[cfg(unix)]
+#[test]
+fn pytest_node_id_hint_is_exact_argv_and_never_claims_broader_verification() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let pytest = dir.path().join("pytest");
+    fs::write(
+        &pytest,
+        "#!/bin/sh\nprintf 'FAILED tests/test_math.py::test_negative_exponent[param-1] - AssertionError\\n'\nexit 1\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&pytest).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&pytest, permissions).unwrap();
+    let path = format!(
+        "{}:{}",
+        dir.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let output = prog_with_env(
+        &[
+            "--dir",
+            dir.path().join("store").to_str().unwrap(),
+            "run",
+            "--",
+            "pytest",
+        ],
+        &[("PATH", &path)],
+    );
+    assert!(output.status.success(), "{}", stdout(&output));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let hint = envelope["next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|action| action["kind"] == "rerun")
+        .expect("exact pytest node hint");
+    assert_eq!(
+        hint["argv"],
+        json!([
+            "pytest",
+            "tests/test_math.py::test_negative_exponent[param-1]"
+        ])
+    );
+    assert_eq!(hint["scope"], "target_test");
+    assert_eq!(hint["exactness"], "exact");
+    assert_eq!(hint["derived_from"], "pytest.failed_node_id");
+    assert_eq!(
+        hint["does_not_satisfy"],
+        json!(["affected_suite", "regression_suite"])
+    );
+    assert!(hint.get("command").is_none());
+}
+
 #[test]
 fn run_can_apply_first_party_failure_lens_and_expand_redacted_capture() {
     let dir = tempfile::tempdir().unwrap();

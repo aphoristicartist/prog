@@ -2700,6 +2700,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                             );
                             map
                         },
+                        ..NextAction::default()
                     },
                     prog_core::PageTarget::Url(url) => NextAction {
                         kind: "call_url".to_string(),
@@ -2715,6 +2716,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                             );
                             map
                         },
+                        ..NextAction::default()
                     },
                 };
                 envelope.next_actions.push(next_action);
@@ -3111,7 +3113,8 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
     if args.out.is_some() {
         warnings.push("wrote redacted structured run capture to --out path".to_string());
     }
-    let next_actions = run_next_actions(cursor.as_deref(), &failure_sections);
+    let mut next_actions = run_next_actions(cursor.as_deref(), &failure_sections);
+    next_actions.extend(pytest_target_actions(&args.command, &failure_sections));
     let envelope = envelope_for_payload(
         store,
         EnvelopeInput {
@@ -3734,17 +3737,68 @@ fn run_next_actions(cursor: Option<&str>, sections: &[RunFailureSection]) -> Vec
             // `extra` is flattened into NextAction; avoid colliding with the
             // typed `kind` field and producing duplicate JSON object keys.
             extra.insert("section_kind".to_string(), json!(section.kind));
-            extra.insert(
-                "argv".to_string(),
-                json!(["prog", "expand", cursor, "--path", path]),
-            );
             NextAction {
                 kind: "expand".to_string(),
                 operation: None,
                 path: Some(path),
                 reason: Some(section.reason.clone()),
+                argv: Some(vec![
+                    "prog".to_string(),
+                    "expand".to_string(),
+                    cursor.to_string(),
+                    "--path".to_string(),
+                    format!("/failure_sections/{index}"),
+                ]),
+                scope: Some("failure_section".to_string()),
+                exactness: Some(prog_core::ActionExactness::Exact),
+                derived_from: Some("run.failure_section".to_string()),
                 extra,
+                ..NextAction::default()
             }
+        })
+        .collect()
+}
+
+fn pytest_target_actions(command: &[String], sections: &[RunFailureSection]) -> Vec<NextAction> {
+    // This is deliberately narrower than command equivalence: only the
+    // literal pytest executable and a complete node ID printed by pytest are
+    // evidence enough for an exact argv recommendation.
+    if command.first().map(String::as_str) != Some("pytest") {
+        return Vec::new();
+    }
+    let mut node_ids = BTreeSet::new();
+    for section in sections {
+        for line in &section.lines {
+            let Some(candidate) = line.trim_start().strip_prefix("FAILED ") else {
+                continue;
+            };
+            let Some(node_id) = candidate.split_whitespace().next() else {
+                continue;
+            };
+            if node_id.contains("::")
+                && !node_id.starts_with('-')
+                && !node_id.contains('\0')
+                && !node_id.contains(char::is_whitespace)
+            {
+                node_ids.insert(node_id.to_string());
+            }
+        }
+    }
+    node_ids
+        .into_iter()
+        .take(3)
+        .map(|node_id| NextAction {
+            kind: "rerun".to_string(),
+            operation: None,
+            path: None,
+            reason: Some("rerun this exact pytest node ID for a focused diagnostic".to_string()),
+            argv: Some(vec!["pytest".to_string(), node_id.clone()]),
+            scope: Some("target_test".to_string()),
+            exactness: Some(prog_core::ActionExactness::Exact),
+            derived_from: Some("pytest.failed_node_id".to_string()),
+            does_not_satisfy: vec!["affected_suite".to_string(), "regression_suite".to_string()],
+            cwd: None,
+            extra: Extra::new(),
         })
         .collect()
 }
@@ -5666,15 +5720,6 @@ fn expansion_next_action(
         extra.insert("detail".to_string(), json!(detail));
     }
     extra.insert(
-        "argv".to_string(),
-        match region.reason {
-            OmissionReason::LargeString => {
-                json!(["prog", "evidence", cursor, "--path", region.path])
-            }
-            _ => json!(["prog", "expand", cursor, "--path", region.path]),
-        },
-    );
-    extra.insert(
         "offline".to_string(),
         json!("uses cached redacted payload; does not contact upstream"),
     );
@@ -5683,7 +5728,27 @@ fn expansion_next_action(
         operation: operation.map(str::to_string),
         path: Some(region.path.clone()),
         reason: Some(omission_action_reason(region)),
+        argv: Some(match region.reason {
+            OmissionReason::LargeString => vec![
+                "prog".to_string(),
+                "evidence".to_string(),
+                cursor.to_string(),
+                "--path".to_string(),
+                region.path.clone(),
+            ],
+            _ => vec![
+                "prog".to_string(),
+                "expand".to_string(),
+                cursor.to_string(),
+                "--path".to_string(),
+                region.path.clone(),
+            ],
+        }),
+        scope: Some("cached_evidence".to_string()),
+        exactness: Some(prog_core::ActionExactness::Exact),
+        derived_from: Some("omitted_region".to_string()),
         extra,
+        ..NextAction::default()
     }
 }
 
@@ -9015,6 +9080,7 @@ fn operation_hint(operation: &OperationProfile, effects: &EffectSet, cache: &Cac
                 path: None,
                 reason: Some("run this operation with JSON args".to_string()),
                 extra: Extra::new(),
+                ..NextAction::default()
             }
         ],
     })
