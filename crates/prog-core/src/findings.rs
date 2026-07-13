@@ -1,6 +1,7 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::{
     Extra, Finding, FindingCommandHints, INSPECT_SCHEMA, InspectResponse, LineRange,
@@ -237,6 +238,7 @@ struct Candidate {
     source: String,
     line_range: Option<LineRange>,
     redaction_state: Option<RedactionState>,
+    fingerprint: Option<String>,
     extra: Extra,
 }
 
@@ -253,6 +255,7 @@ impl Candidate {
             source: signal.source.to_string(),
             line_range: None,
             redaction_state: redaction_state(value),
+            fingerprint: finding_fingerprint(signal.kind, signal.source, value),
             extra: Extra::new(),
         }
     }
@@ -265,6 +268,11 @@ impl Candidate {
             options.hints,
         );
         Finding {
+            occurrence_id: self
+                .fingerprint
+                .as_ref()
+                .map(|fingerprint| format!("fi_{fingerprint}")),
+            fingerprint: self.fingerprint,
             rank,
             kind: self.kind,
             path: self.path.clone(),
@@ -282,6 +290,30 @@ impl Candidate {
             extra: self.extra,
         }
     }
+}
+
+/// Generic identities intentionally preserve every non-whitespace character in
+/// the selected message. Domain packs may introduce proven templates later;
+/// generic value stripping would merge distinct failures.
+fn finding_fingerprint(kind: &str, source: &str, value: &Value) -> Option<String> {
+    let message = match value {
+        Value::String(value) => Some(value.as_str()),
+        Value::Object(object) => ["message", "reason", "summary"]
+            .into_iter()
+            .find_map(|field| object.get(field).and_then(Value::as_str)),
+        _ => None,
+    }?;
+    let message = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if message.is_empty() {
+        return None;
+    }
+    let mut hash = Sha256::new();
+    hash.update(kind.as_bytes());
+    hash.update([0]);
+    hash.update(source.as_bytes());
+    hash.update([0]);
+    hash.update(message.as_bytes());
+    Some(format!("sha256:{:x}", hash.finalize()))
 }
 
 #[derive(Debug, Clone, Copy)]

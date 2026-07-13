@@ -133,7 +133,7 @@ async fn input_schema_drives_missing_and_unknown_args() {
 }
 
 #[tokio::test]
-async fn non_zero_exit_returns_structured_error_with_bounded_stderr() {
+async fn non_zero_exit_returns_captured_error_evidence_with_bounded_stderr() {
     let mut op = operation(
         "fail",
         &[
@@ -144,10 +144,11 @@ async fn non_zero_exit_returns_structured_error_with_bounded_stderr() {
     op.max_stderr_bytes = Some(12);
     let source = source(op);
 
-    let error = source.execute("fail", &json!({})).await.unwrap_err();
+    let result = source.execute("fail", &json!({})).await.unwrap();
 
-    assert_eq!(error.kind(), "cli_exit");
-    let rendered = serde_json::to_string(&error.envelope()).unwrap();
+    assert!(result.received_error);
+    assert_eq!(result.provenance.exit_code, Some(7));
+    let rendered = serde_json::to_string(&result).unwrap();
     assert!(rendered.contains("bad"));
     assert!(rendered.len() < 2048);
 }

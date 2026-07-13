@@ -1,6 +1,7 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::{
     CoreError, ExpandablePayload, ExpansionScope, Extra, Finding, FindingCommandHints,
@@ -90,6 +91,10 @@ pub fn ranked_findings_with_lens(
                 continue;
             }
             findings.push(Finding {
+                occurrence_id: lens_fingerprint(manifest, rule, value)
+                    .as_ref()
+                    .map(|fingerprint| format!("fi_{fingerprint}")),
+                fingerprint: lens_fingerprint(manifest, rule, value),
                 rank: 0,
                 kind: rule.kind.clone(),
                 path: path.clone(),
@@ -145,6 +150,33 @@ pub fn ranked_findings_with_lens(
         finding.rank = index as u64 + 1;
     }
     Ok(findings)
+}
+
+fn lens_fingerprint(
+    manifest: &LensManifest,
+    rule: &LensFindingRule,
+    value: &Value,
+) -> Option<String> {
+    let message = match value {
+        Value::String(value) => value.split_whitespace().collect::<Vec<_>>().join(" "),
+        Value::Object(object) => ["message", "reason", "summary"]
+            .into_iter()
+            .find_map(|field| object.get(field).and_then(Value::as_str))?
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => return None,
+    };
+    if message.is_empty() {
+        return None;
+    }
+    let mut hash = Sha256::new();
+    hash.update(manifest.id.as_bytes());
+    hash.update([0]);
+    hash.update(rule.kind.as_bytes());
+    hash.update([0]);
+    hash.update(message.as_bytes());
+    Some(format!("sha256:{:x}", hash.finalize()))
 }
 
 pub fn lens_slice_request(

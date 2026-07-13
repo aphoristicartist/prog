@@ -707,3 +707,24 @@ fn inspect_request_builder_and_default_cursor_required() {
     assert_eq!(built.limit, 3);
     assert_eq!(built.hints, CommandHintConfig::NAV_ALL);
 }
+
+#[test]
+fn generic_fingerprints_preserve_values_but_normalize_whitespace() {
+    let options = FindingOptions::default();
+    let first = ranked_findings(&json!({"message": "Error: expected value 12"}), &options)
+        .unwrap()
+        .remove(0);
+    let whitespace = ranked_findings(
+        &json!({"message": " Error:   expected\n value 12 "}),
+        &options,
+    )
+    .unwrap()
+    .remove(0);
+    let different = ranked_findings(&json!({"message": "Error: expected value 13"}), &options)
+        .unwrap()
+        .remove(0);
+
+    assert_eq!(first.fingerprint, whitespace.fingerprint);
+    assert_ne!(first.fingerprint, different.fingerprint);
+    assert_eq!(first.occurrence_id, whitespace.occurrence_id);
+}

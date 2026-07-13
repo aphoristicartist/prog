@@ -63,6 +63,7 @@ pub struct CliCallResult {
     pub data: Value,
     pub provenance: CliProvenance,
     pub diagnostics: CliDiagnostics,
+    pub received_error: bool,
     #[serde(default)]
     pub warnings: Vec<String>,
 }
@@ -228,17 +229,24 @@ impl CliSource {
         }
 
         if !status.success() {
-            return Err(CoreError::CliExit {
-                operation: operation.id.clone(),
-                exit_code,
-                stderr_preview,
-            });
+            warnings.push(format!(
+                "command exited with code {exit_code}; stdout and stderr captured as error evidence"
+            ));
         }
 
         Ok(CliCallResult {
-            data: normalize_stdout(&stdout.bytes, stdout.truncated),
+            data: if status.success() {
+                normalize_stdout(&stdout.bytes, stdout.truncated)
+            } else {
+                json!({
+                    "stdout": normalize_stdout(&stdout.bytes, stdout.truncated),
+                    "stderr": stderr_preview,
+                    "exit_code": exit_code,
+                })
+            },
             provenance,
             diagnostics,
+            received_error: !status.success(),
             warnings,
         })
     }

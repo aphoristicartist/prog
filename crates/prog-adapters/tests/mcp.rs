@@ -336,17 +336,17 @@ async fn reads_resource_and_detects_json_text() {
 }
 
 #[tokio::test]
-async fn tool_is_error_maps_to_structured_error() {
+async fn tool_is_error_returns_captured_error_evidence() {
     let fixture = fixture("normal");
 
-    let error = fixture
+    let result = fixture
         .source
         .call_tool("tool_error", &json!({}))
         .await
-        .unwrap_err();
+        .unwrap();
 
-    assert_eq!(error.kind(), "mcp_tool_error");
-    let rendered = serde_json::to_string(&error.envelope()).unwrap();
+    assert!(result.received_error);
+    let rendered = serde_json::to_string(&result).unwrap();
     assert!(rendered.contains("bad fixture input"));
     assert!(rendered.len() < 2048);
 }
