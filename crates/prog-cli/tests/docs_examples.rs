@@ -108,6 +108,13 @@ fn readme_cli_quickstart_commands_stay_copy_pasteable() {
         envelope["summary"]["envelope_bytes"].as_u64().unwrap() <= 16 * 1024,
         "envelope should remain bounded"
     );
+    assert_eq!(
+        envelope["summary"]["approx_tokens"],
+        envelope["summary"]["envelope_bytes"]
+            .as_u64()
+            .unwrap()
+            .div_ceil(4)
+    );
     assert!(
         envelope["schema_hints"]
             .as_object()

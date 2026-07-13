@@ -7436,7 +7436,7 @@ fn make_envelope(
             item_count: item_count(input.payload.as_value()),
             preview_count: item_count(&preview),
             payload_bytes: input.payload_bytes,
-            approx_tokens: input.payload_bytes.saturating_add(3) / 4,
+            approx_tokens: 0,
             envelope_bytes: None,
             extra: Extra::new(),
         },
@@ -7612,12 +7612,24 @@ fn observation_metadata(
 }
 
 fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Result<usize> {
-    envelope.summary.envelope_bytes = None;
-    let first = serde_json::to_vec(envelope)?.len();
-    envelope.summary.envelope_bytes = Some(first.try_into().unwrap_or(u64::MAX));
-    let second = serde_json::to_vec(envelope)?.len();
-    envelope.summary.envelope_bytes = Some(second.try_into().unwrap_or(u64::MAX));
-    Ok(second)
+    // Both fields describe the delivered JSON, including their own encoded
+    // digits. Iterate to the small fixed point rather than estimating from
+    // the much larger cached payload.
+    for _ in 0..8 {
+        let bytes = serde_json::to_vec(envelope)?.len();
+        let envelope_bytes = bytes.try_into().unwrap_or(u64::MAX);
+        let approx_tokens = envelope_bytes.saturating_add(3) / 4;
+        if envelope.summary.envelope_bytes == Some(envelope_bytes)
+            && envelope.summary.approx_tokens == approx_tokens
+        {
+            return Ok(bytes);
+        }
+        envelope.summary.envelope_bytes = Some(envelope_bytes);
+        envelope.summary.approx_tokens = approx_tokens;
+    }
+    Err(CoreError::Storage(
+        "envelope size accounting did not converge".to_string(),
+    ))
 }
 
 fn compact_envelope_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {

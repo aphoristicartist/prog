@@ -124,7 +124,7 @@ The value proposition of `prog` is bounded context injection. That bound is a co
 - Every agent-visible document (envelope, hints, expansion result) respects `max_envelope_bytes` (default 16 KiB, configurable per store and per call).
 - The projection algorithm is deterministic: per-node caps (array items, object fields, string length, depth) plus a global node budget, applied in traversal order. Same payload + same policy = same preview, always.
 - If a projection still exceeds the budget, it is re-projected at a coarser policy (reflexive budgeting), never silently truncated mid-JSON.
-- Summaries include `approx_tokens` (bytes/4 heuristic) so agents can reason about cost before expanding.
+- Summaries include `approx_tokens`, an explicit `envelope_bytes / 4` ceiling estimate for the delivered JSON envelope, so agents can reason about immediate context cost before expanding.
 
 ## Example Interaction
 
