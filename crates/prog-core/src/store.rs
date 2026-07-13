@@ -13,19 +13,28 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    CacheEntryMeta, CallProvenance, CoreError, CursorRecord, PersistedPayload, RedactedPayload,
-    RedactionPolicy, Result, SESSION_SCHEMA, SessionEvent, SessionTrail, SourceProfile,
-    ValidatedCursor, canonical_json, validate_source_profile,
+    CacheEntryMeta, CallProvenance, CoreError, CursorRecord, OBSERVATION_SCHEMA,
+    ObservationAvailability, ObservationLineage, ObservationRecord, PersistedPayload,
+    RedactedPayload, RedactionPolicy, Result, SESSION_SCHEMA, SessionEvent, SessionTrail,
+    SourceProfile, ValidatedCursor, canonical_json, validate_source_profile,
 };
 
 const PAYLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("payloads");
 const ENTRIES: TableDefinition<&str, &[u8]> = TableDefinition::new("entries");
 const CURSORS: TableDefinition<&str, &[u8]> = TableDefinition::new("cursors");
 const SESSIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("sessions");
+const OBSERVATIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("observations");
+const OBSERVATION_SUBJECTS: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("observation_subjects");
+const OBSERVATION_LINEAGE: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("observation_lineage");
 const STATE: TableDefinition<&str, &[u8]> = TableDefinition::new("state");
 const CURRENT_SESSION_KEY: &str = "current_session";
 const STORE_SCHEMA_KEY: &str = "store_schema";
-const STORE_SCHEMA: &str = "prog.store";
+// Pre-release storage is intentionally reset, rather than migrated, whenever
+// an immutable-record invariant changes. This is a contract identity, not a
+// compatibility version.
+const STORE_SCHEMA: &str = "prog.store.observations";
 
 #[derive(Debug)]
 pub struct Store {
@@ -39,6 +48,38 @@ pub struct CacheList {
     pub entries: Vec<CacheEntryMeta>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObservationList {
+    pub observations: Vec<ObservationRecord>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct NewObservation {
+    pub payload_hash: String,
+    pub payload_available: bool,
+    pub invocation_fingerprint: String,
+    pub source_id: String,
+    pub operation: String,
+    pub subject_keys: Vec<String>,
+    pub captured_at: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub status: Option<String>,
+    pub complete: bool,
+    pub truncated: bool,
+    pub redacted: bool,
+    pub provider: Option<String>,
+    pub parser: Option<String>,
+    pub lens: Option<String>,
+    pub workspace_state: Option<String>,
+    pub source_state: Option<String>,
+    pub environment_state: Option<String>,
+    pub lineage: ObservationLineage,
+    pub provenance: Option<CallProvenance>,
+    pub cache_key: Option<String>,
+    pub extra: serde_json::Map<String, Value>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct PurgeSummary {
@@ -47,6 +88,8 @@ pub struct PurgeSummary {
     pub purged_cursors: usize,
     #[serde(default)]
     pub purged_sessions: usize,
+    #[serde(default)]
+    pub purged_observations: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -84,6 +127,13 @@ impl Store {
             write.open_table(ENTRIES).map_err(CoreError::storage)?;
             write.open_table(CURSORS).map_err(CoreError::storage)?;
             write.open_table(SESSIONS).map_err(CoreError::storage)?;
+            write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
+            write
+                .open_table(OBSERVATION_SUBJECTS)
+                .map_err(CoreError::storage)?;
+            write
+                .open_table(OBSERVATION_LINEAGE)
+                .map_err(CoreError::storage)?;
             write.open_table(STATE).map_err(CoreError::storage)?;
         }
         write.commit().map_err(CoreError::storage)?;
@@ -103,12 +153,23 @@ impl Store {
                 let mut payloads = write.open_table(PAYLOADS).map_err(CoreError::storage)?;
                 let mut cursors = write.open_table(CURSORS).map_err(CoreError::storage)?;
                 let mut sessions = write.open_table(SESSIONS).map_err(CoreError::storage)?;
+                let mut observations =
+                    write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
+                let mut observation_subjects = write
+                    .open_table(OBSERVATION_SUBJECTS)
+                    .map_err(CoreError::storage)?;
+                let mut observation_lineage = write
+                    .open_table(OBSERVATION_LINEAGE)
+                    .map_err(CoreError::storage)?;
                 let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
                 if store_existed {
                     retain_none(&mut entries)?;
                     retain_none(&mut payloads)?;
                     retain_none(&mut cursors)?;
                     retain_none(&mut sessions)?;
+                    retain_none(&mut observations)?;
+                    retain_none(&mut observation_subjects)?;
+                    retain_none(&mut observation_lineage)?;
                     retain_none(&mut state)?;
                 }
                 state
@@ -133,6 +194,112 @@ impl Store {
         }
         write.commit().map_err(CoreError::storage)?;
         Ok(hash)
+    }
+
+    /// Return the digest used for persisted payload identity without storing
+    /// bytes. Sensitive and explicitly non-cacheable captures still need an
+    /// immutable, redacted payload reference in their metadata record.
+    pub fn payload_hash(payload: &RedactedPayload) -> Result<String> {
+        let bytes = serde_json::to_vec(payload.as_value())?;
+        Ok(format!("sha256:{}", hex_sha256(&bytes)))
+    }
+
+    /// Append one immutable capture record. This method intentionally has no
+    /// update counterpart: cache reuse records access elsewhere and must not
+    /// rewrite the original execution evidence.
+    pub fn record_observation(&self, input: NewObservation) -> Result<ObservationRecord> {
+        validate_observation_input(&input)?;
+        let redaction = RedactionPolicy::default();
+        let (redacted_extra, _) = redaction.apply_persistence(&Value::Object(input.extra));
+        let record = ObservationRecord {
+            schema: OBSERVATION_SCHEMA.to_string(),
+            observation_id: format!("obs_{}", Uuid::new_v4().simple()),
+            payload_hash: input.payload_hash,
+            availability: if input.payload_available {
+                ObservationAvailability::PayloadAvailable
+            } else {
+                ObservationAvailability::MetadataOnly
+            },
+            invocation_fingerprint: input.invocation_fingerprint,
+            source_id: input.source_id,
+            operation: input.operation,
+            subject_keys: input.subject_keys,
+            captured_at: input.captured_at.unwrap_or_else(|| format_time(Utc::now())),
+            duration_ms: input.duration_ms,
+            status: input.status,
+            complete: input.complete,
+            truncated: input.truncated,
+            redacted: input.redacted,
+            provider: input.provider,
+            parser: input.parser,
+            lens: input.lens,
+            workspace_state: input.workspace_state,
+            source_state: input.source_state,
+            environment_state: input.environment_state,
+            lineage: input.lineage,
+            provenance: input.provenance,
+            cache_key: input.cache_key,
+            extra: redacted_extra.as_object().cloned().unwrap_or_default(),
+        };
+        let bytes = serde_json::to_vec(&record)?;
+        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        {
+            let mut table = write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
+            let mut subjects = write
+                .open_table(OBSERVATION_SUBJECTS)
+                .map_err(CoreError::storage)?;
+            let mut lineage = write
+                .open_table(OBSERVATION_LINEAGE)
+                .map_err(CoreError::storage)?;
+            table
+                .insert(record.observation_id.as_str(), bytes.as_slice())
+                .map_err(CoreError::storage)?;
+            for subject_key in &record.subject_keys {
+                let key = observation_index_key(subject_key, &record.observation_id);
+                subjects
+                    .insert(key.as_str(), b"".as_slice())
+                    .map_err(CoreError::storage)?;
+            }
+            for related_id in observation_lineage_ids(&record.lineage) {
+                let key = observation_index_key(related_id, &record.observation_id);
+                lineage
+                    .insert(key.as_str(), b"".as_slice())
+                    .map_err(CoreError::storage)?;
+            }
+        }
+        write.commit().map_err(CoreError::storage)?;
+        Ok(record)
+    }
+
+    pub fn get_observation(&self, observation_id: &str) -> Result<Option<ObservationRecord>> {
+        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let table = read.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
+        let Some(value) = table.get(observation_id).map_err(CoreError::storage)? else {
+            return Ok(None);
+        };
+        Ok(Some(serde_json::from_slice(value.value())?))
+    }
+
+    /// List retained records in newest-first, deterministic order. Callers may
+    /// request at most 100 records to avoid turning metadata into a new large
+    /// observation surface.
+    pub fn list_observations(&self, limit: usize) -> Result<ObservationList> {
+        let limit = limit.min(100);
+        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let table = read.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
+        let mut observations = Vec::new();
+        for entry in table.iter().map_err(CoreError::storage)? {
+            let (_, value) = entry.map_err(CoreError::storage)?;
+            observations.push(serde_json::from_slice::<ObservationRecord>(value.value())?);
+        }
+        observations.sort_by(|left, right| {
+            right
+                .captured_at
+                .cmp(&left.captured_at)
+                .then_with(|| right.observation_id.cmp(&left.observation_id))
+        });
+        observations.truncate(limit);
+        Ok(ObservationList { observations })
     }
 
     pub fn get_payload(&self, hash: &str) -> Result<Option<PersistedPayload>> {
@@ -238,6 +405,9 @@ impl Store {
     ) -> Result<String> {
         let token = format!("pc1_{}", Uuid::new_v4().simple());
         let now = Utc::now();
+        let observation_id = self
+            .get_entry(cache_key)?
+            .and_then(|entry| entry.observation_id);
         let record = CursorRecord {
             cache_key: cache_key.to_string(),
             source_id: source_id.to_string(),
@@ -246,6 +416,7 @@ impl Store {
             redaction_version,
             created_at: format_time(now),
             expires_at: format_time(now + chrono::Duration::seconds(ttl_seconds)),
+            observation_id,
             extra,
         };
         self.put_cursor(&token, &record)?;
@@ -431,13 +602,23 @@ impl Store {
             let mut payloads = write.open_table(PAYLOADS).map_err(CoreError::storage)?;
             let mut cursors = write.open_table(CURSORS).map_err(CoreError::storage)?;
             let mut sessions = write.open_table(SESSIONS).map_err(CoreError::storage)?;
+            let mut observations = write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
+            let mut observation_subjects = write
+                .open_table(OBSERVATION_SUBJECTS)
+                .map_err(CoreError::storage)?;
+            let mut observation_lineage = write
+                .open_table(OBSERVATION_LINEAGE)
+                .map_err(CoreError::storage)?;
             let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
             summary = PurgeSummary {
                 purged_entries: retain_none(&mut entries)?,
                 purged_payloads: retain_none(&mut payloads)?,
                 purged_cursors: retain_none(&mut cursors)?,
                 purged_sessions: retain_none(&mut sessions)?,
+                purged_observations: retain_none(&mut observations)?,
             };
+            retain_none(&mut observation_subjects)?;
+            retain_none(&mut observation_lineage)?;
             retain_none(&mut state)?;
             state
                 .insert(STORE_SCHEMA_KEY, STORE_SCHEMA.as_bytes())
@@ -556,6 +737,7 @@ impl Store {
             let mut entries = write.open_table(ENTRIES).map_err(CoreError::storage)?;
             let mut payloads = write.open_table(PAYLOADS).map_err(CoreError::storage)?;
             let mut cursors = write.open_table(CURSORS).map_err(CoreError::storage)?;
+            let mut observations = write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
 
             // Reference-count payload blobs: a candidate hash is only safe to
             // remove when no surviving entry still references it. Without this
@@ -578,11 +760,13 @@ impl Store {
                 .collect();
             let purged_payloads = remove_keys(&mut payloads, &orphaned)?;
             let purged_cursors = retain_cursors(&mut cursors, &key_set, source_id)?;
+            mark_payloads_metadata_only(&mut observations, &orphaned)?;
             summary = PurgeSummary {
                 purged_entries,
                 purged_payloads,
                 purged_cursors,
                 purged_sessions: 0,
+                purged_observations: 0,
             };
         }
         write.commit().map_err(CoreError::storage)?;
@@ -609,6 +793,7 @@ pub fn new_cache_entry(
         payload_bytes,
         cacheable: true,
         sensitive: false,
+        observation_id: None,
         provenance: Some(CallProvenance {
             source_call_id: format!("call_{}", Uuid::new_v4().simple()),
             cache_key: None,
@@ -632,6 +817,89 @@ fn retain_none<K: redb::Key + 'static, V: redb::Value + 'static>(
         })
         .map_err(CoreError::storage)?;
     Ok(count)
+}
+
+fn validate_observation_input(input: &NewObservation) -> Result<()> {
+    for (name, value) in [
+        ("payload_hash", &input.payload_hash),
+        ("invocation_fingerprint", &input.invocation_fingerprint),
+        ("source_id", &input.source_id),
+        ("operation", &input.operation),
+    ] {
+        if value.trim().is_empty() {
+            return Err(CoreError::BadArgs {
+                operation: "observation record".to_string(),
+                reason: format!("{name} must not be empty"),
+            });
+        }
+    }
+    for subject_key in &input.subject_keys {
+        if subject_key.len() > 256 || !subject_key.contains(':') {
+            return Err(CoreError::BadArgs {
+                operation: "observation record".to_string(),
+                reason: "subject keys must be namespaced and at most 256 bytes".to_string(),
+            });
+        }
+        let lower = subject_key.to_ascii_lowercase();
+        if ["token", "secret", "password", "authorization", "api_key"]
+            .iter()
+            .any(|needle| lower.contains(needle))
+        {
+            return Err(CoreError::BadArgs {
+                operation: "observation record".to_string(),
+                reason: "subject keys must not contain sensitive identifiers".to_string(),
+            });
+        }
+    }
+    if input.subject_keys.len() > 32 {
+        return Err(CoreError::BadArgs {
+            operation: "observation record".to_string(),
+            reason: "at most 32 subject keys are allowed".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn observation_index_key(left: &str, right: &str) -> String {
+    format!("{left}\0{right}")
+}
+
+fn observation_lineage_ids(lineage: &ObservationLineage) -> impl Iterator<Item = &str> {
+    [
+        lineage.parent_id.as_deref(),
+        lineage.supersedes_id.as_deref(),
+        lineage.derived_from_id.as_deref(),
+        lineage.revalidates_id.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+}
+
+fn mark_payloads_metadata_only(
+    table: &mut redb::Table<'_, &str, &[u8]>,
+    hashes: &[String],
+) -> Result<()> {
+    if hashes.is_empty() {
+        return Ok(());
+    }
+    let hashes: std::collections::BTreeSet<&str> = hashes.iter().map(String::as_str).collect();
+    let mut updates = Vec::new();
+    for entry in table.iter().map_err(CoreError::storage)? {
+        let (id, value) = entry.map_err(CoreError::storage)?;
+        let mut record: ObservationRecord = serde_json::from_slice(value.value())?;
+        if hashes.contains(record.payload_hash.as_str())
+            && record.availability == ObservationAvailability::PayloadAvailable
+        {
+            record.availability = ObservationAvailability::MetadataOnly;
+            updates.push((id.value().to_string(), serde_json::to_vec(&record)?));
+        }
+    }
+    for (id, bytes) in updates {
+        table
+            .insert(id.as_str(), bytes.as_slice())
+            .map_err(CoreError::storage)?;
+    }
+    Ok(())
 }
 
 fn remove_keys<V: redb::Value + 'static>(

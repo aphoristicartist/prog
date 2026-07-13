@@ -2,9 +2,10 @@ use std::{fs, sync::Arc, thread};
 
 use chrono::{Duration, SecondsFormat, Utc};
 use prog_core::{
-    CacheEntryMeta, CachePolicy, CursorRecord, EffectSet, ExpansionScope, NewSessionEvent,
-    OperationProfile, PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, ScopedSlice,
-    SliceRequest, SourceKind, SourceProfile, Store, TrustSettings, expand, new_cache_entry,
+    CacheEntryMeta, CachePolicy, CursorRecord, EffectSet, ExpansionScope, NewObservation,
+    NewSessionEvent, ObservationAvailability, ObservationLineage, OperationProfile, PreviewPolicy,
+    RawPayload, RedactedPayload, RedactionPolicy, ScopedSlice, SliceRequest, SourceKind,
+    SourceProfile, Store, TrustSettings, expand, new_cache_entry,
 };
 
 #[test]
@@ -78,10 +79,15 @@ fn existing_store_without_schema_identity_is_reset() {
     let write = db.begin_write().unwrap();
     {
         const PAYLOADS: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("payloads");
+        const STATE: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("state");
         let mut payloads = write.open_table(PAYLOADS).unwrap();
+        let mut state = write.open_table(STATE).unwrap();
         let legacy_payload = br#"{"legacy":true}"#.to_vec();
         payloads
             .insert("sha256:legacy", legacy_payload.as_slice())
+            .unwrap();
+        state
+            .insert("store_schema", b"prog.store".as_slice())
             .unwrap();
     }
     write.commit().unwrap();
@@ -136,6 +142,7 @@ fn cursors_fail_closed_for_missing_expired_and_redaction_mismatch() {
         redaction_version: 1,
         created_at: format_time(now - Duration::seconds(10)),
         expires_at: format_time(now - Duration::seconds(1)),
+        observation_id: None,
         extra: serde_json::Map::new(),
     };
     store.put_cursor("pc1_expired", &expired).unwrap();
@@ -176,6 +183,7 @@ fn purge_expired_cascades_to_cursors() {
         redaction_version: 1,
         created_at: format_time(Utc::now()),
         expires_at: format_time(Utc::now() + Duration::seconds(60)),
+        observation_id: None,
         extra: serde_json::Map::new(),
     };
     store.put_cursor("pc1_cursor", &cursor).unwrap();
@@ -229,6 +237,119 @@ fn purge_keeps_payload_blob_shared_with_a_surviving_entry() {
     assert_eq!(summary.purged_entries, 1);
     assert_eq!(summary.purged_payloads, 1);
     assert!(store.get_payload(&hash).unwrap().is_none());
+}
+
+#[test]
+fn observations_are_immutable_redacted_and_metadata_survive_payload_purge() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let payload = redacted(json!({"ok": true}));
+    let payload_hash = store.put_payload(&payload).unwrap();
+    let captured_at = "2026-07-13T12:00:00Z".to_string();
+    let first = store
+        .record_observation(NewObservation {
+            payload_hash: payload_hash.clone(),
+            payload_available: true,
+            invocation_fingerprint: "sha256:invocation".to_string(),
+            source_id: "source".to_string(),
+            operation: "read".to_string(),
+            subject_keys: vec!["account:sha256:abc".to_string()],
+            captured_at: Some(captured_at.clone()),
+            complete: true,
+            lineage: ObservationLineage::default(),
+            extra: serde_json::Map::from_iter([(
+                "api_token".to_string(),
+                json!("plain-observation-secret"),
+            )]),
+            ..NewObservation::default()
+        })
+        .unwrap();
+    let second = store
+        .record_observation(NewObservation {
+            payload_hash: payload_hash.clone(),
+            payload_available: true,
+            invocation_fingerprint: "sha256:invocation".to_string(),
+            source_id: "source".to_string(),
+            operation: "read".to_string(),
+            captured_at: Some(captured_at),
+            complete: true,
+            lineage: ObservationLineage {
+                parent_id: Some(first.observation_id.clone()),
+                ..ObservationLineage::default()
+            },
+            ..NewObservation::default()
+        })
+        .unwrap();
+
+    assert_ne!(first.observation_id, second.observation_id);
+    assert_eq!(first.invocation_fingerprint, second.invocation_fingerprint);
+    assert_eq!(
+        second.lineage.parent_id.as_deref(),
+        Some(first.observation_id.as_str())
+    );
+    assert!(
+        !serde_json::to_string(&first)
+            .unwrap()
+            .contains("plain-observation-secret")
+    );
+    assert_eq!(first.extra["api_token"], "[REDACTED:secret_field]");
+
+    let mut entry = entry("observation-cache", &payload_hash, 60);
+    entry.observation_id = Some(first.observation_id.clone());
+    store.put_entry(&entry.key.clone(), &entry).unwrap();
+    let summary = store.purge_source("source").unwrap();
+    assert_eq!(summary.purged_payloads, 1);
+    let retained = store
+        .get_observation(&first.observation_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained.availability, ObservationAvailability::MetadataOnly);
+    assert_eq!(
+        store
+            .get_observation(&second.observation_id)
+            .unwrap()
+            .unwrap()
+            .availability,
+        ObservationAvailability::MetadataOnly
+    );
+}
+
+#[test]
+fn observations_have_bounded_stable_listing_and_reject_sensitive_subject_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    for (index, captured_at) in ["2026-07-12T12:00:00Z", "2026-07-13T12:00:00Z"]
+        .into_iter()
+        .enumerate()
+    {
+        store
+            .record_observation(NewObservation {
+                payload_hash: format!("sha256:{index}"),
+                payload_available: false,
+                invocation_fingerprint: format!("sha256:invoke-{index}"),
+                source_id: "source".to_string(),
+                operation: "read".to_string(),
+                captured_at: Some(captured_at.to_string()),
+                complete: true,
+                ..NewObservation::default()
+            })
+            .unwrap();
+    }
+    let listed = store.list_observations(1).unwrap();
+    assert_eq!(listed.observations.len(), 1);
+    assert_eq!(listed.observations[0].captured_at, "2026-07-13T12:00:00Z");
+
+    let error = store
+        .record_observation(NewObservation {
+            payload_hash: "sha256:payload".to_string(),
+            invocation_fingerprint: "sha256:invoke".to_string(),
+            source_id: "source".to_string(),
+            operation: "read".to_string(),
+            subject_keys: vec!["account:api_token=plain-secret".to_string()],
+            ..NewObservation::default()
+        })
+        .unwrap_err();
+    assert_eq!(error.kind(), "bad_args");
 }
 
 #[test]

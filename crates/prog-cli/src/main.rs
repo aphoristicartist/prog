@@ -21,16 +21,16 @@ use prog_core::{
     AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance,
     CommandHintConfig, CoreError, DISCLOSURE_SCHEMA, DisclosureEnvelope, EffectSet, EvidenceBlock,
     EvidenceGrade, EvidenceRef, ExpansionScope, Extra, FindingOptions, InspectRequest,
-    InspectResponse, LensManifest, NewSessionEvent, NextAction, ObservationCompleteness,
-    ObservationFreshness, ObservationMetadata, ObservationPayloadStatus, ObservationSafety,
-    ObservationTrust, OmissionReason, OmittedRegion, OperationProfile, PersistedPayload,
-    PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, Result, SOURCE_PROFILE_SCHEMA,
-    ScopedSlice, SearchOptions, SearchResponse, SliceRequest, SourceProfile, Store, Summary,
-    TrustSettings, ValidatedCursor, ValueScanReport, build_inspect_response, cache_allowed,
-    call_effect_warnings, canonical_json, check_call, check_discovery, cli_adapter_effects,
-    cli_hardening_effects, effective_effects, evidence_block, expand, http_adapter_effects,
-    http_hardening_effects, infer, join, lens_slice_request, new_cache_entry, project,
-    project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
+    InspectResponse, LensManifest, NewObservation, NewSessionEvent, NextAction,
+    ObservationCompleteness, ObservationFreshness, ObservationMetadata, ObservationPayloadStatus,
+    ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion, OperationProfile,
+    PersistedPayload, PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, Result,
+    SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions, SearchResponse, SliceRequest, SourceProfile,
+    Store, Summary, TrustSettings, ValidatedCursor, ValueScanReport, build_inspect_response,
+    cache_allowed, call_effect_warnings, canonical_json, check_call, check_discovery,
+    cli_adapter_effects, cli_hardening_effects, effective_effects, evidence_block, expand,
+    http_adapter_effects, http_hardening_effects, infer, join, lens_slice_request, new_cache_entry,
+    project, project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
     search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
@@ -519,8 +519,15 @@ struct ExpandArgs {
 #[derive(Debug, Subcommand)]
 enum CacheCommand {
     List,
+    Observations(CacheObservationsArgs),
     Get(CacheGetArgs),
     Purge(CachePurgeArgs),
+}
+
+#[derive(Debug, Args)]
+struct CacheObservationsArgs {
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
 }
 
 #[derive(Debug, Args)]
@@ -782,6 +789,11 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 write_success(&store.list_entries(100)?, cli.pretty)?;
                 Ok(ExitCode::SUCCESS)
             }
+            CacheCommand::Observations(args) => {
+                let store = Store::open(&cli.dir)?;
+                write_success(&store.list_observations(args.limit)?, cli.pretty)?;
+                Ok(ExitCode::SUCCESS)
+            }
             CacheCommand::Get(args) => {
                 let store = Store::open(&cli.dir)?;
                 let entry = store
@@ -871,6 +883,7 @@ struct HintsResponse {
     schema: &'static str,
     source_id: String,
     profile_revision: u64,
+    observation_id: String,
     hints: Value,
     omitted: Vec<OmittedRegion>,
     cursor: Option<String>,
@@ -929,6 +942,7 @@ struct EnvelopeInput {
     root_path: String,
     slice: SliceRequest,
     payload_bytes: u64,
+    observation_id: Option<String>,
     provenance: Option<CallProvenance>,
     cache: Option<CacheInfo>,
     effects: Option<EffectSet>,
@@ -1765,9 +1779,9 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         "hints",
         &json!({"operation": args.operation}),
     )?;
-    let entry = new_cache_entry(
+    let mut entry = new_cache_entry(
         cache_key.clone(),
-        payload_hash,
+        payload_hash.clone(),
         args.source_id.clone(),
         "hints".to_string(),
         serde_json::to_vec(payload.as_value())?
@@ -1776,6 +1790,22 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
             .unwrap_or(u64::MAX),
         86_400,
     );
+    let observation_id = record_capture(
+        store,
+        payload_hash,
+        true,
+        cache_key.clone(),
+        args.source_id.clone(),
+        "hints".to_string(),
+        entry.provenance.clone(),
+        Some(cache_key.clone()),
+        false,
+        true,
+        false,
+        None,
+        None,
+    )?;
+    entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
     let cursor = if projection.omitted.is_empty() {
         None
@@ -1787,6 +1817,7 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         schema: DISCLOSURE_SCHEMA,
         source_id: args.source_id.clone(),
         profile_revision: profile.revision,
+        observation_id,
         hints: projection.preview,
         omitted: projection.omitted,
         cursor,
@@ -1869,6 +1900,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                     root_path: root_path.clone(),
                     slice: view,
                     payload_bytes: entry.payload_bytes,
+                    observation_id: entry.observation_id.clone(),
                     provenance: entry.provenance.clone(),
                     cache: Some(cache_info),
                     effects: Some(effective_effects.clone()),
@@ -1958,9 +1990,34 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
         ));
     }
 
+    let payload_hash = if may_cache {
+        store.put_payload(&payload)?
+    } else {
+        Store::payload_hash(&payload)?
+    };
+    if may_cache {
+        provenance.cache_key = Some(cache_key.clone());
+    } else {
+        provenance.cache_key = None;
+    }
+    let observation_id = record_capture(
+        store,
+        payload_hash.clone(),
+        may_cache,
+        cache_key.clone(),
+        args.source_id.clone(),
+        args.operation.clone(),
+        Some(provenance.clone()),
+        may_cache.then(|| cache_key.clone()),
+        !redacted_paths.is_empty(),
+        true,
+        false,
+        None,
+        lens.as_ref(),
+    )?;
+
     let mut cache_disabled_reason = None;
     let cache_status = if may_cache {
-        let payload_hash = store.put_payload(&payload)?;
         let ttl = ttl_seconds(&effective_cache);
         let mut entry = new_cache_entry(
             cache_key.clone(),
@@ -1970,12 +2027,11 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
             payload_bytes,
             ttl,
         );
-        provenance.cache_key = Some(cache_key.clone());
+        entry.observation_id = Some(observation_id.clone());
         entry.provenance = Some(provenance.clone());
         store.put_entry(&cache_key, &entry)?;
         Some(cache_info(CacheStatus::Stored, &entry, Some(0)))
     } else {
-        provenance.cache_key = None;
         let reason = cache_skip_warning(args.no_cache, &operation);
         warnings.push(reason.clone());
         cache_disabled_reason = Some(reason);
@@ -2013,6 +2069,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
             root_path: root_path.clone(),
             slice: view,
             payload_bytes,
+            observation_id: Some(observation_id),
             provenance: Some(provenance),
             cache: cache_status,
             effects: Some(effective_effects),
@@ -2024,7 +2081,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
             next_action_operation: Some(args.operation.clone()),
             additional_next_actions: Vec::new(),
             observation_parser: None,
-            lens,
+            lens: lens.clone(),
         },
         cursor,
     )?;
@@ -2154,8 +2211,33 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
 
                 let page_cache_key =
                     Store::cache_key(&args.source_id, &args.operation, &page_key_args)?;
+                let page_hash = if may_cache {
+                    store.put_payload(&page_payload)?
+                } else {
+                    Store::payload_hash(&page_payload)?
+                };
+                let page_provenance = call_provenance(
+                    &page_cache_key,
+                    page_call.status.clone(),
+                    page_call.duration_ms,
+                    page_call.provenance.clone(),
+                );
+                let page_observation_id = record_capture(
+                    store,
+                    page_hash.clone(),
+                    may_cache,
+                    page_cache_key.clone(),
+                    args.source_id.clone(),
+                    args.operation.clone(),
+                    Some(page_provenance.clone()),
+                    may_cache.then(|| page_cache_key.clone()),
+                    false,
+                    true,
+                    false,
+                    None,
+                    lens.as_ref(),
+                )?;
                 let page_cursor = if may_cache {
-                    let page_hash = store.put_payload(&page_payload)?;
                     let ttl = ttl_seconds(&effective_cache);
                     let mut entry = new_cache_entry(
                         page_cache_key.clone(),
@@ -2165,12 +2247,8 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                         page_bytes,
                         ttl,
                     );
-                    entry.provenance = Some(call_provenance(
-                        &page_cache_key,
-                        page_call.status.clone(),
-                        page_call.duration_ms,
-                        page_call.provenance.clone(),
-                    ));
+                    entry.observation_id = Some(page_observation_id.clone());
+                    entry.provenance = Some(page_provenance);
                     store.put_entry(&page_cache_key, &entry)?;
                     // Mint a pc1_ cursor carrying page metadata (I9 fail-closed
                     // reuse; extra is observability only).
@@ -2377,7 +2455,7 @@ fn observe_artifact(
         })?;
     let mut entry = new_cache_entry(
         cache_key.clone(),
-        payload_hash,
+        payload_hash.clone(),
         "observe".to_string(),
         input.name.clone(),
         payload_bytes,
@@ -2389,6 +2467,22 @@ fn observe_artifact(
         &normalized.kind,
         redacted_paths.len(),
     ));
+    let observation_id = record_capture(
+        store,
+        payload_hash.clone(),
+        true,
+        cache_key.clone(),
+        "observe".to_string(),
+        input.name.clone(),
+        entry.provenance.clone(),
+        Some(cache_key.clone()),
+        !redacted_paths.is_empty(),
+        true,
+        false,
+        Some(normalized.parser.id.to_string()),
+        lens.as_ref(),
+    )?;
+    entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
 
     let requested_view = SliceRequest {
@@ -2431,6 +2525,7 @@ fn observe_artifact(
             root_path,
             slice,
             payload_bytes,
+            observation_id: Some(observation_id),
             provenance: entry.provenance.clone(),
             cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
             effects: None,
@@ -2591,13 +2686,30 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
     );
     let mut entry = new_cache_entry(
         cache_key.clone(),
-        payload_hash,
+        payload_hash.clone(),
         "run".to_string(),
         operation.clone(),
         payload_bytes,
         ttl,
     );
     entry.provenance = Some(provenance.clone());
+    let truncated = run.stdout.truncated || run.stderr.truncated;
+    let observation_id = record_capture(
+        store,
+        payload_hash.clone(),
+        true,
+        cache_key.clone(),
+        "run".to_string(),
+        operation.clone(),
+        Some(provenance.clone()),
+        Some(cache_key.clone()),
+        !policy_redactions.is_empty(),
+        !truncated,
+        truncated,
+        None,
+        lens.as_ref(),
+    )?;
+    entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
     let cursor = Some(store.create_cursor_with_extra(
         &cache_key,
@@ -2641,6 +2753,7 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
             root_path,
             slice,
             payload_bytes,
+            observation_id: Some(observation_id),
             provenance: Some(provenance),
             cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
             effects: Some(run_effects()),
@@ -5110,6 +5223,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
                     extra: Extra::new(),
                 },
                 payload_bytes: bytes.len().try_into().unwrap_or(u64::MAX),
+                observation_id: entry.observation_id.clone(),
                 provenance: entry.provenance.clone(),
                 cache: Some(cache),
                 effects: None,
@@ -5138,6 +5252,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
             root_path: record.root_path.clone(),
             slice,
             payload_bytes: entry.payload_bytes,
+            observation_id: entry.observation_id.clone(),
             provenance: entry.provenance.clone(),
             cache: Some(cache),
             effects: None,
@@ -5178,14 +5293,30 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
     let payload = redacted.payload;
     let payload_hash = store.put_payload(&payload)?;
     let payload_bytes = json_len_u64(payload.as_value())?;
-    let entry = new_cache_entry(
+    let mut entry = new_cache_entry(
         cache_key.clone(),
-        payload_hash,
+        payload_hash.clone(),
         "prog".to_string(),
         operation.clone(),
         payload_bytes,
         86_400,
     );
+    let observation_id = record_capture(
+        store,
+        payload_hash,
+        true,
+        cache_key.clone(),
+        "prog".to_string(),
+        operation.clone(),
+        entry.provenance.clone(),
+        Some(cache_key.clone()),
+        false,
+        true,
+        false,
+        None,
+        None,
+    )?;
+    entry.observation_id = Some(observation_id);
     store.put_entry(&cache_key, &entry)?;
     let slice = SliceRequest {
         path: None,
@@ -5213,6 +5344,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
             root_path: "".to_string(),
             slice,
             payload_bytes,
+            observation_id: entry.observation_id.clone(),
             provenance: entry.provenance.clone(),
             cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
             effects: None,
@@ -7289,6 +7421,47 @@ fn call_provenance(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn record_capture(
+    store: &Store,
+    payload_hash: String,
+    payload_available: bool,
+    invocation_fingerprint: String,
+    source_id: String,
+    operation: String,
+    provenance: Option<CallProvenance>,
+    cache_key: Option<String>,
+    redacted: bool,
+    complete: bool,
+    truncated: bool,
+    parser: Option<String>,
+    lens: Option<&LensManifest>,
+) -> Result<String> {
+    let duration_ms = provenance.as_ref().and_then(|item| item.duration_ms);
+    let status = provenance.as_ref().and_then(|item| item.status.clone());
+    let captured_at = provenance.as_ref().map(|item| item.captured_at.clone());
+    Ok(store
+        .record_observation(NewObservation {
+            payload_hash,
+            payload_available,
+            invocation_fingerprint,
+            source_id,
+            operation,
+            captured_at,
+            duration_ms,
+            status,
+            complete,
+            truncated,
+            redacted,
+            parser,
+            lens: lens.map(|item| item.id.clone()),
+            provenance,
+            cache_key,
+            ..NewObservation::default()
+        })?
+        .observation_id)
+}
+
 fn cursor_lens_extra(lens: Option<&LensManifest>) -> Extra {
     let mut extra = Extra::new();
     if let Some(lens) = lens {
@@ -7558,6 +7731,7 @@ fn observation_metadata(
         );
     }
     ObservationMetadata {
+        observation_id: input.observation_id.clone(),
         completeness: ObservationCompleteness {
             status: completeness_status.to_string(),
             preview_complete,

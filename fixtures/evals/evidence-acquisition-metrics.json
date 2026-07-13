@@ -11,8 +11,8 @@
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
       "baseline_output_tokens": 633,
-      "findings_output_tokens": 676,
-      "inspect_output_tokens": 1336
+      "findings_output_tokens": 722,
+      "inspect_output_tokens": 1517
     },
     {
       "name": "cargo_test_failure",
@@ -24,8 +24,8 @@
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
       "baseline_output_tokens": 643,
-      "findings_output_tokens": 674,
-      "inspect_output_tokens": 1332
+      "findings_output_tokens": 719,
+      "inspect_output_tokens": 1559
     },
     {
       "name": "noisy_log_root_error",
@@ -37,8 +37,8 @@
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
       "baseline_output_tokens": 834,
-      "findings_output_tokens": 471,
-      "inspect_output_tokens": 667
+      "findings_output_tokens": 516,
+      "inspect_output_tokens": 757
     },
     {
       "name": "pytest_assertion_failure",
@@ -50,8 +50,8 @@
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
       "baseline_output_tokens": 678,
-      "findings_output_tokens": 713,
-      "inspect_output_tokens": 1387
+      "findings_output_tokens": 758,
+      "inspect_output_tokens": 1613
     },
     {
       "name": "sarif_security_error",
@@ -74,7 +74,7 @@
     "findings_tool_calls": 10,
     "inspect_tool_calls": 15,
     "baseline_output_tokens": 3433,
-    "findings_output_tokens": 3155,
-    "inspect_output_tokens": 5393
+    "findings_output_tokens": 3336,
+    "inspect_output_tokens": 6117
   }
 }
