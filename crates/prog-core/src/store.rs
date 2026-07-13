@@ -16,7 +16,8 @@ use crate::{
     CacheEntryMeta, CallProvenance, CoreError, CursorRecord, OBSERVATION_SCHEMA,
     ObservationAvailability, ObservationLineage, ObservationRecord, PersistedPayload,
     RedactedPayload, RedactionPolicy, Result, SESSION_SCHEMA, SessionEvent, SessionTrail,
-    SourceProfile, ValidatedCursor, canonical_json, validate_source_profile,
+    SourceProfile, VERIFICATION_SCHEMA, ValidatedCursor, VerificationObligation, canonical_json,
+    validate_source_profile,
 };
 
 const PAYLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("payloads");
@@ -28,6 +29,7 @@ const OBSERVATION_SUBJECTS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("observation_subjects");
 const OBSERVATION_LINEAGE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("observation_lineage");
+const OBLIGATIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("obligations");
 const STATE: TableDefinition<&str, &[u8]> = TableDefinition::new("state");
 const CURRENT_SESSION_KEY: &str = "current_session";
 const STORE_SCHEMA_KEY: &str = "store_schema";
@@ -52,6 +54,12 @@ pub struct CacheList {
 #[serde(rename_all = "snake_case")]
 pub struct ObservationList {
     pub observations: Vec<ObservationRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObligationList {
+    pub obligations: Vec<VerificationObligation>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -134,6 +142,7 @@ impl Store {
             write
                 .open_table(OBSERVATION_LINEAGE)
                 .map_err(CoreError::storage)?;
+            write.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
             write.open_table(STATE).map_err(CoreError::storage)?;
         }
         write.commit().map_err(CoreError::storage)?;
@@ -161,6 +170,7 @@ impl Store {
                 let mut observation_lineage = write
                     .open_table(OBSERVATION_LINEAGE)
                     .map_err(CoreError::storage)?;
+                let mut obligations = write.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
                 let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
                 if store_existed {
                     retain_none(&mut entries)?;
@@ -170,6 +180,7 @@ impl Store {
                     retain_none(&mut observations)?;
                     retain_none(&mut observation_subjects)?;
                     retain_none(&mut observation_lineage)?;
+                    retain_none(&mut obligations)?;
                     retain_none(&mut state)?;
                 }
                 state
@@ -564,6 +575,66 @@ impl Store {
         Ok(None)
     }
 
+    pub fn put_obligation(&self, obligation: &VerificationObligation) -> Result<()> {
+        if obligation.schema != VERIFICATION_SCHEMA
+            || obligation.id.trim().is_empty()
+            || obligation.session_id.trim().is_empty()
+            || obligation.intended_check.trim().is_empty()
+        {
+            return Err(CoreError::BadArgs {
+                operation: "verification obligation".to_string(),
+                reason: "schema, id, session_id, and intended_check are required".to_string(),
+            });
+        }
+        let key = obligation_key(&obligation.session_id, &obligation.id)?;
+        let bytes = serde_json::to_vec(obligation)?;
+        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        {
+            let mut table = write.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
+            if table
+                .get(key.as_str())
+                .map_err(CoreError::storage)?
+                .is_some()
+            {
+                return Err(CoreError::BadArgs {
+                    operation: "verification obligation".to_string(),
+                    reason: format!(
+                        "obligation '{}' already exists in this session",
+                        obligation.id
+                    ),
+                });
+            }
+            table
+                .insert(key.as_str(), bytes.as_slice())
+                .map_err(CoreError::storage)?;
+        }
+        write.commit().map_err(CoreError::storage)
+    }
+
+    pub fn list_obligations(&self, session_id: Option<&str>) -> Result<ObligationList> {
+        let session_id = match session_id {
+            Some(value) => value.to_string(),
+            None => self.current_session_id()?.unwrap_or_default(),
+        };
+        if session_id.is_empty() {
+            return Ok(ObligationList {
+                obligations: Vec::new(),
+            });
+        }
+        let prefix = format!("{session_id}\0");
+        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let table = read.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
+        let mut obligations = Vec::new();
+        for entry in table.iter().map_err(CoreError::storage)? {
+            let (key, value) = entry.map_err(CoreError::storage)?;
+            if key.value().starts_with(&prefix) {
+                obligations.push(serde_json::from_slice(value.value())?);
+            }
+        }
+        obligations.sort_by(|left: &VerificationObligation, right| left.id.cmp(&right.id));
+        Ok(ObligationList { obligations })
+    }
+
     pub fn record_session_event(&self, input: NewSessionEvent) -> Result<SessionEvent> {
         if input.kind.trim().is_empty() {
             return Err(CoreError::BadArgs {
@@ -638,6 +709,7 @@ impl Store {
             let mut observation_lineage = write
                 .open_table(OBSERVATION_LINEAGE)
                 .map_err(CoreError::storage)?;
+            let mut obligations = write.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
             let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
             summary = PurgeSummary {
                 purged_entries: retain_none(&mut entries)?,
@@ -648,6 +720,7 @@ impl Store {
             };
             retain_none(&mut observation_subjects)?;
             retain_none(&mut observation_lineage)?;
+            retain_none(&mut obligations)?;
             retain_none(&mut state)?;
             state
                 .insert(STORE_SCHEMA_KEY, STORE_SCHEMA.as_bytes())
@@ -891,6 +964,20 @@ fn validate_observation_input(input: &NewObservation) -> Result<()> {
 
 fn observation_index_key(left: &str, right: &str) -> String {
     format!("{left}\0{right}")
+}
+
+fn obligation_key(session_id: &str, id: &str) -> Result<String> {
+    if id.len() > 128
+        || !id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+    {
+        return Err(CoreError::BadArgs {
+            operation: "verification obligation".to_string(),
+            reason: "id must be at most 128 ASCII letters, numbers, '.', '_', or '-'".to_string(),
+        });
+    }
+    Ok(format!("{session_id}\0{id}"))
 }
 
 fn observation_lineage_ids(lineage: &ObservationLineage) -> impl Iterator<Item = &str> {

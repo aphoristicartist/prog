@@ -16,6 +16,7 @@ pub const SESSION_SCHEMA: &str = "prog.session";
 pub const OBSERVATION_SCHEMA: &str = "prog.observation";
 pub const SOURCE_STATE_SCHEMA: &str = "prog.source_state";
 pub const OBSERVATION_DELTA_SCHEMA: &str = "prog.observation_delta";
+pub const VERIFICATION_SCHEMA: &str = "prog.verification";
 
 pub type Extra = Map<String, Value>;
 
@@ -1049,6 +1050,69 @@ pub struct ObservationDelta {
     pub extra: Extra,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationStatus {
+    Pending,
+    Passed,
+    Failed,
+    Persisting,
+    New,
+    NotObserved,
+    Stale,
+    Unknown,
+    Unverifiable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct VerificationObligation {
+    pub schema: String,
+    pub id: String,
+    pub session_id: String,
+    pub required: bool,
+    pub intended_check: String,
+    pub required_scope: String,
+    #[serde(default)]
+    pub comparison_family: Option<String>,
+    #[serde(default)]
+    pub origin_observation_id: Option<String>,
+    #[serde(default)]
+    pub expected_absent_fingerprint: Option<String>,
+    #[serde(default)]
+    pub evidence_observation_id: Option<String>,
+    pub created_at: String,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObligationEvaluation {
+    pub obligation: VerificationObligation,
+    pub status: VerificationStatus,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    #[serde(default)]
+    pub assessment: Option<ComparabilityAssessment>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ReadinessReport {
+    pub schema: String,
+    pub configured: bool,
+    pub ready: bool,
+    #[serde(default)]
+    pub evaluations: Vec<ObligationEvaluation>,
+    #[serde(default)]
+    pub blockers: Vec<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
 pub fn canonical_json(value: &Value) -> crate::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&sort_json(value))?)
 }
@@ -1069,6 +1133,9 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<ComparabilityAssessment>(&mut schemas, "ComparabilityAssessment")?;
     insert_schema::<DeltaFinding>(&mut schemas, "DeltaFinding")?;
     insert_schema::<ObservationDelta>(&mut schemas, "ObservationDelta")?;
+    insert_schema::<VerificationObligation>(&mut schemas, "VerificationObligation")?;
+    insert_schema::<ObligationEvaluation>(&mut schemas, "ObligationEvaluation")?;
+    insert_schema::<ReadinessReport>(&mut schemas, "ReadinessReport")?;
     insert_schema::<CachePolicy>(&mut schemas, "CachePolicy")?;
     insert_schema::<TrustSettings>(&mut schemas, "TrustSettings")?;
     insert_schema::<AuthRef>(&mut schemas, "AuthRef")?;

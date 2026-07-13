@@ -3495,6 +3495,185 @@ fn automatic_delta_never_matches_similar_but_different_command_invocations() {
     assert!(second.get("changes_since").is_none());
 }
 
+#[test]
+fn verification_readiness_requires_every_declared_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let state = dir.path().join("state.txt");
+    let script = dir.path().join("emit.py");
+    fs::write(
+        &script,
+        "from pathlib import Path\nprint(Path(__import__('sys').argv[1]).read_text())\n",
+    )
+    .unwrap();
+    fs::write(&state, "error old failure\n").unwrap();
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let first_id = first["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    fs::write(&state, "error new failure\n").unwrap();
+    let second = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(second.status.success(), "{}", stdout(&second));
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    let second_id = second["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let delta = prog(&["--dir", dir_arg, "delta", &first_id, &second_id]);
+    assert!(delta.status.success(), "{}", stdout(&delta));
+    let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
+    let resolved_fingerprint = delta["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["status"] == "resolved")
+        .and_then(|finding| finding["fingerprint"].as_str())
+        .unwrap()
+        .to_string();
+
+    let target = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "target-failure",
+        "--check",
+        "target failure is absent",
+        "--scope",
+        "target",
+        "--origin-observation",
+        &first_id,
+        "--evidence-observation",
+        &second_id,
+        "--expected-absent-fingerprint",
+        &resolved_fingerprint,
+    ]);
+    assert!(target.status.success(), "{}", stdout(&target));
+    let affected = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "affected-suite",
+        "--check",
+        "affected test suite passes",
+        "--scope",
+        "affected-suite",
+    ]);
+    assert!(affected.status.success(), "{}", stdout(&affected));
+
+    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    assert_eq!(readiness["schema"], "prog.verification");
+    assert_eq!(readiness["configured"], true);
+    assert_eq!(readiness["ready"], false);
+    let target = readiness["evaluations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|evaluation| evaluation["obligation"]["id"] == "target-failure")
+        .unwrap();
+    assert_eq!(target["status"], "passed");
+    let affected = readiness["evaluations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|evaluation| evaluation["obligation"]["id"] == "affected-suite")
+        .unwrap();
+    assert_eq!(affected["status"], "pending");
+    assert!(
+        readiness["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|blocker| blocker.as_str().unwrap().contains("affected-suite"))
+    );
+}
+
+#[test]
+fn verification_without_obligations_is_explicitly_not_ready() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let started = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "start",
+        "--goal",
+        "verify a patch",
+    ]);
+    assert!(started.status.success(), "{}", stdout(&started));
+    let readiness = prog(&["--dir", dir_arg, "session", "obligation-list"]);
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    assert_eq!(readiness["configured"], false);
+    assert_eq!(readiness["ready"], false);
+    assert!(
+        readiness["blockers"][0]
+            .as_str()
+            .unwrap()
+            .contains("no verification obligations")
+    );
+}
+
+#[test]
+fn verification_accepts_a_complete_successful_command_as_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let run = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        "-c",
+        "print('all clear')",
+    ]);
+    assert!(run.status.success(), "{}", stdout(&run));
+    let run: Value = serde_json::from_slice(&run.stdout).unwrap();
+    let observation_id = run["observation"]["observation_id"].as_str().unwrap();
+    let add = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "target-command",
+        "--check",
+        "target command passes",
+        "--scope",
+        "target",
+        "--evidence-observation",
+        observation_id,
+    ]);
+    assert!(add.status.success(), "{}", stdout(&add));
+    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    assert_eq!(readiness["ready"], true);
+    assert_eq!(readiness["evaluations"][0]["status"], "passed");
+}
+
 #[tokio::test]
 async fn http_capture_persists_scoped_etag_source_state() {
     let dir = tempfile::tempdir().unwrap();
