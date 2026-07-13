@@ -22,6 +22,7 @@ The structured ref includes:
 - cursor and JSON Pointer path
 - captured timestamp
 - cache status, age, expiry, and stale flag
+- observation-wide `availability` and `capture` lifecycle facts
 - redaction and lossiness flags
 - `redacted_slice_sha256`, a hash of the already-redacted visible slice
 
@@ -40,6 +41,19 @@ the detailed `observation.capture` record. The immutable observation record
 always retains full capture accounting. `capture_truncated`, `redacted`, `metadata_only`, `expired`, and
 `unavailable` evidence never grants `can_prove_absence`; only recoverable,
 complete evidence can participate in a resolved delta or verification claim.
+
+Every `EvidenceRef` also carries the immutable observation's `availability`
+and complete `capture` record. Its `redacted` and `lossy` flags remain local to
+the cited path or preview; use the lifecycle fields to decide whether the
+underlying observation can support an absence claim. A ref with no attached
+immutable observation explicitly reports `availability: unavailable` and a
+non-proving capture record.
+
+For a canonical recoverable and complete observation, the initial envelope
+omits its redundant root `EvidenceRef`; `observation` already carries the same
+lifecycle facts and the cursor remains available for navigation. Path-specific
+responses still emit their refs. Nonstandard lifecycle states retain the root
+ref so the limitation is visible immediately.
 
 For CLI runs, capture records report separate `stdout` and `stderr` byte facts.
 For transport adapters, byte limits report the captured body size and retain an

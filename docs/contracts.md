@@ -104,6 +104,11 @@ appear on envelopes, expanded slices, path entries, and export receipts. It is
 not a capability; consumers must still call `prog expand` with the cursor and
 path when they need evidence.
 
+Each ref includes the immutable observation's `availability` and `capture`
+facts. Treat those as observation-wide lifecycle metadata: a locally complete
+path cannot prove absence when its containing capture was truncated, redacted,
+expired, metadata-only, or unavailable.
+
 Evidence-navigation contracts are the machine-readable surface for
 ranked evidence workflows. `InspectResponse` contains ranked `Finding` entries,
 `EvidenceBlock` contains compact citation-oriented evidence for one path, and
