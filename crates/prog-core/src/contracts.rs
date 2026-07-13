@@ -1291,6 +1291,7 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<ObservationRecord>(&mut schemas, "ObservationRecord")?;
     insert_schema::<ObservationLineage>(&mut schemas, "ObservationLineage")?;
     insert_schema::<EvidenceAvailability>(&mut schemas, "EvidenceAvailability")?;
+    insert_schema::<crate::StorageQuotaSummary>(&mut schemas, "StorageQuotaSummary")?;
     insert_schema::<CaptureStopReason>(&mut schemas, "CaptureStopReason")?;
     insert_schema::<CaptureScope>(&mut schemas, "CaptureScope")?;
     insert_schema::<CaptureCompleteness>(&mut schemas, "CaptureCompleteness")?;

@@ -99,6 +99,21 @@ pub struct PurgeSummary {
     pub purged_observations: usize,
 }
 
+/// Result of enforcing a maximum retained size over redacted payload blobs.
+/// Payloads are deduplicated by content hash, so byte accounting is per blob,
+/// while eviction removes every cache entry that points at a selected blob.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct StorageQuotaSummary {
+    pub max_payload_bytes: u64,
+    pub payload_bytes_before: u64,
+    pub payload_bytes_retained: u64,
+    pub evicted_entries: usize,
+    pub evicted_payloads: usize,
+    pub evicted_cursors: usize,
+    pub metadata_only_observations: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct NewSessionEvent {
     pub kind: String,
@@ -745,6 +760,100 @@ impl Store {
         self.purge_entries_and_cursors(&keys, Some(source_id))
     }
 
+    /// Enforce a hard quota over durable, already-redacted payload blobs.
+    ///
+    /// The eviction unit is a complete payload-reference group, never one
+    /// entry from a shared blob. Groups are selected oldest first by their
+    /// newest cache entry, then hash, so a live shared payload is never left
+    /// behind with a missing expansion target. Immutable observations survive
+    /// as metadata-only lineage records.
+    pub fn enforce_payload_quota(&self, max_payload_bytes: u64) -> Result<StorageQuotaSummary> {
+        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let summary;
+        {
+            let mut entries = write.open_table(ENTRIES).map_err(CoreError::storage)?;
+            let mut payloads = write.open_table(PAYLOADS).map_err(CoreError::storage)?;
+            let mut cursors = write.open_table(CURSORS).map_err(CoreError::storage)?;
+            let mut observations = write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
+
+            let mut payload_sizes = std::collections::BTreeMap::new();
+            for item in payloads.iter().map_err(CoreError::storage)? {
+                let (hash, bytes) = item.map_err(CoreError::storage)?;
+                payload_sizes.insert(
+                    hash.value().to_string(),
+                    u64::try_from(bytes.value().len()).unwrap_or(u64::MAX),
+                );
+            }
+            let payload_bytes_before = payload_sizes
+                .values()
+                .copied()
+                .fold(0u64, u64::saturating_add);
+
+            let mut groups: std::collections::BTreeMap<String, Vec<(String, CacheEntryMeta)>> =
+                std::collections::BTreeMap::new();
+            for item in entries.iter().map_err(CoreError::storage)? {
+                let (key, value) = item.map_err(CoreError::storage)?;
+                let meta: CacheEntryMeta = serde_json::from_slice(value.value())?;
+                groups
+                    .entry(meta.payload_hash.clone())
+                    .or_default()
+                    .push((key.value().to_string(), meta));
+            }
+
+            let mut candidates = payload_sizes
+                .iter()
+                .map(|(hash, size)| {
+                    let group = groups.remove(hash).unwrap_or_default();
+                    let newest = group
+                        .iter()
+                        .map(|(_, entry)| entry.created_at.as_str())
+                        .max()
+                        .unwrap_or("");
+                    (newest.to_string(), hash.clone(), *size, group)
+                })
+                .collect::<Vec<_>>();
+            candidates
+                .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+
+            let mut payload_bytes_retained = payload_bytes_before;
+            let mut evicted_entries = 0;
+            let mut evicted_payloads = 0;
+            let mut evicted_cursors = 0;
+            let mut metadata_only_observations = 0;
+            for (_, hash, size, group) in candidates {
+                if payload_bytes_retained <= max_payload_bytes {
+                    break;
+                }
+                let keys = group.into_iter().map(|(key, _)| key).collect::<Vec<_>>();
+                let key_set = keys.iter().map(String::as_str).collect();
+                evicted_entries += remove_keys(&mut entries, &keys)?;
+                if payloads
+                    .remove(hash.as_str())
+                    .map_err(CoreError::storage)?
+                    .is_some()
+                {
+                    evicted_payloads += 1;
+                    payload_bytes_retained = payload_bytes_retained.saturating_sub(size);
+                }
+                evicted_cursors += retain_cursors(&mut cursors, &key_set, None)?;
+                metadata_only_observations +=
+                    mark_payloads_metadata_only(&mut observations, std::slice::from_ref(&hash))?;
+            }
+
+            summary = StorageQuotaSummary {
+                max_payload_bytes,
+                payload_bytes_before,
+                payload_bytes_retained,
+                evicted_entries,
+                evicted_payloads,
+                evicted_cursors,
+                metadata_only_observations,
+            };
+        }
+        write.commit().map_err(CoreError::storage)?;
+        Ok(summary)
+    }
+
     pub fn update_profile<F>(&self, id: &str, mut update: F) -> Result<SourceProfile>
     where
         F: FnMut(Option<SourceProfile>) -> SourceProfile,
@@ -856,7 +965,7 @@ impl Store {
                 .collect();
             let purged_payloads = remove_keys(&mut payloads, &orphaned)?;
             let purged_cursors = retain_cursors(&mut cursors, &key_set, source_id)?;
-            mark_payloads_metadata_only(&mut observations, &orphaned)?;
+            let _ = mark_payloads_metadata_only(&mut observations, &orphaned)?;
             summary = PurgeSummary {
                 purged_entries,
                 purged_payloads,
@@ -988,9 +1097,9 @@ fn observation_lineage_ids(lineage: &ObservationLineage) -> impl Iterator<Item =
 fn mark_payloads_metadata_only(
     table: &mut redb::Table<'_, &str, &[u8]>,
     hashes: &[String],
-) -> Result<()> {
+) -> Result<usize> {
     if hashes.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let hashes: std::collections::BTreeSet<&str> = hashes.iter().map(String::as_str).collect();
     let mut updates = Vec::new();
@@ -1009,12 +1118,13 @@ fn mark_payloads_metadata_only(
             updates.push((id.value().to_string(), serde_json::to_vec(&record)?));
         }
     }
+    let updated = updates.len();
     for (id, bytes) in updates {
         table
             .insert(id.as_str(), bytes.as_slice())
             .map_err(CoreError::storage)?;
     }
-    Ok(())
+    Ok(updated)
 }
 
 fn remove_keys<V: redb::Value + 'static>(

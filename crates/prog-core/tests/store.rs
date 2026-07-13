@@ -240,6 +240,89 @@ fn purge_keeps_payload_blob_shared_with_a_surviving_entry() {
 }
 
 #[test]
+fn payload_quota_evicts_whole_shared_groups_and_preserves_metadata_lineage() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let old_payload = redacted(json!({"items": vec!["old"; 80]}));
+    let new_payload = redacted(json!({"items": vec!["new"; 40]}));
+    let old_hash = store.put_payload(&old_payload).unwrap();
+    let new_hash = store.put_payload(&new_payload).unwrap();
+    let new_bytes = serde_json::to_vec(new_payload.as_value()).unwrap().len() as u64;
+
+    let old_observation = store
+        .record_observation(NewObservation {
+            payload_hash: old_hash.clone(),
+            availability: EvidenceAvailability::Recoverable,
+            invocation_fingerprint: "sha256:old".to_string(),
+            source_id: "source".to_string(),
+            operation: "read".to_string(),
+            capture: CaptureCompleteness::complete(1),
+            ..NewObservation::default()
+        })
+        .unwrap();
+    let mut old_a = entry("old-a", &old_hash, 60);
+    let mut old_b = entry("old-b", &old_hash, 60);
+    old_a.created_at = "2020-01-01T00:00:00Z".to_string();
+    old_b.created_at = "2020-01-01T00:00:00Z".to_string();
+    old_a.observation_id = Some(old_observation.observation_id.clone());
+    old_b.observation_id = Some(old_observation.observation_id.clone());
+    store.put_entry(&old_a.key, &old_a).unwrap();
+    store.put_entry(&old_b.key, &old_b).unwrap();
+    for (token, cache_key) in [("pc1_old_a", "old-a"), ("pc1_old_b", "old-b")] {
+        store
+            .put_cursor(
+                token,
+                &CursorRecord {
+                    cache_key: cache_key.to_string(),
+                    source_id: "source".to_string(),
+                    operation: "read".to_string(),
+                    root_path: "".to_string(),
+                    redaction_version: 1,
+                    created_at: "2020-01-01T00:00:00Z".to_string(),
+                    expires_at: "2030-01-01T00:00:00Z".to_string(),
+                    observation_id: Some(old_observation.observation_id.clone()),
+                    extra: serde_json::Map::new(),
+                },
+            )
+            .unwrap();
+    }
+
+    let mut newest = entry("new", &new_hash, 60);
+    newest.created_at = "2025-01-01T00:00:00Z".to_string();
+    store.put_entry(&newest.key, &newest).unwrap();
+
+    let summary = store.enforce_payload_quota(new_bytes).unwrap();
+    assert!(summary.payload_bytes_before > new_bytes);
+    assert_eq!(summary.payload_bytes_retained, new_bytes);
+    assert_eq!(summary.evicted_entries, 2);
+    assert_eq!(summary.evicted_payloads, 1);
+    assert_eq!(summary.evicted_cursors, 2);
+    assert_eq!(summary.metadata_only_observations, 1);
+    assert!(store.get_payload(&old_hash).unwrap().is_none());
+    assert!(store.get_entry("old-a").unwrap().is_none());
+    assert!(store.get_entry("old-b").unwrap().is_none());
+    assert!(store.get_payload(&new_hash).unwrap().is_some());
+    assert!(store.get_entry("new").unwrap().is_some());
+    assert_eq!(
+        store
+            .get_observation(&old_observation.observation_id)
+            .unwrap()
+            .unwrap()
+            .availability,
+        EvidenceAvailability::MetadataOnly
+    );
+    assert_eq!(
+        store.get_cursor("pc1_old_a", 1).unwrap_err().kind(),
+        "cursor_not_found"
+    );
+
+    let repeated = store.enforce_payload_quota(new_bytes).unwrap();
+    assert_eq!(repeated.evicted_entries, 0);
+    assert_eq!(repeated.evicted_payloads, 0);
+    assert_eq!(repeated.payload_bytes_retained, new_bytes);
+}
+
+#[test]
 fn observations_are_immutable_redacted_and_metadata_survive_payload_purge() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
