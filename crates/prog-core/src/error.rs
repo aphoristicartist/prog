@@ -80,6 +80,14 @@ pub enum CoreError {
     #[error("invalid arguments for '{operation}': {reason}")]
     BadArgs { operation: String, reason: String },
 
+    #[error(
+        "disclosure budget of {requested_bytes} bytes is too small; at least {minimum_bytes} bytes are required"
+    )]
+    BudgetTooSmall {
+        requested_bytes: usize,
+        minimum_bytes: usize,
+    },
+
     #[error("http operation '{operation}' timed out after {timeout_ms} ms")]
     HttpTimeout { operation: String, timeout_ms: u64 },
 
@@ -162,6 +170,7 @@ impl CoreError {
             CoreError::DiscoveryRequiresConfirmation { .. } => "discovery_requires_confirmation",
             CoreError::BadPointer(_) => "bad_pointer",
             CoreError::BadArgs { .. } => "bad_args",
+            CoreError::BudgetTooSmall { .. } => "budget_too_small",
             CoreError::HttpTimeout { .. } => "http_timeout",
             CoreError::HttpTransport { .. } => "http_transport",
             CoreError::HttpStatus { .. } => "http_status",
@@ -234,6 +243,9 @@ impl CoreError {
                 "Use an RFC 6901 JSON Pointer such as /items/0/body.".to_string()
             }
             CoreError::BadArgs { .. } => "Fix the named missing or unknown arguments.".to_string(),
+            CoreError::BudgetTooSmall { minimum_bytes, .. } => {
+                format!("Raise --budget-bytes to at least {minimum_bytes}.")
+            }
             CoreError::HttpTimeout { .. } => {
                 "Increase the operation timeout or retry when the upstream is healthy.".to_string()
             }

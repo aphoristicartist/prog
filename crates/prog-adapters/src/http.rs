@@ -4,7 +4,8 @@ use std::{
 };
 
 use prog_core::{
-    AuthRef, CoreError, RedactionPolicy, Result, is_sensitive_name, redact_sensitive_text,
+    AuthRef, CoreError, RedactionPolicy, Result, SourceStateKind, SourceStateToken,
+    invocation_scope, is_sensitive_name, redact_sensitive_text, validate_http_validator,
 };
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
@@ -59,6 +60,8 @@ pub struct HttpCallResult {
     pub provenance: HttpProvenance,
     pub received_error: bool,
     #[serde(default)]
+    pub not_modified: bool,
+    #[serde(default)]
     pub pagination: Option<Value>,
     #[serde(default)]
     pub warnings: Vec<String>,
@@ -92,6 +95,20 @@ impl HttpSource {
         operation_id: &str,
         args: &Value,
         env: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<HttpCallResult> {
+        self.execute_with_env_conditional(operation_id, args, env, None)
+            .await
+    }
+
+    /// Perform a conditional read using a previously captured, scoped source
+    /// validator. Callers must supply the exact operation arguments; a token
+    /// from another subject, operation, or source fails closed before I/O.
+    pub async fn execute_with_env_conditional(
+        &self,
+        operation_id: &str,
+        args: &Value,
+        env: &dyn Fn(&str) -> Option<String>,
+        source_state: Option<&SourceStateToken>,
     ) -> Result<HttpCallResult> {
         let operation = self
             .operations
@@ -132,6 +149,9 @@ impl HttpSource {
                     .replace("{value}", &secret);
                 request = request.header(header, value);
             }
+        }
+        if let Some((name, value)) = conditional_header(self, operation, args, source_state)? {
+            request = request.header(name, value);
         }
         if let Some(body) = &operation.json_body {
             request = request.json(&substitute_json(body, args)?);
@@ -189,7 +209,8 @@ impl HttpSource {
             args: redacted_args(args, &operation.sensitive_args),
         };
 
-        if !status.is_success() {
+        let not_modified = status == reqwest::StatusCode::NOT_MODIFIED;
+        if !status.is_success() && !not_modified {
             warnings.push(format!(
                 "upstream returned HTTP status {}; response captured as error evidence",
                 status.as_u16()
@@ -199,7 +220,8 @@ impl HttpSource {
         Ok(HttpCallResult {
             data,
             provenance,
-            received_error: !status.is_success(),
+            received_error: !status.is_success() && !not_modified,
+            not_modified,
             pagination,
             warnings,
         })
@@ -341,6 +363,7 @@ impl HttpSource {
             data,
             provenance,
             received_error: !status.is_success(),
+            not_modified: false,
             pagination,
             warnings,
         })
@@ -662,6 +685,48 @@ fn selected_headers(
         }
     }
     selected
+}
+
+fn conditional_header(
+    source: &HttpSource,
+    operation: &HttpOperation,
+    args: &Map<String, Value>,
+    source_state: Option<&SourceStateToken>,
+) -> Result<Option<(&'static str, String)>> {
+    let Some(source_state) = source_state else {
+        return Ok(None);
+    };
+    if source_state.source_id != source.id || source_state.operation != operation.id {
+        return Err(CoreError::BadArgs {
+            operation: operation.id.clone(),
+            reason: "conditional source-state token does not match source or operation".to_string(),
+        });
+    }
+    let scope = invocation_scope(&Value::Object(args.clone()))?;
+    if source_state.subject_scope.as_deref() != Some(scope.as_str()) {
+        return Err(CoreError::BadArgs {
+            operation: operation.id.clone(),
+            reason: "conditional source-state token does not match call arguments".to_string(),
+        });
+    }
+    match source_state.kind {
+        SourceStateKind::HttpEtag => {
+            validate_http_validator("etag", &source_state.value)?;
+            Ok(Some(("if-none-match", source_state.value.clone())))
+        }
+        SourceStateKind::HttpLastModified => {
+            // Shared validation rejects control bytes and bounds the value;
+            // parsing was performed when the source-state token was created.
+            validate_http_validator("last-modified", &source_state.value)?;
+            Ok(Some(("if-modified-since", source_state.value.clone())))
+        }
+        SourceStateKind::ChangeToken | SourceStateKind::McpModification => {
+            Err(CoreError::BadArgs {
+                operation: operation.id.clone(),
+                reason: "source-state token is not an HTTP conditional validator".to_string(),
+            })
+        }
+    }
 }
 
 fn redacted_args(args: &Map<String, Value>, sensitive: &[String]) -> Value {

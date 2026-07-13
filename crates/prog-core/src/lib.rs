@@ -1,4 +1,5 @@
 pub mod contracts;
+pub mod delta;
 pub mod disclosure;
 pub mod error;
 pub mod findings;
@@ -11,10 +12,13 @@ pub mod pointer;
 pub mod policy;
 pub mod redaction;
 pub mod shape;
+pub mod source_state;
 pub mod store;
 pub mod table;
+pub mod workspace;
 
 pub use contracts::*;
+pub use delta::*;
 pub use disclosure::*;
 pub use error::{CoreError, ErrorBody, ErrorEnvelope, Result};
 pub use findings::*;
@@ -25,5 +29,7 @@ pub use pagination::*;
 pub use policy::*;
 pub use redaction::*;
 pub use shape::*;
+pub use source_state::*;
 pub use store::*;
 pub use table::*;
+pub use workspace::*;

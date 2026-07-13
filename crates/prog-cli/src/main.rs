@@ -3,6 +3,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{ExitCode, Stdio},
+    sync::OnceLock,
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
@@ -21,15 +22,17 @@ use prog_core::{
     AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance,
     CommandHintConfig, CoreError, DISCLOSURE_SCHEMA, DisclosureEnvelope, EffectSet, EvidenceBlock,
     EvidenceGrade, EvidenceRef, ExpansionScope, Extra, FindingOptions, InspectRequest,
-    InspectResponse, LensManifest, NewSessionEvent, NextAction, ObservationCompleteness,
-    ObservationFreshness, ObservationMetadata, ObservationPayloadStatus, ObservationSafety,
-    ObservationTrust, OmissionReason, OmittedRegion, OperationProfile, PersistedPayload,
-    PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, Result, SOURCE_PROFILE_SCHEMA,
-    ScopedSlice, SearchOptions, SearchResponse, SliceRequest, SourceProfile, Store, Summary,
-    TrustSettings, ValidatedCursor, ValueScanReport, build_inspect_response, cache_allowed,
-    call_effect_warnings, canonical_json, check_call, check_discovery, cli_adapter_effects,
-    cli_hardening_effects, effective_effects, evidence_block, expand, http_adapter_effects,
-    http_hardening_effects, infer, join, lens_slice_request, new_cache_entry, project,
+    InspectResponse, LensManifest, NewObservation, NewSessionEvent, NextAction,
+    ObligationEvaluation, ObservationCompleteness, ObservationFreshness, ObservationMetadata,
+    ObservationPayloadStatus, ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion,
+    OperationProfile, PersistedPayload, PreviewPolicy, RawPayload, ReadinessReport,
+    RedactedPayload, RedactionPolicy, Result, SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions,
+    SearchResponse, SliceRequest, SourceProfile, SourceStateToken, Store, Summary, TrustSettings,
+    VERIFICATION_SCHEMA, ValidatedCursor, ValueScanReport, VerificationObligation,
+    VerificationStatus, build_inspect_response, cache_allowed, call_effect_warnings,
+    canonical_json, check_call, check_discovery, cli_adapter_effects, cli_hardening_effects,
+    effective_effects, evidence_block, expand, http_adapter_effects, http_hardening_effects,
+    http_source_state, infer, join, lens_slice_request, new_cache_entry, project,
     project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
     search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
 };
@@ -45,7 +48,21 @@ use tokio::{
 use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
 static RUN_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static DISCLOSURE_BUDGET: OnceLock<EffectiveDisclosureBudget> = OnceLock::new();
 const PROG_AGENT_SKILL: &str = include_str!("../../../skills/prog/SKILL.md");
+const DEFAULT_DISCLOSURE_BUDGET_BYTES: usize = 16 * 1024;
+const MAX_DISCLOSURE_BUDGET_BYTES: usize = 64 * 1024;
+const MIN_DISCLOSURE_BUDGET_BYTES: usize = 512;
+const BUDGET_METADATA_RESERVE_BYTES: usize = 384;
+const TOKEN_ESTIMATOR: &str = "bytes_div_4_approximate";
+
+#[derive(Clone, Debug)]
+struct EffectiveDisclosureBudget {
+    requested_bytes: Option<u64>,
+    requested_tokens: Option<u64>,
+    source: &'static str,
+    effective_bytes: usize,
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -62,6 +79,14 @@ struct Cli {
 
     #[arg(long, global = true)]
     pretty: bool,
+
+    /// Hard maximum number of bytes written in one model-visible JSON response.
+    #[arg(long, global = true)]
+    budget_bytes: Option<u64>,
+
+    /// Approximate token convenience input, converted by the named bytes/4 estimator.
+    #[arg(long, global = true)]
+    budget_tokens: Option<u64>,
 
     #[command(subcommand)]
     command: Command,
@@ -86,6 +111,7 @@ enum Command {
     Evidence(EvidenceArgs),
     Search(SearchArgs),
     Find(FindArgs),
+    Delta(DeltaArgs),
     Session {
         #[command(subcommand)]
         command: SessionCommand,
@@ -473,11 +499,19 @@ struct FindArgs {
     limit: usize,
 }
 
+#[derive(Debug, Args)]
+struct DeltaArgs {
+    baseline: String,
+    subject: String,
+}
+
 #[derive(Debug, Subcommand)]
 enum SessionCommand {
     Start(SessionStartArgs),
     Show(SessionShowArgs),
     Note(SessionNoteArgs),
+    ObligationAdd(ObligationAddArgs),
+    ObligationList(ObligationListArgs),
 }
 
 #[derive(Debug, Args)]
@@ -489,11 +523,55 @@ struct SessionStartArgs {
 #[derive(Debug, Args)]
 struct SessionShowArgs {
     session_id: Option<String>,
+
+    /// Evaluate declared verification obligations instead of returning the session trail.
+    #[arg(long)]
+    readiness: bool,
 }
 
 #[derive(Debug, Args)]
 struct SessionNoteArgs {
     note: String,
+}
+
+#[derive(Debug, Args)]
+struct ObligationAddArgs {
+    /// Stable identifier, unique within the session.
+    id: String,
+
+    /// Human-readable check the agent intends to run or evaluate.
+    #[arg(long = "check")]
+    intended_check: String,
+
+    /// Scope that this check covers, such as target, affected-suite, or regression-suite.
+    #[arg(long)]
+    scope: String,
+
+    /// Canonical invocation family expected for evidence.
+    #[arg(long)]
+    comparison_family: Option<String>,
+
+    /// Earlier observation containing the finding that must disappear.
+    #[arg(long)]
+    origin_observation: Option<String>,
+
+    /// Stable finding fingerprint that must be absent from the evidence observation.
+    #[arg(long)]
+    expected_absent_fingerprint: Option<String>,
+
+    /// Observation used to evaluate this obligation.
+    #[arg(long)]
+    evidence_observation: Option<String>,
+
+    /// Record an advisory obligation that does not block readiness.
+    #[arg(long)]
+    optional: bool,
+}
+
+#[derive(Debug, Args)]
+struct ObligationListArgs {
+    /// Session to evaluate. Defaults to the active session.
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -519,8 +597,15 @@ struct ExpandArgs {
 #[derive(Debug, Subcommand)]
 enum CacheCommand {
     List,
+    Observations(CacheObservationsArgs),
     Get(CacheGetArgs),
     Purge(CachePurgeArgs),
+}
+
+#[derive(Debug, Args)]
+struct CacheObservationsArgs {
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
 }
 
 #[derive(Debug, Args)]
@@ -566,10 +651,88 @@ async fn main() -> ExitCode {
         }
     };
 
+    let budget = match resolve_disclosure_budget(&cli) {
+        Ok(budget) => budget,
+        Err(error) => return write_error(&error, cli.pretty),
+    };
+    let _ = DISCLOSURE_BUDGET.set(budget);
+
     match run(&cli).await {
         Ok(exit_code) => exit_code,
         Err(error) => write_error(&error, cli.pretty),
     }
+}
+
+fn resolve_disclosure_budget(cli: &Cli) -> Result<EffectiveDisclosureBudget> {
+    let ((requested_bytes, requested_tokens), source) = if let Some(bytes) = cli.budget_bytes {
+        ((Some(bytes), None), "flag")
+    } else if let Some(tokens) = cli.budget_tokens {
+        ((None, Some(tokens)), "flag")
+    } else if let Some(bytes) = budget_env("PROG_BUDGET_BYTES")? {
+        ((Some(bytes), None), "environment")
+    } else if let Some(tokens) = budget_env("PROG_BUDGET_TOKENS")? {
+        ((None, Some(tokens)), "environment")
+    } else {
+        ((None, None), "default")
+    };
+    let requested = match (requested_bytes, requested_tokens) {
+        (Some(bytes), None) => bytes,
+        (None, Some(tokens)) => tokens.checked_mul(4).ok_or_else(|| CoreError::BadArgs {
+            operation: "disclosure budget".to_string(),
+            reason: "token budget overflows the bytes/4 approximation".to_string(),
+        })?,
+        (None, None) => DEFAULT_DISCLOSURE_BUDGET_BYTES as u64,
+        (Some(_), Some(_)) => unreachable!("budget source has one authoritative value"),
+    };
+    if requested == 0 {
+        return Err(CoreError::BadArgs {
+            operation: "disclosure budget".to_string(),
+            reason: "budget values must be greater than zero".to_string(),
+        });
+    }
+    let effective_bytes = requested.min(MAX_DISCLOSURE_BUDGET_BYTES as u64) as usize;
+    if effective_bytes < MIN_DISCLOSURE_BUDGET_BYTES {
+        return Err(CoreError::BudgetTooSmall {
+            requested_bytes: effective_bytes,
+            minimum_bytes: MIN_DISCLOSURE_BUDGET_BYTES,
+        });
+    }
+    Ok(EffectiveDisclosureBudget {
+        requested_bytes: requested_bytes.map(|_| requested),
+        requested_tokens,
+        source,
+        effective_bytes,
+    })
+}
+
+fn budget_env(name: &str) -> Result<Option<u64>> {
+    let Some(value) = std::env::var_os(name) else {
+        return Ok(None);
+    };
+    let value = value.into_string().map_err(|_| CoreError::BadArgs {
+        operation: "disclosure budget".to_string(),
+        reason: format!("{name} must be valid UTF-8 digits"),
+    })?;
+    let parsed = value.parse::<u64>().map_err(|_| CoreError::BadArgs {
+        operation: "disclosure budget".to_string(),
+        reason: format!("{name} must be an unsigned integer"),
+    })?;
+    Ok(Some(parsed))
+}
+
+fn disclosure_budget() -> &'static EffectiveDisclosureBudget {
+    DISCLOSURE_BUDGET.get_or_init(|| EffectiveDisclosureBudget {
+        requested_bytes: None,
+        requested_tokens: None,
+        source: "default",
+        effective_bytes: DEFAULT_DISCLOSURE_BUDGET_BYTES,
+    })
+}
+
+fn response_budget_bytes() -> usize {
+    disclosure_budget()
+        .effective_bytes
+        .saturating_sub(BUDGET_METADATA_RESERVE_BYTES)
 }
 
 fn init_tracing() {
@@ -747,6 +910,12 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             write_success(&response, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::Delta(args) => {
+            let store = Store::open(&cli.dir)?;
+            let delta = delta_observations(&store, args)?;
+            write_success(&delta, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Session { command } => {
             let store = Store::open(&cli.dir)?;
             match command {
@@ -755,8 +924,14 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                     write_success(&trail, cli.pretty)?;
                 }
                 SessionCommand::Show(args) => {
-                    let trail = session_show(&store, args)?;
-                    write_success(&trail, cli.pretty)?;
+                    if args.readiness {
+                        let session_id = args.session_id.as_deref();
+                        let report = readiness_report(&store, session_id)?;
+                        write_success(&report, cli.pretty)?;
+                    } else {
+                        let trail = session_show(&store, args)?;
+                        write_success(&trail, cli.pretty)?;
+                    }
                 }
                 SessionCommand::Note(args) => {
                     let event = store.record_session_event(NewSessionEvent {
@@ -765,6 +940,32 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                         ..NewSessionEvent::default()
                     })?;
                     write_success(&event, cli.pretty)?;
+                }
+                SessionCommand::ObligationAdd(args) => {
+                    let session = match store.get_session(None)? {
+                        Some(session) => session,
+                        None => store.start_session(None)?,
+                    };
+                    let obligation = VerificationObligation {
+                        schema: VERIFICATION_SCHEMA.to_string(),
+                        id: args.id.clone(),
+                        session_id: session.session_id,
+                        required: !args.optional,
+                        intended_check: args.intended_check.clone(),
+                        required_scope: args.scope.clone(),
+                        comparison_family: args.comparison_family.clone(),
+                        origin_observation_id: args.origin_observation.clone(),
+                        expected_absent_fingerprint: args.expected_absent_fingerprint.clone(),
+                        evidence_observation_id: args.evidence_observation.clone(),
+                        created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+                        extra: Extra::new(),
+                    };
+                    store.put_obligation(&obligation)?;
+                    write_success(&obligation, cli.pretty)?;
+                }
+                SessionCommand::ObligationList(args) => {
+                    let report = readiness_report(&store, args.session_id.as_deref())?;
+                    write_success(&report, cli.pretty)?;
                 }
             }
             Ok(ExitCode::SUCCESS)
@@ -780,6 +981,11 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             CacheCommand::List => {
                 let store = Store::open(&cli.dir)?;
                 write_success(&store.list_entries(100)?, cli.pretty)?;
+                Ok(ExitCode::SUCCESS)
+            }
+            CacheCommand::Observations(args) => {
+                let store = Store::open(&cli.dir)?;
+                write_success(&store.list_observations(args.limit)?, cli.pretty)?;
                 Ok(ExitCode::SUCCESS)
             }
             CacheCommand::Get(args) => {
@@ -871,6 +1077,7 @@ struct HintsResponse {
     schema: &'static str,
     source_id: String,
     profile_revision: u64,
+    observation_id: String,
     hints: Value,
     omitted: Vec<OmittedRegion>,
     cursor: Option<String>,
@@ -914,6 +1121,7 @@ struct AdapterCall {
     pagination: Option<Value>,
     warnings: Vec<String>,
     received_error: bool,
+    not_modified: bool,
 }
 
 struct CallSourceResult {
@@ -929,6 +1137,7 @@ struct EnvelopeInput {
     root_path: String,
     slice: SliceRequest,
     payload_bytes: u64,
+    observation_id: Option<String>,
     provenance: Option<CallProvenance>,
     cache: Option<CacheInfo>,
     effects: Option<EffectSet>,
@@ -1765,9 +1974,9 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         "hints",
         &json!({"operation": args.operation}),
     )?;
-    let entry = new_cache_entry(
+    let mut entry = new_cache_entry(
         cache_key.clone(),
-        payload_hash,
+        payload_hash.clone(),
         args.source_id.clone(),
         "hints".to_string(),
         serde_json::to_vec(payload.as_value())?
@@ -1776,6 +1985,23 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
             .unwrap_or(u64::MAX),
         86_400,
     );
+    let observation_id = record_capture(
+        store,
+        payload_hash,
+        true,
+        cache_key.clone(),
+        args.source_id.clone(),
+        "hints".to_string(),
+        entry.provenance.clone(),
+        Some(cache_key.clone()),
+        false,
+        true,
+        false,
+        None,
+        None,
+        None,
+    )?;
+    entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
     let cursor = if projection.omitted.is_empty() {
         None
@@ -1787,6 +2013,7 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         schema: DISCLOSURE_SCHEMA,
         source_id: args.source_id.clone(),
         profile_revision: profile.revision,
+        observation_id,
         hints: projection.preview,
         omitted: projection.omitted,
         cursor,
@@ -1825,9 +2052,13 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
     let may_cache = !args.no_cache && cache_allowed(&operation, &effective_cache);
     let cache_key = Store::cache_key(&args.source_id, &args.operation, &call_args)?;
 
-    if may_cache
-        && !args.refresh
-        && let Some(entry) = store.get_entry(&cache_key)?
+    let cached_entry = if may_cache {
+        store.get_entry(&cache_key)?
+    } else {
+        None
+    };
+    if !args.refresh
+        && let Some(entry) = cached_entry.as_ref()
     {
         let cached_pagination = entry.extra.get("pagination").cloned();
         let cache_satisfies_request = args.pages <= 1
@@ -1841,7 +2072,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                 .into_redacted();
             let cache_info = cache_info(
                 CacheStatus::Hit,
-                &entry,
+                entry,
                 Some(age_seconds(&entry.created_at)?),
             );
             let cursor = cursor_for_projection(
@@ -1869,6 +2100,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                     root_path: root_path.clone(),
                     slice: view,
                     payload_bytes: entry.payload_bytes,
+                    observation_id: entry.observation_id.clone(),
                     provenance: entry.provenance.clone(),
                     cache: Some(cache_info),
                     effects: Some(effective_effects.clone()),
@@ -1907,7 +2139,141 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
     }
 
     let source = callable_source_from_profile(&profile)?;
-    let adapter_call = execute_callable(&source, &operation, &call_args).await?;
+    let revalidation = if args.refresh {
+        match cached_entry
+            .as_ref()
+            .and_then(|entry| entry.observation_id.as_deref())
+        {
+            Some(observation_id) => store
+                .get_observation(observation_id)?
+                .and_then(|observation| observation.source_state),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let adapter_call =
+        execute_callable_conditional(&source, &operation, &call_args, revalidation.as_ref())
+            .await?;
+    if adapter_call.not_modified {
+        let prior = cached_entry.as_ref().ok_or_else(|| CoreError::BadArgs {
+            operation: "call --refresh".to_string(),
+            reason: "received HTTP 304 without a reusable cached observation".to_string(),
+        })?;
+        let prior_id = prior
+            .observation_id
+            .as_ref()
+            .ok_or_else(|| CoreError::BadArgs {
+                operation: "call --refresh".to_string(),
+                reason: "received HTTP 304 but cached evidence has no observation identity"
+                    .to_string(),
+            })?;
+        let prior_observation =
+            store
+                .get_observation(prior_id)?
+                .ok_or_else(|| CoreError::BadArgs {
+                    operation: "call --refresh".to_string(),
+                    reason: "received HTTP 304 but cached observation metadata is unavailable"
+                        .to_string(),
+                })?;
+        let payload = store
+            .get_payload(&prior.payload_hash)?
+            .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
+            .into_redacted();
+        let provenance = call_provenance(
+            &cache_key,
+            adapter_call.status.clone(),
+            adapter_call.duration_ms,
+            adapter_call.provenance,
+        );
+        let observation_id = store
+            .record_observation(NewObservation {
+                payload_hash: prior.payload_hash.clone(),
+                payload_available: true,
+                invocation_fingerprint: cache_key.clone(),
+                source_id: args.source_id.clone(),
+                operation: args.operation.clone(),
+                captured_at: Some(provenance.captured_at.clone()),
+                duration_ms: provenance.duration_ms,
+                status: provenance.status.clone(),
+                complete: prior_observation.complete,
+                truncated: prior_observation.truncated,
+                redacted: prior_observation.redacted,
+                source_state: prior_observation.source_state.clone(),
+                lineage: prog_core::ObservationLineage {
+                    revalidates_id: Some(prior_id.clone()),
+                    ..prog_core::ObservationLineage::default()
+                },
+                provenance: Some(provenance.clone()),
+                cache_key: Some(cache_key.clone()),
+                ..NewObservation::default()
+            })?
+            .observation_id;
+        let mut entry = prior.clone();
+        entry.observation_id = Some(observation_id.clone());
+        entry.provenance = Some(provenance.clone());
+        store.put_entry(&cache_key, &entry)?;
+        let cursor = cursor_for_projection(
+            store,
+            CursorInput {
+                cache_key: &cache_key,
+                source_id: &args.source_id,
+                operation: &args.operation,
+                root_path: &root_path,
+                payload: &payload,
+                slice: &view,
+                cache: &effective_cache,
+                may_cache,
+                lens: lens.as_ref(),
+            },
+        )?;
+        let mut envelope = envelope_for_payload(
+            store,
+            EnvelopeInput {
+                value_scan: None,
+                source_id: args.source_id.clone(),
+                operation: args.operation.clone(),
+                source_kind: Some(profile_source_kind_name(profile.kind).to_string()),
+                payload,
+                root_path,
+                slice: view,
+                payload_bytes: entry.payload_bytes,
+                observation_id: Some(observation_id),
+                provenance: Some(provenance),
+                cache: Some(cache_info(
+                    CacheStatus::Hit,
+                    &entry,
+                    Some(age_seconds(&entry.created_at)?),
+                )),
+                effects: Some(effective_effects),
+                auto_upgrade_audit,
+                redacted_paths: 0,
+                cache_disabled_reason: None,
+                warnings: vec![
+                    "HTTP validator confirmed the source is unchanged (304 Not Modified)"
+                        .to_string(),
+                ],
+                schema_hints: operation
+                    .output_shape
+                    .as_ref()
+                    .map(|shape| render_hints(shape, ""))
+                    .unwrap_or_default(),
+                next_action_operation: Some(args.operation.clone()),
+                additional_next_actions: Vec::new(),
+                observation_parser: None,
+                lens,
+            },
+            cursor,
+        )?;
+        envelope
+            .extra
+            .insert("source_validity".to_string(), json!("confirmed_unchanged"));
+        compact_envelope_to_budget(&mut envelope)?;
+        return Ok(CallSourceResult {
+            envelope,
+            received_error: false,
+        });
+    }
     let received_error = adapter_call.received_error;
     let first_pagination = adapter_call.pagination.clone();
     let redaction = resolve_redaction(Some(&profile));
@@ -1958,9 +2324,41 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
         ));
     }
 
+    let payload_hash = if may_cache {
+        store.put_payload(&payload)?
+    } else {
+        Store::payload_hash(&payload)?
+    };
+    if may_cache {
+        provenance.cache_key = Some(cache_key.clone());
+    } else {
+        provenance.cache_key = None;
+    }
+    let observation_id = record_capture(
+        store,
+        payload_hash.clone(),
+        may_cache,
+        cache_key.clone(),
+        args.source_id.clone(),
+        args.operation.clone(),
+        Some(provenance.clone()),
+        may_cache.then(|| cache_key.clone()),
+        !redacted_paths.is_empty(),
+        true,
+        false,
+        None,
+        lens.as_ref(),
+        source_state_from_provenance(
+            profile.kind,
+            &args.source_id,
+            &args.operation,
+            &call_args,
+            &provenance,
+        )?,
+    )?;
+
     let mut cache_disabled_reason = None;
     let cache_status = if may_cache {
-        let payload_hash = store.put_payload(&payload)?;
         let ttl = ttl_seconds(&effective_cache);
         let mut entry = new_cache_entry(
             cache_key.clone(),
@@ -1970,12 +2368,11 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
             payload_bytes,
             ttl,
         );
-        provenance.cache_key = Some(cache_key.clone());
+        entry.observation_id = Some(observation_id.clone());
         entry.provenance = Some(provenance.clone());
         store.put_entry(&cache_key, &entry)?;
         Some(cache_info(CacheStatus::Stored, &entry, Some(0)))
     } else {
-        provenance.cache_key = None;
         let reason = cache_skip_warning(args.no_cache, &operation);
         warnings.push(reason.clone());
         cache_disabled_reason = Some(reason);
@@ -2013,6 +2410,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
             root_path: root_path.clone(),
             slice: view,
             payload_bytes,
+            observation_id: Some(observation_id),
             provenance: Some(provenance),
             cache: cache_status,
             effects: Some(effective_effects),
@@ -2024,10 +2422,22 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
             next_action_operation: Some(args.operation.clone()),
             additional_next_actions: Vec::new(),
             observation_parser: None,
-            lens,
+            lens: lens.clone(),
         },
         cursor,
     )?;
+    if args.refresh {
+        let validity = if received_error {
+            "refresh_failed"
+        } else if revalidation.is_some() {
+            "source_changed"
+        } else {
+            "validator_unavailable"
+        };
+        envelope
+            .extra
+            .insert("source_validity".to_string(), json!(validity));
+    }
 
     // Auto-pagination: when --pages > 1 on a read-only operation, prefetch up
     // to N pages into the cache under hard page/byte/time caps (I10). The
@@ -2154,8 +2564,40 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
 
                 let page_cache_key =
                     Store::cache_key(&args.source_id, &args.operation, &page_key_args)?;
+                let page_hash = if may_cache {
+                    store.put_payload(&page_payload)?
+                } else {
+                    Store::payload_hash(&page_payload)?
+                };
+                let page_provenance = call_provenance(
+                    &page_cache_key,
+                    page_call.status.clone(),
+                    page_call.duration_ms,
+                    page_call.provenance.clone(),
+                );
+                let page_observation_id = record_capture(
+                    store,
+                    page_hash.clone(),
+                    may_cache,
+                    page_cache_key.clone(),
+                    args.source_id.clone(),
+                    args.operation.clone(),
+                    Some(page_provenance.clone()),
+                    may_cache.then(|| page_cache_key.clone()),
+                    false,
+                    true,
+                    false,
+                    None,
+                    lens.as_ref(),
+                    source_state_from_provenance(
+                        profile.kind,
+                        &args.source_id,
+                        &args.operation,
+                        &page_key_args,
+                        &page_provenance,
+                    )?,
+                )?;
                 let page_cursor = if may_cache {
-                    let page_hash = store.put_payload(&page_payload)?;
                     let ttl = ttl_seconds(&effective_cache);
                     let mut entry = new_cache_entry(
                         page_cache_key.clone(),
@@ -2165,12 +2607,8 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                         page_bytes,
                         ttl,
                     );
-                    entry.provenance = Some(call_provenance(
-                        &page_cache_key,
-                        page_call.status.clone(),
-                        page_call.duration_ms,
-                        page_call.provenance.clone(),
-                    ));
+                    entry.observation_id = Some(page_observation_id.clone());
+                    entry.provenance = Some(page_provenance);
                     store.put_entry(&page_cache_key, &entry)?;
                     // Mint a pc1_ cursor carrying page metadata (I9 fail-closed
                     // reuse; extra is observability only).
@@ -2262,6 +2700,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                             );
                             map
                         },
+                        ..NextAction::default()
                     },
                     prog_core::PageTarget::Url(url) => NextAction {
                         kind: "call_url".to_string(),
@@ -2277,6 +2716,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                             );
                             map
                         },
+                        ..NextAction::default()
                     },
                 };
                 envelope.next_actions.push(next_action);
@@ -2377,7 +2817,7 @@ fn observe_artifact(
         })?;
     let mut entry = new_cache_entry(
         cache_key.clone(),
-        payload_hash,
+        payload_hash.clone(),
         "observe".to_string(),
         input.name.clone(),
         payload_bytes,
@@ -2389,6 +2829,23 @@ fn observe_artifact(
         &normalized.kind,
         redacted_paths.len(),
     ));
+    let observation_id = record_capture(
+        store,
+        payload_hash.clone(),
+        true,
+        cache_key.clone(),
+        "observe".to_string(),
+        input.name.clone(),
+        entry.provenance.clone(),
+        Some(cache_key.clone()),
+        !redacted_paths.is_empty(),
+        true,
+        false,
+        Some(normalized.parser.id.to_string()),
+        lens.as_ref(),
+        None,
+    )?;
+    entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
 
     let requested_view = SliceRequest {
@@ -2431,6 +2888,7 @@ fn observe_artifact(
             root_path,
             slice,
             payload_bytes,
+            observation_id: Some(observation_id),
             provenance: entry.provenance.clone(),
             cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
             effects: None,
@@ -2494,6 +2952,14 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         "started_at": started_at.to_rfc3339_opts(SecondsFormat::Nanos, true)
     });
     let cache_key = Store::cache_key("run", &operation, &cache_args)?;
+    let invocation_fingerprint = Store::cache_key(
+        "run",
+        &operation,
+        &json!({
+            "argv": argv,
+            "cwd": cwd.to_string_lossy(),
+        }),
+    )?;
 
     let mut command = TokioCommand::new(&args.command[0]);
     command
@@ -2591,13 +3057,31 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
     );
     let mut entry = new_cache_entry(
         cache_key.clone(),
-        payload_hash,
+        payload_hash.clone(),
         "run".to_string(),
         operation.clone(),
         payload_bytes,
         ttl,
     );
     entry.provenance = Some(provenance.clone());
+    let truncated = run.stdout.truncated || run.stderr.truncated;
+    let observation_id = record_capture(
+        store,
+        payload_hash.clone(),
+        true,
+        invocation_fingerprint,
+        "run".to_string(),
+        operation.clone(),
+        Some(provenance.clone()),
+        Some(cache_key.clone()),
+        !policy_redactions.is_empty(),
+        !truncated,
+        truncated,
+        None,
+        lens.as_ref(),
+        None,
+    )?;
+    entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
     let cursor = Some(store.create_cursor_with_extra(
         &cache_key,
@@ -2629,7 +3113,8 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
     if args.out.is_some() {
         warnings.push("wrote redacted structured run capture to --out path".to_string());
     }
-    let next_actions = run_next_actions(cursor.as_deref(), &failure_sections);
+    let mut next_actions = run_next_actions(cursor.as_deref(), &failure_sections);
+    next_actions.extend(pytest_target_actions(&args.command, &failure_sections));
     let envelope = envelope_for_payload(
         store,
         EnvelopeInput {
@@ -2641,6 +3126,7 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
             root_path,
             slice,
             payload_bytes,
+            observation_id: Some(observation_id),
             provenance: Some(provenance),
             cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
             effects: Some(run_effects()),
@@ -3251,17 +3737,68 @@ fn run_next_actions(cursor: Option<&str>, sections: &[RunFailureSection]) -> Vec
             // `extra` is flattened into NextAction; avoid colliding with the
             // typed `kind` field and producing duplicate JSON object keys.
             extra.insert("section_kind".to_string(), json!(section.kind));
-            extra.insert(
-                "argv".to_string(),
-                json!(["prog", "expand", cursor, "--path", path]),
-            );
             NextAction {
                 kind: "expand".to_string(),
                 operation: None,
                 path: Some(path),
                 reason: Some(section.reason.clone()),
+                argv: Some(vec![
+                    "prog".to_string(),
+                    "expand".to_string(),
+                    cursor.to_string(),
+                    "--path".to_string(),
+                    format!("/failure_sections/{index}"),
+                ]),
+                scope: Some("failure_section".to_string()),
+                exactness: Some(prog_core::ActionExactness::Exact),
+                derived_from: Some("run.failure_section".to_string()),
                 extra,
+                ..NextAction::default()
             }
+        })
+        .collect()
+}
+
+fn pytest_target_actions(command: &[String], sections: &[RunFailureSection]) -> Vec<NextAction> {
+    // This is deliberately narrower than command equivalence: only the
+    // literal pytest executable and a complete node ID printed by pytest are
+    // evidence enough for an exact argv recommendation.
+    if command.first().map(String::as_str) != Some("pytest") {
+        return Vec::new();
+    }
+    let mut node_ids = BTreeSet::new();
+    for section in sections {
+        for line in &section.lines {
+            let Some(candidate) = line.trim_start().strip_prefix("FAILED ") else {
+                continue;
+            };
+            let Some(node_id) = candidate.split_whitespace().next() else {
+                continue;
+            };
+            if node_id.contains("::")
+                && !node_id.starts_with('-')
+                && !node_id.contains('\0')
+                && !node_id.contains(char::is_whitespace)
+            {
+                node_ids.insert(node_id.to_string());
+            }
+        }
+    }
+    node_ids
+        .into_iter()
+        .take(3)
+        .map(|node_id| NextAction {
+            kind: "rerun".to_string(),
+            operation: None,
+            path: None,
+            reason: Some("rerun this exact pytest node ID for a focused diagnostic".to_string()),
+            argv: Some(vec!["pytest".to_string(), node_id.clone()]),
+            scope: Some("target_test".to_string()),
+            exactness: Some(prog_core::ActionExactness::Exact),
+            derived_from: Some("pytest.failed_node_id".to_string()),
+            does_not_satisfy: vec!["affected_suite".to_string(), "regression_suite".to_string()],
+            cwd: None,
+            extra: Extra::new(),
         })
         .collect()
 }
@@ -4434,7 +4971,7 @@ fn source_command_from_provenance(provenance: Option<&CallProvenance>) -> Option
 }
 
 fn bound_inspect_response(response: &mut InspectResponse) -> Result<()> {
-    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let budget = response_budget_bytes();
     let original_len = response.findings.len();
     while serde_json::to_vec(response)?.len() > budget && !response.findings.is_empty() {
         response.findings.pop();
@@ -4467,7 +5004,7 @@ fn bound_inspect_response(response: &mut InspectResponse) -> Result<()> {
 }
 
 fn bound_search_response(response: &mut SearchResponse) -> Result<()> {
-    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let budget = response_budget_bytes();
     let original_len = response.hits.len();
     while serde_json::to_vec(response)?.len() > budget && !response.hits.is_empty() {
         response.hits.pop();
@@ -4494,7 +5031,7 @@ fn bound_search_response(response: &mut SearchResponse) -> Result<()> {
 }
 
 fn bound_evidence_block(block: &mut EvidenceBlock) -> Result<()> {
-    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let budget = response_budget_bytes();
     if serde_json::to_vec(block)?.len() > budget {
         block.citations.truncate(1);
         if let Some(citation) = block.citations.first_mut() {
@@ -4546,24 +5083,54 @@ fn exceeds_node_budget(value: &Value, max_nodes: usize, max_depth: usize) -> boo
 }
 
 fn record_envelope_event(store: &Store, envelope: &mut DisclosureEnvelope, kind: &str) {
+    if let Some(observation_id) = envelope
+        .observation
+        .as_ref()
+        .and_then(|observation| observation.observation_id.as_deref())
+        && let Ok(Some(subject)) = store.get_observation(observation_id)
+        && let Ok(Some(baseline)) =
+            store.latest_session_predecessor(&subject.invocation_fingerprint, observation_id)
+        && let Ok(mut delta) =
+            compare_observation_ids(store, &baseline.observation_id, &subject.observation_id)
+    {
+        delta.findings.truncate(10);
+        envelope.extra.insert(
+            "changes_since".to_string(),
+            serde_json::to_value(delta).unwrap_or(Value::Null),
+        );
+        if let Err(error) = compact_envelope_to_budget(envelope) {
+            envelope.extra.remove("changes_since");
+            envelope.warnings.push(format!(
+                "automatic changes_since was omitted because it could not fit the envelope budget: {error}"
+            ));
+        }
+    }
     let evidence_ref = envelope
         .extra
         .get("evidence_ref")
         .and_then(|reference| reference.get("uri"))
         .and_then(Value::as_str);
-    record_navigation_event(
-        store,
-        kind,
-        envelope.cursor.as_deref(),
-        None,
-        evidence_ref,
-        Some(format!(
+    let mut extra = Extra::new();
+    if let Some(observation_id) = envelope
+        .observation
+        .as_ref()
+        .and_then(|observation| observation.observation_id.as_ref())
+    {
+        extra.insert("observation_id".to_string(), json!(observation_id));
+    }
+    let _ = store.record_session_event(NewSessionEvent {
+        kind: kind.to_string(),
+        cursor: envelope.cursor.clone(),
+        evidence_ref: evidence_ref.map(str::to_string),
+        summary: Some(format!(
             "{} {} byte payload; {} finding(s)",
             envelope.summary.kind,
             envelope.summary.payload_bytes,
             envelope.findings.len()
         )),
-    );
+        extra,
+        ..NewSessionEvent::default()
+    });
 }
 
 fn record_navigation_event(
@@ -4616,6 +5183,196 @@ fn session_show(store: &Store, args: &SessionShowArgs) -> Result<prog_core::Sess
         ));
     }
     Ok(trail)
+}
+
+fn readiness_report(store: &Store, session_id: Option<&str>) -> Result<ReadinessReport> {
+    let obligations = store.list_obligations(session_id)?.obligations;
+    if obligations.is_empty() {
+        return Ok(ReadinessReport {
+            schema: VERIFICATION_SCHEMA.to_string(),
+            configured: false,
+            ready: false,
+            evaluations: Vec::new(),
+            blockers: vec!["no verification obligations are declared for this session".to_string()],
+            extra: Extra::new(),
+        });
+    }
+
+    let mut evaluations = Vec::with_capacity(obligations.len());
+    let mut blockers = Vec::new();
+    for obligation in obligations {
+        let evaluation = evaluate_obligation(store, obligation)?;
+        if evaluation.obligation.required && evaluation.status != VerificationStatus::Passed {
+            blockers.push(format!(
+                "{}: {}",
+                evaluation.obligation.id,
+                evaluation.reasons.join("; ")
+            ));
+        }
+        evaluations.push(evaluation);
+    }
+    Ok(ReadinessReport {
+        schema: VERIFICATION_SCHEMA.to_string(),
+        configured: true,
+        ready: blockers.is_empty(),
+        evaluations,
+        blockers,
+        extra: Extra::new(),
+    })
+}
+
+fn evaluate_obligation(
+    store: &Store,
+    obligation: VerificationObligation,
+) -> Result<ObligationEvaluation> {
+    let Some(evidence_id) = obligation.evidence_observation_id.clone() else {
+        return Ok(obligation_evaluation(
+            obligation,
+            VerificationStatus::Pending,
+            vec!["no evidence observation has been attached".to_string()],
+            None,
+        ));
+    };
+    let Some(evidence) = store.get_observation(&evidence_id)? else {
+        return Ok(obligation_evaluation(
+            obligation,
+            VerificationStatus::Unverifiable,
+            vec![format!(
+                "evidence observation '{evidence_id}' is unavailable"
+            )],
+            None,
+        ));
+    };
+    if evidence.availability != prog_core::ObservationAvailability::PayloadAvailable {
+        return Ok(obligation_evaluation(
+            obligation,
+            VerificationStatus::Unverifiable,
+            vec!["the evidence payload is no longer available".to_string()],
+            None,
+        ));
+    }
+    if !evidence.complete || evidence.truncated {
+        return Ok(obligation_evaluation(
+            obligation,
+            VerificationStatus::Unverifiable,
+            vec!["the evidence observation is incomplete or truncated".to_string()],
+            None,
+        ));
+    }
+    if let Some(family) = obligation.comparison_family.as_deref()
+        && evidence.invocation_fingerprint != family
+    {
+        return Ok(obligation_evaluation(
+            obligation,
+            VerificationStatus::Stale,
+            vec!["evidence does not match the declared comparison family".to_string()],
+            None,
+        ));
+    }
+
+    match (
+        obligation.origin_observation_id.clone(),
+        obligation.expected_absent_fingerprint.clone(),
+    ) {
+        (Some(origin_id), Some(expected_fingerprint)) => {
+            let delta = compare_observation_ids(store, &origin_id, &evidence_id)?;
+            let status = delta
+                .findings
+                .iter()
+                .find(|finding| finding.fingerprint == expected_fingerprint)
+                .map(|finding| match finding.status {
+                    prog_core::DeltaFindingStatus::Resolved => VerificationStatus::Passed,
+                    prog_core::DeltaFindingStatus::Persisting => VerificationStatus::Persisting,
+                    prog_core::DeltaFindingStatus::New => VerificationStatus::New,
+                    prog_core::DeltaFindingStatus::NotObserved => VerificationStatus::NotObserved,
+                    prog_core::DeltaFindingStatus::Unknown => VerificationStatus::Unknown,
+                })
+                .unwrap_or(VerificationStatus::Unknown);
+            let reasons = match status {
+                VerificationStatus::Passed => vec![
+                    "the expected finding is absent under a comparable, complete observation"
+                        .to_string(),
+                ],
+                VerificationStatus::Unknown => vec![
+                    "the expected finding could not be evaluated from the comparable evidence"
+                        .to_string(),
+                ],
+                _ => delta
+                    .findings
+                    .iter()
+                    .find(|finding| finding.fingerprint == expected_fingerprint)
+                    .map(|finding| finding.reasons.clone())
+                    .filter(|reasons| !reasons.is_empty())
+                    .unwrap_or_else(|| delta.assessment.reasons.clone()),
+            };
+            Ok(obligation_evaluation(
+                obligation,
+                status,
+                reasons,
+                Some(delta.assessment),
+            ))
+        }
+        (None, None) => match command_success(store, &evidence)? {
+            Some(true) => Ok(obligation_evaluation(
+                obligation,
+                VerificationStatus::Passed,
+                vec!["a complete command observation exited successfully".to_string()],
+                None,
+            )),
+            Some(false) => Ok(obligation_evaluation(
+                obligation,
+                VerificationStatus::Failed,
+                vec!["the evidence command did not exit successfully".to_string()],
+                None,
+            )),
+            None => Ok(obligation_evaluation(
+                obligation,
+                VerificationStatus::Unknown,
+                vec![
+                    "evidence has no explicit finding comparison or successful command result"
+                        .to_string(),
+                ],
+                None,
+            )),
+        },
+        _ => Ok(obligation_evaluation(
+            obligation,
+            VerificationStatus::Unknown,
+            vec![
+                "origin observation and expected finding fingerprint must be supplied together"
+                    .to_string(),
+            ],
+            None,
+        )),
+    }
+}
+
+fn command_success(
+    store: &Store,
+    observation: &prog_core::ObservationRecord,
+) -> Result<Option<bool>> {
+    let Some(payload) = store.get_payload(&observation.payload_hash)? else {
+        return Ok(None);
+    };
+    Ok(payload
+        .as_value()
+        .pointer("/command/success")
+        .and_then(Value::as_bool))
+}
+
+fn obligation_evaluation(
+    obligation: VerificationObligation,
+    status: VerificationStatus,
+    reasons: Vec<String>,
+    assessment: Option<prog_core::ComparabilityAssessment>,
+) -> ObligationEvaluation {
+    ObligationEvaluation {
+        obligation,
+        status,
+        reasons,
+        assessment,
+        extra: Extra::new(),
+    }
 }
 
 fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
@@ -4963,15 +5720,6 @@ fn expansion_next_action(
         extra.insert("detail".to_string(), json!(detail));
     }
     extra.insert(
-        "argv".to_string(),
-        match region.reason {
-            OmissionReason::LargeString => {
-                json!(["prog", "evidence", cursor, "--path", region.path])
-            }
-            _ => json!(["prog", "expand", cursor, "--path", region.path]),
-        },
-    );
-    extra.insert(
         "offline".to_string(),
         json!("uses cached redacted payload; does not contact upstream"),
     );
@@ -4980,7 +5728,27 @@ fn expansion_next_action(
         operation: operation.map(str::to_string),
         path: Some(region.path.clone()),
         reason: Some(omission_action_reason(region)),
+        argv: Some(match region.reason {
+            OmissionReason::LargeString => vec![
+                "prog".to_string(),
+                "evidence".to_string(),
+                cursor.to_string(),
+                "--path".to_string(),
+                region.path.clone(),
+            ],
+            _ => vec![
+                "prog".to_string(),
+                "expand".to_string(),
+                cursor.to_string(),
+                "--path".to_string(),
+                region.path.clone(),
+            ],
+        }),
+        scope: Some("cached_evidence".to_string()),
+        exactness: Some(prog_core::ActionExactness::Exact),
+        derived_from: Some("omitted_region".to_string()),
         extra,
+        ..NextAction::default()
     }
 }
 
@@ -5110,6 +5878,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
                     extra: Extra::new(),
                 },
                 payload_bytes: bytes.len().try_into().unwrap_or(u64::MAX),
+                observation_id: entry.observation_id.clone(),
                 provenance: entry.provenance.clone(),
                 cache: Some(cache),
                 effects: None,
@@ -5138,6 +5907,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
             root_path: record.root_path.clone(),
             slice,
             payload_bytes: entry.payload_bytes,
+            observation_id: entry.observation_id.clone(),
             provenance: entry.provenance.clone(),
             cache: Some(cache),
             effects: None,
@@ -5178,14 +5948,31 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
     let payload = redacted.payload;
     let payload_hash = store.put_payload(&payload)?;
     let payload_bytes = json_len_u64(payload.as_value())?;
-    let entry = new_cache_entry(
+    let mut entry = new_cache_entry(
         cache_key.clone(),
-        payload_hash,
+        payload_hash.clone(),
         "prog".to_string(),
         operation.clone(),
         payload_bytes,
         86_400,
     );
+    let observation_id = record_capture(
+        store,
+        payload_hash,
+        true,
+        cache_key.clone(),
+        "prog".to_string(),
+        operation.clone(),
+        entry.provenance.clone(),
+        Some(cache_key.clone()),
+        false,
+        true,
+        false,
+        None,
+        None,
+        None,
+    )?;
+    entry.observation_id = Some(observation_id);
     store.put_entry(&cache_key, &entry)?;
     let slice = SliceRequest {
         path: None,
@@ -5213,6 +6000,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
             root_path: "".to_string(),
             slice,
             payload_bytes,
+            observation_id: entry.observation_id.clone(),
             provenance: entry.provenance.clone(),
             cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
             effects: None,
@@ -5228,6 +6016,50 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
         },
         cursor,
     )
+}
+
+fn delta_observations(store: &Store, args: &DeltaArgs) -> Result<prog_core::ObservationDelta> {
+    compare_observation_ids(store, &args.baseline, &args.subject)
+}
+
+fn compare_observation_ids(
+    store: &Store,
+    baseline_id: &str,
+    subject_id: &str,
+) -> Result<prog_core::ObservationDelta> {
+    let baseline = store
+        .get_observation(baseline_id)?
+        .ok_or_else(|| CoreError::BadArgs {
+            operation: "delta".to_string(),
+            reason: format!("unknown baseline observation '{baseline_id}'"),
+        })?;
+    let subject = store
+        .get_observation(subject_id)?
+        .ok_or_else(|| CoreError::BadArgs {
+            operation: "delta".to_string(),
+            reason: format!("unknown subject observation '{subject_id}'"),
+        })?;
+    let findings_for =
+        |observation: &prog_core::ObservationRecord| -> Result<Vec<prog_core::Finding>> {
+            let Some(payload) = store.get_payload(&observation.payload_hash)? else {
+                return Ok(Vec::new());
+            };
+            prog_core::ranked_findings(
+                payload.as_value(),
+                &FindingOptions {
+                    limit: 100,
+                    ..FindingOptions::default()
+                },
+            )
+        };
+    let baseline_findings = findings_for(&baseline)?;
+    let subject_findings = findings_for(&subject)?;
+    Ok(prog_core::compare_observations(
+        &baseline,
+        &subject,
+        &baseline_findings,
+        &subject_findings,
+    ))
 }
 
 fn read_seed(seed: &str) -> Result<Value> {
@@ -6998,6 +7830,7 @@ async fn execute_callable(
                 pagination: result.pagination,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: result.not_modified,
             })
         }
         CallableSource::Cli(source) => {
@@ -7017,6 +7850,7 @@ async fn execute_callable(
                 pagination: None,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: false,
             })
         }
         CallableSource::Mcp(source) => {
@@ -7060,7 +7894,41 @@ async fn execute_callable(
                 pagination: None,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: false,
             })
+        }
+    }
+}
+
+async fn execute_callable_conditional(
+    source: &CallableSource,
+    operation: &OperationProfile,
+    args: &Value,
+    source_state: Option<&SourceStateToken>,
+) -> Result<AdapterCall> {
+    match source {
+        CallableSource::Http(source) => {
+            let result = source
+                .execute_with_env_conditional(
+                    &operation.id,
+                    args,
+                    &|name| std::env::var(name).ok(),
+                    source_state,
+                )
+                .await?;
+            Ok(AdapterCall {
+                data: result.data,
+                provenance: serde_json::to_value(result.provenance.clone())?,
+                status: Some(result.provenance.status.to_string()),
+                duration_ms: Some(result.provenance.duration_ms),
+                pagination: result.pagination,
+                warnings: result.warnings,
+                received_error: result.received_error,
+                not_modified: result.not_modified,
+            })
+        }
+        CallableSource::Cli(_) | CallableSource::Mcp(_) => {
+            execute_callable(source, operation, args).await
         }
     }
 }
@@ -7086,6 +7954,7 @@ async fn execute_callable_url(
                 pagination: result.pagination,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: result.not_modified,
             }))
         }
         // CLI and MCP sources have no URL continuation model.
@@ -7289,6 +8158,84 @@ fn call_provenance(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn record_capture(
+    store: &Store,
+    payload_hash: String,
+    payload_available: bool,
+    invocation_fingerprint: String,
+    source_id: String,
+    operation: String,
+    provenance: Option<CallProvenance>,
+    cache_key: Option<String>,
+    redacted: bool,
+    complete: bool,
+    truncated: bool,
+    parser: Option<String>,
+    lens: Option<&LensManifest>,
+    source_state: Option<SourceStateToken>,
+) -> Result<String> {
+    let duration_ms = provenance.as_ref().and_then(|item| item.duration_ms);
+    let status = provenance.as_ref().and_then(|item| item.status.clone());
+    let captured_at = provenance.as_ref().map(|item| item.captured_at.clone());
+    Ok(store
+        .record_observation(NewObservation {
+            payload_hash,
+            payload_available,
+            invocation_fingerprint,
+            source_id,
+            operation,
+            captured_at,
+            duration_ms,
+            status,
+            complete,
+            truncated,
+            redacted,
+            parser,
+            lens: lens.map(|item| item.id.clone()),
+            source_state,
+            provenance,
+            cache_key,
+            ..NewObservation::default()
+        })?
+        .observation_id)
+}
+
+fn source_state_from_provenance(
+    kind: prog_core::SourceKind,
+    source_id: &str,
+    operation: &str,
+    invocation: &Value,
+    provenance: &CallProvenance,
+) -> Result<Option<SourceStateToken>> {
+    if kind != prog_core::SourceKind::Http {
+        return Ok(None);
+    }
+    let headers = provenance
+        .extra
+        .get("adapter")
+        .and_then(|adapter| adapter.get("selected_headers"))
+        .and_then(Value::as_object)
+        .map(|headers| {
+            headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .as_str()
+                        .map(|value| (name.to_ascii_lowercase(), value.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    http_source_state(
+        source_id,
+        operation,
+        invocation,
+        &headers,
+        &provenance.captured_at,
+    )
+}
+
 fn cursor_lens_extra(lens: Option<&LensManifest>) -> Extra {
     let mut extra = Extra::new();
     if let Some(lens) = lens {
@@ -7327,7 +8274,10 @@ fn envelope_for_payload(
     input: EnvelopeInput,
     cursor: Option<String>,
 ) -> Result<DisclosureEnvelope> {
-    let mut policy = PreviewPolicy::default();
+    let mut policy = PreviewPolicy {
+        max_envelope_bytes: response_budget_bytes(),
+        ..PreviewPolicy::default()
+    };
     let mut last = None;
     let findings = ranked_findings_with_lens(
         input.payload.as_value(),
@@ -7362,7 +8312,7 @@ fn envelope_for_payload(
         policy = next;
     }
     let mut envelope = last.expect("envelope loop always builds at least once");
-    if serde_json::to_vec(&envelope)?.len() > PreviewPolicy::default().max_envelope_bytes {
+    if serde_json::to_vec(&envelope)?.len() > policy.max_envelope_bytes {
         envelope.schema_hints.clear();
         envelope.provenance = None;
         envelope.findings.truncate(1);
@@ -7374,7 +8324,7 @@ fn envelope_for_payload(
             .push("envelope metadata compacted to enforce max_envelope_bytes".to_string());
         finalize_envelope_bytes(&mut envelope)?;
     }
-    if serde_json::to_vec(&envelope)?.len() > PreviewPolicy::default().max_envelope_bytes {
+    if serde_json::to_vec(&envelope)?.len() > policy.max_envelope_bytes {
         envelope.data_preview =
             Value::String("«preview omitted to enforce envelope budget»".to_string());
         envelope.omitted.clear();
@@ -7382,6 +8332,7 @@ fn envelope_for_payload(
         envelope.warnings.truncate(1);
         finalize_envelope_bytes(&mut envelope)?;
     }
+    compact_envelope_to_budget(&mut envelope)?;
     Ok(envelope)
 }
 
@@ -7558,6 +8509,7 @@ fn observation_metadata(
         );
     }
     ObservationMetadata {
+        observation_id: input.observation_id.clone(),
         completeness: ObservationCompleteness {
             status: completeness_status.to_string(),
             preview_complete,
@@ -7661,7 +8613,7 @@ fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Result<usize> {
 }
 
 fn compact_envelope_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
-    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let budget = response_budget_bytes();
     while serde_json::to_vec(envelope)?.len() > budget && !envelope.findings.is_empty() {
         envelope.findings.pop();
     }
@@ -7679,6 +8631,17 @@ fn compact_envelope_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
         envelope.next_actions.truncate(4);
         envelope.warnings.truncate(2);
     }
+    if serde_json::to_vec(envelope)?.len() > budget {
+        // Keep the observation identity and cursor, which are the recovery
+        // path for the payload, while dropping derivable presentation detail.
+        envelope.provenance = None;
+        envelope.cache = None;
+        envelope.schema_hints.clear();
+        envelope.extra.clear();
+        envelope.omitted.truncate(1);
+        envelope.next_actions.truncate(1);
+        envelope.warnings.truncate(1);
+    }
     finalize_envelope_bytes(envelope)?;
     Ok(())
 }
@@ -7691,7 +8654,7 @@ fn compact_envelope_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
 /// counters) until the serialized envelope fits, recording a warning each time
 /// (invariant I11: pagination never escapes the envelope budget).
 fn compact_pagination_extra_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
-    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let budget = response_budget_bytes();
     if serde_json::to_vec(envelope)?.len() <= budget {
         return Ok(());
     }
@@ -8117,6 +9080,7 @@ fn operation_hint(operation: &OperationProfile, effects: &EffectSet, cache: &Cac
                 path: None,
                 reason: Some("run this operation with JSON args".to_string()),
                 extra: Extra::new(),
+                ..NextAction::default()
             }
         ],
     })
@@ -8422,36 +9386,92 @@ struct CacheGetOutput {
 }
 
 fn write_success<T: Serialize>(value: &T, pretty: bool) -> Result<()> {
-    if pretty {
-        println!("{}", serde_json::to_string_pretty(value)?);
-    } else {
-        println!("{}", serde_json::to_string(value)?);
-    }
+    let rendered = render_budgeted_json(serde_json::to_value(value)?, pretty)?;
+    println!("{rendered}");
     Ok(())
 }
 
 fn write_error(error: &CoreError, pretty: bool) -> ExitCode {
-    let envelope = error.envelope();
-    let rendered = if pretty {
-        serde_json::to_string_pretty(&envelope)
-    } else {
-        serde_json::to_string(&envelope)
-    };
-
+    let rendered = serde_json::to_value(error.envelope())
+        .map_err(CoreError::from)
+        .and_then(|value| render_budgeted_json(value, pretty));
     match rendered {
         Ok(json) => {
             println!("{json}");
             ExitCode::FAILURE
         }
-        Err(json_error) => {
-            let fallback = CoreError::Json(json_error);
+        Err(_) => {
+            let budget = disclosure_budget();
+            let fallback = json!({
+                "error": {
+                    "kind": "budget_too_small",
+                    "message": format!("response cannot fit in {} bytes", budget.effective_bytes),
+                    "hint": format!("Raise --budget-bytes to at least {MIN_DISCLOSURE_BUDGET_BYTES}.")
+                }
+            });
             println!(
                 "{}",
-                serde_json::to_string(&fallback.envelope()).unwrap_or_else(|_| {
+                serde_json::to_string(&fallback).unwrap_or_else(|_| {
                     "{\"error\":{\"kind\":\"json\",\"message\":\"failed to render error\",\"hint\":\"Report this bug.\"}}".to_string()
                 })
             );
             ExitCode::FAILURE
         }
     }
+}
+
+fn render_budgeted_json(mut value: Value, pretty: bool) -> Result<String> {
+    if !value.is_object() {
+        value = json!({"result": value});
+    }
+    let budget = disclosure_budget();
+    let mut metadata = json!({
+        "source": budget.source,
+        "requested_bytes": budget.requested_bytes,
+        "requested_tokens": budget.requested_tokens,
+        "effective_bytes": budget.effective_bytes,
+        "token_estimator": TOKEN_ESTIMATOR,
+        "actual_bytes": 0
+    });
+    value
+        .as_object_mut()
+        .expect("response value is an object")
+        .insert("disclosure_budget".to_string(), metadata.clone());
+    let mut use_pretty = pretty;
+    for _ in 0..8 {
+        let rendered = if use_pretty {
+            serde_json::to_string_pretty(&value)?
+        } else {
+            serde_json::to_string(&value)?
+        };
+        // The trailing newline is part of stdout and therefore part of the
+        // hard caller-visible byte ceiling.
+        let bytes = rendered.len().saturating_add(1);
+        if bytes > budget.effective_bytes && use_pretty {
+            use_pretty = false;
+            continue;
+        }
+        if bytes > budget.effective_bytes {
+            return Err(CoreError::BudgetTooSmall {
+                requested_bytes: budget.effective_bytes,
+                minimum_bytes: bytes,
+            });
+        }
+        metadata["actual_bytes"] = json!(bytes);
+        value
+            .as_object_mut()
+            .expect("response value is an object")
+            .insert("disclosure_budget".to_string(), metadata.clone());
+        let final_rendered = if use_pretty {
+            serde_json::to_string_pretty(&value)?
+        } else {
+            serde_json::to_string(&value)?
+        };
+        if final_rendered.len().saturating_add(1) == bytes {
+            return Ok(final_rendered);
+        }
+    }
+    Err(CoreError::Storage(
+        "disclosure budget accounting did not converge".to_string(),
+    ))
 }

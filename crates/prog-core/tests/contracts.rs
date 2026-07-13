@@ -354,6 +354,7 @@ fn schemas_generate_for_all_public_contracts() {
         "RedactionState",
         "Summary",
         "OmittedRegion",
+        "ActionExactness",
         "NextAction",
         "LensManifest",
         "LensFindingRule",

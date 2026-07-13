@@ -8,15 +8,38 @@ use std::{
 
 use serde_json::{Value, json};
 use wiremock::{
-    Mock, MockServer, ResponseTemplate,
+    Mock, MockServer, Request, Respond, ResponseTemplate,
     matchers::{method, path, query_param},
 };
+
+struct EtagResponder;
+
+impl Respond for EtagResponder {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        if request.headers.get("if-none-match").is_some() {
+            ResponseTemplate::new(304)
+        } else {
+            ResponseTemplate::new(200)
+                .insert_header("etag", "\"record-7\"")
+                .set_body_json(json!({"id": 7, "body": "original"}))
+        }
+    }
+}
 
 fn prog(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_prog"))
         .args(args)
         .output()
         .expect("prog binary should run")
+}
+
+fn prog_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_prog"));
+    command.args(args);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    command.output().expect("prog binary should run")
 }
 
 fn prog_with_stdin(args: &[&str], stdin: &[u8]) -> Output {
@@ -1242,6 +1265,61 @@ fn run_failure_returns_envelope_and_can_preserve_exit_code() {
     assert_eq!(preserved.status.code(), Some(7));
     let value: Value = serde_json::from_slice(&preserved.stdout).unwrap();
     assert_eq!(value["data_preview"]["command"]["exit_code"], 7);
+}
+
+#[cfg(unix)]
+#[test]
+fn pytest_node_id_hint_is_exact_argv_and_never_claims_broader_verification() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let pytest = dir.path().join("pytest");
+    fs::write(
+        &pytest,
+        "#!/bin/sh\nprintf 'FAILED tests/test_math.py::test_negative_exponent[param-1] - AssertionError\\n'\nexit 1\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&pytest).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&pytest, permissions).unwrap();
+    let path = format!(
+        "{}:{}",
+        dir.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let output = prog_with_env(
+        &[
+            "--dir",
+            dir.path().join("store").to_str().unwrap(),
+            "run",
+            "--",
+            "pytest",
+        ],
+        &[("PATH", &path)],
+    );
+    assert!(output.status.success(), "{}", stdout(&output));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let hint = envelope["next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|action| action["kind"] == "rerun")
+        .expect("exact pytest node hint");
+    assert_eq!(
+        hint["argv"],
+        json!([
+            "pytest",
+            "tests/test_math.py::test_negative_exponent[param-1]"
+        ])
+    );
+    assert_eq!(hint["scope"], "target_test");
+    assert_eq!(hint["exactness"], "exact");
+    assert_eq!(hint["derived_from"], "pytest.failed_node_id");
+    assert_eq!(
+        hint["does_not_satisfy"],
+        json!(["affected_suite", "regression_suite"])
+    );
+    assert!(hint.get("command").is_none());
 }
 
 #[test]
@@ -3353,6 +3431,598 @@ fn cache_list_and_purge_are_real_json_commands() {
 }
 
 #[test]
+fn captures_surface_immutable_observation_identity_across_cursor_and_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let file = dir.path().join("observation.json");
+    fs::write(&file, br#"{"items":[{"id":1},{"id":2}]}"#).unwrap();
+
+    let observed = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--name",
+        "fixture",
+    ]);
+    assert!(observed.status.success(), "{}", stdout(&observed));
+    let first: Value = serde_json::from_slice(&observed.stdout).unwrap();
+    let observation_id = first["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(observation_id.starts_with("obs_"));
+    let cursor = first["cursor"].as_str().unwrap();
+
+    let expanded = prog(&["--dir", dir_arg, "expand", cursor, "--path", "/items"]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let expanded: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(expanded["observation"]["observation_id"], observation_id);
+
+    let listed = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "1"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(listed["observations"].as_array().unwrap().len(), 1);
+    assert_eq!(listed["observations"][0]["observation_id"], observation_id);
+    assert_eq!(
+        listed["observations"][0]["availability"],
+        "payload_available"
+    );
+}
+
+#[test]
+fn explicit_delta_reports_new_and_resolved_findings_for_repeated_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let state = dir.path().join("state.txt");
+    let script = dir.path().join("emit.py");
+    fs::write(
+        &script,
+        "from pathlib import Path\nprint(Path(__import__('sys').argv[1]).read_text())\n",
+    )
+    .unwrap();
+    fs::write(&state, "error old failure\n").unwrap();
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let first_id = first["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    fs::write(&state, "error new failure\n").unwrap();
+    let second = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(second.status.success(), "{}", stdout(&second));
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    let second_id = second["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(second["changes_since"]["baseline_observation_id"], first_id);
+    assert_eq!(second["changes_since"]["counts"]["new"], 1);
+    assert_eq!(second["changes_since"]["counts"]["resolved"], 1);
+    let delta = prog(&["--dir", dir_arg, "delta", &first_id, &second_id]);
+    assert!(delta.status.success(), "{}", stdout(&delta));
+    let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
+    assert_eq!(delta["schema"], "prog.observation_delta");
+    assert_eq!(delta["assessment"]["can_prove_absence"], true);
+    assert_eq!(delta["counts"]["new"], 1);
+    assert_eq!(delta["counts"]["resolved"], 1);
+    assert!(
+        delta["findings"].as_array().unwrap().iter().all(|finding| {
+            matches!(finding["status"].as_str(), Some("new") | Some("resolved"))
+        })
+    );
+}
+
+#[test]
+fn automatic_delta_never_matches_similar_but_different_command_invocations() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        "-c",
+        "print('error one')",
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let second = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        "-c",
+        "print('error two')",
+    ]);
+    assert!(second.status.success(), "{}", stdout(&second));
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert!(second.get("changes_since").is_none());
+}
+
+#[test]
+fn verification_readiness_requires_every_declared_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let state = dir.path().join("state.txt");
+    let script = dir.path().join("emit.py");
+    fs::write(
+        &script,
+        "from pathlib import Path\nprint(Path(__import__('sys').argv[1]).read_text())\n",
+    )
+    .unwrap();
+    fs::write(&state, "error old failure\n").unwrap();
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let first_id = first["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    fs::write(&state, "error new failure\n").unwrap();
+    let second = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(second.status.success(), "{}", stdout(&second));
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    let second_id = second["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let delta = prog(&["--dir", dir_arg, "delta", &first_id, &second_id]);
+    assert!(delta.status.success(), "{}", stdout(&delta));
+    let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
+    let resolved_fingerprint = delta["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["status"] == "resolved")
+        .and_then(|finding| finding["fingerprint"].as_str())
+        .unwrap()
+        .to_string();
+
+    let target = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "target-failure",
+        "--check",
+        "target failure is absent",
+        "--scope",
+        "target",
+        "--origin-observation",
+        &first_id,
+        "--evidence-observation",
+        &second_id,
+        "--expected-absent-fingerprint",
+        &resolved_fingerprint,
+    ]);
+    assert!(target.status.success(), "{}", stdout(&target));
+    let affected = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "affected-suite",
+        "--check",
+        "affected test suite passes",
+        "--scope",
+        "affected-suite",
+    ]);
+    assert!(affected.status.success(), "{}", stdout(&affected));
+
+    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    assert_eq!(readiness["schema"], "prog.verification");
+    assert_eq!(readiness["configured"], true);
+    assert_eq!(readiness["ready"], false);
+    let target = readiness["evaluations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|evaluation| evaluation["obligation"]["id"] == "target-failure")
+        .unwrap();
+    assert_eq!(target["status"], "passed");
+    let affected = readiness["evaluations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|evaluation| evaluation["obligation"]["id"] == "affected-suite")
+        .unwrap();
+    assert_eq!(affected["status"], "pending");
+    assert!(
+        readiness["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|blocker| blocker.as_str().unwrap().contains("affected-suite"))
+    );
+}
+
+#[test]
+fn verification_without_obligations_is_explicitly_not_ready() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let started = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "start",
+        "--goal",
+        "verify a patch",
+    ]);
+    assert!(started.status.success(), "{}", stdout(&started));
+    let readiness = prog(&["--dir", dir_arg, "session", "obligation-list"]);
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    assert_eq!(readiness["configured"], false);
+    assert_eq!(readiness["ready"], false);
+    assert!(
+        readiness["blockers"][0]
+            .as_str()
+            .unwrap()
+            .contains("no verification obligations")
+    );
+}
+
+#[test]
+fn verification_accepts_a_complete_successful_command_as_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let run = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        "-c",
+        "print('all clear')",
+    ]);
+    assert!(run.status.success(), "{}", stdout(&run));
+    let run: Value = serde_json::from_slice(&run.stdout).unwrap();
+    let observation_id = run["observation"]["observation_id"].as_str().unwrap();
+    let add = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "target-command",
+        "--check",
+        "target command passes",
+        "--scope",
+        "target",
+        "--evidence-observation",
+        observation_id,
+    ]);
+    assert!(add.status.success(), "{}", stdout(&add));
+    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    assert_eq!(readiness["ready"], true);
+    assert_eq!(readiness["evaluations"][0]["status"], "passed");
+}
+
+#[test]
+fn disclosure_budget_flag_is_hard_and_retains_recovery_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("large.json");
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({"items": [{"body": "x".repeat(16_000)}]})).unwrap(),
+    )
+    .unwrap();
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--budget-bytes",
+        "2048",
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--name",
+        "large",
+    ]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    assert!(
+        output.stdout.len() <= 2048,
+        "stdout was {} bytes: {}",
+        output.stdout.len(),
+        stdout(&output)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["disclosure_budget"]["source"], "flag");
+    assert_eq!(value["disclosure_budget"]["effective_bytes"], 2048);
+    assert_eq!(
+        value["disclosure_budget"]["actual_bytes"].as_u64().unwrap() as usize,
+        output.stdout.len()
+    );
+    assert!(value["cursor"].as_str().is_some());
+    assert!(value["observation"]["observation_id"].as_str().is_some());
+}
+
+#[test]
+fn disclosure_budget_precedence_and_token_estimate_are_explicit() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let from_environment = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "--budget-tokens",
+            "512",
+            "session",
+            "start",
+        ],
+        &[("PROG_BUDGET_BYTES", "4096")],
+    );
+    assert!(
+        from_environment.status.success(),
+        "{}",
+        stdout(&from_environment)
+    );
+    let from_environment: Value = serde_json::from_slice(&from_environment.stdout).unwrap();
+    assert_eq!(from_environment["disclosure_budget"]["source"], "flag");
+    assert_eq!(
+        from_environment["disclosure_budget"]["requested_tokens"],
+        512
+    );
+    assert_eq!(
+        from_environment["disclosure_budget"]["requested_bytes"],
+        Value::Null
+    );
+    assert_eq!(
+        from_environment["disclosure_budget"]["effective_bytes"],
+        2048
+    );
+    assert_eq!(
+        from_environment["disclosure_budget"]["token_estimator"],
+        "bytes_div_4_approximate"
+    );
+
+    let byte_flag_wins = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "--budget-bytes",
+            "3072",
+            "session",
+            "start",
+        ],
+        &[
+            ("PROG_BUDGET_BYTES", "4096"),
+            ("PROG_BUDGET_TOKENS", "8192"),
+        ],
+    );
+    assert!(
+        byte_flag_wins.status.success(),
+        "{}",
+        stdout(&byte_flag_wins)
+    );
+    let byte_flag_wins: Value = serde_json::from_slice(&byte_flag_wins.stdout).unwrap();
+    assert_eq!(byte_flag_wins["disclosure_budget"]["effective_bytes"], 3072);
+    assert_eq!(byte_flag_wins["disclosure_budget"]["requested_bytes"], 3072);
+
+    let environment_only = prog_with_env(
+        &["--dir", dir_arg, "session", "start"],
+        &[("PROG_BUDGET_BYTES", "4096")],
+    );
+    assert!(
+        environment_only.status.success(),
+        "{}",
+        stdout(&environment_only)
+    );
+    let environment_only: Value = serde_json::from_slice(&environment_only.stdout).unwrap();
+    assert_eq!(
+        environment_only["disclosure_budget"]["source"],
+        "environment"
+    );
+    assert_eq!(
+        environment_only["disclosure_budget"]["effective_bytes"],
+        4096
+    );
+
+    let capped = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "--budget-bytes",
+            "1000000",
+            "session",
+            "start",
+        ],
+        &[],
+    );
+    assert!(capped.status.success(), "{}", stdout(&capped));
+    let capped: Value = serde_json::from_slice(&capped.stdout).unwrap();
+    assert_eq!(capped["disclosure_budget"]["effective_bytes"], 64 * 1024);
+}
+
+#[test]
+fn disclosure_budget_rejects_zero_and_reports_the_minimum() {
+    let output = prog(&["--budget-bytes", "0", "session", "start"]);
+    assert!(!output.status.success());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["error"]["kind"], "bad_args");
+
+    let output = prog(&["--budget-bytes", "128", "session", "start"]);
+    assert!(!output.status.success());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["error"]["kind"], "budget_too_small");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("at least 512 bytes")
+    );
+}
+
+#[tokio::test]
+async fn http_capture_persists_scoped_etag_source_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/records/7"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("etag", "W/\"record-7\"")
+                .set_body_json(json!({"id": 7})),
+        )
+        .mount(&server)
+        .await;
+    let seed = write_seed(
+        dir.path(),
+        "source-state.json",
+        &format!(
+            r#"{{"kind":"http","base_url":"{}","operations":[{{"name":"get","method":"GET","path":"/records/{{id}}","input_schema":{{"type":"object","properties":{{"id":{{"type":"integer"}}}},"required":["id"]}},"effect":{{"read_only":true,"mutating":false,"network":true,"shell":false,"sensitive":false,"cacheable":true,"requires_confirmation":false}}}}]}}"#,
+            server.uri()
+        ),
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "state",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+    let called = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "state",
+        "get",
+        "--args",
+        r#"{"id":7}"#,
+    ]);
+    assert!(called.status.success(), "{}", stdout(&called));
+    let listed = prog(&["--dir", dir_arg, "cache", "observations"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let state = &listed["observations"][0]["source_state"];
+    assert_eq!(state["kind"], "http_etag");
+    assert_eq!(state["value"], "W/\"record-7\"");
+    assert_eq!(state["source_id"], "state");
+    assert_eq!(state["operation"], "get");
+    assert!(
+        state["subject_scope"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+}
+
+#[tokio::test]
+async fn refresh_304_revalidates_prior_observation_without_replacing_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/records/7"))
+        .respond_with(EtagResponder)
+        .expect(2)
+        .mount(&server)
+        .await;
+    let seed = write_seed(
+        dir.path(),
+        "refresh-state.json",
+        &format!(
+            r#"{{"kind":"http","base_url":"{}","operations":[{{"name":"get","method":"GET","path":"/records/{{id}}","input_schema":{{"type":"object","properties":{{"id":{{"type":"integer"}}}},"required":["id"]}},"effect":{{"read_only":true,"mutating":false,"network":true,"shell":false,"sensitive":false,"cacheable":true,"requires_confirmation":false}}}}]}}"#,
+            server.uri()
+        ),
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "refresh-state",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "refresh-state",
+        "get",
+        "--args",
+        r#"{"id":7}"#,
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let first_observation = first["observation"]["observation_id"].as_str().unwrap();
+    let refreshed = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "refresh-state",
+        "get",
+        "--args",
+        r#"{"id":7}"#,
+        "--refresh",
+    ]);
+    assert!(refreshed.status.success(), "{}", stdout(&refreshed));
+    let refreshed: Value = serde_json::from_slice(&refreshed.stdout).unwrap();
+    assert_eq!(refreshed["source_validity"], "confirmed_unchanged");
+    assert_eq!(refreshed["data_preview"]["body"], "original");
+    assert_eq!(refreshed["provenance"]["status"], "304");
+    let second_observation = refreshed["observation"]["observation_id"].as_str().unwrap();
+    assert_ne!(first_observation, second_observation);
+    let observations = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "2"]);
+    assert!(observations.status.success(), "{}", stdout(&observations));
+    let observations: Value = serde_json::from_slice(&observations.stdout).unwrap();
+    let latest = observations["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["observation_id"] == second_observation)
+        .unwrap();
+    assert_eq!(latest["lineage"]["revalidates_id"], first_observation);
+}
+
+#[test]
 fn cache_get_missing_uses_structured_cache_miss_error() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
@@ -3618,8 +4288,9 @@ fn meta_lists_and_discloses_contract_schemas() {
     let schema = prog(&["--dir", dir_arg, "--pretty", "meta", "SourceProfile"]);
     assert!(schema.status.success(), "{}", stdout(&schema));
     let text = stdout(&schema);
-    assert!(text.starts_with("{\n"));
     let value: Value = serde_json::from_str(&text).unwrap();
+    assert!(text.len() <= 16 * 1024);
+    assert_eq!(value["disclosure_budget"]["effective_bytes"], 16 * 1024);
     assert_eq!(value["operation"], "SourceProfile");
     assert_eq!(value["summary"]["kind"], "object");
     assert!(value["data_preview"].is_object());
