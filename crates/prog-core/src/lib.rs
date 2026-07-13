@@ -13,6 +13,7 @@ pub mod redaction;
 pub mod shape;
 pub mod store;
 pub mod table;
+pub mod workspace;
 
 pub use contracts::*;
 pub use disclosure::*;
@@ -27,3 +28,4 @@ pub use redaction::*;
 pub use shape::*;
 pub use store::*;
 pub use table::*;
+pub use workspace::*;
