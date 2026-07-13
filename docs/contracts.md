@@ -36,6 +36,11 @@ The current public contracts include:
 - `AuthRef`
 - `DisclosureEnvelope`
 - `ObservationMetadata`
+- `ObservationRecord`
+- `EvidenceAvailability`
+- `CaptureStopReason`
+- `CaptureScope`
+- `CaptureCompleteness`
 - `EvidenceRef`
 - `InspectResponse`
 - `Finding`

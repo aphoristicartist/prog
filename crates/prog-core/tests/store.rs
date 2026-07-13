@@ -2,10 +2,10 @@ use std::{fs, sync::Arc, thread};
 
 use chrono::{Duration, SecondsFormat, Utc};
 use prog_core::{
-    CacheEntryMeta, CachePolicy, CursorRecord, EffectSet, ExpansionScope, NewObservation,
-    NewSessionEvent, ObservationAvailability, ObservationLineage, OperationProfile, PreviewPolicy,
-    RawPayload, RedactedPayload, RedactionPolicy, ScopedSlice, SliceRequest, SourceKind,
-    SourceProfile, Store, TrustSettings, expand, new_cache_entry,
+    CacheEntryMeta, CachePolicy, CaptureCompleteness, CursorRecord, EffectSet,
+    EvidenceAvailability, ExpansionScope, NewObservation, NewSessionEvent, ObservationLineage,
+    OperationProfile, PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, ScopedSlice,
+    SliceRequest, SourceKind, SourceProfile, Store, TrustSettings, expand, new_cache_entry,
 };
 
 #[test]
@@ -71,7 +71,7 @@ fn payloads_survive_across_store_process_boundaries() {
 }
 
 #[test]
-fn existing_store_without_schema_identity_is_reset() {
+fn existing_or_pre_capture_lifecycle_store_is_reset() {
     let dir = tempfile::tempdir().unwrap();
     let cache = dir.path().join("cache");
     fs::create_dir_all(&cache).unwrap();
@@ -87,7 +87,7 @@ fn existing_store_without_schema_identity_is_reset() {
             .insert("sha256:legacy", legacy_payload.as_slice())
             .unwrap();
         state
-            .insert("store_schema", b"prog.store".as_slice())
+            .insert("store_schema", b"prog.store.observations".as_slice())
             .unwrap();
     }
     write.commit().unwrap();
@@ -249,13 +249,13 @@ fn observations_are_immutable_redacted_and_metadata_survive_payload_purge() {
     let first = store
         .record_observation(NewObservation {
             payload_hash: payload_hash.clone(),
-            payload_available: true,
+            availability: EvidenceAvailability::Recoverable,
             invocation_fingerprint: "sha256:invocation".to_string(),
             source_id: "source".to_string(),
             operation: "read".to_string(),
             subject_keys: vec!["account:sha256:abc".to_string()],
             captured_at: Some(captured_at.clone()),
-            complete: true,
+            capture: CaptureCompleteness::complete(0),
             lineage: ObservationLineage::default(),
             extra: serde_json::Map::from_iter([(
                 "api_token".to_string(),
@@ -267,12 +267,12 @@ fn observations_are_immutable_redacted_and_metadata_survive_payload_purge() {
     let second = store
         .record_observation(NewObservation {
             payload_hash: payload_hash.clone(),
-            payload_available: true,
+            availability: EvidenceAvailability::Recoverable,
             invocation_fingerprint: "sha256:invocation".to_string(),
             source_id: "source".to_string(),
             operation: "read".to_string(),
             captured_at: Some(captured_at),
-            complete: true,
+            capture: CaptureCompleteness::complete(0),
             lineage: ObservationLineage {
                 parent_id: Some(first.observation_id.clone()),
                 ..ObservationLineage::default()
@@ -303,14 +303,14 @@ fn observations_are_immutable_redacted_and_metadata_survive_payload_purge() {
         .get_observation(&first.observation_id)
         .unwrap()
         .unwrap();
-    assert_eq!(retained.availability, ObservationAvailability::MetadataOnly);
+    assert_eq!(retained.availability, EvidenceAvailability::MetadataOnly);
     assert_eq!(
         store
             .get_observation(&second.observation_id)
             .unwrap()
             .unwrap()
             .availability,
-        ObservationAvailability::MetadataOnly
+        EvidenceAvailability::MetadataOnly
     );
 }
 
@@ -325,12 +325,12 @@ fn observations_have_bounded_stable_listing_and_reject_sensitive_subject_keys() 
         store
             .record_observation(NewObservation {
                 payload_hash: format!("sha256:{index}"),
-                payload_available: false,
+                availability: EvidenceAvailability::MetadataOnly,
                 invocation_fingerprint: format!("sha256:invoke-{index}"),
                 source_id: "source".to_string(),
                 operation: "read".to_string(),
                 captured_at: Some(captured_at.to_string()),
-                complete: true,
+                capture: CaptureCompleteness::complete(0),
                 ..NewObservation::default()
             })
             .unwrap();

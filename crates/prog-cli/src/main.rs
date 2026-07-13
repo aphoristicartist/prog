@@ -20,7 +20,8 @@ use prog_core::importers::{
 };
 use prog_core::{
     AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance,
-    CommandHintConfig, CoreError, DISCLOSURE_SCHEMA, DisclosureEnvelope, EffectSet, EvidenceBlock,
+    CaptureCompleteness, CaptureScope, CaptureStopReason, CommandHintConfig, CoreError,
+    DISCLOSURE_SCHEMA, DisclosureEnvelope, EffectSet, EvidenceAvailability, EvidenceBlock,
     EvidenceGrade, EvidenceRef, ExpansionScope, Extra, FindingOptions, InspectRequest,
     InspectResponse, LensManifest, NewObservation, NewSessionEvent, NextAction,
     ObligationEvaluation, ObservationCompleteness, ObservationFreshness, ObservationMetadata,
@@ -1985,17 +1986,17 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
             .unwrap_or(u64::MAX),
         86_400,
     );
+    let (availability, capture) = complete_capture(entry.payload_bytes, true, false);
     let observation_id = record_capture(
         store,
         payload_hash,
-        true,
+        availability,
+        capture,
         cache_key.clone(),
         args.source_id.clone(),
         "hints".to_string(),
         entry.provenance.clone(),
         Some(cache_key.clone()),
-        false,
-        true,
         false,
         None,
         None,
@@ -2189,15 +2190,14 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
         let observation_id = store
             .record_observation(NewObservation {
                 payload_hash: prior.payload_hash.clone(),
-                payload_available: true,
+                availability: prior_observation.availability,
                 invocation_fingerprint: cache_key.clone(),
                 source_id: args.source_id.clone(),
                 operation: args.operation.clone(),
                 captured_at: Some(provenance.captured_at.clone()),
                 duration_ms: provenance.duration_ms,
                 status: provenance.status.clone(),
-                complete: prior_observation.complete,
-                truncated: prior_observation.truncated,
+                capture: prior_observation.capture.clone(),
                 redacted: prior_observation.redacted,
                 source_state: prior_observation.source_state.clone(),
                 lineage: prog_core::ObservationLineage {
@@ -2334,18 +2334,24 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
     } else {
         provenance.cache_key = None;
     }
+    let (availability, capture) = adapter_capture(
+        Some(&provenance),
+        payload.as_value(),
+        payload_bytes,
+        may_cache,
+        !redacted_paths.is_empty(),
+    );
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
-        may_cache,
+        availability,
+        capture,
         cache_key.clone(),
         args.source_id.clone(),
         args.operation.clone(),
         Some(provenance.clone()),
         may_cache.then(|| cache_key.clone()),
         !redacted_paths.is_empty(),
-        true,
-        false,
         None,
         lens.as_ref(),
         source_state_from_provenance(
@@ -2575,17 +2581,23 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                     page_call.duration_ms,
                     page_call.provenance.clone(),
                 );
+                let (availability, capture) = adapter_capture(
+                    Some(&page_provenance),
+                    page_payload.as_value(),
+                    page_bytes,
+                    may_cache,
+                    false,
+                );
                 let page_observation_id = record_capture(
                     store,
                     page_hash.clone(),
-                    may_cache,
+                    availability,
+                    capture,
                     page_cache_key.clone(),
                     args.source_id.clone(),
                     args.operation.clone(),
                     Some(page_provenance.clone()),
                     may_cache.then(|| page_cache_key.clone()),
-                    false,
-                    true,
                     false,
                     None,
                     lens.as_ref(),
@@ -2829,18 +2841,18 @@ fn observe_artifact(
         &normalized.kind,
         redacted_paths.len(),
     ));
+    let (availability, capture) = complete_capture(payload_bytes, true, !redacted_paths.is_empty());
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
-        true,
+        availability,
+        capture,
         cache_key.clone(),
         "observe".to_string(),
         input.name.clone(),
         entry.provenance.clone(),
         Some(cache_key.clone()),
         !redacted_paths.is_empty(),
-        true,
-        false,
         Some(normalized.parser.id.to_string()),
         lens.as_ref(),
         None,
@@ -3064,19 +3076,23 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         ttl,
     );
     entry.provenance = Some(provenance.clone());
-    let truncated = run.stdout.truncated || run.stderr.truncated;
+    let (availability, capture) = run_capture_completeness(
+        &run.stdout,
+        &run.stderr,
+        payload_bytes,
+        !policy_redactions.is_empty(),
+    );
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
-        true,
+        availability,
+        capture,
         invocation_fingerprint,
         "run".to_string(),
         operation.clone(),
         Some(provenance.clone()),
         Some(cache_key.clone()),
         !policy_redactions.is_empty(),
-        !truncated,
-        truncated,
         None,
         lens.as_ref(),
         None,
@@ -5243,7 +5259,7 @@ fn evaluate_obligation(
             None,
         ));
     };
-    if evidence.availability != prog_core::ObservationAvailability::PayloadAvailable {
+    if evidence.availability != prog_core::EvidenceAvailability::Recoverable {
         return Ok(obligation_evaluation(
             obligation,
             VerificationStatus::Unverifiable,
@@ -5251,7 +5267,7 @@ fn evaluate_obligation(
             None,
         ));
     }
-    if !evidence.complete || evidence.truncated {
+    if !evidence.capture.can_prove_absence {
         return Ok(obligation_evaluation(
             obligation,
             VerificationStatus::Unverifiable,
@@ -5956,17 +5972,17 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
         payload_bytes,
         86_400,
     );
+    let (availability, capture) = complete_capture(payload_bytes, true, false);
     let observation_id = record_capture(
         store,
         payload_hash,
-        true,
+        availability,
+        capture,
         cache_key.clone(),
         "prog".to_string(),
         operation.clone(),
         entry.provenance.clone(),
         Some(cache_key.clone()),
-        false,
-        true,
         false,
         None,
         None,
@@ -8162,15 +8178,14 @@ fn call_provenance(
 fn record_capture(
     store: &Store,
     payload_hash: String,
-    payload_available: bool,
+    availability: EvidenceAvailability,
+    capture: CaptureCompleteness,
     invocation_fingerprint: String,
     source_id: String,
     operation: String,
     provenance: Option<CallProvenance>,
     cache_key: Option<String>,
     redacted: bool,
-    complete: bool,
-    truncated: bool,
     parser: Option<String>,
     lens: Option<&LensManifest>,
     source_state: Option<SourceStateToken>,
@@ -8181,15 +8196,14 @@ fn record_capture(
     Ok(store
         .record_observation(NewObservation {
             payload_hash,
-            payload_available,
+            availability,
             invocation_fingerprint,
             source_id,
             operation,
             captured_at,
             duration_ms,
             status,
-            complete,
-            truncated,
+            capture,
             redacted,
             parser,
             lens: lens.map(|item| item.id.clone()),
@@ -8199,6 +8213,229 @@ fn record_capture(
             ..NewObservation::default()
         })?
         .observation_id)
+}
+
+fn complete_capture(
+    stored_bytes: u64,
+    persisted: bool,
+    redacted: bool,
+) -> (EvidenceAvailability, CaptureCompleteness) {
+    let availability = if !persisted {
+        EvidenceAvailability::MetadataOnly
+    } else if redacted {
+        EvidenceAvailability::Redacted
+    } else {
+        EvidenceAvailability::Recoverable
+    };
+    let mut capture = CaptureCompleteness::complete(stored_bytes);
+    if availability != EvidenceAvailability::Recoverable {
+        capture.can_prove_absence = false;
+        capture.stop_reason = if redacted {
+            CaptureStopReason::Redacted
+        } else {
+            CaptureStopReason::StorageLimit
+        };
+    }
+    (availability, capture)
+}
+
+fn adapter_capture(
+    provenance: Option<&CallProvenance>,
+    payload: &Value,
+    stored_bytes: u64,
+    persisted: bool,
+    redacted: bool,
+) -> (EvidenceAvailability, CaptureCompleteness) {
+    let adapter = provenance
+        .and_then(|item| item.extra.get("adapter"))
+        .and_then(Value::as_object);
+    let generic_truncated = adapter
+        .and_then(|item| item.get("truncated"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let cli_truncated = adapter.is_some_and(|item| {
+        ["stdout_truncated", "stderr_truncated"]
+            .into_iter()
+            .any(|field| item.get(field).and_then(Value::as_bool).unwrap_or(false))
+    });
+    if cli_truncated {
+        return cli_adapter_capture(
+            adapter.expect("CLI truncation requires adapter provenance"),
+            payload,
+            stored_bytes,
+        );
+    }
+    if generic_truncated {
+        let response_bytes = adapter
+            .and_then(|item| item.get("response_bytes"))
+            .and_then(Value::as_u64);
+        let mcp_response = adapter.is_some_and(|item| item.contains_key("server_command"));
+        let (total_bytes, captured_bytes, stop_reason) = if mcp_response {
+            // MCP reports the complete response size before it projects the
+            // bounded preview, so this is retention loss rather than a
+            // transport capture limit.
+            (
+                response_bytes,
+                response_bytes.unwrap_or(stored_bytes),
+                CaptureStopReason::StorageLimit,
+            )
+        } else {
+            // HTTP reports bytes read from the bounded body, but has no
+            // trustworthy total once the body limit interrupts the stream.
+            (
+                None,
+                response_bytes.unwrap_or(stored_bytes),
+                CaptureStopReason::ByteLimit,
+            )
+        };
+        return (
+            EvidenceAvailability::CaptureTruncated,
+            CaptureCompleteness {
+                total_bytes,
+                captured_bytes,
+                stored_bytes,
+                stop_reason,
+                affected: vec![CaptureScope {
+                    scope: "body".to_string(),
+                    total_bytes,
+                    captured_bytes,
+                    stop_reason,
+                    extra: Extra::new(),
+                }],
+                can_prove_absence: false,
+                extra: Extra::new(),
+            },
+        );
+    }
+    complete_capture(stored_bytes, persisted, redacted)
+}
+
+fn cli_adapter_capture(
+    adapter: &Map<String, Value>,
+    payload: &Value,
+    stored_bytes: u64,
+) -> (EvidenceAvailability, CaptureCompleteness) {
+    let mut total_bytes = 0u64;
+    let mut captured_bytes = 0u64;
+    let mut affected = Vec::new();
+    for stream in ["stdout", "stderr"] {
+        let total = adapter
+            .get(&format!("{stream}_bytes"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let truncated = adapter
+            .get(&format!("{stream}_truncated"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let captured = if truncated {
+            cli_stream_captured_bytes(adapter, payload, stream).unwrap_or(0)
+        } else {
+            total
+        };
+        total_bytes = total_bytes.saturating_add(total);
+        captured_bytes = captured_bytes.saturating_add(captured);
+        if truncated {
+            affected.push(CaptureScope {
+                scope: stream.to_string(),
+                total_bytes: Some(total),
+                captured_bytes: captured,
+                stop_reason: CaptureStopReason::ByteLimit,
+                extra: Extra::new(),
+            });
+        }
+    }
+    (
+        EvidenceAvailability::CaptureTruncated,
+        CaptureCompleteness {
+            total_bytes: Some(total_bytes),
+            captured_bytes,
+            stored_bytes,
+            stop_reason: CaptureStopReason::ByteLimit,
+            affected,
+            can_prove_absence: false,
+            extra: Extra::new(),
+        },
+    )
+}
+
+fn cli_stream_captured_bytes(
+    adapter: &Map<String, Value>,
+    payload: &Value,
+    stream: &str,
+) -> Option<u64> {
+    let output = payload
+        .get(stream)
+        .or_else(|| (stream == "stdout").then_some(payload));
+    output
+        .and_then(|value| value.get("byte_count"))
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            adapter
+                .get("diagnostics")
+                .and_then(|value| value.get(stream))
+                .and_then(|value| value.get("byte_count"))
+                .and_then(Value::as_u64)
+        })
+}
+
+fn run_capture_completeness(
+    stdout: &RunCapture,
+    stderr: &RunCapture,
+    stored_bytes: u64,
+    redacted: bool,
+) -> (EvidenceAvailability, CaptureCompleteness) {
+    let truncated = stdout.truncated || stderr.truncated;
+    let captured_bytes = stdout.bytes.len().saturating_add(stderr.bytes.len()) as u64;
+    let total_bytes = stdout.total_bytes.saturating_add(stderr.total_bytes) as u64;
+    let reason = if truncated {
+        CaptureStopReason::ByteLimit
+    } else if redacted {
+        CaptureStopReason::Redacted
+    } else {
+        CaptureStopReason::Complete
+    };
+    let availability = if truncated {
+        EvidenceAvailability::CaptureTruncated
+    } else if redacted {
+        EvidenceAvailability::Redacted
+    } else {
+        EvidenceAvailability::Recoverable
+    };
+    (
+        availability,
+        CaptureCompleteness {
+            total_bytes: Some(total_bytes),
+            captured_bytes,
+            stored_bytes,
+            stop_reason: reason,
+            affected: vec![
+                CaptureScope {
+                    scope: "stdout".to_string(),
+                    total_bytes: Some(stdout.total_bytes as u64),
+                    captured_bytes: stdout.bytes.len() as u64,
+                    stop_reason: if stdout.truncated {
+                        CaptureStopReason::ByteLimit
+                    } else {
+                        CaptureStopReason::Complete
+                    },
+                    extra: Extra::new(),
+                },
+                CaptureScope {
+                    scope: "stderr".to_string(),
+                    total_bytes: Some(stderr.total_bytes as u64),
+                    captured_bytes: stderr.bytes.len() as u64,
+                    stop_reason: if stderr.truncated {
+                        CaptureStopReason::ByteLimit
+                    } else {
+                        CaptureStopReason::Complete
+                    },
+                    extra: Extra::new(),
+                },
+            ],
+            can_prove_absence: !truncated && !redacted,
+            extra: Extra::new(),
+        },
+    )
 }
 
 fn source_state_from_provenance(
@@ -8270,10 +8507,16 @@ fn cursor_for_projection(store: &Store, input: CursorInput<'_>) -> Result<Option
 }
 
 fn envelope_for_payload(
-    _store: &Store,
+    store: &Store,
     input: EnvelopeInput,
     cursor: Option<String>,
 ) -> Result<DisclosureEnvelope> {
+    let observation_record = input
+        .observation_id
+        .as_deref()
+        .map(|id| store.get_observation(id))
+        .transpose()?
+        .flatten();
     let mut policy = PreviewPolicy {
         max_envelope_bytes: response_budget_bytes(),
         ..PreviewPolicy::default()
@@ -8299,7 +8542,13 @@ fn envelope_for_payload(
             &policy,
             input.lens.as_ref(),
         )?;
-        let mut envelope = make_envelope(&input, lens_projection, cursor.clone(), findings.clone());
+        let mut envelope = make_envelope(
+            &input,
+            lens_projection,
+            cursor.clone(),
+            findings.clone(),
+            observation_record.as_ref(),
+        );
         let bytes = finalize_envelope_bytes(&mut envelope)?;
         if bytes <= policy.max_envelope_bytes {
             return Ok(envelope);
@@ -8341,11 +8590,12 @@ fn make_envelope(
     lens_projection: prog_core::LensProjection,
     cursor: Option<String>,
     findings: Vec<prog_core::Finding>,
+    observation_record: Option<&prog_core::ObservationRecord>,
 ) -> DisclosureEnvelope {
     let projection = lens_projection.projection;
     let preview = projection.preview;
     let omitted = projection.omitted;
-    let observation = observation_metadata(input, &omitted, cursor.as_deref());
+    let observation = observation_metadata(input, &omitted, cursor.as_deref(), observation_record);
     let mut next_actions = lens_projection
         .next_actions
         .into_iter()
@@ -8437,6 +8687,7 @@ fn observation_metadata(
     input: &EnvelopeInput,
     omitted: &[OmittedRegion],
     cursor: Option<&str>,
+    observation_record: Option<&prog_core::ObservationRecord>,
 ) -> ObservationMetadata {
     let redacted_omissions = omitted
         .iter()
@@ -8587,6 +8838,29 @@ fn observation_metadata(
             payload_bytes: input.payload_bytes,
             extra: Extra::new(),
         },
+        availability: observation_record
+            .map(|record| record.availability)
+            .unwrap_or(EvidenceAvailability::Unavailable),
+        capture: observation_record
+            .map(|record| {
+                if record.availability == EvidenceAvailability::Recoverable
+                    && record.capture.stop_reason == CaptureStopReason::Complete
+                    && record.capture.can_prove_absence
+                    && record.capture.affected.is_empty()
+                {
+                    return None;
+                }
+                Some(record.capture.clone())
+            })
+            .unwrap_or(Some(CaptureCompleteness {
+                total_bytes: None,
+                captured_bytes: 0,
+                stored_bytes: input.payload_bytes,
+                stop_reason: CaptureStopReason::Unavailable,
+                affected: Vec::new(),
+                can_prove_absence: false,
+                extra: Extra::new(),
+            })),
         extra: metadata_extra,
     }
 }
@@ -9474,4 +9748,95 @@ fn render_budgeted_json(mut value: Value, pretty: bool) -> Result<String> {
     Err(CoreError::Storage(
         "disclosure budget accounting did not converge".to_string(),
     ))
+}
+
+#[cfg(test)]
+mod capture_lifecycle_tests {
+    use super::*;
+
+    fn provenance(adapter: Value) -> CallProvenance {
+        let mut extra = Extra::new();
+        extra.insert("adapter".to_string(), adapter);
+        CallProvenance {
+            source_call_id: "call_test".to_string(),
+            cache_key: None,
+            captured_at: "2026-07-13T00:00:00Z".to_string(),
+            status: None,
+            duration_ms: None,
+            extra,
+        }
+    }
+
+    #[test]
+    fn cli_stdout_truncation_cannot_be_marked_recoverable() {
+        let provenance = provenance(json!({
+            "stdout_bytes": 100,
+            "stderr_bytes": 20,
+            "stdout_truncated": true,
+            "stderr_truncated": false,
+            "diagnostics": {"stderr": {"byte_count": 20}}
+        }));
+        let (availability, capture) = adapter_capture(
+            Some(&provenance),
+            &json!({"format": "text", "byte_count": 64, "truncated": true}),
+            90,
+            true,
+            false,
+        );
+
+        assert_eq!(availability, EvidenceAvailability::CaptureTruncated);
+        assert_eq!(capture.total_bytes, Some(120));
+        assert_eq!(capture.captured_bytes, 84);
+        assert!(!capture.can_prove_absence);
+        assert_eq!(capture.affected.len(), 1);
+        assert_eq!(capture.affected[0].scope, "stdout");
+        assert_eq!(capture.affected[0].total_bytes, Some(100));
+        assert_eq!(capture.affected[0].captured_bytes, 64);
+    }
+
+    #[test]
+    fn cli_stderr_truncation_uses_diagnostic_capture_accounting() {
+        let provenance = provenance(json!({
+            "stdout_bytes": 20,
+            "stderr_bytes": 100,
+            "stdout_truncated": false,
+            "stderr_truncated": true,
+            "diagnostics": {"stderr": {"byte_count": 64, "truncated": true}}
+        }));
+        let (availability, capture) =
+            adapter_capture(Some(&provenance), &json!({"ok": true}), 90, true, false);
+
+        assert_eq!(availability, EvidenceAvailability::CaptureTruncated);
+        assert_eq!(capture.total_bytes, Some(120));
+        assert_eq!(capture.captured_bytes, 84);
+        assert!(!capture.can_prove_absence);
+        assert_eq!(capture.affected.len(), 1);
+        assert_eq!(capture.affected[0].scope, "stderr");
+        assert_eq!(capture.affected[0].total_bytes, Some(100));
+        assert_eq!(capture.affected[0].captured_bytes, 64);
+    }
+
+    #[test]
+    fn mcp_truncation_retains_its_known_total() {
+        let provenance = provenance(json!({
+            "server_command": ["mcp-server"],
+            "response_bytes": 4096,
+            "truncated": true
+        }));
+        let (availability, capture) = adapter_capture(
+            Some(&provenance),
+            &json!({"preview": "..."}),
+            128,
+            true,
+            false,
+        );
+
+        assert_eq!(availability, EvidenceAvailability::CaptureTruncated);
+        assert_eq!(capture.total_bytes, Some(4096));
+        assert_eq!(capture.captured_bytes, 4096);
+        assert_eq!(capture.stored_bytes, 128);
+        assert_eq!(capture.stop_reason, CaptureStopReason::StorageLimit);
+        assert_eq!(capture.affected[0].total_bytes, Some(4096));
+        assert!(!capture.can_prove_absence);
+    }
 }

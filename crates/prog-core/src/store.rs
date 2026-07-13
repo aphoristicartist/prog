@@ -13,11 +13,11 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    CacheEntryMeta, CallProvenance, CoreError, CursorRecord, OBSERVATION_SCHEMA,
-    ObservationAvailability, ObservationLineage, ObservationRecord, PersistedPayload,
-    RedactedPayload, RedactionPolicy, Result, SESSION_SCHEMA, SessionEvent, SessionTrail,
-    SourceProfile, VERIFICATION_SCHEMA, ValidatedCursor, VerificationObligation, canonical_json,
-    validate_source_profile,
+    CacheEntryMeta, CallProvenance, CaptureCompleteness, CoreError, CursorRecord,
+    EvidenceAvailability, OBSERVATION_SCHEMA, ObservationLineage, ObservationRecord,
+    PersistedPayload, RedactedPayload, RedactionPolicy, Result, SESSION_SCHEMA, SessionEvent,
+    SessionTrail, SourceProfile, VERIFICATION_SCHEMA, ValidatedCursor, VerificationObligation,
+    canonical_json, validate_source_profile,
 };
 
 const PAYLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("payloads");
@@ -36,7 +36,7 @@ const STORE_SCHEMA_KEY: &str = "store_schema";
 // Pre-release storage is intentionally reset, rather than migrated, whenever
 // an immutable-record invariant changes. This is a contract identity, not a
 // compatibility version.
-const STORE_SCHEMA: &str = "prog.store.observations";
+const STORE_SCHEMA: &str = "prog.store.capture_lifecycle";
 
 #[derive(Debug)]
 pub struct Store {
@@ -65,7 +65,7 @@ pub struct ObligationList {
 #[derive(Debug, Clone, Default)]
 pub struct NewObservation {
     pub payload_hash: String,
-    pub payload_available: bool,
+    pub availability: EvidenceAvailability,
     pub invocation_fingerprint: String,
     pub source_id: String,
     pub operation: String,
@@ -73,8 +73,7 @@ pub struct NewObservation {
     pub captured_at: Option<String>,
     pub duration_ms: Option<u64>,
     pub status: Option<String>,
-    pub complete: bool,
-    pub truncated: bool,
+    pub capture: CaptureCompleteness,
     pub redacted: bool,
     pub provider: Option<String>,
     pub parser: Option<String>,
@@ -226,11 +225,7 @@ impl Store {
             schema: OBSERVATION_SCHEMA.to_string(),
             observation_id: format!("obs_{}", Uuid::new_v4().simple()),
             payload_hash: input.payload_hash,
-            availability: if input.payload_available {
-                ObservationAvailability::PayloadAvailable
-            } else {
-                ObservationAvailability::MetadataOnly
-            },
+            availability: input.availability,
             invocation_fingerprint: input.invocation_fingerprint,
             source_id: input.source_id,
             operation: input.operation,
@@ -238,8 +233,7 @@ impl Store {
             captured_at: input.captured_at.unwrap_or_else(|| format_time(Utc::now())),
             duration_ms: input.duration_ms,
             status: input.status,
-            complete: input.complete,
-            truncated: input.truncated,
+            capture: input.capture,
             redacted: input.redacted,
             provider: input.provider,
             parser: input.parser,
@@ -1004,9 +998,14 @@ fn mark_payloads_metadata_only(
         let (id, value) = entry.map_err(CoreError::storage)?;
         let mut record: ObservationRecord = serde_json::from_slice(value.value())?;
         if hashes.contains(record.payload_hash.as_str())
-            && record.availability == ObservationAvailability::PayloadAvailable
+            && matches!(
+                record.availability,
+                EvidenceAvailability::Recoverable
+                    | EvidenceAvailability::CaptureTruncated
+                    | EvidenceAvailability::Redacted
+            )
         {
-            record.availability = ObservationAvailability::MetadataOnly;
+            record.availability = EvidenceAvailability::MetadataOnly;
             updates.push((id.value().to_string(), serde_json::to_vec(&record)?));
         }
     }

@@ -1555,6 +1555,19 @@ fn run_large_streams_are_bounded_expandable_and_redacted() {
     assert!(envelope["summary"]["envelope_bytes"].as_u64().unwrap() <= 16 * 1024);
     assert_eq!(envelope["data_preview"]["stdout"]["truncated"], true);
     assert_eq!(envelope["data_preview"]["stderr"]["truncated"], true);
+    assert_eq!(envelope["observation"]["availability"], "capture_truncated");
+    assert_eq!(
+        envelope["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["affected"][0]["scope"],
+        "stdout"
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["affected"][1]["scope"],
+        "stderr"
+    );
     assert_eq!(
         envelope["data_preview"]["stdout"]["head"][0],
         "token=[REDACTED:observed_text_secret]"
@@ -2090,6 +2103,8 @@ fn envelopes_expose_observation_metadata_for_agent_safety() {
         "stored"
     );
     assert_eq!(complete_value["observation"]["payload"]["cached"], true);
+    assert_eq!(complete_value["observation"]["availability"], "recoverable");
+    assert!(complete_value["observation"].get("capture").is_none());
     assert_eq!(
         complete_value["observation"]["trust"]["profile_backed"],
         false
@@ -2151,6 +2166,11 @@ fn envelopes_expose_observation_metadata_for_agent_safety() {
             .as_u64()
             .unwrap()
             > 0
+    );
+    assert_eq!(partial_value["observation"]["availability"], "redacted");
+    assert_eq!(
+        partial_value["observation"]["capture"]["can_prove_absence"],
+        false
     );
 
     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -3465,10 +3485,7 @@ fn captures_surface_immutable_observation_identity_across_cursor_and_listing() {
     let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
     assert_eq!(listed["observations"].as_array().unwrap().len(), 1);
     assert_eq!(listed["observations"][0]["observation_id"], observation_id);
-    assert_eq!(
-        listed["observations"][0]["availability"],
-        "payload_available"
-    );
+    assert_eq!(listed["observations"][0]["availability"], "recoverable");
 }
 
 #[test]
