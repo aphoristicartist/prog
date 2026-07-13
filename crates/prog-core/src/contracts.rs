@@ -15,6 +15,7 @@ pub const SEARCH_SCHEMA: &str = "prog.search";
 pub const SESSION_SCHEMA: &str = "prog.session";
 pub const OBSERVATION_SCHEMA: &str = "prog.observation";
 pub const SOURCE_STATE_SCHEMA: &str = "prog.source_state";
+pub const OBSERVATION_DELTA_SCHEMA: &str = "prog.observation_delta";
 
 pub type Extra = Map<String, Value>;
 
@@ -969,6 +970,85 @@ pub enum SourceValidity {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SubjectIdentity {
+    Same,
+    Different,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopeRelationship {
+    Equal,
+    Superset,
+    Subset,
+    Overlap,
+    Disjoint,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeltaFindingStatus {
+    New,
+    Persisting,
+    Resolved,
+    NotObserved,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ComparabilityAssessment {
+    pub subject_identity: SubjectIdentity,
+    pub scope_relationship: ScopeRelationship,
+    pub invocation_match: bool,
+    pub baseline_complete: bool,
+    pub subject_complete: bool,
+    pub normalization_compatible: bool,
+    pub workspace_validity: String,
+    pub source_validity: String,
+    pub can_prove_absence: bool,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct DeltaFinding {
+    pub status: DeltaFindingStatus,
+    pub fingerprint: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub baseline_path: Option<String>,
+    #[serde(default)]
+    pub subject_path: Option<String>,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObservationDelta {
+    pub schema: String,
+    pub baseline_observation_id: String,
+    pub subject_observation_id: String,
+    pub assessment: ComparabilityAssessment,
+    #[serde(default)]
+    pub findings: Vec<DeltaFinding>,
+    #[serde(default)]
+    pub counts: BTreeMap<String, u64>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
 pub fn canonical_json(value: &Value) -> crate::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&sort_json(value))?)
 }
@@ -986,6 +1066,9 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<SourceStateToken>(&mut schemas, "SourceStateToken")?;
     insert_schema::<SourceStateKind>(&mut schemas, "SourceStateKind")?;
     insert_schema::<SourceValidity>(&mut schemas, "SourceValidity")?;
+    insert_schema::<ComparabilityAssessment>(&mut schemas, "ComparabilityAssessment")?;
+    insert_schema::<DeltaFinding>(&mut schemas, "DeltaFinding")?;
+    insert_schema::<ObservationDelta>(&mut schemas, "ObservationDelta")?;
     insert_schema::<CachePolicy>(&mut schemas, "CachePolicy")?;
     insert_schema::<TrustSettings>(&mut schemas, "TrustSettings")?;
     insert_schema::<AuthRef>(&mut schemas, "AuthRef")?;

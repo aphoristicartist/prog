@@ -535,6 +535,35 @@ impl Store {
         Ok(Some(serde_json::from_slice(value.value())?))
     }
 
+    /// Find the newest earlier capture in the active session with exactly the
+    /// same canonical invocation identity. Session events are only an index;
+    /// the immutable observation record remains the source of truth.
+    pub fn latest_session_predecessor(
+        &self,
+        invocation_fingerprint: &str,
+        exclude_observation_id: &str,
+    ) -> Result<Option<ObservationRecord>> {
+        let Some(trail) = self.get_session(None)? else {
+            return Ok(None);
+        };
+        for event in trail.events.iter().rev() {
+            let Some(observation_id) = event.extra.get("observation_id").and_then(Value::as_str)
+            else {
+                continue;
+            };
+            if observation_id == exclude_observation_id {
+                continue;
+            }
+            let Some(observation) = self.get_observation(observation_id)? else {
+                continue;
+            };
+            if observation.invocation_fingerprint == invocation_fingerprint {
+                return Ok(Some(observation));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn record_session_event(&self, input: NewSessionEvent) -> Result<SessionEvent> {
         if input.kind.trim().is_empty() {
             return Err(CoreError::BadArgs {

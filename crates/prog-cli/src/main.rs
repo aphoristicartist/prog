@@ -87,6 +87,7 @@ enum Command {
     Evidence(EvidenceArgs),
     Search(SearchArgs),
     Find(FindArgs),
+    Delta(DeltaArgs),
     Session {
         #[command(subcommand)]
         command: SessionCommand,
@@ -474,6 +475,12 @@ struct FindArgs {
     limit: usize,
 }
 
+#[derive(Debug, Args)]
+struct DeltaArgs {
+    baseline: String,
+    subject: String,
+}
+
 #[derive(Debug, Subcommand)]
 enum SessionCommand {
     Start(SessionStartArgs),
@@ -753,6 +760,12 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 )),
             );
             write_success(&response, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Delta(args) => {
+            let store = Store::open(&cli.dir)?;
+            let delta = delta_observations(&store, args)?;
+            write_success(&delta, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Session { command } => {
@@ -2757,6 +2770,14 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         "started_at": started_at.to_rfc3339_opts(SecondsFormat::Nanos, true)
     });
     let cache_key = Store::cache_key("run", &operation, &cache_args)?;
+    let invocation_fingerprint = Store::cache_key(
+        "run",
+        &operation,
+        &json!({
+            "argv": argv,
+            "cwd": cwd.to_string_lossy(),
+        }),
+    )?;
 
     let mut command = TokioCommand::new(&args.command[0]);
     command
@@ -2866,7 +2887,7 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         store,
         payload_hash.clone(),
         true,
-        cache_key.clone(),
+        invocation_fingerprint,
         "run".to_string(),
         operation.clone(),
         Some(provenance.clone()),
@@ -4828,24 +4849,54 @@ fn exceeds_node_budget(value: &Value, max_nodes: usize, max_depth: usize) -> boo
 }
 
 fn record_envelope_event(store: &Store, envelope: &mut DisclosureEnvelope, kind: &str) {
+    if let Some(observation_id) = envelope
+        .observation
+        .as_ref()
+        .and_then(|observation| observation.observation_id.as_deref())
+        && let Ok(Some(subject)) = store.get_observation(observation_id)
+        && let Ok(Some(baseline)) =
+            store.latest_session_predecessor(&subject.invocation_fingerprint, observation_id)
+        && let Ok(mut delta) =
+            compare_observation_ids(store, &baseline.observation_id, &subject.observation_id)
+    {
+        delta.findings.truncate(10);
+        envelope.extra.insert(
+            "changes_since".to_string(),
+            serde_json::to_value(delta).unwrap_or(Value::Null),
+        );
+        if let Err(error) = compact_envelope_to_budget(envelope) {
+            envelope.extra.remove("changes_since");
+            envelope.warnings.push(format!(
+                "automatic changes_since was omitted because it could not fit the envelope budget: {error}"
+            ));
+        }
+    }
     let evidence_ref = envelope
         .extra
         .get("evidence_ref")
         .and_then(|reference| reference.get("uri"))
         .and_then(Value::as_str);
-    record_navigation_event(
-        store,
-        kind,
-        envelope.cursor.as_deref(),
-        None,
-        evidence_ref,
-        Some(format!(
+    let mut extra = Extra::new();
+    if let Some(observation_id) = envelope
+        .observation
+        .as_ref()
+        .and_then(|observation| observation.observation_id.as_ref())
+    {
+        extra.insert("observation_id".to_string(), json!(observation_id));
+    }
+    let _ = store.record_session_event(NewSessionEvent {
+        kind: kind.to_string(),
+        cursor: envelope.cursor.clone(),
+        evidence_ref: evidence_ref.map(str::to_string),
+        summary: Some(format!(
             "{} {} byte payload; {} finding(s)",
             envelope.summary.kind,
             envelope.summary.payload_bytes,
             envelope.findings.len()
         )),
-    );
+        extra,
+        ..NewSessionEvent::default()
+    });
 }
 
 fn record_navigation_event(
@@ -5530,6 +5581,50 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
         },
         cursor,
     )
+}
+
+fn delta_observations(store: &Store, args: &DeltaArgs) -> Result<prog_core::ObservationDelta> {
+    compare_observation_ids(store, &args.baseline, &args.subject)
+}
+
+fn compare_observation_ids(
+    store: &Store,
+    baseline_id: &str,
+    subject_id: &str,
+) -> Result<prog_core::ObservationDelta> {
+    let baseline = store
+        .get_observation(baseline_id)?
+        .ok_or_else(|| CoreError::BadArgs {
+            operation: "delta".to_string(),
+            reason: format!("unknown baseline observation '{baseline_id}'"),
+        })?;
+    let subject = store
+        .get_observation(subject_id)?
+        .ok_or_else(|| CoreError::BadArgs {
+            operation: "delta".to_string(),
+            reason: format!("unknown subject observation '{subject_id}'"),
+        })?;
+    let findings_for =
+        |observation: &prog_core::ObservationRecord| -> Result<Vec<prog_core::Finding>> {
+            let Some(payload) = store.get_payload(&observation.payload_hash)? else {
+                return Ok(Vec::new());
+            };
+            prog_core::ranked_findings(
+                payload.as_value(),
+                &FindingOptions {
+                    limit: 100,
+                    ..FindingOptions::default()
+                },
+            )
+        };
+    let baseline_findings = findings_for(&baseline)?;
+    let subject_findings = findings_for(&subject)?;
+    Ok(prog_core::compare_observations(
+        &baseline,
+        &subject,
+        &baseline_findings,
+        &subject_findings,
+    ))
 }
 
 fn read_seed(seed: &str) -> Result<Value> {
