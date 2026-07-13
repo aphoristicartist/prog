@@ -1,10 +1,11 @@
 use prog_core::{
-    AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CallProvenance, CursorRecord,
-    DISCLOSURE_SCHEMA, DisclosureEnvelope, EVIDENCE_BLOCK_SCHEMA, EffectSet, EvidenceBlock,
-    EvidenceRef, Finding, FindingCommandHints, INSPECT_SCHEMA, InspectResponse,
-    LENS_MANIFEST_SCHEMA, LensFindingRule, LensManifest, NextAction, OmittedRegion, SEARCH_SCHEMA,
-    SearchResponse, SessionEvent, SessionTrail, SliceRequest, SourceProfile, Summary,
-    TrustSettings, canonical_json, public_contract_schemas, validate_source_profile,
+    AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CallProvenance, CaptureCompleteness,
+    CursorRecord, DISCLOSURE_SCHEMA, DisclosureEnvelope, EVIDENCE_BLOCK_SCHEMA, EffectSet,
+    EvidenceAvailability, EvidenceBlock, EvidenceRef, Finding, FindingCommandHints, INSPECT_SCHEMA,
+    InspectResponse, LENS_MANIFEST_SCHEMA, LensFindingRule, LensManifest, NextAction,
+    OmittedRegion, SEARCH_SCHEMA, SearchResponse, SessionEvent, SessionTrail, SliceRequest,
+    SourceProfile, Summary, TrustSettings, canonical_json, public_contract_schemas,
+    validate_source_profile,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -55,6 +56,14 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
             "operation": "artifact",
             "path": "/items/0",
             "stale": false,
+            "availability": "recoverable",
+            "capture": {
+                "total_bytes": 8,
+                "captured_bytes": 8,
+                "stored_bytes": 8,
+                "stop_reason": "complete",
+                "can_prove_absence": true
+            },
             "redacted": false,
             "lossy": false,
             "x_future": "kept"
@@ -418,6 +427,8 @@ fn evidence_navigation_contracts_cover_north_star_workflow() {
                 age_seconds: Some(0),
                 expires_at: None,
                 stale: false,
+                availability: EvidenceAvailability::Recoverable,
+                capture: CaptureCompleteness::complete(64),
                 redacted: true,
                 lossy: false,
                 redacted_slice_sha256: Some("sha256:abc".to_string()),

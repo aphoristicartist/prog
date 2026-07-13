@@ -354,6 +354,13 @@ pub struct EvidenceRef {
     #[serde(default)]
     pub expires_at: Option<String>,
     pub stale: bool,
+    /// Lifecycle state of the immutable observation this reference names.
+    /// `unavailable` is explicit when no observation record is attached.
+    pub availability: EvidenceAvailability,
+    /// Capture and retention facts for the referenced observation. These are
+    /// intentionally observation-wide: a JSON pointer cannot prove that an
+    /// unobserved sibling was absent.
+    pub capture: CaptureCompleteness,
     pub redacted: bool,
     pub lossy: bool,
     #[serde(default)]

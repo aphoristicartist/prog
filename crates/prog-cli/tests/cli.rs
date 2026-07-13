@@ -396,6 +396,9 @@ fn evidence_refs_are_stable_refresh_sensitive_and_redaction_safe() {
     assert_eq!(evidence["uri"], format!("prog://{cursor}#/answer"));
     assert_eq!(evidence["cache_status"], "hit");
     assert_eq!(evidence["stale"], false);
+    assert_eq!(evidence["availability"], "redacted");
+    assert_eq!(evidence["capture"]["stop_reason"], "redacted");
+    assert_eq!(evidence["capture"]["can_prove_absence"], false);
     assert_eq!(evidence["redacted"], false);
     assert_eq!(evidence["lossy"], false);
     let first_hash = evidence["redacted_slice_sha256"].as_str().unwrap();
@@ -425,6 +428,11 @@ fn evidence_refs_are_stable_refresh_sensitive_and_redaction_safe() {
         .find(|entry| entry["path"] == "/nested")
         .unwrap();
     assert_eq!(nested["evidence_ref"]["path"], "/nested");
+    assert_eq!(nested["evidence_ref"]["availability"], "redacted");
+    assert_eq!(
+        nested["evidence_ref"]["capture"]["can_prove_absence"],
+        false
+    );
     assert_eq!(
         nested["evidence_ref"]["uri"],
         format!("prog://{cursor}#/nested")
@@ -2105,6 +2113,7 @@ fn envelopes_expose_observation_metadata_for_agent_safety() {
     assert_eq!(complete_value["observation"]["payload"]["cached"], true);
     assert_eq!(complete_value["observation"]["availability"], "recoverable");
     assert!(complete_value["observation"].get("capture").is_none());
+    assert!(complete_value.get("evidence_ref").is_none());
     assert_eq!(
         complete_value["observation"]["trust"]["profile_backed"],
         false
@@ -2170,6 +2179,11 @@ fn envelopes_expose_observation_metadata_for_agent_safety() {
     assert_eq!(partial_value["observation"]["availability"], "redacted");
     assert_eq!(
         partial_value["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+    assert_eq!(partial_value["evidence_ref"]["availability"], "redacted");
+    assert_eq!(
+        partial_value["evidence_ref"]["capture"]["can_prove_absence"],
         false
     );
 

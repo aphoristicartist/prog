@@ -1284,10 +1284,20 @@ struct EvidenceRefInput<'a> {
     cursor: Option<&'a str>,
     path: &'a str,
     value: &'a Value,
+    observation: Option<&'a prog_core::ObservationRecord>,
     provenance: Option<&'a CallProvenance>,
     cache: Option<&'a CacheInfo>,
     omitted: &'a [OmittedRegion],
     redacted_paths: usize,
+}
+
+struct PathEvidenceContext<'a> {
+    record: &'a prog_core::CursorRecord,
+    entry: &'a prog_core::CacheEntryMeta,
+    observation: Option<&'a prog_core::ObservationRecord>,
+    cache: &'a CacheInfo,
+    omitted: &'a [OmittedRegion],
+    cursor: &'a str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4653,6 +4663,14 @@ fn evidence_ref(input: EvidenceRefInput<'_>) -> EvidenceRef {
         .iter()
         .filter(|region| omission_intersects_path(input.path, &region.path))
         .collect::<Vec<_>>();
+    let availability = input
+        .observation
+        .map(|observation| observation.availability)
+        .unwrap_or(EvidenceAvailability::Unavailable);
+    let capture = input
+        .observation
+        .map(|observation| observation.capture.clone())
+        .unwrap_or_else(|| CaptureCompleteness::unavailable(0));
     let redacted = input.redacted_paths > 0
         || value_contains_redaction(input.value)
         || omitted_in_scope
@@ -4683,6 +4701,8 @@ fn evidence_ref(input: EvidenceRefInput<'_>) -> EvidenceRef {
         age_seconds,
         expires_at: input.cache.and_then(|cache| cache.expires_at.clone()),
         stale,
+        availability,
+        capture,
         redacted,
         lossy,
         redacted_slice_sha256,
@@ -4707,6 +4727,7 @@ fn value_contains_redaction(value: &Value) -> bool {
 struct CursorContext {
     record: ValidatedCursor,
     entry: CacheEntryMeta,
+    observation: Option<prog_core::ObservationRecord>,
     payload: PersistedPayload,
     target_path: String,
     age_seconds: u64,
@@ -4718,6 +4739,12 @@ fn cursor_context(store: &Store, cursor: &str, requested_path: &str) -> Result<C
     let entry = store
         .get_entry(&record.cache_key)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
+    let observation = record
+        .observation_id
+        .as_deref()
+        .map(|observation_id| store.get_observation(observation_id))
+        .transpose()?
+        .flatten();
     let payload = store
         .get_payload(&entry.payload_hash)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
@@ -4749,6 +4776,7 @@ fn cursor_context(store: &Store, cursor: &str, requested_path: &str) -> Result<C
     Ok(CursorContext {
         record,
         entry,
+        observation,
         payload,
         target_path,
         age_seconds,
@@ -4803,6 +4831,7 @@ fn inspect_cursor(store: &Store, lens_dir: &Path, args: &InspectArgs) -> Result<
                 cursor: Some(&args.cursor),
                 path: &finding.path,
                 value,
+                observation: context.observation.as_ref(),
                 provenance: context.entry.provenance.as_ref(),
                 cache: Some(&context.cache),
                 omitted: &[],
@@ -4871,6 +4900,7 @@ fn evidence_cursor(store: &Store, lens_dir: &Path, args: &EvidenceArgs) -> Resul
         cursor: Some(&args.cursor),
         path: &context.target_path,
         value,
+        observation: context.observation.as_ref(),
         provenance: context.entry.provenance.as_ref(),
         cache: Some(&context.cache),
         omitted: &[],
@@ -5398,6 +5428,12 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
     let entry = store
         .get_entry(&record.cache_key)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
+    let observation = record
+        .observation_id
+        .as_deref()
+        .map(|observation_id| store.get_observation(observation_id))
+        .transpose()?
+        .flatten();
     let payload = store
         .get_payload(&entry.payload_hash)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
@@ -5459,11 +5495,14 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
     attach_path_evidence_refs(
         &mut paths,
         value,
-        record.record(),
-        &entry,
-        &cache,
-        &projected_omitted,
-        &args.cursor,
+        PathEvidenceContext {
+            record: record.record(),
+            entry: &entry,
+            observation: observation.as_ref(),
+            cache: &cache,
+            omitted: &projected_omitted,
+            cursor: &args.cursor,
+        },
     )?;
 
     Ok(PathsResponse {
@@ -5664,11 +5703,7 @@ fn append_missing_omitted_paths(
 fn attach_path_evidence_refs(
     paths: &mut [PathEntry],
     payload: &Value,
-    record: &prog_core::CursorRecord,
-    entry: &prog_core::CacheEntryMeta,
-    cache: &CacheInfo,
-    omitted: &[OmittedRegion],
-    cursor: &str,
+    context: PathEvidenceContext<'_>,
 ) -> Result<()> {
     for path in paths {
         if !path.expandable && path.omitted_reason.is_none() {
@@ -5676,14 +5711,15 @@ fn attach_path_evidence_refs(
         }
         if let Some(value) = prog_core::pointer::get(payload, &path.path)? {
             path.evidence_ref = Some(evidence_ref(EvidenceRefInput {
-                source_id: &record.source_id,
-                operation: &record.operation,
-                cursor: Some(cursor),
+                source_id: &context.record.source_id,
+                operation: &context.record.operation,
+                cursor: Some(context.cursor),
                 path: &path.path,
                 value,
-                provenance: entry.provenance.as_ref(),
-                cache: Some(cache),
-                omitted,
+                observation: context.observation,
+                provenance: context.entry.provenance.as_ref(),
+                cache: Some(context.cache),
+                omitted: context.omitted,
                 redacted_paths: 0,
             }));
         }
@@ -5825,6 +5861,12 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
     let entry = store
         .get_entry(&record.cache_key)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
+    let observation = record
+        .observation_id
+        .as_deref()
+        .map(|observation_id| store.get_observation(observation_id))
+        .transpose()?
+        .flatten();
     let payload = store
         .get_payload(&entry.payload_hash)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
@@ -5861,6 +5903,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
             cursor: Some(&args.cursor),
             path: &target_path,
             value: &selected,
+            observation: observation.as_ref(),
             provenance: entry.provenance.as_ref(),
             cache: Some(&cache),
             omitted: &[],
@@ -8638,7 +8681,14 @@ fn make_envelope(
             }),
         );
     }
-    if let Some(cursor) = cursor.as_deref() {
+    // A complete, recoverable observation already exposes the same lifecycle
+    // facts in `observation`; repeating a root citation would cost more than
+    // the bounded preview it is meant to help navigate. Path-specific outputs
+    // (expand, evidence, inspect, paths, and export receipts) always retain
+    // their EvidenceRef.
+    if let Some(cursor) = cursor.as_deref()
+        && !observation_record.is_some_and(has_implicit_complete_capture)
+    {
         let evidence_path = input.slice.path.as_deref().unwrap_or(&input.root_path);
         extra.insert(
             "evidence_ref".to_string(),
@@ -8648,6 +8698,7 @@ fn make_envelope(
                 cursor: Some(cursor),
                 path: evidence_path,
                 value: &preview,
+                observation: observation_record,
                 provenance: input.provenance.as_ref(),
                 cache: input.cache.as_ref(),
                 omitted: &omitted,
@@ -8843,11 +8894,7 @@ fn observation_metadata(
             .unwrap_or(EvidenceAvailability::Unavailable),
         capture: observation_record
             .map(|record| {
-                if record.availability == EvidenceAvailability::Recoverable
-                    && record.capture.stop_reason == CaptureStopReason::Complete
-                    && record.capture.can_prove_absence
-                    && record.capture.affected.is_empty()
-                {
+                if has_implicit_complete_capture(record) {
                     return None;
                 }
                 Some(record.capture.clone())
@@ -8863,6 +8910,13 @@ fn observation_metadata(
             })),
         extra: metadata_extra,
     }
+}
+
+fn has_implicit_complete_capture(record: &prog_core::ObservationRecord) -> bool {
+    record.availability == EvidenceAvailability::Recoverable
+        && record.capture.stop_reason == CaptureStopReason::Complete
+        && record.capture.can_prove_absence
+        && record.capture.affected.is_empty()
 }
 
 fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Result<usize> {
@@ -9838,5 +9892,29 @@ mod capture_lifecycle_tests {
         assert_eq!(capture.stop_reason, CaptureStopReason::StorageLimit);
         assert_eq!(capture.affected[0].total_bytes, Some(4096));
         assert!(!capture.can_prove_absence);
+    }
+
+    #[test]
+    fn evidence_ref_without_an_observation_fails_closed() {
+        let value = json!({"status": "unknown"});
+        let reference = evidence_ref(EvidenceRefInput {
+            source_id: "test",
+            operation: "read",
+            cursor: None,
+            path: "/status",
+            value: &value,
+            observation: None,
+            provenance: None,
+            cache: None,
+            omitted: &[],
+            redacted_paths: 0,
+        });
+
+        assert_eq!(reference.availability, EvidenceAvailability::Unavailable);
+        assert_eq!(
+            reference.capture.stop_reason,
+            CaptureStopReason::Unavailable
+        );
+        assert!(!reference.capture.can_prove_absence);
     }
 }
