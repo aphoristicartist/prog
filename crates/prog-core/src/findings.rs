@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     Extra, Finding, FindingCommandHints, INSPECT_SCHEMA, InspectResponse, LineRange,
-    RedactionState, Result, pointer,
+    RedactionState, Result, SourceSpan, SourceSpanExactness, pointer,
 };
 
 const DEFAULT_LIMIT: usize = 10;
@@ -237,6 +237,8 @@ struct Candidate {
     severity: Option<String>,
     source: String,
     line_range: Option<LineRange>,
+    primary_span: Option<SourceSpan>,
+    related_spans: Vec<SourceSpan>,
     redaction_state: Option<RedactionState>,
     fingerprint: Option<String>,
     extra: Extra,
@@ -244,6 +246,7 @@ struct Candidate {
 
 impl Candidate {
     fn from_signal(path: String, value: &Value, signal: Signal) -> Self {
+        let (primary_span, related_spans) = extract_source_spans(value);
         Self {
             kind: signal.kind.to_string(),
             path,
@@ -254,10 +257,21 @@ impl Candidate {
             severity: signal.severity.map(str::to_string),
             source: signal.source.to_string(),
             line_range: None,
+            primary_span,
+            related_spans,
             redaction_state: redaction_state(value),
             fingerprint: finding_fingerprint(signal.kind, signal.source, value),
             extra: Extra::new(),
         }
+    }
+
+    fn inherit_source_spans(&mut self, context: &Value) {
+        if self.primary_span.is_some() || !self.related_spans.is_empty() {
+            return;
+        }
+        let (primary_span, related_spans) = extract_source_spans(context);
+        self.primary_span = primary_span;
+        self.related_spans = related_spans;
     }
 
     fn into_finding(self, rank: u64, options: &FindingOptions) -> Finding {
@@ -285,11 +299,258 @@ impl Candidate {
             evidence_ref: None,
             line_range: self.line_range,
             byte_range: None,
+            primary_span: self.primary_span,
+            related_spans: self.related_spans,
             redaction_state: self.redaction_state,
             commands,
             extra: self.extra,
         }
     }
+}
+
+const MAX_SOURCE_SPANS: usize = 16;
+
+/// Extract source locations only from explicit structured location fields.
+///
+/// This function intentionally does not parse display prose (tracebacks,
+/// compiler renderings, or log messages) and never reads a referenced file.
+/// Its input is expected to have crossed the redaction-before-persistence
+/// boundary already.
+pub fn extract_source_spans(value: &Value) -> (Option<SourceSpan>, Vec<SourceSpan>) {
+    let Some(map) = value.as_object() else {
+        return (None, Vec::new());
+    };
+
+    let mut spans = Vec::new();
+    // rustc/Cargo JSON diagnostics: the primary span is explicit and related
+    // spans retain the producer's original order.
+    if let Some(items) = map.get("spans").and_then(Value::as_array) {
+        for item in items.iter().take(MAX_SOURCE_SPANS) {
+            let Some(item) = item.as_object() else {
+                continue;
+            };
+            let role = if item
+                .get("is_primary")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                "primary"
+            } else if item
+                .get("is_generated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                "generated"
+            } else {
+                "related"
+            };
+            push_span(&mut spans, build_span(item, role, "structured.rustc"));
+        }
+    }
+
+    // SARIF results use locations/relatedLocations with a physicalLocation
+    // wrapper; we retain URI locations without resolving them locally.
+    if let Some(items) = map.get("locations").and_then(Value::as_array) {
+        for (index, item) in items.iter().take(MAX_SOURCE_SPANS).enumerate() {
+            let Some(item) = item.as_object() else {
+                continue;
+            };
+            push_span(
+                &mut spans,
+                build_span(
+                    item.get("physicalLocation")
+                        .and_then(Value::as_object)
+                        .unwrap_or(item),
+                    if index == 0 { "primary" } else { "related" },
+                    "structured.sarif",
+                ),
+            );
+        }
+    }
+    for key in ["related_locations", "relatedLocations"] {
+        if let Some(items) = map.get(key).and_then(Value::as_array) {
+            for item in items.iter().take(MAX_SOURCE_SPANS) {
+                let Some(item) = item.as_object() else {
+                    continue;
+                };
+                push_span(
+                    &mut spans,
+                    build_span(
+                        item.get("physicalLocation")
+                            .and_then(Value::as_object)
+                            .unwrap_or(item),
+                        "related",
+                        "structured.related_location",
+                    ),
+                );
+            }
+        }
+    }
+
+    // Common structured diagnostic wrappers. Do not recurse through arbitrary
+    // object fields: a name such as `path` is not source evidence by itself.
+    for key in ["primary_location", "primaryLocation", "location", "span"] {
+        if let Some(location) = map.get(key).and_then(Value::as_object) {
+            push_span(
+                &mut spans,
+                build_span(location, "primary", "structured.location"),
+            );
+        }
+    }
+    push_span(&mut spans, build_span(map, "primary", "structured.direct"));
+
+    let mut primary = None;
+    let mut related = Vec::new();
+    for mut span in spans {
+        if primary.is_none() && span.role == "primary" {
+            primary = Some(span);
+        } else {
+            if span.role == "primary" {
+                span.role = "related".to_string();
+            }
+            related.push(span);
+        }
+    }
+    if primary.is_none()
+        && let Some(index) = related.iter().position(|span| span.role == "related")
+    {
+        let mut span = related.remove(index);
+        span.role = "primary".to_string();
+        primary = Some(span);
+    }
+    related.truncate(MAX_SOURCE_SPANS.saturating_sub(primary.is_some() as usize));
+    (primary, related)
+}
+
+fn push_span(target: &mut Vec<SourceSpan>, span: Option<SourceSpan>) {
+    let Some(span) = span else {
+        return;
+    };
+    if target.len() >= MAX_SOURCE_SPANS || target.iter().any(|existing| existing == &span) {
+        return;
+    }
+    target.push(span);
+}
+
+fn build_span(map: &Map<String, Value>, role: &str, origin: &str) -> Option<SourceSpan> {
+    let region = map.get("region").and_then(Value::as_object).unwrap_or(map);
+    let start_line = field_u64(region, &["start_line", "startLine", "line_start", "line"])?;
+    if start_line == 0 {
+        return None;
+    }
+    let start_column = field_u64(
+        region,
+        &["start_column", "startColumn", "column_start", "column"],
+    );
+    let end_line = field_u64(region, &["end_line", "endLine", "line_end"]);
+    let end_column = field_u64(region, &["end_column", "endColumn", "column_end"]);
+    if start_column == Some(0)
+        || end_column == Some(0)
+        || end_line.is_some_and(|end| end < start_line)
+        || (end_line == Some(start_line)
+            && start_column
+                .zip(end_column)
+                .is_some_and(|(start, end)| end < start))
+    {
+        return None;
+    }
+
+    let locator_map = map
+        .get("artifactLocation")
+        .and_then(Value::as_object)
+        .unwrap_or(map);
+    let path = ["file_name", "file", "path", "filename"]
+        .into_iter()
+        .find_map(|key| locator_map.get(key).and_then(Value::as_str))
+        .and_then(normalize_relative_path);
+    let uri = if path.is_none() {
+        ["uri", "url"]
+            .into_iter()
+            .find_map(|key| locator_map.get(key).and_then(Value::as_str))
+            .and_then(safe_external_uri)
+    } else {
+        None
+    };
+    if path.is_none() && uri.is_none() {
+        return None;
+    }
+    let exactness = if end_line.is_some() && start_column.is_some() && end_column.is_some() {
+        SourceSpanExactness::Exact
+    } else if end_line.is_some() || start_column.is_some() {
+        SourceSpanExactness::Range
+    } else {
+        SourceSpanExactness::Approximate
+    };
+    Some(SourceSpan {
+        path,
+        uri,
+        start_line,
+        start_column,
+        end_line,
+        end_column,
+        role: role.to_string(),
+        // Payload-provided labels can contain arbitrary user text. Keep the
+        // provenance location but leave interpretation/display to evidence
+        // navigation, which already applies its own redaction boundary.
+        label: None,
+        origin: origin.to_string(),
+        exactness,
+        extra: Extra::new(),
+    })
+}
+
+fn field_u64(map: &Map<String, Value>, names: &[&str]) -> Option<u64> {
+    names
+        .iter()
+        .find_map(|name| map.get(*name).and_then(Value::as_u64))
+}
+
+fn normalize_relative_path(raw: &str) -> Option<String> {
+    if raw.is_empty()
+        || raw.contains('\0')
+        || raw.contains("[REDACTED:")
+        || raw.contains("\u{00ab}redacted\u{00bb}")
+    {
+        return None;
+    }
+    let normalized = raw.replace('\\', "/");
+    if normalized.starts_with('/')
+        || normalized.starts_with("//")
+        || normalized.as_bytes().get(1) == Some(&b':')
+    {
+        return None;
+    }
+    let mut output = Vec::new();
+    for component in normalized.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => return None,
+            value => output.push(value),
+        }
+    }
+    (!output.is_empty()).then(|| output.join("/"))
+}
+
+fn safe_external_uri(raw: &str) -> Option<String> {
+    if raw.is_empty()
+        || raw.len() > 2_048
+        || raw.contains(char::is_whitespace)
+        || raw.contains("[REDACTED:")
+        || raw.contains("\u{00ab}redacted\u{00bb}")
+    {
+        return None;
+    }
+    let colon = raw.find(':')?;
+    let scheme = &raw[..colon];
+    if scheme.is_empty()
+        || scheme == "file"
+        || !scheme
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
+    {
+        return None;
+    }
+    Some(raw.to_string())
 }
 
 /// Generic identities intentionally preserve every non-whitespace character in
@@ -704,7 +965,9 @@ fn collect_generic_signals(
             for (key, child) in map {
                 let child_path = pointer::push(path, key);
                 if let Some(signal) = key_signal(key, child) {
-                    out.push(Candidate::from_signal(child_path.clone(), child, signal));
+                    let mut candidate = Candidate::from_signal(child_path.clone(), child, signal);
+                    candidate.inherit_source_spans(value);
+                    out.push(candidate);
                 }
                 collect_generic_signals(child, &child_path, out, depth + 1, visited);
                 if *visited >= MAX_FINDING_NODES {

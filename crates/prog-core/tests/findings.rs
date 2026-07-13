@@ -1,4 +1,7 @@
-use prog_core::{CommandHintConfig, FindingOptions, RedactionPolicy, ranked_findings};
+use prog_core::{
+    CommandHintConfig, FindingOptions, RedactionPolicy, SourceSpanExactness, extract_source_spans,
+    ranked_findings,
+};
 use serde_json::{Value, json};
 
 #[test]
@@ -217,6 +220,125 @@ fn stack_trace_strings_are_detected_inside_nested_payloads() {
             .iter()
             .any(|finding| finding.kind == "diagnostic" && finding.path == "/events/1")
     );
+}
+
+#[test]
+fn structured_rustc_spans_attach_to_message_findings_without_parsing_prose() {
+    let payload = json!({
+        "message": "error[E0308]: mismatched types",
+        "level": "error",
+        "spans": [
+            {
+                "file_name": "src\\lib.rs",
+                "line_start": 12,
+                "line_end": 12,
+                "column_start": 5,
+                "column_end": 9,
+                "is_primary": true
+            },
+            {
+                "file_name": "src/types.rs",
+                "line_start": 4,
+                "line_end": 4,
+                "column_start": 1,
+                "column_end": 8,
+                "is_primary": false
+            }
+        ]
+    });
+
+    let findings = ranked_findings(&payload, &FindingOptions::default()).unwrap();
+    let message = findings
+        .iter()
+        .find(|finding| finding.path == "/message")
+        .expect("message finding");
+    let primary = message.primary_span.as_ref().expect("primary source span");
+    assert_eq!(primary.path.as_deref(), Some("src/lib.rs"));
+    assert_eq!(primary.start_line, 12);
+    assert_eq!(primary.start_column, Some(5));
+    assert_eq!(primary.end_column, Some(9));
+    assert_eq!(primary.role, "primary");
+    assert_eq!(primary.exactness, SourceSpanExactness::Exact);
+    assert_eq!(message.related_spans.len(), 1);
+    assert_eq!(
+        message.related_spans[0].path.as_deref(),
+        Some("src/types.rs")
+    );
+    assert_eq!(message.related_spans[0].role, "related");
+}
+
+#[test]
+fn sarif_locations_keep_external_uris_and_bound_related_locations() {
+    let payload = json!({
+        "level": "error",
+        "message": {"text": "unsafe operation"},
+        "locations": [{
+            "physicalLocation": {
+                "artifactLocation": {"uri": "git://example/repo/src/lib.rs"},
+                "region": {"startLine": 8, "endLine": 10}
+            }
+        }],
+        "relatedLocations": [{
+            "physicalLocation": {
+                "artifactLocation": {"uri": "https://example.test/generated.rs"},
+                "region": {"startLine": 2, "startColumn": 1}
+            }
+        }]
+    });
+
+    let (primary, related) = extract_source_spans(&payload);
+    let primary = primary.expect("SARIF primary location");
+    assert_eq!(
+        primary.uri.as_deref(),
+        Some("git://example/repo/src/lib.rs")
+    );
+    assert_eq!(primary.start_line, 8);
+    assert_eq!(primary.exactness, SourceSpanExactness::Range);
+    assert_eq!(related.len(), 1);
+    assert_eq!(
+        related[0].uri.as_deref(),
+        Some("https://example.test/generated.rs")
+    );
+    assert_eq!(related[0].exactness, SourceSpanExactness::Range);
+}
+
+#[test]
+fn source_span_rejects_unsafe_or_malformed_locators() {
+    for payload in [
+        json!({"file_name": "../../private.rs", "line_start": 1}),
+        json!({"file_name": "/Users/alice/private.rs", "line_start": 1}),
+        json!({"file_name": "C:\\Users\\alice\\private.rs", "line_start": 1}),
+        json!({"uri": "file:///Users/alice/private.rs", "line_start": 1}),
+        json!({"file_name": "src/lib.rs", "line_start": 0}),
+        json!({"file_name": "src/lib.rs", "line_start": 4, "line_end": 3}),
+        json!({"file_name": "[REDACTED:path]", "line_start": 1}),
+    ] {
+        assert_eq!(extract_source_spans(&payload), (None, Vec::new()));
+    }
+}
+
+#[test]
+fn source_span_keeps_one_locator_and_does_not_promote_generated_spans() {
+    let (primary, related) = extract_source_spans(&json!({
+        "file_name": "src/lib.rs",
+        "uri": "https://example.test/ignored.rs",
+        "line_start": 7
+    }));
+    let primary = primary.expect("relative path span");
+    assert_eq!(primary.path.as_deref(), Some("src/lib.rs"));
+    assert_eq!(primary.uri, None);
+    assert!(related.is_empty());
+
+    let (primary, related) = extract_source_spans(&json!({
+        "spans": [{
+            "file_name": "generated.rs",
+            "line_start": 1,
+            "is_generated": true
+        }]
+    }));
+    assert!(primary.is_none());
+    assert_eq!(related.len(), 1);
+    assert_eq!(related[0].role, "generated");
 }
 
 #[test]

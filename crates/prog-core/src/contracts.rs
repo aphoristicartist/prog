@@ -406,6 +406,15 @@ pub struct Finding {
     pub line_range: Option<LineRange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub byte_range: Option<ByteRange>,
+    /// The single most relevant source location declared by the observed
+    /// payload. This is distinct from `line_range`, which addresses lines in
+    /// captured evidence rather than source code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_span: Option<SourceSpan>,
+    /// Additional source locations declared by the observed payload. The
+    /// extraction boundary caps and orders these deterministically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_spans: Vec<SourceSpan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redaction_state: Option<RedactionState>,
     #[serde(default)]
@@ -445,6 +454,45 @@ pub struct ByteRange {
     pub end: u64,
     #[serde(default, flatten)]
     pub extra: Extra,
+}
+
+/// A provenance-backed source location extracted from a structured payload.
+///
+/// `path` is a normalized workspace-relative path. `uri` is retained for
+/// external or virtual sources. Exactly one is present on spans emitted by
+/// `prog`; the optional representation keeps deserialization forward-safe for
+/// evidence captured before a producer could identify its locator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct SourceSpan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    pub start_line: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_column: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<u64>,
+    /// `primary`, `related`, `generated`, or a producer-defined role.
+    pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// The deterministic extractor that produced this span.
+    pub origin: String,
+    pub exactness: SourceSpanExactness,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceSpanExactness {
+    Exact,
+    Range,
+    Approximate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1171,6 +1219,8 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<SearchHit>(&mut schemas, "SearchHit")?;
     insert_schema::<LineRange>(&mut schemas, "LineRange")?;
     insert_schema::<ByteRange>(&mut schemas, "ByteRange")?;
+    insert_schema::<SourceSpan>(&mut schemas, "SourceSpan")?;
+    insert_schema::<SourceSpanExactness>(&mut schemas, "SourceSpanExactness")?;
     insert_schema::<RedactionState>(&mut schemas, "RedactionState")?;
     insert_schema::<Summary>(&mut schemas, "Summary")?;
     insert_schema::<OmittedRegion>(&mut schemas, "OmittedRegion")?;
