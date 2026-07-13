@@ -1,4 +1,5 @@
 pub mod contracts;
+pub mod delta;
 pub mod disclosure;
 pub mod error;
 pub mod findings;
@@ -17,6 +18,7 @@ pub mod table;
 pub mod workspace;
 
 pub use contracts::*;
+pub use delta::*;
 pub use disclosure::*;
 pub use error::{CoreError, ErrorBody, ErrorEnvelope, Result};
 pub use findings::*;

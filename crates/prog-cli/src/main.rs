@@ -87,6 +87,7 @@ enum Command {
     Evidence(EvidenceArgs),
     Search(SearchArgs),
     Find(FindArgs),
+    Delta(DeltaArgs),
     Session {
         #[command(subcommand)]
         command: SessionCommand,
@@ -474,6 +475,12 @@ struct FindArgs {
     limit: usize,
 }
 
+#[derive(Debug, Args)]
+struct DeltaArgs {
+    baseline: String,
+    subject: String,
+}
+
 #[derive(Debug, Subcommand)]
 enum SessionCommand {
     Start(SessionStartArgs),
@@ -753,6 +760,12 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 )),
             );
             write_success(&response, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Delta(args) => {
+            let store = Store::open(&cli.dir)?;
+            let delta = delta_observations(&store, args)?;
+            write_success(&delta, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Session { command } => {
@@ -2757,6 +2770,14 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         "started_at": started_at.to_rfc3339_opts(SecondsFormat::Nanos, true)
     });
     let cache_key = Store::cache_key("run", &operation, &cache_args)?;
+    let invocation_fingerprint = Store::cache_key(
+        "run",
+        &operation,
+        &json!({
+            "argv": argv,
+            "cwd": cwd.to_string_lossy(),
+        }),
+    )?;
 
     let mut command = TokioCommand::new(&args.command[0]);
     command
@@ -2866,7 +2887,7 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         store,
         payload_hash.clone(),
         true,
-        cache_key.clone(),
+        invocation_fingerprint,
         "run".to_string(),
         operation.clone(),
         Some(provenance.clone()),
@@ -5530,6 +5551,42 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
         },
         cursor,
     )
+}
+
+fn delta_observations(store: &Store, args: &DeltaArgs) -> Result<prog_core::ObservationDelta> {
+    let baseline = store
+        .get_observation(&args.baseline)?
+        .ok_or_else(|| CoreError::BadArgs {
+            operation: "delta".to_string(),
+            reason: format!("unknown baseline observation '{}'", args.baseline),
+        })?;
+    let subject = store
+        .get_observation(&args.subject)?
+        .ok_or_else(|| CoreError::BadArgs {
+            operation: "delta".to_string(),
+            reason: format!("unknown subject observation '{}'", args.subject),
+        })?;
+    let findings_for =
+        |observation: &prog_core::ObservationRecord| -> Result<Vec<prog_core::Finding>> {
+            let Some(payload) = store.get_payload(&observation.payload_hash)? else {
+                return Ok(Vec::new());
+            };
+            prog_core::ranked_findings(
+                payload.as_value(),
+                &FindingOptions {
+                    limit: 100,
+                    ..FindingOptions::default()
+                },
+            )
+        };
+    let baseline_findings = findings_for(&baseline)?;
+    let subject_findings = findings_for(&subject)?;
+    Ok(prog_core::compare_observations(
+        &baseline,
+        &subject,
+        &baseline_findings,
+        &subject_findings,
+    ))
 }
 
 fn read_seed(seed: &str) -> Result<Value> {
