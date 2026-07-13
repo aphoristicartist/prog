@@ -928,6 +928,7 @@ struct AdapterCall {
     pagination: Option<Value>,
     warnings: Vec<String>,
     received_error: bool,
+    not_modified: bool,
 }
 
 struct CallSourceResult {
@@ -1858,9 +1859,13 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
     let may_cache = !args.no_cache && cache_allowed(&operation, &effective_cache);
     let cache_key = Store::cache_key(&args.source_id, &args.operation, &call_args)?;
 
-    if may_cache
-        && !args.refresh
-        && let Some(entry) = store.get_entry(&cache_key)?
+    let cached_entry = if may_cache {
+        store.get_entry(&cache_key)?
+    } else {
+        None
+    };
+    if !args.refresh
+        && let Some(entry) = cached_entry.as_ref()
     {
         let cached_pagination = entry.extra.get("pagination").cloned();
         let cache_satisfies_request = args.pages <= 1
@@ -1874,7 +1879,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                 .into_redacted();
             let cache_info = cache_info(
                 CacheStatus::Hit,
-                &entry,
+                entry,
                 Some(age_seconds(&entry.created_at)?),
             );
             let cursor = cursor_for_projection(
@@ -1941,7 +1946,141 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
     }
 
     let source = callable_source_from_profile(&profile)?;
-    let adapter_call = execute_callable(&source, &operation, &call_args).await?;
+    let revalidation = if args.refresh {
+        match cached_entry
+            .as_ref()
+            .and_then(|entry| entry.observation_id.as_deref())
+        {
+            Some(observation_id) => store
+                .get_observation(observation_id)?
+                .and_then(|observation| observation.source_state),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let adapter_call =
+        execute_callable_conditional(&source, &operation, &call_args, revalidation.as_ref())
+            .await?;
+    if adapter_call.not_modified {
+        let prior = cached_entry.as_ref().ok_or_else(|| CoreError::BadArgs {
+            operation: "call --refresh".to_string(),
+            reason: "received HTTP 304 without a reusable cached observation".to_string(),
+        })?;
+        let prior_id = prior
+            .observation_id
+            .as_ref()
+            .ok_or_else(|| CoreError::BadArgs {
+                operation: "call --refresh".to_string(),
+                reason: "received HTTP 304 but cached evidence has no observation identity"
+                    .to_string(),
+            })?;
+        let prior_observation =
+            store
+                .get_observation(prior_id)?
+                .ok_or_else(|| CoreError::BadArgs {
+                    operation: "call --refresh".to_string(),
+                    reason: "received HTTP 304 but cached observation metadata is unavailable"
+                        .to_string(),
+                })?;
+        let payload = store
+            .get_payload(&prior.payload_hash)?
+            .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
+            .into_redacted();
+        let provenance = call_provenance(
+            &cache_key,
+            adapter_call.status.clone(),
+            adapter_call.duration_ms,
+            adapter_call.provenance,
+        );
+        let observation_id = store
+            .record_observation(NewObservation {
+                payload_hash: prior.payload_hash.clone(),
+                payload_available: true,
+                invocation_fingerprint: cache_key.clone(),
+                source_id: args.source_id.clone(),
+                operation: args.operation.clone(),
+                captured_at: Some(provenance.captured_at.clone()),
+                duration_ms: provenance.duration_ms,
+                status: provenance.status.clone(),
+                complete: prior_observation.complete,
+                truncated: prior_observation.truncated,
+                redacted: prior_observation.redacted,
+                source_state: prior_observation.source_state.clone(),
+                lineage: prog_core::ObservationLineage {
+                    revalidates_id: Some(prior_id.clone()),
+                    ..prog_core::ObservationLineage::default()
+                },
+                provenance: Some(provenance.clone()),
+                cache_key: Some(cache_key.clone()),
+                ..NewObservation::default()
+            })?
+            .observation_id;
+        let mut entry = prior.clone();
+        entry.observation_id = Some(observation_id.clone());
+        entry.provenance = Some(provenance.clone());
+        store.put_entry(&cache_key, &entry)?;
+        let cursor = cursor_for_projection(
+            store,
+            CursorInput {
+                cache_key: &cache_key,
+                source_id: &args.source_id,
+                operation: &args.operation,
+                root_path: &root_path,
+                payload: &payload,
+                slice: &view,
+                cache: &effective_cache,
+                may_cache,
+                lens: lens.as_ref(),
+            },
+        )?;
+        let mut envelope = envelope_for_payload(
+            store,
+            EnvelopeInput {
+                value_scan: None,
+                source_id: args.source_id.clone(),
+                operation: args.operation.clone(),
+                source_kind: Some(profile_source_kind_name(profile.kind).to_string()),
+                payload,
+                root_path,
+                slice: view,
+                payload_bytes: entry.payload_bytes,
+                observation_id: Some(observation_id),
+                provenance: Some(provenance),
+                cache: Some(cache_info(
+                    CacheStatus::Hit,
+                    &entry,
+                    Some(age_seconds(&entry.created_at)?),
+                )),
+                effects: Some(effective_effects),
+                auto_upgrade_audit,
+                redacted_paths: 0,
+                cache_disabled_reason: None,
+                warnings: vec![
+                    "HTTP validator confirmed the source is unchanged (304 Not Modified)"
+                        .to_string(),
+                ],
+                schema_hints: operation
+                    .output_shape
+                    .as_ref()
+                    .map(|shape| render_hints(shape, ""))
+                    .unwrap_or_default(),
+                next_action_operation: Some(args.operation.clone()),
+                additional_next_actions: Vec::new(),
+                observation_parser: None,
+                lens,
+            },
+            cursor,
+        )?;
+        envelope
+            .extra
+            .insert("source_validity".to_string(), json!("confirmed_unchanged"));
+        compact_envelope_to_budget(&mut envelope)?;
+        return Ok(CallSourceResult {
+            envelope,
+            received_error: false,
+        });
+    }
     let received_error = adapter_call.received_error;
     let first_pagination = adapter_call.pagination.clone();
     let redaction = resolve_redaction(Some(&profile));
@@ -7149,6 +7288,7 @@ async fn execute_callable(
                 pagination: result.pagination,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: result.not_modified,
             })
         }
         CallableSource::Cli(source) => {
@@ -7168,6 +7308,7 @@ async fn execute_callable(
                 pagination: None,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: false,
             })
         }
         CallableSource::Mcp(source) => {
@@ -7211,7 +7352,41 @@ async fn execute_callable(
                 pagination: None,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: false,
             })
+        }
+    }
+}
+
+async fn execute_callable_conditional(
+    source: &CallableSource,
+    operation: &OperationProfile,
+    args: &Value,
+    source_state: Option<&SourceStateToken>,
+) -> Result<AdapterCall> {
+    match source {
+        CallableSource::Http(source) => {
+            let result = source
+                .execute_with_env_conditional(
+                    &operation.id,
+                    args,
+                    &|name| std::env::var(name).ok(),
+                    source_state,
+                )
+                .await?;
+            Ok(AdapterCall {
+                data: result.data,
+                provenance: serde_json::to_value(result.provenance.clone())?,
+                status: Some(result.provenance.status.to_string()),
+                duration_ms: Some(result.provenance.duration_ms),
+                pagination: result.pagination,
+                warnings: result.warnings,
+                received_error: result.received_error,
+                not_modified: result.not_modified,
+            })
+        }
+        CallableSource::Cli(_) | CallableSource::Mcp(_) => {
+            execute_callable(source, operation, args).await
         }
     }
 }
@@ -7237,6 +7412,7 @@ async fn execute_callable_url(
                 pagination: result.pagination,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: result.not_modified,
             }))
         }
         // CLI and MCP sources have no URL continuation model.
