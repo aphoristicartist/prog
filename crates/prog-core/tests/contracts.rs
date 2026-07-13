@@ -387,6 +387,8 @@ fn evidence_navigation_contracts_cover_north_star_workflow() {
         normalized_goal: Some("root_cause".to_string()),
         scope_path: None,
         findings: vec![Finding {
+            occurrence_id: None,
+            fingerprint: None,
             rank: 1,
             kind: "rust_compile_error".to_string(),
             path: "/failure_sections/0".to_string(),
