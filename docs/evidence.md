@@ -30,6 +30,23 @@ after redaction and should not be used as a capability. Expanding still requires
 the original cursor, and stale, purged, expired, or redaction-version-mismatched
 cursors fail closed.
 
+## Capture lifecycle
+
+Capture, storage, and disclosure have independent limits. A small first-view
+envelope does not mean the captured payload was incomplete, and a cursor cannot
+recover bytes that an adapter did not capture. Every observation envelope
+reports `observation.availability`; nonstandard lifecycle states also include
+the detailed `observation.capture` record. The immutable observation record
+always retains full capture accounting. `capture_truncated`, `redacted`, `metadata_only`, `expired`, and
+`unavailable` evidence never grants `can_prove_absence`; only recoverable,
+complete evidence can participate in a resolved delta or verification claim.
+
+For CLI runs, capture records report separate `stdout` and `stderr` byte facts.
+For transport adapters, byte limits report the captured body size and retain an
+unknown total when the adapter stopped early. Preview omissions remain in
+`observation.completeness` and describe only model disclosure, not upstream
+capture completeness.
+
 ## Workflow
 
 ```bash

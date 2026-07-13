@@ -253,6 +253,12 @@ pub struct ObservationMetadata {
     pub trust: ObservationTrust,
     pub safety: ObservationSafety,
     pub payload: ObservationPayloadStatus,
+    pub availability: EvidenceAvailability,
+    /// Detailed byte accounting is omitted from envelopes only for the
+    /// canonical `recoverable` + complete capture state, which availability
+    /// already identifies. The immutable observation record always retains it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<CaptureCompleteness>,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
@@ -924,13 +930,96 @@ pub enum CacheStatus {
     Expired,
 }
 
-/// Whether an observation's redacted payload can still be recovered.
+/// Whether an observation's evidence can still be used for navigation or
+/// absence claims. This is a lifecycle state, not a disclosure-preview state.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceAvailability {
+    Recoverable,
+    CaptureTruncated,
+    Redacted,
+    Expired,
+    MetadataOnly,
+    #[default]
+    Unavailable,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ObservationAvailability {
-    PayloadAvailable,
-    MetadataOnly,
-    Tombstoned,
+pub enum CaptureStopReason {
+    Complete,
+    ByteLimit,
+    Timeout,
+    Cancelled,
+    Redacted,
+    StorageLimit,
+    Expired,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CaptureScope {
+    /// A bounded producer-declared channel, page, or JSON path such as
+    /// `stdout`, `stderr`, `body`, or `/items/0`.
+    pub scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    pub captured_bytes: u64,
+    pub stop_reason: CaptureStopReason,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+/// Capture and retention facts for an immutable observation. Capture,
+/// storage, and disclosure budgets are deliberately separate contracts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CaptureCompleteness {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    pub captured_bytes: u64,
+    pub stored_bytes: u64,
+    pub stop_reason: CaptureStopReason,
+    #[serde(default)]
+    pub affected: Vec<CaptureScope>,
+    pub can_prove_absence: bool,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+impl CaptureCompleteness {
+    pub fn complete(stored_bytes: u64) -> Self {
+        Self {
+            total_bytes: Some(stored_bytes),
+            captured_bytes: stored_bytes,
+            stored_bytes,
+            stop_reason: CaptureStopReason::Complete,
+            affected: Vec::new(),
+            can_prove_absence: true,
+            extra: Extra::new(),
+        }
+    }
+
+    pub fn unavailable(stored_bytes: u64) -> Self {
+        Self {
+            total_bytes: None,
+            captured_bytes: 0,
+            stored_bytes,
+            stop_reason: CaptureStopReason::Unavailable,
+            affected: Vec::new(),
+            can_prove_absence: false,
+            extra: Extra::new(),
+        }
+    }
+}
+
+impl Default for CaptureCompleteness {
+    fn default() -> Self {
+        Self::unavailable(0)
+    }
 }
 
 /// Directed, immutable relationships between captures. The relationship
@@ -959,7 +1048,7 @@ pub struct ObservationRecord {
     pub schema: String,
     pub observation_id: String,
     pub payload_hash: String,
-    pub availability: ObservationAvailability,
+    pub availability: EvidenceAvailability,
     pub invocation_fingerprint: String,
     pub source_id: String,
     pub operation: String,
@@ -970,8 +1059,7 @@ pub struct ObservationRecord {
     pub duration_ms: Option<u64>,
     #[serde(default)]
     pub status: Option<String>,
-    pub complete: bool,
-    pub truncated: bool,
+    pub capture: CaptureCompleteness,
     pub redacted: bool,
     #[serde(default)]
     pub provider: Option<String>,
@@ -1195,7 +1283,10 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<ObservationMetadata>(&mut schemas, "ObservationMetadata")?;
     insert_schema::<ObservationRecord>(&mut schemas, "ObservationRecord")?;
     insert_schema::<ObservationLineage>(&mut schemas, "ObservationLineage")?;
-    insert_schema::<ObservationAvailability>(&mut schemas, "ObservationAvailability")?;
+    insert_schema::<EvidenceAvailability>(&mut schemas, "EvidenceAvailability")?;
+    insert_schema::<CaptureStopReason>(&mut schemas, "CaptureStopReason")?;
+    insert_schema::<CaptureScope>(&mut schemas, "CaptureScope")?;
+    insert_schema::<CaptureCompleteness>(&mut schemas, "CaptureCompleteness")?;
     insert_schema::<SourceStateToken>(&mut schemas, "SourceStateToken")?;
     insert_schema::<SourceStateKind>(&mut schemas, "SourceStateKind")?;
     insert_schema::<SourceValidity>(&mut schemas, "SourceValidity")?;

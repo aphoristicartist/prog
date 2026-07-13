@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    ComparabilityAssessment, DeltaFinding, DeltaFindingStatus, Extra, Finding,
-    OBSERVATION_DELTA_SCHEMA, ObservationAvailability, ObservationDelta, ObservationRecord,
-    ScopeRelationship, SourceStateKind, SubjectIdentity,
+    ComparabilityAssessment, DeltaFinding, DeltaFindingStatus, EvidenceAvailability, Extra,
+    Finding, OBSERVATION_DELTA_SCHEMA, ObservationDelta, ObservationRecord, ScopeRelationship,
+    SourceStateKind, SubjectIdentity,
 };
 
 const MAX_DELTA_FINDINGS: usize = 100;
@@ -102,13 +102,13 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
     }
     .to_string();
     let source_validity = source_validity(baseline, subject);
-    let payloads_available = baseline.availability == ObservationAvailability::PayloadAvailable
-        && subject.availability == ObservationAvailability::PayloadAvailable;
+    let payloads_available = baseline.availability == EvidenceAvailability::Recoverable
+        && subject.availability == EvidenceAvailability::Recoverable;
     let mut reasons = Vec::new();
     if !invocation_match {
         reasons.push("canonical invocation fingerprints differ".to_string());
     }
-    if !baseline.complete || !subject.complete || baseline.truncated || subject.truncated {
+    if !baseline.capture.can_prove_absence || !subject.capture.can_prove_absence {
         reasons.push("one or both observations are incomplete or truncated".to_string());
     }
     if !normalization_compatible {
@@ -122,10 +122,8 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
     }
     let can_prove_absence = invocation_match
         && matches!(subject_identity, SubjectIdentity::Same)
-        && baseline.complete
-        && subject.complete
-        && !baseline.truncated
-        && !subject.truncated
+        && baseline.capture.can_prove_absence
+        && subject.capture.can_prove_absence
         && normalization_compatible
         && payloads_available
         && matches!(source_validity.as_str(), "valid" | "not_required");
@@ -133,8 +131,8 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
         subject_identity,
         scope_relationship,
         invocation_match,
-        baseline_complete: baseline.complete && !baseline.truncated,
-        subject_complete: subject.complete && !subject.truncated,
+        baseline_complete: baseline.capture.can_prove_absence,
+        subject_complete: subject.capture.can_prove_absence,
         normalization_compatible,
         workspace_validity,
         source_validity,
@@ -206,14 +204,16 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{FindingCommandHints, ObservationAvailability, ObservationLineage};
+    use crate::{
+        CaptureCompleteness, EvidenceAvailability, FindingCommandHints, ObservationLineage,
+    };
 
     fn observation(id: &str, invocation: &str, complete: bool) -> ObservationRecord {
         ObservationRecord {
             schema: "prog.observation".to_string(),
             observation_id: id.to_string(),
             payload_hash: "sha256:x".to_string(),
-            availability: ObservationAvailability::PayloadAvailable,
+            availability: EvidenceAvailability::Recoverable,
             invocation_fingerprint: invocation.to_string(),
             source_id: "run".to_string(),
             operation: "test".to_string(),
@@ -221,8 +221,19 @@ mod tests {
             captured_at: "2026-07-13T12:00:00Z".to_string(),
             duration_ms: None,
             status: None,
-            complete,
-            truncated: !complete,
+            capture: if complete {
+                CaptureCompleteness::complete(1)
+            } else {
+                CaptureCompleteness {
+                    total_bytes: None,
+                    captured_bytes: 1,
+                    stored_bytes: 1,
+                    stop_reason: crate::CaptureStopReason::ByteLimit,
+                    affected: Vec::new(),
+                    can_prove_absence: false,
+                    extra: Extra::new(),
+                }
+            },
             redacted: false,
             provider: None,
             parser: None,
@@ -295,5 +306,24 @@ mod tests {
                 .contains("canonical invocation")
         );
         let _ = json!(delta);
+    }
+
+    #[test]
+    fn redacted_or_metadata_only_evidence_never_proves_absence() {
+        for availability in [
+            EvidenceAvailability::Redacted,
+            EvidenceAvailability::CaptureTruncated,
+            EvidenceAvailability::MetadataOnly,
+            EvidenceAvailability::Expired,
+            EvidenceAvailability::Unavailable,
+        ] {
+            let baseline = observation("a", "same", true);
+            let mut subject = observation("b", "same", true);
+            subject.availability = availability;
+            subject.capture.can_prove_absence = false;
+            let delta = compare_observations(&baseline, &subject, &[finding("old")], &[]);
+            assert!(!delta.assessment.can_prove_absence, "{availability:?}");
+            assert_eq!(delta.findings[0].status, DeltaFindingStatus::Unknown);
+        }
     }
 }
