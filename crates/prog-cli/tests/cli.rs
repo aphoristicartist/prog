@@ -3353,6 +3353,47 @@ fn cache_list_and_purge_are_real_json_commands() {
 }
 
 #[test]
+fn captures_surface_immutable_observation_identity_across_cursor_and_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let file = dir.path().join("observation.json");
+    fs::write(&file, br#"{"items":[{"id":1},{"id":2}]}"#).unwrap();
+
+    let observed = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--name",
+        "fixture",
+    ]);
+    assert!(observed.status.success(), "{}", stdout(&observed));
+    let first: Value = serde_json::from_slice(&observed.stdout).unwrap();
+    let observation_id = first["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(observation_id.starts_with("obs_"));
+    let cursor = first["cursor"].as_str().unwrap();
+
+    let expanded = prog(&["--dir", dir_arg, "expand", cursor, "--path", "/items"]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let expanded: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(expanded["observation"]["observation_id"], observation_id);
+
+    let listed = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "1"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(listed["observations"].as_array().unwrap().len(), 1);
+    assert_eq!(listed["observations"][0]["observation_id"], observation_id);
+    assert_eq!(
+        listed["observations"][0]["availability"],
+        "payload_available"
+    );
+}
+
+#[test]
 fn cache_get_missing_uses_structured_cache_miss_error() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();

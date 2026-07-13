@@ -13,6 +13,7 @@ pub const INSPECT_SCHEMA: &str = "prog.inspect";
 pub const EVIDENCE_BLOCK_SCHEMA: &str = "prog.evidence";
 pub const SEARCH_SCHEMA: &str = "prog.search";
 pub const SESSION_SCHEMA: &str = "prog.session";
+pub const OBSERVATION_SCHEMA: &str = "prog.observation";
 
 pub type Extra = Map<String, Value>;
 
@@ -242,6 +243,8 @@ pub struct DisclosureEnvelope {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct ObservationMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_id: Option<String>,
     pub completeness: ObservationCompleteness,
     pub freshness: ObservationFreshness,
     pub trust: ObservationTrust,
@@ -778,6 +781,10 @@ pub struct CursorRecord {
     pub redaction_version: u32,
     pub created_at: String,
     pub expires_at: String,
+    /// Immutable capture identity. Cursors are short-lived capabilities and
+    /// must never be treated as the identity of the underlying observation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_id: Option<String>,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
@@ -796,6 +803,10 @@ pub struct CacheEntryMeta {
     pub cacheable: bool,
     #[serde(default)]
     pub sensitive: bool,
+    /// The capture that produced this reusable cache entry. A cache hit must
+    /// reference this record instead of fabricating a new execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_id: Option<String>,
     #[serde(default)]
     pub provenance: Option<CallProvenance>,
     #[serde(default, flatten)]
@@ -841,6 +852,77 @@ pub enum CacheStatus {
     Expired,
 }
 
+/// Whether an observation's redacted payload can still be recovered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationAvailability {
+    PayloadAvailable,
+    MetadataOnly,
+    Tombstoned,
+}
+
+/// Directed, immutable relationships between captures. The relationship
+/// values are opaque observation identifiers, never cursors or cache keys.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObservationLineage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_from_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revalidates_id: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+/// Immutable metadata for one real upstream, command, artifact, or internal
+/// capture. Payload bytes remain in the payload store; cache entries and
+/// cursors only refer to this record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ObservationRecord {
+    pub schema: String,
+    pub observation_id: String,
+    pub payload_hash: String,
+    pub availability: ObservationAvailability,
+    pub invocation_fingerprint: String,
+    pub source_id: String,
+    pub operation: String,
+    #[serde(default)]
+    pub subject_keys: Vec<String>,
+    pub captured_at: String,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub status: Option<String>,
+    pub complete: bool,
+    pub truncated: bool,
+    pub redacted: bool,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub parser: Option<String>,
+    #[serde(default)]
+    pub lens: Option<String>,
+    #[serde(default)]
+    pub workspace_state: Option<String>,
+    #[serde(default)]
+    pub source_state: Option<String>,
+    #[serde(default)]
+    pub environment_state: Option<String>,
+    #[serde(default)]
+    pub lineage: ObservationLineage,
+    #[serde(default)]
+    pub provenance: Option<CallProvenance>,
+    #[serde(default)]
+    pub cache_key: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
 pub fn canonical_json(value: &Value) -> crate::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&sort_json(value))?)
 }
@@ -852,6 +934,9 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<Shape>(&mut schemas, "Shape")?;
     insert_schema::<EffectSet>(&mut schemas, "EffectSet")?;
     insert_schema::<ObservationMetadata>(&mut schemas, "ObservationMetadata")?;
+    insert_schema::<ObservationRecord>(&mut schemas, "ObservationRecord")?;
+    insert_schema::<ObservationLineage>(&mut schemas, "ObservationLineage")?;
+    insert_schema::<ObservationAvailability>(&mut schemas, "ObservationAvailability")?;
     insert_schema::<CachePolicy>(&mut schemas, "CachePolicy")?;
     insert_schema::<TrustSettings>(&mut schemas, "TrustSettings")?;
     insert_schema::<AuthRef>(&mut schemas, "AuthRef")?;
