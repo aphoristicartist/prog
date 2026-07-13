@@ -3450,6 +3450,9 @@ fn explicit_delta_reports_new_and_resolved_findings_for_repeated_command() {
         .as_str()
         .unwrap()
         .to_string();
+    assert_eq!(second["changes_since"]["baseline_observation_id"], first_id);
+    assert_eq!(second["changes_since"]["counts"]["new"], 1);
+    assert_eq!(second["changes_since"]["counts"]["resolved"], 1);
     let delta = prog(&["--dir", dir_arg, "delta", &first_id, &second_id]);
     assert!(delta.status.success(), "{}", stdout(&delta));
     let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
@@ -3462,6 +3465,34 @@ fn explicit_delta_reports_new_and_resolved_findings_for_repeated_command() {
             matches!(finding["status"].as_str(), Some("new") | Some("resolved"))
         })
     );
+}
+
+#[test]
+fn automatic_delta_never_matches_similar_but_different_command_invocations() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        "-c",
+        "print('error one')",
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let second = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        "-c",
+        "print('error two')",
+    ]);
+    assert!(second.status.success(), "{}", stdout(&second));
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert!(second.get("changes_since").is_none());
 }
 
 #[tokio::test]
