@@ -33,6 +33,15 @@ fn prog(args: &[&str]) -> Output {
         .expect("prog binary should run")
 }
 
+fn prog_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_prog"));
+    command.args(args);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    command.output().expect("prog binary should run")
+}
+
 fn prog_with_stdin(args: &[&str], stdin: &[u8]) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_prog"))
         .args(args)
@@ -3674,6 +3683,160 @@ fn verification_accepts_a_complete_successful_command_as_evidence() {
     assert_eq!(readiness["evaluations"][0]["status"], "passed");
 }
 
+#[test]
+fn disclosure_budget_flag_is_hard_and_retains_recovery_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("large.json");
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({"items": [{"body": "x".repeat(16_000)}]})).unwrap(),
+    )
+    .unwrap();
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--budget-bytes",
+        "2048",
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--name",
+        "large",
+    ]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    assert!(
+        output.stdout.len() <= 2048,
+        "stdout was {} bytes: {}",
+        output.stdout.len(),
+        stdout(&output)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["disclosure_budget"]["source"], "flag");
+    assert_eq!(value["disclosure_budget"]["effective_bytes"], 2048);
+    assert_eq!(
+        value["disclosure_budget"]["actual_bytes"].as_u64().unwrap() as usize,
+        output.stdout.len()
+    );
+    assert!(value["cursor"].as_str().is_some());
+    assert!(value["observation"]["observation_id"].as_str().is_some());
+}
+
+#[test]
+fn disclosure_budget_precedence_and_token_estimate_are_explicit() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let from_environment = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "--budget-tokens",
+            "512",
+            "session",
+            "start",
+        ],
+        &[("PROG_BUDGET_BYTES", "4096")],
+    );
+    assert!(
+        from_environment.status.success(),
+        "{}",
+        stdout(&from_environment)
+    );
+    let from_environment: Value = serde_json::from_slice(&from_environment.stdout).unwrap();
+    assert_eq!(from_environment["disclosure_budget"]["source"], "flag");
+    assert_eq!(
+        from_environment["disclosure_budget"]["requested_tokens"],
+        512
+    );
+    assert_eq!(
+        from_environment["disclosure_budget"]["requested_bytes"],
+        Value::Null
+    );
+    assert_eq!(
+        from_environment["disclosure_budget"]["effective_bytes"],
+        2048
+    );
+    assert_eq!(
+        from_environment["disclosure_budget"]["token_estimator"],
+        "bytes_div_4_approximate"
+    );
+
+    let byte_flag_wins = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "--budget-bytes",
+            "3072",
+            "session",
+            "start",
+        ],
+        &[
+            ("PROG_BUDGET_BYTES", "4096"),
+            ("PROG_BUDGET_TOKENS", "8192"),
+        ],
+    );
+    assert!(
+        byte_flag_wins.status.success(),
+        "{}",
+        stdout(&byte_flag_wins)
+    );
+    let byte_flag_wins: Value = serde_json::from_slice(&byte_flag_wins.stdout).unwrap();
+    assert_eq!(byte_flag_wins["disclosure_budget"]["effective_bytes"], 3072);
+    assert_eq!(byte_flag_wins["disclosure_budget"]["requested_bytes"], 3072);
+
+    let environment_only = prog_with_env(
+        &["--dir", dir_arg, "session", "start"],
+        &[("PROG_BUDGET_BYTES", "4096")],
+    );
+    assert!(
+        environment_only.status.success(),
+        "{}",
+        stdout(&environment_only)
+    );
+    let environment_only: Value = serde_json::from_slice(&environment_only.stdout).unwrap();
+    assert_eq!(
+        environment_only["disclosure_budget"]["source"],
+        "environment"
+    );
+    assert_eq!(
+        environment_only["disclosure_budget"]["effective_bytes"],
+        4096
+    );
+
+    let capped = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "--budget-bytes",
+            "1000000",
+            "session",
+            "start",
+        ],
+        &[],
+    );
+    assert!(capped.status.success(), "{}", stdout(&capped));
+    let capped: Value = serde_json::from_slice(&capped.stdout).unwrap();
+    assert_eq!(capped["disclosure_budget"]["effective_bytes"], 64 * 1024);
+}
+
+#[test]
+fn disclosure_budget_rejects_zero_and_reports_the_minimum() {
+    let output = prog(&["--budget-bytes", "0", "session", "start"]);
+    assert!(!output.status.success());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["error"]["kind"], "bad_args");
+
+    let output = prog(&["--budget-bytes", "128", "session", "start"]);
+    assert!(!output.status.success());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["error"]["kind"], "budget_too_small");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("at least 512 bytes")
+    );
+}
+
 #[tokio::test]
 async fn http_capture_persists_scoped_etag_source_state() {
     let dir = tempfile::tempdir().unwrap();
@@ -4070,8 +4233,9 @@ fn meta_lists_and_discloses_contract_schemas() {
     let schema = prog(&["--dir", dir_arg, "--pretty", "meta", "SourceProfile"]);
     assert!(schema.status.success(), "{}", stdout(&schema));
     let text = stdout(&schema);
-    assert!(text.starts_with("{\n"));
     let value: Value = serde_json::from_str(&text).unwrap();
+    assert!(text.len() <= 16 * 1024);
+    assert_eq!(value["disclosure_budget"]["effective_bytes"], 16 * 1024);
     assert_eq!(value["operation"], "SourceProfile");
     assert_eq!(value["summary"]["kind"], "object");
     assert!(value["data_preview"].is_object());
