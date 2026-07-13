@@ -1,5 +1,5 @@
 {
-  "schema_version": "prog.model_profile.v1",
+  "schema": "prog.model_profile",
   "model": "fable-class-long-context-2026-07",
   "input_price_per_million_tokens": 10.0,
   "output_price_per_million_tokens": 50.0,

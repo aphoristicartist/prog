@@ -1,4 +1,4 @@
-use std::{sync::Arc, thread};
+use std::{fs, sync::Arc, thread};
 
 use chrono::{Duration, SecondsFormat, Utc};
 use prog_core::{
@@ -67,6 +67,28 @@ fn payloads_survive_across_store_process_boundaries() {
         reopened.get_payload(&hash).unwrap().unwrap().as_value(),
         &payload
     );
+}
+
+#[test]
+fn existing_store_without_schema_identity_is_reset() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache");
+    fs::create_dir_all(&cache).unwrap();
+    let db = redb::Database::create(cache.join("data.redb")).unwrap();
+    let write = db.begin_write().unwrap();
+    {
+        const PAYLOADS: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("payloads");
+        let mut payloads = write.open_table(PAYLOADS).unwrap();
+        let legacy_payload = br#"{"legacy":true}"#.to_vec();
+        payloads
+            .insert("sha256:legacy", legacy_payload.as_slice())
+            .unwrap();
+    }
+    write.commit().unwrap();
+    drop(db);
+
+    let store = Store::open(dir.path()).unwrap();
+    assert!(store.get_payload("sha256:legacy").unwrap().is_none());
 }
 
 #[test]
@@ -237,7 +259,7 @@ fn profile_updates_converge_under_locking() {
         .collect();
     operations.sort();
     assert_eq!(operations, vec!["left", "right"]);
-    assert_eq!(profile.version, 2);
+    assert_eq!(profile.revision, 2);
 }
 
 #[test]
@@ -389,10 +411,10 @@ fn format_time(value: chrono::DateTime<Utc>) -> String {
 
 fn add_operation(current: Option<SourceProfile>, id: &str) -> SourceProfile {
     let mut profile = current.unwrap_or_else(|| SourceProfile {
-        schema_version: "prog.source_profile.v1".to_string(),
+        schema: "prog.source_profile".to_string(),
         id: "local".to_string(),
         kind: SourceKind::Cli,
-        version: 0,
+        revision: 0,
         description: None,
         operations: Vec::new(),
         auth: Vec::new(),

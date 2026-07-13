@@ -6,24 +6,54 @@ use serde_json::{Map, Value};
 use crate::redaction::RedactionConfig;
 use crate::shape::Shape;
 
-pub const SOURCE_PROFILE_VERSION: &str = "prog.source_profile.v1";
-pub const DISCLOSURE_VERSION: &str = "prog.disclosure.v1";
-pub const LENS_MANIFEST_VERSION: &str = "prog.lens_manifest.v1";
-pub const INSPECT_VERSION: &str = "prog.inspect.v1";
-pub const EVIDENCE_BLOCK_VERSION: &str = "prog.evidence.v1";
-pub const SEARCH_VERSION: &str = "prog.search.v1";
-pub const SESSION_VERSION: &str = "prog.session.v1";
+pub const SOURCE_PROFILE_SCHEMA: &str = "prog.source_profile";
+pub const DISCLOSURE_SCHEMA: &str = "prog.disclosure";
+pub const LENS_MANIFEST_SCHEMA: &str = "prog.lens_manifest";
+pub const INSPECT_SCHEMA: &str = "prog.inspect";
+pub const EVIDENCE_BLOCK_SCHEMA: &str = "prog.evidence";
+pub const SEARCH_SCHEMA: &str = "prog.search";
+pub const SESSION_SCHEMA: &str = "prog.session";
 
 pub type Extra = Map<String, Value>;
+
+/// Reject compatibility-era profile data instead of attempting to interpret it.
+/// Adapter metadata remains in `extra`, but contract identity and local profile
+/// bookkeeping have one current representation during the pre-release period.
+pub fn validate_source_profile(profile: &SourceProfile) -> crate::Result<()> {
+    if profile.schema != SOURCE_PROFILE_SCHEMA {
+        return Err(crate::CoreError::BadArgs {
+            operation: "source profile".to_string(),
+            reason: format!(
+                "schema must be '{SOURCE_PROFILE_SCHEMA}', got '{}'",
+                profile.schema
+            ),
+        });
+    }
+    if profile.revision == 0 {
+        return Err(crate::CoreError::BadArgs {
+            operation: "source profile".to_string(),
+            reason: "revision must be greater than zero".to_string(),
+        });
+    }
+    for legacy in ["schema_version", "version"] {
+        if profile.extra.contains_key(legacy) {
+            return Err(crate::CoreError::BadArgs {
+                operation: "source profile".to_string(),
+                reason: format!("'{legacy}' is unsupported; regenerate this pre-release profile"),
+            });
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SourceProfile {
-    pub schema_version: String,
+    pub schema: String,
     pub id: String,
     pub kind: SourceKind,
     #[serde(default)]
-    pub version: u64,
+    pub revision: u64,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -179,7 +209,7 @@ pub struct AuthRef {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct DisclosureEnvelope {
-    pub schema_version: String,
+    pub schema: String,
     #[serde(default)]
     pub source_id: Option<String>,
     #[serde(default)]
@@ -295,7 +325,7 @@ pub struct ObservationPayloadStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct EvidenceRef {
-    pub schema_version: String,
+    pub schema: String,
     pub source_id: String,
     pub operation: String,
     #[serde(default)]
@@ -324,7 +354,7 @@ pub struct EvidenceRef {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct InspectResponse {
-    pub schema_version: String,
+    pub schema: String,
     pub cursor: String,
     pub goal: String,
     #[serde(default)]
@@ -425,7 +455,7 @@ pub struct RedactionState {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct EvidenceBlock {
-    pub schema_version: String,
+    pub schema: String,
     pub cursor: String,
     pub path: String,
     pub kind: String,
@@ -478,7 +508,7 @@ pub struct EvidenceCitation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SearchResponse {
-    pub schema_version: String,
+    pub schema: String,
     pub cursor: String,
     #[serde(default)]
     pub query: Option<String>,
@@ -580,12 +610,10 @@ pub struct NextAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct LensManifest {
-    pub schema_version: String,
+    pub schema: String,
     pub id: String,
-    #[serde(default)]
-    pub version: u64,
     #[serde(default, rename = "match")]
     pub match_rules: LensMatch,
     #[serde(default)]
@@ -600,8 +628,6 @@ pub struct LensManifest {
     pub invariants: Vec<String>,
     #[serde(default)]
     pub fixtures: LensFixtures,
-    #[serde(default, flatten)]
-    pub extra: Extra,
 }
 
 /// Declarative, data-only finding provider used by a lens manifest.
@@ -651,7 +677,7 @@ pub struct SessionEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionTrail {
-    pub schema_version: String,
+    pub schema: String,
     pub session_id: String,
     #[serde(default)]
     pub goal: Option<String>,

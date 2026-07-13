@@ -223,7 +223,6 @@ The manifest should be intentionally small:
 
 ```yaml
 id: github.issues.triage
-version: 1
 
 match:
   source_kind: http

@@ -124,7 +124,7 @@ The value proposition of `prog` is bounded context injection. That bound is a co
 - Every agent-visible document (envelope, hints, expansion result) respects `max_envelope_bytes` (default 16 KiB, configurable per store and per call).
 - The projection algorithm is deterministic: per-node caps (array items, object fields, string length, depth) plus a global node budget, applied in traversal order. Same payload + same policy = same preview, always.
 - If a projection still exceeds the budget, it is re-projected at a coarser policy (reflexive budgeting), never silently truncated mid-JSON.
-- Summaries include `approx_tokens` (bytes/4 heuristic) so agents can reason about cost before expanding.
+- Summaries include `approx_tokens`, an explicit `envelope_bytes / 4` ceiling estimate for the delivered JSON envelope, so agents can reason about immediate context cost before expanding.
 
 ## Example Interaction
 
@@ -139,7 +139,7 @@ A `call` should return something like:
 
 ```json
 {
-  "schema_version": "prog.disclosure.v1",
+  "schema": "prog.disclosure",
   "source_id": "github",
   "operation": "list_issues",
   "summary": {
@@ -303,13 +303,13 @@ Returns prog's own contracts (JSON Schemas generated via `schemars`) rendered th
 
 All machine-readable output uses these contracts rather than ad hoc JSON.
 
-Forward-compatibility rule: **consumers must preserve unknown fields on round-trip** (serde `flatten` extra map). Without this, the first schema evolution breaks every stored profile.
+Pre-release contract rule: profile and lens inputs must match the current contract and reject compatibility-era fields. Agent-facing output metadata remains additive, so consumers should ignore output fields they do not use.
 
 ### `SourceProfile`
 
 ```json
 {
-  "schema_version": "prog.source_profile.v1",
+  "schema": "prog.source_profile",
   "id": "github",
   "kind": "http",
   "display_name": "GitHub REST API",
@@ -324,7 +324,7 @@ Forward-compatibility rule: **consumers must preserve unknown fields on round-tr
 }
 ```
 
-Required fields: `schema_version`, `id`, `kind`, `version`, `operations`, `cache_policy`, `safety`, `provenance`.
+Required fields: `schema`, `id`, `kind`, `revision`, `operations`, `cache_policy`, `safety`, `provenance`.
 
 Profiles must never contain secrets. Auth is referenced by environment-variable name only; profiles are designed to be committed to a repo.
 
@@ -359,7 +359,7 @@ Profiles must never contain secrets. Auth is referenced by environment-variable 
 
 ```json
 {
-  "schema_version": "prog.disclosure.v1",
+  "schema": "prog.disclosure",
   "source_id": "github",
   "operation": "list_issues",
   "view": null,
@@ -682,7 +682,7 @@ Policy rules (all fail closed; unknown = worst case):
 Two agent processes may run `prog` against the same `.prog/` simultaneously.
 
 - The redb store has a single-writer model; concurrent writers block briefly. Acceptable for V1.
-- Profiles-as-JSON-files are the hazard: racy read-modify-write loses learned schema, which silently violates monotone learning (I5). Profile writes therefore go through **compare-and-swap on the profile `version` field** (write to temp file, verify version unchanged under a lock file, atomic rename). On CAS failure: re-read, re-join (join makes retry safe and convergent), retry.
+- Profiles-as-JSON-files are the hazard: racy read-modify-write loses learned schema, which silently violates monotone learning (I5). Profile writes therefore go through a lock-protected update with a monotonically increasing local `revision` (write to temp file and atomically rename). This revision is local state bookkeeping, not a wire-schema compatibility version.
 
 ## Storage Layout
 

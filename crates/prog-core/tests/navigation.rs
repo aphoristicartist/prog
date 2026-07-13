@@ -92,9 +92,8 @@ fn search_and_evidence_are_bounded_and_preserve_redaction() {
 #[test]
 fn lens_findings_resolve_existing_wildcards_and_reject_path_escape() {
     let lens: LensManifest = serde_json::from_value(json!({
-        "schema_version": "prog.lens_manifest.v1",
+        "schema": "prog.lens_manifest",
         "id": "test.failures",
-        "version": 1,
         "view": {"root": "/items"},
         "findings": [{
             "kind": "test_failure",
@@ -136,9 +135,8 @@ fn lens_findings_resolve_existing_wildcards_and_reject_path_escape() {
     assert!(!encoded.contains("plain-lens-secret"));
 
     let escaping: LensManifest = serde_json::from_value(json!({
-        "schema_version": "prog.lens_manifest.v1",
+        "schema": "prog.lens_manifest",
         "id": "test.escape",
-        "version": 1,
         "view": {"root": "/items"},
         "findings": [{
             "kind": "bad",

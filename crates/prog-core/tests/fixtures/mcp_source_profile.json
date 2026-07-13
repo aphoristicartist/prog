@@ -1,8 +1,8 @@
 {
-  "schema_version": "prog.source_profile.v1",
+  "schema": "prog.source_profile",
   "id": "fixture_mcp",
   "kind": "mcp",
-  "version": 1,
+  "revision": 1,
   "description": "MCP fixture with a declared output schema",
   "operations": [
     {

@@ -1,7 +1,6 @@
 {
-  "schema_version": "prog.lens_manifest.v1",
+  "schema": "prog.lens_manifest",
   "id": "sarif",
-  "version": 1,
   "match": {"source_id": "observe", "artifact_kind": "sarif"},
   "view": {"root": "/runs/0/results", "limit": 20, "depth": 5, "fields": {"rule_id": "/ruleId", "level": "/level", "message": "/message/text", "locations": "/locations"}},
   "omit": [{"path": "/runs/0/results/*/codeFlows", "reason": "deep_object", "detail": "SARIF code flows remain cursor-expandable", "expandable": true}],

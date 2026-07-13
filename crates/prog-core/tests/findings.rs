@@ -645,7 +645,7 @@ fn build_inspect_response_assembles_ranked_response_and_round_trips_serde() {
         .build();
     let response = build_inspect_response(&payload, &request).unwrap();
 
-    assert_eq!(response.schema_version, "prog.inspect.v1");
+    assert_eq!(response.schema, "prog.inspect");
     assert_eq!(response.cursor, "pc1_inspect");
     assert_eq!(response.goal, "why did tests fail");
     assert_eq!(response.normalized_goal.as_deref(), Some("root_cause"));

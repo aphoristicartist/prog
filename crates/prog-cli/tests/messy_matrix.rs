@@ -198,7 +198,7 @@ fn validate_scenario(store: &Path, source_id: &str, operation: &str, id: usize) 
     );
 
     let envelope: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(envelope["schema_version"], "prog.disclosure.v1");
+    assert_eq!(envelope["schema"], "prog.disclosure");
     assert_eq!(envelope["source_id"], source_id);
     assert_eq!(envelope["operation"], operation);
     assert_eq!(envelope["cache"]["status"], "stored");

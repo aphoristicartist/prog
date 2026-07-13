@@ -6,7 +6,7 @@ scenarios.
 
 ```bash
 cargo test -p prog-cli --test evidence_acquisition
-PROG_EVIDENCE_EVAL_UPDATE=1 cargo test -p prog-cli --test evidence_acquisition -- --nocapture
+scripts/regenerate-eval-fixtures.sh
 ```
 
 The checked baseline records tool calls, output-token estimates, top finding

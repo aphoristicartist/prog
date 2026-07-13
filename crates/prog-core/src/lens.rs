@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     CoreError, ExpandablePayload, ExpansionScope, Extra, Finding, FindingCommandHints,
-    FindingOptions, LENS_MANIFEST_VERSION, LensFindingRule, LensManifest, LensOmission, NextAction,
+    FindingOptions, LENS_MANIFEST_SCHEMA, LensFindingRule, LensManifest, LensOmission, NextAction,
     OmittedRegion, PreviewPolicy, Projection, RedactionPolicy, RedactionState, Result, ScopedSlice,
     SliceRequest,
     disclosure::{expand, project},
@@ -19,12 +19,12 @@ pub struct LensProjection {
 }
 
 pub fn validate_lens_manifest(manifest: &LensManifest) -> Result<()> {
-    if manifest.schema_version != LENS_MANIFEST_VERSION {
+    if manifest.schema != LENS_MANIFEST_SCHEMA {
         return Err(lens_error(
             manifest,
             format!(
-                "schema_version must be '{LENS_MANIFEST_VERSION}', got '{}'",
-                manifest.schema_version
+                "schema must be '{LENS_MANIFEST_SCHEMA}', got '{}'",
+                manifest.schema
             ),
         ));
     }
@@ -33,9 +33,6 @@ pub fn validate_lens_manifest(manifest: &LensManifest) -> Result<()> {
             manifest,
             "id must contain 1-128 ASCII letters, digits, '.', '_', or '-'",
         ));
-    }
-    if manifest.version == 0 {
-        return Err(lens_error(manifest, "version must be greater than zero"));
     }
     if manifest.findings.len() > 100 {
         return Err(lens_error(

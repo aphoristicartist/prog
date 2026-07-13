@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use crate::{
     CacheEntryMeta, CallProvenance, CoreError, CursorRecord, PersistedPayload, RedactedPayload,
-    RedactionPolicy, Result, SESSION_VERSION, SessionEvent, SessionTrail, SourceProfile,
-    ValidatedCursor, canonical_json,
+    RedactionPolicy, Result, SESSION_SCHEMA, SessionEvent, SessionTrail, SourceProfile,
+    ValidatedCursor, canonical_json, validate_source_profile,
 };
 
 const PAYLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("payloads");
@@ -24,6 +24,8 @@ const CURSORS: TableDefinition<&str, &[u8]> = TableDefinition::new("cursors");
 const SESSIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("sessions");
 const STATE: TableDefinition<&str, &[u8]> = TableDefinition::new("state");
 const CURRENT_SESSION_KEY: &str = "current_session";
+const STORE_SCHEMA_KEY: &str = "store_schema";
+const STORE_SCHEMA: &str = "prog.store";
 
 #[derive(Debug)]
 pub struct Store {
@@ -72,6 +74,7 @@ impl Store {
         set_dir_permissions(&logs)?;
 
         let db_path = cache.join("data.redb");
+        let store_existed = db_path.exists();
         let db = Database::create(&db_path).map_err(CoreError::storage)?;
         set_file_permissions(&db_path)?;
 
@@ -84,6 +87,36 @@ impl Store {
             write.open_table(STATE).map_err(CoreError::storage)?;
         }
         write.commit().map_err(CoreError::storage)?;
+
+        let read = db.begin_read().map_err(CoreError::storage)?;
+        let state = read.open_table(STATE).map_err(CoreError::storage)?;
+        let store_schema = state
+            .get(STORE_SCHEMA_KEY)
+            .map_err(CoreError::storage)?
+            .map(|value| String::from_utf8_lossy(value.value()).into_owned());
+        drop(state);
+        drop(read);
+        if store_schema.as_deref() != Some(STORE_SCHEMA) {
+            let write = db.begin_write().map_err(CoreError::storage)?;
+            {
+                let mut entries = write.open_table(ENTRIES).map_err(CoreError::storage)?;
+                let mut payloads = write.open_table(PAYLOADS).map_err(CoreError::storage)?;
+                let mut cursors = write.open_table(CURSORS).map_err(CoreError::storage)?;
+                let mut sessions = write.open_table(SESSIONS).map_err(CoreError::storage)?;
+                let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
+                if store_existed {
+                    retain_none(&mut entries)?;
+                    retain_none(&mut payloads)?;
+                    retain_none(&mut cursors)?;
+                    retain_none(&mut sessions)?;
+                    retain_none(&mut state)?;
+                }
+                state
+                    .insert(STORE_SCHEMA_KEY, STORE_SCHEMA.as_bytes())
+                    .map_err(CoreError::storage)?;
+            }
+            write.commit().map_err(CoreError::storage)?;
+        }
 
         Ok(Self { dir, db })
     }
@@ -277,7 +310,7 @@ impl Store {
                 .collect::<String>()
         });
         let trail = SessionTrail {
-            schema_version: SESSION_VERSION.to_string(),
+            schema: SESSION_SCHEMA.to_string(),
             session_id: session_id.clone(),
             goal,
             created_at: now.clone(),
@@ -406,6 +439,9 @@ impl Store {
                 purged_sessions: retain_none(&mut sessions)?,
             };
             retain_none(&mut state)?;
+            state
+                .insert(STORE_SCHEMA_KEY, STORE_SCHEMA.as_bytes())
+                .map_err(CoreError::storage)?;
         }
         write.commit().map_err(CoreError::storage)?;
         Ok(summary)
@@ -446,13 +482,14 @@ impl Store {
         } else {
             None
         };
-        let current_version = current
+        let current_revision = current
             .as_ref()
-            .map_or(0, |profile: &SourceProfile| profile.version);
+            .map_or(0, |profile: &SourceProfile| profile.revision);
         let mut next = update(current);
-        if next.version <= current_version {
-            next.version = current_version.saturating_add(1);
+        if next.revision <= current_revision {
+            next.revision = current_revision.saturating_add(1);
         }
+        validate_source_profile(&next)?;
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, serde_json::to_vec_pretty(&next)?)?;
         set_file_permissions(&tmp)?;
@@ -466,7 +503,9 @@ impl Store {
         if !path.exists() {
             return Ok(None);
         }
-        Ok(Some(serde_json::from_slice(&fs::read(path)?)?))
+        let profile = serde_json::from_slice(&fs::read(path)?)?;
+        validate_source_profile(&profile)?;
+        Ok(Some(profile))
     }
 
     fn profile_path(&self, id: &str) -> Result<PathBuf> {

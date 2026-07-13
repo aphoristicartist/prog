@@ -1,7 +1,6 @@
 {
-  "schema_version": "prog.lens_manifest.v1",
+  "schema": "prog.lens_manifest",
   "id": "logs",
-  "version": 1,
   "match": {"source_id": "observe", "artifact_kind": "text"},
   "view": {"limit": 20, "depth": 4, "fields": {"head": "/head", "tail": "/tail", "line_count": "/line_count", "byte_count": "/byte_count"}},
   "omit": [{"path": "/lines", "reason": "long_array", "detail": "all redacted log lines remain cursor-expandable", "expandable": true}],

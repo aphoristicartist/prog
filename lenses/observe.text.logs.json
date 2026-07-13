@@ -1,7 +1,6 @@
 {
-  "schema_version": "prog.lens_manifest.v1",
+  "schema": "prog.lens_manifest",
   "id": "observe.text.logs",
-  "version": 1,
   "match": {
     "source_id": "observe",
     "artifact_kind": "text"

@@ -99,7 +99,7 @@ fn readme_cli_quickstart_commands_stay_copy_pasteable() {
     );
     assert_success(&call);
     let envelope = json(&call);
-    assert_eq!(envelope["schema_version"], "prog.disclosure.v1");
+    assert_eq!(envelope["schema"], "prog.disclosure");
     assert_eq!(envelope["source_id"], "demo_cli");
     assert_eq!(envelope["operation"], "list");
     assert_eq!(envelope["cache"]["status"], "stored");
@@ -107,6 +107,13 @@ fn readme_cli_quickstart_commands_stay_copy_pasteable() {
     assert!(
         envelope["summary"]["envelope_bytes"].as_u64().unwrap() <= 16 * 1024,
         "envelope should remain bounded"
+    );
+    assert_eq!(
+        envelope["summary"]["approx_tokens"],
+        envelope["summary"]["envelope_bytes"]
+            .as_u64()
+            .unwrap()
+            .div_ceil(4)
     );
     assert!(
         envelope["schema_hints"]

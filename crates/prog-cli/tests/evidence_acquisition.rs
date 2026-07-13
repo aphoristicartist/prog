@@ -17,7 +17,7 @@ struct Scenario {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Report {
-    schema_version: String,
+    schema: String,
     scenarios: Vec<ScenarioMetrics>,
     summary: Summary,
 }
@@ -70,7 +70,7 @@ fn evidence_acquisition_eval_smoke() {
         scenarios.push(measure(scenario));
     }
     let report = Report {
-        schema_version: "prog.evidence_acquisition_eval.v1".to_string(),
+        schema: "prog.evidence_acquisition_eval".to_string(),
         summary: Summary {
             scenario_count: scenarios.len() as u64,
             correct_top_findings: scenarios.iter().filter(|scenario| scenario.correct).count()

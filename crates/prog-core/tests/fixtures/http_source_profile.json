@@ -1,8 +1,8 @@
 {
-  "schema_version": "prog.source_profile.v1",
+  "schema": "prog.source_profile",
   "id": "github",
   "kind": "http",
-  "version": 1,
+  "revision": 1,
   "description": "GitHub issues API fixture",
   "auth": [
     {

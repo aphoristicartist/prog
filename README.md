@@ -202,7 +202,7 @@ and `evidence` have smaller dedicated JSON contracts.
 
 ```json
 {
-  "schema_version": "prog.disclosure.v1",
+  "schema": "prog.disclosure",
   "source_id": "...",
   "operation": "...",
   "summary": {
