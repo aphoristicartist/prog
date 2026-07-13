@@ -26,12 +26,13 @@ use prog_core::{
     ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion, OperationProfile,
     PersistedPayload, PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, Result,
     SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions, SearchResponse, SliceRequest, SourceProfile,
-    Store, Summary, TrustSettings, ValidatedCursor, ValueScanReport, build_inspect_response,
-    cache_allowed, call_effect_warnings, canonical_json, check_call, check_discovery,
-    cli_adapter_effects, cli_hardening_effects, effective_effects, evidence_block, expand,
-    http_adapter_effects, http_hardening_effects, infer, join, lens_slice_request, new_cache_entry,
-    project, project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
-    search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
+    SourceStateToken, Store, Summary, TrustSettings, ValidatedCursor, ValueScanReport,
+    build_inspect_response, cache_allowed, call_effect_warnings, canonical_json, check_call,
+    check_discovery, cli_adapter_effects, cli_hardening_effects, effective_effects, evidence_block,
+    expand, http_adapter_effects, http_hardening_effects, http_source_state, infer, join,
+    lens_slice_request, new_cache_entry, project, project_with_lens, public_contract_schemas,
+    ranked_findings_with_lens, render_hints, search_payload_with_lens, slice_value,
+    tighten_effects, validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -927,6 +928,7 @@ struct AdapterCall {
     pagination: Option<Value>,
     warnings: Vec<String>,
     received_error: bool,
+    not_modified: bool,
 }
 
 struct CallSourceResult {
@@ -1804,6 +1806,7 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         false,
         None,
         None,
+        None,
     )?;
     entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
@@ -1856,9 +1859,13 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
     let may_cache = !args.no_cache && cache_allowed(&operation, &effective_cache);
     let cache_key = Store::cache_key(&args.source_id, &args.operation, &call_args)?;
 
-    if may_cache
-        && !args.refresh
-        && let Some(entry) = store.get_entry(&cache_key)?
+    let cached_entry = if may_cache {
+        store.get_entry(&cache_key)?
+    } else {
+        None
+    };
+    if !args.refresh
+        && let Some(entry) = cached_entry.as_ref()
     {
         let cached_pagination = entry.extra.get("pagination").cloned();
         let cache_satisfies_request = args.pages <= 1
@@ -1872,7 +1879,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                 .into_redacted();
             let cache_info = cache_info(
                 CacheStatus::Hit,
-                &entry,
+                entry,
                 Some(age_seconds(&entry.created_at)?),
             );
             let cursor = cursor_for_projection(
@@ -1939,7 +1946,141 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
     }
 
     let source = callable_source_from_profile(&profile)?;
-    let adapter_call = execute_callable(&source, &operation, &call_args).await?;
+    let revalidation = if args.refresh {
+        match cached_entry
+            .as_ref()
+            .and_then(|entry| entry.observation_id.as_deref())
+        {
+            Some(observation_id) => store
+                .get_observation(observation_id)?
+                .and_then(|observation| observation.source_state),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let adapter_call =
+        execute_callable_conditional(&source, &operation, &call_args, revalidation.as_ref())
+            .await?;
+    if adapter_call.not_modified {
+        let prior = cached_entry.as_ref().ok_or_else(|| CoreError::BadArgs {
+            operation: "call --refresh".to_string(),
+            reason: "received HTTP 304 without a reusable cached observation".to_string(),
+        })?;
+        let prior_id = prior
+            .observation_id
+            .as_ref()
+            .ok_or_else(|| CoreError::BadArgs {
+                operation: "call --refresh".to_string(),
+                reason: "received HTTP 304 but cached evidence has no observation identity"
+                    .to_string(),
+            })?;
+        let prior_observation =
+            store
+                .get_observation(prior_id)?
+                .ok_or_else(|| CoreError::BadArgs {
+                    operation: "call --refresh".to_string(),
+                    reason: "received HTTP 304 but cached observation metadata is unavailable"
+                        .to_string(),
+                })?;
+        let payload = store
+            .get_payload(&prior.payload_hash)?
+            .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
+            .into_redacted();
+        let provenance = call_provenance(
+            &cache_key,
+            adapter_call.status.clone(),
+            adapter_call.duration_ms,
+            adapter_call.provenance,
+        );
+        let observation_id = store
+            .record_observation(NewObservation {
+                payload_hash: prior.payload_hash.clone(),
+                payload_available: true,
+                invocation_fingerprint: cache_key.clone(),
+                source_id: args.source_id.clone(),
+                operation: args.operation.clone(),
+                captured_at: Some(provenance.captured_at.clone()),
+                duration_ms: provenance.duration_ms,
+                status: provenance.status.clone(),
+                complete: prior_observation.complete,
+                truncated: prior_observation.truncated,
+                redacted: prior_observation.redacted,
+                source_state: prior_observation.source_state.clone(),
+                lineage: prog_core::ObservationLineage {
+                    revalidates_id: Some(prior_id.clone()),
+                    ..prog_core::ObservationLineage::default()
+                },
+                provenance: Some(provenance.clone()),
+                cache_key: Some(cache_key.clone()),
+                ..NewObservation::default()
+            })?
+            .observation_id;
+        let mut entry = prior.clone();
+        entry.observation_id = Some(observation_id.clone());
+        entry.provenance = Some(provenance.clone());
+        store.put_entry(&cache_key, &entry)?;
+        let cursor = cursor_for_projection(
+            store,
+            CursorInput {
+                cache_key: &cache_key,
+                source_id: &args.source_id,
+                operation: &args.operation,
+                root_path: &root_path,
+                payload: &payload,
+                slice: &view,
+                cache: &effective_cache,
+                may_cache,
+                lens: lens.as_ref(),
+            },
+        )?;
+        let mut envelope = envelope_for_payload(
+            store,
+            EnvelopeInput {
+                value_scan: None,
+                source_id: args.source_id.clone(),
+                operation: args.operation.clone(),
+                source_kind: Some(profile_source_kind_name(profile.kind).to_string()),
+                payload,
+                root_path,
+                slice: view,
+                payload_bytes: entry.payload_bytes,
+                observation_id: Some(observation_id),
+                provenance: Some(provenance),
+                cache: Some(cache_info(
+                    CacheStatus::Hit,
+                    &entry,
+                    Some(age_seconds(&entry.created_at)?),
+                )),
+                effects: Some(effective_effects),
+                auto_upgrade_audit,
+                redacted_paths: 0,
+                cache_disabled_reason: None,
+                warnings: vec![
+                    "HTTP validator confirmed the source is unchanged (304 Not Modified)"
+                        .to_string(),
+                ],
+                schema_hints: operation
+                    .output_shape
+                    .as_ref()
+                    .map(|shape| render_hints(shape, ""))
+                    .unwrap_or_default(),
+                next_action_operation: Some(args.operation.clone()),
+                additional_next_actions: Vec::new(),
+                observation_parser: None,
+                lens,
+            },
+            cursor,
+        )?;
+        envelope
+            .extra
+            .insert("source_validity".to_string(), json!("confirmed_unchanged"));
+        compact_envelope_to_budget(&mut envelope)?;
+        return Ok(CallSourceResult {
+            envelope,
+            received_error: false,
+        });
+    }
     let received_error = adapter_call.received_error;
     let first_pagination = adapter_call.pagination.clone();
     let redaction = resolve_redaction(Some(&profile));
@@ -2014,6 +2155,13 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
         false,
         None,
         lens.as_ref(),
+        source_state_from_provenance(
+            profile.kind,
+            &args.source_id,
+            &args.operation,
+            &call_args,
+            &provenance,
+        )?,
     )?;
 
     let mut cache_disabled_reason = None;
@@ -2085,6 +2233,18 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
         },
         cursor,
     )?;
+    if args.refresh {
+        let validity = if received_error {
+            "refresh_failed"
+        } else if revalidation.is_some() {
+            "source_changed"
+        } else {
+            "validator_unavailable"
+        };
+        envelope
+            .extra
+            .insert("source_validity".to_string(), json!(validity));
+    }
 
     // Auto-pagination: when --pages > 1 on a read-only operation, prefetch up
     // to N pages into the cache under hard page/byte/time caps (I10). The
@@ -2236,6 +2396,13 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                     false,
                     None,
                     lens.as_ref(),
+                    source_state_from_provenance(
+                        profile.kind,
+                        &args.source_id,
+                        &args.operation,
+                        &page_key_args,
+                        &page_provenance,
+                    )?,
                 )?;
                 let page_cursor = if may_cache {
                     let ttl = ttl_seconds(&effective_cache);
@@ -2481,6 +2648,7 @@ fn observe_artifact(
         false,
         Some(normalized.parser.id.to_string()),
         lens.as_ref(),
+        None,
     )?;
     entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
@@ -2708,6 +2876,7 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         truncated,
         None,
         lens.as_ref(),
+        None,
     )?;
     entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
@@ -5315,6 +5484,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
         false,
         None,
         None,
+        None,
     )?;
     entry.observation_id = Some(observation_id);
     store.put_entry(&cache_key, &entry)?;
@@ -7130,6 +7300,7 @@ async fn execute_callable(
                 pagination: result.pagination,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: result.not_modified,
             })
         }
         CallableSource::Cli(source) => {
@@ -7149,6 +7320,7 @@ async fn execute_callable(
                 pagination: None,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: false,
             })
         }
         CallableSource::Mcp(source) => {
@@ -7192,7 +7364,41 @@ async fn execute_callable(
                 pagination: None,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: false,
             })
+        }
+    }
+}
+
+async fn execute_callable_conditional(
+    source: &CallableSource,
+    operation: &OperationProfile,
+    args: &Value,
+    source_state: Option<&SourceStateToken>,
+) -> Result<AdapterCall> {
+    match source {
+        CallableSource::Http(source) => {
+            let result = source
+                .execute_with_env_conditional(
+                    &operation.id,
+                    args,
+                    &|name| std::env::var(name).ok(),
+                    source_state,
+                )
+                .await?;
+            Ok(AdapterCall {
+                data: result.data,
+                provenance: serde_json::to_value(result.provenance.clone())?,
+                status: Some(result.provenance.status.to_string()),
+                duration_ms: Some(result.provenance.duration_ms),
+                pagination: result.pagination,
+                warnings: result.warnings,
+                received_error: result.received_error,
+                not_modified: result.not_modified,
+            })
+        }
+        CallableSource::Cli(_) | CallableSource::Mcp(_) => {
+            execute_callable(source, operation, args).await
         }
     }
 }
@@ -7218,6 +7424,7 @@ async fn execute_callable_url(
                 pagination: result.pagination,
                 warnings: result.warnings,
                 received_error: result.received_error,
+                not_modified: result.not_modified,
             }))
         }
         // CLI and MCP sources have no URL continuation model.
@@ -7436,6 +7643,7 @@ fn record_capture(
     truncated: bool,
     parser: Option<String>,
     lens: Option<&LensManifest>,
+    source_state: Option<SourceStateToken>,
 ) -> Result<String> {
     let duration_ms = provenance.as_ref().and_then(|item| item.duration_ms);
     let status = provenance.as_ref().and_then(|item| item.status.clone());
@@ -7455,11 +7663,47 @@ fn record_capture(
             redacted,
             parser,
             lens: lens.map(|item| item.id.clone()),
+            source_state,
             provenance,
             cache_key,
             ..NewObservation::default()
         })?
         .observation_id)
+}
+
+fn source_state_from_provenance(
+    kind: prog_core::SourceKind,
+    source_id: &str,
+    operation: &str,
+    invocation: &Value,
+    provenance: &CallProvenance,
+) -> Result<Option<SourceStateToken>> {
+    if kind != prog_core::SourceKind::Http {
+        return Ok(None);
+    }
+    let headers = provenance
+        .extra
+        .get("adapter")
+        .and_then(|adapter| adapter.get("selected_headers"))
+        .and_then(Value::as_object)
+        .map(|headers| {
+            headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .as_str()
+                        .map(|value| (name.to_ascii_lowercase(), value.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    http_source_state(
+        source_id,
+        operation,
+        invocation,
+        &headers,
+        &provenance.captured_at,
+    )
 }
 
 fn cursor_lens_extra(lens: Option<&LensManifest>) -> Extra {

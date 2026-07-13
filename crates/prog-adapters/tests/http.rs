@@ -1,7 +1,10 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use prog_adapters::http::{HttpOperation, HttpSource};
-use prog_core::{AuthRef, RawPayload, RedactionPolicy, Store, new_cache_entry};
+use prog_core::{
+    AuthRef, Extra, RawPayload, RedactionPolicy, SOURCE_STATE_SCHEMA, SourceStateKind,
+    SourceStateToken, Store, invocation_scope, new_cache_entry,
+};
 use serde_json::json;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
@@ -71,6 +74,67 @@ async fn executes_json_request_with_encoded_path_query_and_body_template() {
             .final_url
             .contains("q=state%3Dopen+label%3Abug")
     );
+}
+
+#[tokio::test]
+async fn conditional_request_returns_304_as_revalidation_and_rejects_scope_mismatches() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/records/7"))
+        .and(header("if-none-match", "W/\"record-7\""))
+        .respond_with(ResponseTemplate::new(304))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let source = source(
+        &server,
+        HttpOperation {
+            id: "get".to_string(),
+            method: "GET".to_string(),
+            path: "/records/{id}".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: None,
+            max_response_bytes: None,
+            sensitive_args: Vec::new(),
+        },
+    );
+    let args = json!({"id": 7});
+    let token = SourceStateToken {
+        schema: SOURCE_STATE_SCHEMA.to_string(),
+        kind: SourceStateKind::HttpEtag,
+        value: "W/\"record-7\"".to_string(),
+        source_id: source.id.clone(),
+        operation: "get".to_string(),
+        subject_scope: Some(invocation_scope(&args).unwrap()),
+        captured_at: "2026-07-13T12:00:00Z".to_string(),
+        expires_at: None,
+        provider: Some("http".to_string()),
+        extra: Extra::new(),
+    };
+    let result = source
+        .execute_with_env_conditional("get", &args, &|_| None, Some(&token))
+        .await
+        .unwrap();
+    assert!(result.not_modified);
+    assert!(!result.received_error);
+    assert_eq!(result.provenance.status, 304);
+
+    let mut wrong_scope = token.clone();
+    wrong_scope.subject_scope = Some(invocation_scope(&json!({"id": 8})).unwrap());
+    let error = source
+        .execute_with_env_conditional("get", &args, &|_| None, Some(&wrong_scope))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), "bad_args");
+    let mut wrong_operation = token;
+    wrong_operation.operation = "other".to_string();
+    let error = source
+        .execute_with_env_conditional("get", &args, &|_| None, Some(&wrong_operation))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), "bad_args");
 }
 
 #[tokio::test]

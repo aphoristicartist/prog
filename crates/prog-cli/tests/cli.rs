@@ -8,9 +8,23 @@ use std::{
 
 use serde_json::{Value, json};
 use wiremock::{
-    Mock, MockServer, ResponseTemplate,
+    Mock, MockServer, Request, Respond, ResponseTemplate,
     matchers::{method, path, query_param},
 };
+
+struct EtagResponder;
+
+impl Respond for EtagResponder {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        if request.headers.get("if-none-match").is_some() {
+            ResponseTemplate::new(304)
+        } else {
+            ResponseTemplate::new(200)
+                .insert_header("etag", "\"record-7\"")
+                .set_body_json(json!({"id": 7, "body": "original"}))
+        }
+    }
+}
 
 fn prog(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_prog"))
@@ -3391,6 +3405,136 @@ fn captures_surface_immutable_observation_identity_across_cursor_and_listing() {
         listed["observations"][0]["availability"],
         "payload_available"
     );
+}
+
+#[tokio::test]
+async fn http_capture_persists_scoped_etag_source_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/records/7"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("etag", "W/\"record-7\"")
+                .set_body_json(json!({"id": 7})),
+        )
+        .mount(&server)
+        .await;
+    let seed = write_seed(
+        dir.path(),
+        "source-state.json",
+        &format!(
+            r#"{{"kind":"http","base_url":"{}","operations":[{{"name":"get","method":"GET","path":"/records/{{id}}","input_schema":{{"type":"object","properties":{{"id":{{"type":"integer"}}}},"required":["id"]}},"effect":{{"read_only":true,"mutating":false,"network":true,"shell":false,"sensitive":false,"cacheable":true,"requires_confirmation":false}}}}]}}"#,
+            server.uri()
+        ),
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "state",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+    let called = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "state",
+        "get",
+        "--args",
+        r#"{"id":7}"#,
+    ]);
+    assert!(called.status.success(), "{}", stdout(&called));
+    let listed = prog(&["--dir", dir_arg, "cache", "observations"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let state = &listed["observations"][0]["source_state"];
+    assert_eq!(state["kind"], "http_etag");
+    assert_eq!(state["value"], "W/\"record-7\"");
+    assert_eq!(state["source_id"], "state");
+    assert_eq!(state["operation"], "get");
+    assert!(
+        state["subject_scope"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+}
+
+#[tokio::test]
+async fn refresh_304_revalidates_prior_observation_without_replacing_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/records/7"))
+        .respond_with(EtagResponder)
+        .expect(2)
+        .mount(&server)
+        .await;
+    let seed = write_seed(
+        dir.path(),
+        "refresh-state.json",
+        &format!(
+            r#"{{"kind":"http","base_url":"{}","operations":[{{"name":"get","method":"GET","path":"/records/{{id}}","input_schema":{{"type":"object","properties":{{"id":{{"type":"integer"}}}},"required":["id"]}},"effect":{{"read_only":true,"mutating":false,"network":true,"shell":false,"sensitive":false,"cacheable":true,"requires_confirmation":false}}}}]}}"#,
+            server.uri()
+        ),
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "refresh-state",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "refresh-state",
+        "get",
+        "--args",
+        r#"{"id":7}"#,
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let first_observation = first["observation"]["observation_id"].as_str().unwrap();
+    let refreshed = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "refresh-state",
+        "get",
+        "--args",
+        r#"{"id":7}"#,
+        "--refresh",
+    ]);
+    assert!(refreshed.status.success(), "{}", stdout(&refreshed));
+    let refreshed: Value = serde_json::from_slice(&refreshed.stdout).unwrap();
+    assert_eq!(refreshed["source_validity"], "confirmed_unchanged");
+    assert_eq!(refreshed["data_preview"]["body"], "original");
+    assert_eq!(refreshed["provenance"]["status"], "304");
+    let second_observation = refreshed["observation"]["observation_id"].as_str().unwrap();
+    assert_ne!(first_observation, second_observation);
+    let observations = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "2"]);
+    assert!(observations.status.success(), "{}", stdout(&observations));
+    let observations: Value = serde_json::from_slice(&observations.stdout).unwrap();
+    let latest = observations["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["observation_id"] == second_observation)
+        .unwrap();
+    assert_eq!(latest["lineage"]["revalidates_id"], first_observation);
 }
 
 #[test]

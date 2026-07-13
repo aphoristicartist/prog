@@ -14,6 +14,7 @@ pub const EVIDENCE_BLOCK_SCHEMA: &str = "prog.evidence";
 pub const SEARCH_SCHEMA: &str = "prog.search";
 pub const SESSION_SCHEMA: &str = "prog.session";
 pub const OBSERVATION_SCHEMA: &str = "prog.observation";
+pub const SOURCE_STATE_SCHEMA: &str = "prog.source_state";
 
 pub type Extra = Map<String, Value>;
 
@@ -910,7 +911,7 @@ pub struct ObservationRecord {
     #[serde(default)]
     pub workspace_state: Option<String>,
     #[serde(default)]
-    pub source_state: Option<String>,
+    pub source_state: Option<SourceStateToken>,
     #[serde(default)]
     pub environment_state: Option<String>,
     #[serde(default)]
@@ -921,6 +922,51 @@ pub struct ObservationRecord {
     pub cache_key: Option<String>,
     #[serde(default, flatten)]
     pub extra: Extra,
+}
+
+/// Opaque evidence of the upstream state at capture time. Token values are
+/// either safe validators (for example an HTTP ETag) or a one-way digest; no
+/// transport credential or source payload belongs in this contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct SourceStateToken {
+    pub schema: String,
+    pub kind: SourceStateKind,
+    pub value: String,
+    pub source_id: String,
+    pub operation: String,
+    #[serde(default)]
+    pub subject_scope: Option<String>,
+    pub captured_at: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceStateKind {
+    HttpEtag,
+    HttpLastModified,
+    ChangeToken,
+    McpModification,
+}
+
+/// Source-state validity is deliberately independent from cache age. A TTL
+/// can make evidence stale, but it cannot prove the upstream changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceValidity {
+    ConfirmedUnchanged,
+    SourceChanged,
+    StaleByTtl,
+    ValidatorUnavailable,
+    ValidatorExpired,
+    RefreshFailed,
+    Unknown,
 }
 
 pub fn canonical_json(value: &Value) -> crate::Result<Vec<u8>> {
@@ -937,6 +983,9 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<ObservationRecord>(&mut schemas, "ObservationRecord")?;
     insert_schema::<ObservationLineage>(&mut schemas, "ObservationLineage")?;
     insert_schema::<ObservationAvailability>(&mut schemas, "ObservationAvailability")?;
+    insert_schema::<SourceStateToken>(&mut schemas, "SourceStateToken")?;
+    insert_schema::<SourceStateKind>(&mut schemas, "SourceStateKind")?;
+    insert_schema::<SourceValidity>(&mut schemas, "SourceValidity")?;
     insert_schema::<CachePolicy>(&mut schemas, "CachePolicy")?;
     insert_schema::<TrustSettings>(&mut schemas, "TrustSettings")?;
     insert_schema::<AuthRef>(&mut schemas, "AuthRef")?;
