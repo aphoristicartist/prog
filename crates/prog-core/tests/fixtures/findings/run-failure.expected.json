@@ -1,5 +1,7 @@
 [
   {
+    "occurrence_id": "fi_sha256:1cb72ba04920e9a8b8493650b953a09ee091c4e02c33ae0612a4d31b45be3e3b",
+    "fingerprint": "sha256:1cb72ba04920e9a8b8493650b953a09ee091c4e02c33ae0612a4d31b45be3e3b",
     "rank": 1,
     "kind": "python_traceback",
     "path": "/failure_sections/0",
@@ -23,6 +25,8 @@
     "priority": 90
   },
   {
+    "occurrence_id": "fi_sha256:bf5fb1b393415e2e8f6a2380766722b23a3cdd0a768a2d42b9e20afe75bf8c15",
+    "fingerprint": "sha256:bf5fb1b393415e2e8f6a2380766722b23a3cdd0a768a2d42b9e20afe75bf8c15",
     "rank": 2,
     "kind": "test_failure",
     "path": "/failure_sections/0/lines/3",
@@ -39,6 +43,8 @@
     }
   },
   {
+    "occurrence_id": "fi_sha256:1f6ce7970f4d8e673b77ad922d13241b52b6f63d759dc798c659e5d55df38408",
+    "fingerprint": "sha256:1f6ce7970f4d8e673b77ad922d13241b52b6f63d759dc798c659e5d55df38408",
     "rank": 3,
     "kind": "stack_trace",
     "path": "/failure_sections/0/lines/0",
@@ -55,6 +61,8 @@
     }
   },
   {
+    "occurrence_id": "fi_sha256:7198722c47f7fe1a309a564e465e1cff04a21ad1e5074924bb67175ecd74d222",
+    "fingerprint": "sha256:7198722c47f7fe1a309a564e465e1cff04a21ad1e5074924bb67175ecd74d222",
     "rank": 4,
     "kind": "stack_trace",
     "path": "/stderr/text",

@@ -1,5 +1,7 @@
 [
   {
+    "occurrence_id": "fi_sha256:05235716655710d948b1ea31989a52325af6e47c2552c2a3674af088158dbab6",
+    "fingerprint": "sha256:05235716655710d948b1ea31989a52325af6e47c2552c2a3674af088158dbab6",
     "rank": 1,
     "kind": "test_name",
     "path": "/failure_sections/0",
@@ -23,6 +25,8 @@
     "priority": 75
   },
   {
+    "occurrence_id": "fi_sha256:7c0081471ba207d4b03389b78abf19e04664b20f275732e77899052869926a0b",
+    "fingerprint": "sha256:7c0081471ba207d4b03389b78abf19e04664b20f275732e77899052869926a0b",
     "rank": 2,
     "kind": "test_name",
     "path": "/failure_sections/0/lines/0",
@@ -39,6 +43,8 @@
     }
   },
   {
+    "occurrence_id": "fi_sha256:f7b92d7edc0f060d27462c4abf647f4f7578ee5f160f77632345c0dfee26e63b",
+    "fingerprint": "sha256:f7b92d7edc0f060d27462c4abf647f4f7578ee5f160f77632345c0dfee26e63b",
     "rank": 3,
     "kind": "test_name",
     "path": "/summary",
