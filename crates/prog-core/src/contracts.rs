@@ -605,7 +605,15 @@ pub enum OmissionReason {
     Redacted,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionExactness {
+    Exact,
+    Filter,
+    Approximate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct NextAction {
     pub kind: String,
@@ -615,6 +623,19 @@ pub struct NextAction {
     pub path: Option<String>,
     #[serde(default)]
     pub reason: Option<String>,
+    /// Never a shell string. Consumers must execute only after their own policy checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exactness: Option<ActionExactness>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub does_not_satisfy: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
@@ -1153,6 +1174,7 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<RedactionState>(&mut schemas, "RedactionState")?;
     insert_schema::<Summary>(&mut schemas, "Summary")?;
     insert_schema::<OmittedRegion>(&mut schemas, "OmittedRegion")?;
+    insert_schema::<ActionExactness>(&mut schemas, "ActionExactness")?;
     insert_schema::<NextAction>(&mut schemas, "NextAction")?;
     insert_schema::<LensManifest>(&mut schemas, "LensManifest")?;
     insert_schema::<LensFindingRule>(&mut schemas, "LensFindingRule")?;
