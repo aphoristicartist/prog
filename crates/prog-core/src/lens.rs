@@ -9,6 +9,7 @@ use crate::{
     OmittedRegion, PreviewPolicy, Projection, RedactionPolicy, RedactionState, Result, ScopedSlice,
     SliceRequest,
     disclosure::{expand, project},
+    extract_source_spans,
     pointer::{get, is_within, parse},
     ranked_findings,
 };
@@ -90,6 +91,7 @@ pub fn ranked_findings_with_lens(
             if !is_within(scope, &path)? || !rule_matches_value(rule, value) {
                 continue;
             }
+            let (primary_span, related_spans) = extract_source_spans(value);
             findings.push(Finding {
                 occurrence_id: lens_fingerprint(manifest, rule, value)
                     .as_ref()
@@ -110,6 +112,8 @@ pub fn ranked_findings_with_lens(
                 evidence_ref: None,
                 line_range: object_line_range(value),
                 byte_range: None,
+                primary_span,
+                related_spans,
                 redaction_state: redaction_state(value),
                 commands: lens_command_hints(options, &path, &rule.kind),
                 extra: sanitize_manifest_extra(&rule.extra),

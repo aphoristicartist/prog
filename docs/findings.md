@@ -198,3 +198,19 @@ cannot honestly invent a query.
 
 The evidence-acquisition pipeline is documented
 separately in [`evidence.md`](./evidence.md).
+
+## Source spans
+
+`Finding.line_range` and `Finding.byte_range` locate material inside the
+captured evidence. They are not source-code locations. A finding may instead
+carry one `primary_span` and bounded `related_spans`, each with a
+workspace-relative `path` or an external/virtual `uri`, one-based positions,
+role, extractor origin, and exactness.
+
+The generic extractor accepts only explicit structured diagnostic fields such
+as rustc `spans`, SARIF `locations`/`relatedLocations`, and direct structured
+location objects. It does not parse traceback or compiler display prose, read
+referenced files, resolve a URI, or claim a local file exists. Paths that are
+absolute, escaping, malformed, or redacted are omitted; non-file external URIs
+remain URIs. This keeps source navigation provenance-backed and independent of
+the machine rendering the observation.

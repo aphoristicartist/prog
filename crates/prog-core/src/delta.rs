@@ -252,6 +252,8 @@ mod tests {
             evidence_ref: None,
             line_range: None,
             byte_range: None,
+            primary_span: None,
+            related_spans: Vec::new(),
             redaction_state: None,
             commands: FindingCommandHints::default(),
             extra: Extra::new(),

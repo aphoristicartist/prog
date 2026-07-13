@@ -351,6 +351,8 @@ fn schemas_generate_for_all_public_contracts() {
         "SearchHit",
         "LineRange",
         "ByteRange",
+        "SourceSpan",
+        "SourceSpanExactness",
         "RedactionState",
         "Summary",
         "OmittedRegion",
@@ -418,6 +420,8 @@ fn evidence_navigation_contracts_cover_north_star_workflow() {
             }),
             line_range: None,
             byte_range: None,
+            primary_span: None,
+            related_spans: Vec::new(),
             redaction_state: None,
             commands: FindingCommandHints {
                 inspect: None,

@@ -46,6 +46,8 @@ The current public contracts include:
 - `SearchHit`
 - `LineRange`
 - `ByteRange`
+- `SourceSpan`
+- `SourceSpanExactness`
 - `RedactionState`
 - `Summary`
 - `OmittedRegion`
