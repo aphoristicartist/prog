@@ -2,6 +2,11 @@
 
 `prog meta` is the source of truth for public JSON contracts. It generates schemas from the Rust types and returns them in the same `DisclosureEnvelope` used for adapter responses.
 
+Every JSON response also has a compact top-level `disclosure_budget` block. It
+identifies the applied source and byte ceiling, labels the optional bytes/4
+token estimate, and records the final emitted stdout byte count. See
+`prog --help` for `--budget-bytes` and `--budget-tokens`.
+
 List available contracts:
 
 ```bash

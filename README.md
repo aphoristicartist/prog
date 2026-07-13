@@ -14,9 +14,16 @@ next decision without rerunning the source.
 capture once -> redact -> bounded envelope -> inspect -> exact evidence -> verify again
 ```
 
-The default envelope budget is 16 KiB. Cached navigation commands (`inspect`,
-`search`, `find`, `evidence`, `paths`, and `expand`) operate on the persisted,
-redacted payload and do not contact the upstream source.
+The default model-visible response budget is 16 KiB. Cached navigation commands
+(`inspect`, `search`, `find`, `evidence`, `paths`, and `expand`) operate on the
+persisted, redacted payload and do not contact the upstream source.
+
+Use `--budget-bytes N` (or `PROG_BUDGET_BYTES=N`) to set a hard stdout ceiling
+for one invocation. `--budget-tokens N` and `PROG_BUDGET_TOKENS=N` are a
+convenience conversion using the explicitly labeled `bytes_div_4_approximate`
+estimator; they are not tokenizer measurements. Command flags override the
+environment, and a 64 KiB safety ceiling still applies. Every JSON response
+reports its applied `disclosure_budget`, including actual emitted stdout bytes.
 
 ## Why prog
 
@@ -298,7 +305,10 @@ explicit project hooks.
 
 Run `prog <command> --help` for the complete argument surface. Global options
 are `--dir <DIR>` (`PROG_DIR`, default `./.prog`), `--lens-dir <DIR>`
-(`PROG_LENS_DIR`, default `./lenses`), and `--pretty`.
+(`PROG_LENS_DIR`, default `./lenses`), `--budget-bytes <N>`
+(`PROG_BUDGET_BYTES`), `--budget-tokens <N>` (`PROG_BUDGET_TOKENS`), and
+`--pretty`. The byte budget is authoritative; when pretty formatting would
+exceed it, `prog` emits compact JSON instead.
 
 ## Safety and storage
 

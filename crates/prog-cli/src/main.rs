@@ -3,6 +3,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{ExitCode, Stdio},
+    sync::OnceLock,
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
@@ -47,7 +48,21 @@ use tokio::{
 use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
 static RUN_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static DISCLOSURE_BUDGET: OnceLock<EffectiveDisclosureBudget> = OnceLock::new();
 const PROG_AGENT_SKILL: &str = include_str!("../../../skills/prog/SKILL.md");
+const DEFAULT_DISCLOSURE_BUDGET_BYTES: usize = 16 * 1024;
+const MAX_DISCLOSURE_BUDGET_BYTES: usize = 64 * 1024;
+const MIN_DISCLOSURE_BUDGET_BYTES: usize = 512;
+const BUDGET_METADATA_RESERVE_BYTES: usize = 384;
+const TOKEN_ESTIMATOR: &str = "bytes_div_4_approximate";
+
+#[derive(Clone, Debug)]
+struct EffectiveDisclosureBudget {
+    requested_bytes: Option<u64>,
+    requested_tokens: Option<u64>,
+    source: &'static str,
+    effective_bytes: usize,
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -64,6 +79,14 @@ struct Cli {
 
     #[arg(long, global = true)]
     pretty: bool,
+
+    /// Hard maximum number of bytes written in one model-visible JSON response.
+    #[arg(long, global = true)]
+    budget_bytes: Option<u64>,
+
+    /// Approximate token convenience input, converted by the named bytes/4 estimator.
+    #[arg(long, global = true)]
+    budget_tokens: Option<u64>,
 
     #[command(subcommand)]
     command: Command,
@@ -628,10 +651,88 @@ async fn main() -> ExitCode {
         }
     };
 
+    let budget = match resolve_disclosure_budget(&cli) {
+        Ok(budget) => budget,
+        Err(error) => return write_error(&error, cli.pretty),
+    };
+    let _ = DISCLOSURE_BUDGET.set(budget);
+
     match run(&cli).await {
         Ok(exit_code) => exit_code,
         Err(error) => write_error(&error, cli.pretty),
     }
+}
+
+fn resolve_disclosure_budget(cli: &Cli) -> Result<EffectiveDisclosureBudget> {
+    let ((requested_bytes, requested_tokens), source) = if let Some(bytes) = cli.budget_bytes {
+        ((Some(bytes), None), "flag")
+    } else if let Some(tokens) = cli.budget_tokens {
+        ((None, Some(tokens)), "flag")
+    } else if let Some(bytes) = budget_env("PROG_BUDGET_BYTES")? {
+        ((Some(bytes), None), "environment")
+    } else if let Some(tokens) = budget_env("PROG_BUDGET_TOKENS")? {
+        ((None, Some(tokens)), "environment")
+    } else {
+        ((None, None), "default")
+    };
+    let requested = match (requested_bytes, requested_tokens) {
+        (Some(bytes), None) => bytes,
+        (None, Some(tokens)) => tokens.checked_mul(4).ok_or_else(|| CoreError::BadArgs {
+            operation: "disclosure budget".to_string(),
+            reason: "token budget overflows the bytes/4 approximation".to_string(),
+        })?,
+        (None, None) => DEFAULT_DISCLOSURE_BUDGET_BYTES as u64,
+        (Some(_), Some(_)) => unreachable!("budget source has one authoritative value"),
+    };
+    if requested == 0 {
+        return Err(CoreError::BadArgs {
+            operation: "disclosure budget".to_string(),
+            reason: "budget values must be greater than zero".to_string(),
+        });
+    }
+    let effective_bytes = requested.min(MAX_DISCLOSURE_BUDGET_BYTES as u64) as usize;
+    if effective_bytes < MIN_DISCLOSURE_BUDGET_BYTES {
+        return Err(CoreError::BudgetTooSmall {
+            requested_bytes: effective_bytes,
+            minimum_bytes: MIN_DISCLOSURE_BUDGET_BYTES,
+        });
+    }
+    Ok(EffectiveDisclosureBudget {
+        requested_bytes: requested_bytes.map(|_| requested),
+        requested_tokens,
+        source,
+        effective_bytes,
+    })
+}
+
+fn budget_env(name: &str) -> Result<Option<u64>> {
+    let Some(value) = std::env::var_os(name) else {
+        return Ok(None);
+    };
+    let value = value.into_string().map_err(|_| CoreError::BadArgs {
+        operation: "disclosure budget".to_string(),
+        reason: format!("{name} must be valid UTF-8 digits"),
+    })?;
+    let parsed = value.parse::<u64>().map_err(|_| CoreError::BadArgs {
+        operation: "disclosure budget".to_string(),
+        reason: format!("{name} must be an unsigned integer"),
+    })?;
+    Ok(Some(parsed))
+}
+
+fn disclosure_budget() -> &'static EffectiveDisclosureBudget {
+    DISCLOSURE_BUDGET.get_or_init(|| EffectiveDisclosureBudget {
+        requested_bytes: None,
+        requested_tokens: None,
+        source: "default",
+        effective_bytes: DEFAULT_DISCLOSURE_BUDGET_BYTES,
+    })
+}
+
+fn response_budget_bytes() -> usize {
+    disclosure_budget()
+        .effective_bytes
+        .saturating_sub(BUDGET_METADATA_RESERVE_BYTES)
 }
 
 fn init_tracing() {
@@ -4816,7 +4917,7 @@ fn source_command_from_provenance(provenance: Option<&CallProvenance>) -> Option
 }
 
 fn bound_inspect_response(response: &mut InspectResponse) -> Result<()> {
-    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let budget = response_budget_bytes();
     let original_len = response.findings.len();
     while serde_json::to_vec(response)?.len() > budget && !response.findings.is_empty() {
         response.findings.pop();
@@ -4849,7 +4950,7 @@ fn bound_inspect_response(response: &mut InspectResponse) -> Result<()> {
 }
 
 fn bound_search_response(response: &mut SearchResponse) -> Result<()> {
-    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let budget = response_budget_bytes();
     let original_len = response.hits.len();
     while serde_json::to_vec(response)?.len() > budget && !response.hits.is_empty() {
         response.hits.pop();
@@ -4876,7 +4977,7 @@ fn bound_search_response(response: &mut SearchResponse) -> Result<()> {
 }
 
 fn bound_evidence_block(block: &mut EvidenceBlock) -> Result<()> {
-    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let budget = response_budget_bytes();
     if serde_json::to_vec(block)?.len() > budget {
         block.citations.truncate(1);
         if let Some(citation) = block.citations.first_mut() {
@@ -8108,7 +8209,10 @@ fn envelope_for_payload(
     input: EnvelopeInput,
     cursor: Option<String>,
 ) -> Result<DisclosureEnvelope> {
-    let mut policy = PreviewPolicy::default();
+    let mut policy = PreviewPolicy {
+        max_envelope_bytes: response_budget_bytes(),
+        ..PreviewPolicy::default()
+    };
     let mut last = None;
     let findings = ranked_findings_with_lens(
         input.payload.as_value(),
@@ -8143,7 +8247,7 @@ fn envelope_for_payload(
         policy = next;
     }
     let mut envelope = last.expect("envelope loop always builds at least once");
-    if serde_json::to_vec(&envelope)?.len() > PreviewPolicy::default().max_envelope_bytes {
+    if serde_json::to_vec(&envelope)?.len() > policy.max_envelope_bytes {
         envelope.schema_hints.clear();
         envelope.provenance = None;
         envelope.findings.truncate(1);
@@ -8155,7 +8259,7 @@ fn envelope_for_payload(
             .push("envelope metadata compacted to enforce max_envelope_bytes".to_string());
         finalize_envelope_bytes(&mut envelope)?;
     }
-    if serde_json::to_vec(&envelope)?.len() > PreviewPolicy::default().max_envelope_bytes {
+    if serde_json::to_vec(&envelope)?.len() > policy.max_envelope_bytes {
         envelope.data_preview =
             Value::String("«preview omitted to enforce envelope budget»".to_string());
         envelope.omitted.clear();
@@ -8163,6 +8267,7 @@ fn envelope_for_payload(
         envelope.warnings.truncate(1);
         finalize_envelope_bytes(&mut envelope)?;
     }
+    compact_envelope_to_budget(&mut envelope)?;
     Ok(envelope)
 }
 
@@ -8443,7 +8548,7 @@ fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Result<usize> {
 }
 
 fn compact_envelope_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
-    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let budget = response_budget_bytes();
     while serde_json::to_vec(envelope)?.len() > budget && !envelope.findings.is_empty() {
         envelope.findings.pop();
     }
@@ -8461,6 +8566,17 @@ fn compact_envelope_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
         envelope.next_actions.truncate(4);
         envelope.warnings.truncate(2);
     }
+    if serde_json::to_vec(envelope)?.len() > budget {
+        // Keep the observation identity and cursor, which are the recovery
+        // path for the payload, while dropping derivable presentation detail.
+        envelope.provenance = None;
+        envelope.cache = None;
+        envelope.schema_hints.clear();
+        envelope.extra.clear();
+        envelope.omitted.truncate(1);
+        envelope.next_actions.truncate(1);
+        envelope.warnings.truncate(1);
+    }
     finalize_envelope_bytes(envelope)?;
     Ok(())
 }
@@ -8473,7 +8589,7 @@ fn compact_envelope_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
 /// counters) until the serialized envelope fits, recording a warning each time
 /// (invariant I11: pagination never escapes the envelope budget).
 fn compact_pagination_extra_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
-    let budget = PreviewPolicy::default().max_envelope_bytes;
+    let budget = response_budget_bytes();
     if serde_json::to_vec(envelope)?.len() <= budget {
         return Ok(());
     }
@@ -9204,36 +9320,92 @@ struct CacheGetOutput {
 }
 
 fn write_success<T: Serialize>(value: &T, pretty: bool) -> Result<()> {
-    if pretty {
-        println!("{}", serde_json::to_string_pretty(value)?);
-    } else {
-        println!("{}", serde_json::to_string(value)?);
-    }
+    let rendered = render_budgeted_json(serde_json::to_value(value)?, pretty)?;
+    println!("{rendered}");
     Ok(())
 }
 
 fn write_error(error: &CoreError, pretty: bool) -> ExitCode {
-    let envelope = error.envelope();
-    let rendered = if pretty {
-        serde_json::to_string_pretty(&envelope)
-    } else {
-        serde_json::to_string(&envelope)
-    };
-
+    let rendered = serde_json::to_value(error.envelope())
+        .map_err(CoreError::from)
+        .and_then(|value| render_budgeted_json(value, pretty));
     match rendered {
         Ok(json) => {
             println!("{json}");
             ExitCode::FAILURE
         }
-        Err(json_error) => {
-            let fallback = CoreError::Json(json_error);
+        Err(_) => {
+            let budget = disclosure_budget();
+            let fallback = json!({
+                "error": {
+                    "kind": "budget_too_small",
+                    "message": format!("response cannot fit in {} bytes", budget.effective_bytes),
+                    "hint": format!("Raise --budget-bytes to at least {MIN_DISCLOSURE_BUDGET_BYTES}.")
+                }
+            });
             println!(
                 "{}",
-                serde_json::to_string(&fallback.envelope()).unwrap_or_else(|_| {
+                serde_json::to_string(&fallback).unwrap_or_else(|_| {
                     "{\"error\":{\"kind\":\"json\",\"message\":\"failed to render error\",\"hint\":\"Report this bug.\"}}".to_string()
                 })
             );
             ExitCode::FAILURE
         }
     }
+}
+
+fn render_budgeted_json(mut value: Value, pretty: bool) -> Result<String> {
+    if !value.is_object() {
+        value = json!({"result": value});
+    }
+    let budget = disclosure_budget();
+    let mut metadata = json!({
+        "source": budget.source,
+        "requested_bytes": budget.requested_bytes,
+        "requested_tokens": budget.requested_tokens,
+        "effective_bytes": budget.effective_bytes,
+        "token_estimator": TOKEN_ESTIMATOR,
+        "actual_bytes": 0
+    });
+    value
+        .as_object_mut()
+        .expect("response value is an object")
+        .insert("disclosure_budget".to_string(), metadata.clone());
+    let mut use_pretty = pretty;
+    for _ in 0..8 {
+        let rendered = if use_pretty {
+            serde_json::to_string_pretty(&value)?
+        } else {
+            serde_json::to_string(&value)?
+        };
+        // The trailing newline is part of stdout and therefore part of the
+        // hard caller-visible byte ceiling.
+        let bytes = rendered.len().saturating_add(1);
+        if bytes > budget.effective_bytes && use_pretty {
+            use_pretty = false;
+            continue;
+        }
+        if bytes > budget.effective_bytes {
+            return Err(CoreError::BudgetTooSmall {
+                requested_bytes: budget.effective_bytes,
+                minimum_bytes: bytes,
+            });
+        }
+        metadata["actual_bytes"] = json!(bytes);
+        value
+            .as_object_mut()
+            .expect("response value is an object")
+            .insert("disclosure_budget".to_string(), metadata.clone());
+        let final_rendered = if use_pretty {
+            serde_json::to_string_pretty(&value)?
+        } else {
+            serde_json::to_string(&value)?
+        };
+        if final_rendered.len().saturating_add(1) == bytes {
+            return Ok(final_rendered);
+        }
+    }
+    Err(CoreError::Storage(
+        "disclosure budget accounting did not converge".to_string(),
+    ))
 }
