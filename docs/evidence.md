@@ -61,6 +61,18 @@ unknown total when the adapter stopped early. Preview omissions remain in
 `observation.completeness` and describe only model disclosure, not upstream
 capture completeness.
 
+To apply a durable storage limit over redacted payload blobs, run:
+
+```bash
+prog cache purge --payload-budget-bytes 33554432
+```
+
+The quota groups identical payload hashes, evicts oldest groups first, removes
+their dependent cursors, and retains immutable observations as
+`metadata_only`. It never leaves one surviving cache entry pointing at a
+deleted shared blob. This is distinct from capture limits and the per-response
+disclosure budget.
+
 ## Workflow
 
 ```bash

@@ -3465,6 +3465,68 @@ fn cache_list_and_purge_are_real_json_commands() {
 }
 
 #[test]
+fn cache_payload_budget_evicts_payloads_but_retains_observation_lineage() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let file = dir.path().join("large.json");
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({"items": vec!["x".repeat(64); 32]})).unwrap(),
+    )
+    .unwrap();
+
+    let observed = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--name",
+        "large",
+    ]);
+    assert!(observed.status.success(), "{}", stdout(&observed));
+    let observed: Value = serde_json::from_slice(&observed.stdout).unwrap();
+    let cursor = observed["cursor"].as_str().unwrap().to_string();
+    let observation_id = observed["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let quota = prog(&[
+        "--dir",
+        dir_arg,
+        "cache",
+        "purge",
+        "--payload-budget-bytes",
+        "0",
+    ]);
+    assert!(quota.status.success(), "{}", stdout(&quota));
+    let quota: Value = serde_json::from_slice(&quota.stdout).unwrap();
+    assert_eq!(quota["max_payload_bytes"], 0);
+    assert_eq!(quota["evicted_entries"], 1);
+    assert_eq!(quota["evicted_payloads"], 1);
+    assert_eq!(quota["evicted_cursors"], 1);
+    assert_eq!(quota["metadata_only_observations"], 1);
+
+    let expanded = prog(&["--dir", dir_arg, "expand", &cursor]);
+    assert!(!expanded.status.success());
+    let expanded: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(expanded["error"]["kind"], "cursor_not_found");
+
+    let observations = prog(&["--dir", dir_arg, "cache", "observations"]);
+    assert!(observations.status.success(), "{}", stdout(&observations));
+    let observations: Value = serde_json::from_slice(&observations.stdout).unwrap();
+    assert_eq!(
+        observations["observations"][0]["observation_id"],
+        observation_id
+    );
+    assert_eq!(
+        observations["observations"][0]["availability"],
+        "metadata_only"
+    );
+}
+
+#[test]
 fn captures_surface_immutable_observation_identity_across_cursor_and_listing() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();

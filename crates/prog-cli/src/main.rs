@@ -624,6 +624,11 @@ struct CachePurgeArgs {
 
     #[arg(long)]
     all: bool,
+
+    /// Retain at most this many bytes of redacted payload blobs, evicting
+    /// oldest payload-reference groups while preserving metadata lineage.
+    #[arg(long)]
+    payload_budget_bytes: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -1011,17 +1016,27 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             }
             CacheCommand::Purge(args) => {
                 let store = Store::open(&cli.dir)?;
+                let selected = usize::from(args.all)
+                    + usize::from(args.expired)
+                    + usize::from(args.source.is_some())
+                    + usize::from(args.payload_budget_bytes.is_some());
+                if selected != 1 {
+                    return Err(CoreError::BadArgs {
+                        operation: "cache purge".to_string(),
+                        reason: "pass exactly one of --all, --expired, --source <id>, or --payload-budget-bytes <bytes>".to_string(),
+                    });
+                }
                 let summary = if args.all {
                     store.purge_all()?
                 } else if args.expired {
                     store.purge_expired(chrono::Utc::now())?
                 } else if let Some(source) = &args.source {
                     store.purge_source(source)?
+                } else if let Some(max_payload_bytes) = args.payload_budget_bytes {
+                    write_success(&store.enforce_payload_quota(max_payload_bytes)?, cli.pretty)?;
+                    return Ok(ExitCode::SUCCESS);
                 } else {
-                    return Err(CoreError::BadArgs {
-                        operation: "cache purge".to_string(),
-                        reason: "pass --all, --expired, or --source <id>".to_string(),
-                    });
+                    unreachable!("validated one cache purge selector")
                 };
                 write_success(&summary, cli.pretty)?;
                 Ok(ExitCode::SUCCESS)
