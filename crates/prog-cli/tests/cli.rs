@@ -3393,6 +3393,65 @@ fn captures_surface_immutable_observation_identity_across_cursor_and_listing() {
     );
 }
 
+#[tokio::test]
+async fn http_capture_persists_scoped_etag_source_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/records/7"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("etag", "W/\"record-7\"")
+                .set_body_json(json!({"id": 7})),
+        )
+        .mount(&server)
+        .await;
+    let seed = write_seed(
+        dir.path(),
+        "source-state.json",
+        &format!(
+            r#"{{"kind":"http","base_url":"{}","operations":[{{"name":"get","method":"GET","path":"/records/{{id}}","input_schema":{{"type":"object","properties":{{"id":{{"type":"integer"}}}},"required":["id"]}},"effect":{{"read_only":true,"mutating":false,"network":true,"shell":false,"sensitive":false,"cacheable":true,"requires_confirmation":false}}}}]}}"#,
+            server.uri()
+        ),
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "state",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+    let called = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "state",
+        "get",
+        "--args",
+        r#"{"id":7}"#,
+    ]);
+    assert!(called.status.success(), "{}", stdout(&called));
+    let listed = prog(&["--dir", dir_arg, "cache", "observations"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let state = &listed["observations"][0]["source_state"];
+    assert_eq!(state["kind"], "http_etag");
+    assert_eq!(state["value"], "W/\"record-7\"");
+    assert_eq!(state["source_id"], "state");
+    assert_eq!(state["operation"], "get");
+    assert!(
+        state["subject_scope"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+}
+
 #[test]
 fn cache_get_missing_uses_structured_cache_miss_error() {
     let dir = tempfile::tempdir().unwrap();

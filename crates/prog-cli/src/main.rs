@@ -26,12 +26,13 @@ use prog_core::{
     ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion, OperationProfile,
     PersistedPayload, PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, Result,
     SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions, SearchResponse, SliceRequest, SourceProfile,
-    Store, Summary, TrustSettings, ValidatedCursor, ValueScanReport, build_inspect_response,
-    cache_allowed, call_effect_warnings, canonical_json, check_call, check_discovery,
-    cli_adapter_effects, cli_hardening_effects, effective_effects, evidence_block, expand,
-    http_adapter_effects, http_hardening_effects, infer, join, lens_slice_request, new_cache_entry,
-    project, project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
-    search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
+    SourceStateToken, Store, Summary, TrustSettings, ValidatedCursor, ValueScanReport,
+    build_inspect_response, cache_allowed, call_effect_warnings, canonical_json, check_call,
+    check_discovery, cli_adapter_effects, cli_hardening_effects, effective_effects, evidence_block,
+    expand, http_adapter_effects, http_hardening_effects, http_source_state, infer, join,
+    lens_slice_request, new_cache_entry, project, project_with_lens, public_contract_schemas,
+    ranked_findings_with_lens, render_hints, search_payload_with_lens, slice_value,
+    tighten_effects, validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -1804,6 +1805,7 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         false,
         None,
         None,
+        None,
     )?;
     entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
@@ -2014,6 +2016,13 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
         false,
         None,
         lens.as_ref(),
+        source_state_from_provenance(
+            profile.kind,
+            &args.source_id,
+            &args.operation,
+            &call_args,
+            &provenance,
+        )?,
     )?;
 
     let mut cache_disabled_reason = None;
@@ -2236,6 +2245,13 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                     false,
                     None,
                     lens.as_ref(),
+                    source_state_from_provenance(
+                        profile.kind,
+                        &args.source_id,
+                        &args.operation,
+                        &page_key_args,
+                        &page_provenance,
+                    )?,
                 )?;
                 let page_cursor = if may_cache {
                     let ttl = ttl_seconds(&effective_cache);
@@ -2481,6 +2497,7 @@ fn observe_artifact(
         false,
         Some(normalized.parser.id.to_string()),
         lens.as_ref(),
+        None,
     )?;
     entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
@@ -2708,6 +2725,7 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         truncated,
         None,
         lens.as_ref(),
+        None,
     )?;
     entry.observation_id = Some(observation_id.clone());
     store.put_entry(&cache_key, &entry)?;
@@ -5315,6 +5333,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
         false,
         None,
         None,
+        None,
     )?;
     entry.observation_id = Some(observation_id);
     store.put_entry(&cache_key, &entry)?;
@@ -7436,6 +7455,7 @@ fn record_capture(
     truncated: bool,
     parser: Option<String>,
     lens: Option<&LensManifest>,
+    source_state: Option<SourceStateToken>,
 ) -> Result<String> {
     let duration_ms = provenance.as_ref().and_then(|item| item.duration_ms);
     let status = provenance.as_ref().and_then(|item| item.status.clone());
@@ -7455,11 +7475,47 @@ fn record_capture(
             redacted,
             parser,
             lens: lens.map(|item| item.id.clone()),
+            source_state,
             provenance,
             cache_key,
             ..NewObservation::default()
         })?
         .observation_id)
+}
+
+fn source_state_from_provenance(
+    kind: prog_core::SourceKind,
+    source_id: &str,
+    operation: &str,
+    invocation: &Value,
+    provenance: &CallProvenance,
+) -> Result<Option<SourceStateToken>> {
+    if kind != prog_core::SourceKind::Http {
+        return Ok(None);
+    }
+    let headers = provenance
+        .extra
+        .get("adapter")
+        .and_then(|adapter| adapter.get("selected_headers"))
+        .and_then(Value::as_object)
+        .map(|headers| {
+            headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .as_str()
+                        .map(|value| (name.to_ascii_lowercase(), value.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    http_source_state(
+        source_id,
+        operation,
+        invocation,
+        &headers,
+        &provenance.captured_at,
+    )
 }
 
 fn cursor_lens_extra(lens: Option<&LensManifest>) -> Extra {

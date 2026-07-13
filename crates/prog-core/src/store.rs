@@ -72,7 +72,7 @@ pub struct NewObservation {
     pub parser: Option<String>,
     pub lens: Option<String>,
     pub workspace_state: Option<String>,
-    pub source_state: Option<String>,
+    pub source_state: Option<crate::SourceStateToken>,
     pub environment_state: Option<String>,
     pub lineage: ObservationLineage,
     pub provenance: Option<CallProvenance>,
