@@ -1,10 +1,10 @@
 use prog_core::{
     AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CallProvenance, CursorRecord,
-    DISCLOSURE_VERSION, DisclosureEnvelope, EVIDENCE_BLOCK_VERSION, EffectSet, EvidenceBlock,
-    EvidenceRef, Finding, FindingCommandHints, INSPECT_VERSION, InspectResponse,
-    LENS_MANIFEST_VERSION, LensFindingRule, LensManifest, NextAction, OmittedRegion,
-    SEARCH_VERSION, SearchResponse, SessionEvent, SessionTrail, SliceRequest, SourceProfile,
-    Summary, TrustSettings, canonical_json, public_contract_schemas,
+    DISCLOSURE_SCHEMA, DisclosureEnvelope, EVIDENCE_BLOCK_SCHEMA, EffectSet, EvidenceBlock,
+    EvidenceRef, Finding, FindingCommandHints, INSPECT_SCHEMA, InspectResponse,
+    LENS_MANIFEST_SCHEMA, LensFindingRule, LensManifest, NextAction, OmittedRegion, SEARCH_SCHEMA,
+    SearchResponse, SessionEvent, SessionTrail, SliceRequest, SourceProfile, Summary,
+    TrustSettings, canonical_json, public_contract_schemas, validate_source_profile,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -22,7 +22,7 @@ where
 fn unknown_fields_survive_roundtrip_for_public_contracts() {
     assert_extra_roundtrips::<SourceProfile>(
         json!({
-            "schema_version": "prog.source_profile.v1",
+            "schema": "prog.source_profile",
             "id": "local",
             "kind": "cli",
             "x_future": "kept"
@@ -42,7 +42,7 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
     assert_extra_roundtrips::<EffectSet>(json!({"x_future": "kept"}), "x_future");
     assert_extra_roundtrips::<DisclosureEnvelope>(
         json!({
-            "schema_version": DISCLOSURE_VERSION,
+            "schema": DISCLOSURE_SCHEMA,
             "summary": {"kind": "object"},
             "x_future": "kept"
         }),
@@ -50,7 +50,7 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
     );
     assert_extra_roundtrips::<EvidenceRef>(
         json!({
-            "schema_version": "prog.evidence_ref.v1",
+            "schema": "prog.evidence_ref",
             "source_id": "observe",
             "operation": "artifact",
             "path": "/items/0",
@@ -63,7 +63,7 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
     );
     assert_extra_roundtrips::<InspectResponse>(
         json!({
-            "schema_version": INSPECT_VERSION,
+            "schema": INSPECT_SCHEMA,
             "cursor": "pc1_demo",
             "goal": "find the root cause",
             "x_future": "kept"
@@ -83,7 +83,7 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
     );
     assert_extra_roundtrips::<EvidenceBlock>(
         json!({
-            "schema_version": EVIDENCE_BLOCK_VERSION,
+            "schema": EVIDENCE_BLOCK_SCHEMA,
             "cursor": "pc1_demo",
             "path": "/failure_sections/0",
             "kind": "test_failure",
@@ -94,7 +94,7 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
     );
     assert_extra_roundtrips::<SearchResponse>(
         json!({
-            "schema_version": SEARCH_VERSION,
+            "schema": SEARCH_SCHEMA,
             "cursor": "pc1_demo",
             "query": "NullPointerException",
             "x_future": "kept"
@@ -108,15 +108,6 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
     );
     assert_extra_roundtrips::<NextAction>(
         json!({"kind": "expand", "x_future": "kept"}),
-        "x_future",
-    );
-    assert_extra_roundtrips::<LensManifest>(
-        json!({
-            "schema_version": LENS_MANIFEST_VERSION,
-            "id": "local.items",
-            "version": 1,
-            "x_future": "kept"
-        }),
         "x_future",
     );
     assert_extra_roundtrips::<LensFindingRule>(
@@ -142,7 +133,7 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
     );
     assert_extra_roundtrips::<SessionTrail>(
         json!({
-            "schema_version": "prog.session.v1",
+            "schema": "prog.session",
             "session_id": "ps1_demo",
             "created_at": "2026-07-09T00:00:00Z",
             "updated_at": "2026-07-09T00:00:00Z",
@@ -192,26 +183,62 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
 }
 
 #[test]
-fn version_fields_are_required_on_versioned_contracts() {
+fn lens_manifest_input_rejects_legacy_and_unknown_fields() {
+    for value in [
+        json!({
+            "schema_version": "prog.lens_manifest.v1",
+            "id": "legacy"
+        }),
+        json!({
+            "schema": LENS_MANIFEST_SCHEMA,
+            "id": "legacy",
+            "version": 1
+        }),
+        json!({
+            "schema": LENS_MANIFEST_SCHEMA,
+            "id": "unknown",
+            "x_future": true
+        }),
+    ] {
+        assert!(serde_json::from_value::<LensManifest>(value).is_err());
+    }
+}
+
+#[test]
+fn source_profile_rejects_legacy_compatibility_fields() {
+    let profile: SourceProfile = serde_json::from_value(json!({
+        "schema": "prog.source_profile",
+        "id": "legacy",
+        "kind": "cli",
+        "revision": 1,
+        "version": 1
+    }))
+    .unwrap();
+    let error = validate_source_profile(&profile).unwrap_err();
+    assert!(error.to_string().contains("unsupported"));
+}
+
+#[test]
+fn schema_identity_is_required_on_prog_contracts() {
     let source_error = serde_json::from_value::<SourceProfile>(json!({
         "id": "missing_version",
         "kind": "cli"
     }))
     .unwrap_err();
-    assert!(source_error.to_string().contains("schema_version"));
+    assert!(source_error.to_string().contains("schema"));
 
     let envelope_error = serde_json::from_value::<DisclosureEnvelope>(json!({
         "summary": {"kind": "object"}
     }))
     .unwrap_err();
-    assert!(envelope_error.to_string().contains("schema_version"));
+    assert!(envelope_error.to_string().contains("schema"));
 
     let inspect_error = serde_json::from_value::<InspectResponse>(json!({
         "cursor": "pc1_demo",
         "goal": "find root cause"
     }))
     .unwrap_err();
-    assert!(inspect_error.to_string().contains("schema_version"));
+    assert!(inspect_error.to_string().contains("schema"));
 
     let evidence_error = serde_json::from_value::<EvidenceBlock>(json!({
         "cursor": "pc1_demo",
@@ -220,14 +247,14 @@ fn version_fields_are_required_on_versioned_contracts() {
         "summary": "first failing test"
     }))
     .unwrap_err();
-    assert!(evidence_error.to_string().contains("schema_version"));
+    assert!(evidence_error.to_string().contains("schema"));
 
     let search_error = serde_json::from_value::<SearchResponse>(json!({
         "cursor": "pc1_demo",
         "query": "panic"
     }))
     .unwrap_err();
-    assert!(search_error.to_string().contains("schema_version"));
+    assert!(search_error.to_string().contains("schema"));
 
     let session_error = serde_json::from_value::<SessionTrail>(json!({
         "session_id": "ps1_demo",
@@ -235,7 +262,7 @@ fn version_fields_are_required_on_versioned_contracts() {
         "updated_at": "2026-07-09T00:00:00Z"
     }))
     .unwrap_err();
-    assert!(session_error.to_string().contains("schema_version"));
+    assert!(session_error.to_string().contains("schema"));
 }
 
 #[test]
@@ -354,7 +381,7 @@ fn schemas_generate_for_all_public_contracts() {
 #[test]
 fn evidence_navigation_contracts_cover_north_star_workflow() {
     let response = InspectResponse {
-        schema_version: INSPECT_VERSION.to_string(),
+        schema: INSPECT_SCHEMA.to_string(),
         cursor: "pc1_demo".to_string(),
         goal: "find the root cause".to_string(),
         normalized_goal: Some("root_cause".to_string()),
@@ -370,7 +397,7 @@ fn evidence_navigation_contracts_cover_north_star_workflow() {
             source: Some("generic.run.failure_sections".to_string()),
             lens_id: Some("cargo-test".to_string()),
             evidence_ref: Some(EvidenceRef {
-                schema_version: "prog.evidence_ref.v1".to_string(),
+                schema: "prog.evidence_ref".to_string(),
                 source_id: "run".to_string(),
                 operation: "cargo".to_string(),
                 cursor: Some("pc1_demo".to_string()),
@@ -405,7 +432,7 @@ fn evidence_navigation_contracts_cover_north_star_workflow() {
     };
 
     let encoded = serde_json::to_value(&response).unwrap();
-    assert_eq!(encoded["schema_version"], INSPECT_VERSION);
+    assert_eq!(encoded["schema"], INSPECT_SCHEMA);
     assert_eq!(encoded["findings"][0]["kind"], "rust_compile_error");
     assert_eq!(
         encoded["findings"][0]["commands"]["evidence"],
@@ -431,7 +458,7 @@ fn source_profile_fixtures_deserialize() {
             std::fs::read_to_string(format!("{}/tests/{fixture}", env!("CARGO_MANIFEST_DIR")))
                 .expect("fixture should be readable");
         let profile: SourceProfile = serde_json::from_str(&raw).expect("fixture should decode");
-        assert_eq!(profile.schema_version, "prog.source_profile.v1");
+        assert_eq!(profile.schema, "prog.source_profile");
         assert!(!profile.operations.is_empty());
     }
 }

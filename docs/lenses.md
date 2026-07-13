@@ -30,9 +30,8 @@ The public contract is exposed through `prog meta LensManifest`.
 
 ```json
 {
-  "schema_version": "prog.lens_manifest.v1",
+  "schema": "prog.lens_manifest",
   "id": "github.issues.triage",
-  "version": 1,
   "match": {
     "source_kind": "http",
     "operation": "list_issues"

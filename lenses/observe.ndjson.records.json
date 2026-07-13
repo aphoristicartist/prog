@@ -1,7 +1,6 @@
 {
-  "schema_version": "prog.lens_manifest.v1",
+  "schema": "prog.lens_manifest",
   "id": "observe.ndjson.records",
-  "version": 1,
   "match": {
     "source_id": "observe",
     "artifact_kind": "ndjson"

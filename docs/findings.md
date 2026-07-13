@@ -31,8 +31,8 @@ part of `InspectResponse`; it lives at the request edge so the non-optional
 `InspectResponse::cursor` is enforced before assembly instead of being
 panic-recovered later. Use `InspectRequest::builder(cursor)` to construct one.
 
-`schema_version` on the response is stamped from the existing
-`prog.inspect.v1` const (`INSPECT_VERSION` in `contracts.rs`) — there is no
+`schema` on the response is stamped from the existing
+`prog.inspect` const (`INSPECT_SCHEMA` in `contracts.rs`) — there is no
 second version constant to drift.
 
 ## How a payload becomes findings

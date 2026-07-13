@@ -44,7 +44,7 @@ When the answer depends on the expanded failure section, cite the ref:
 EvidenceRef: prog://pc1_...#/failure_sections/0
 ```
 
-`prog evidence` returns a bounded `prog.evidence.v1` block with an excerpt,
+`prog evidence` returns a bounded `prog.evidence` block with an excerpt,
 line/byte ranges when the parser knows them, safe provenance, redaction state,
 and exact follow-up commands. Do not paste the full stdout/stderr unless the user explicitly needs it. Use
 `prog expand <cursor> --path <path> --out <file>` for bulk evidence that should

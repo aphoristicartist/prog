@@ -1,7 +1,6 @@
 {
-  "schema_version": "prog.lens_manifest.v1",
+  "schema": "prog.lens_manifest",
   "id": "pytest",
-  "version": 1,
   "match": {"source_kind": "cli", "source_id": "run", "operation": "pytest", "artifact_kind": "run"},
   "view": {"limit": 8, "depth": 4, "fields": {"command": "/command", "failures": "/failure_sections", "stderr": "/stderr/head", "stdout": "/stdout/head"}},
   "omit": [

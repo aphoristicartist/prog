@@ -1,7 +1,6 @@
 {
-  "schema_version": "prog.lens_manifest.v1",
+  "schema": "prog.lens_manifest",
   "id": "unified-diff",
-  "version": 1,
   "match": {"source_id": "observe", "artifact_kind": "unified_diff"},
   "view": {"limit": 20, "depth": 5, "fields": {"files": "/files", "head": "/head", "tail": "/tail", "line_count": "/line_count"}},
   "omit": [{"path": "/text", "reason": "large_string", "detail": "full unified diff remains cursor-expandable", "expandable": true}],

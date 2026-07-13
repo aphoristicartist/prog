@@ -1,7 +1,6 @@
 {
-  "schema_version": "prog.lens_manifest.v1",
+  "schema": "prog.lens_manifest",
   "id": "run.failures",
-  "version": 1,
   "match": {
     "source_kind": "cli",
     "source_id": "run",

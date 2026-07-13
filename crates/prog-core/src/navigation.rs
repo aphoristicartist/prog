@@ -4,9 +4,9 @@ use regex::{Regex, RegexBuilder};
 use serde_json::{Value, json};
 
 use crate::{
-    ByteRange, CoreError, EVIDENCE_BLOCK_VERSION, EvidenceBlock, EvidenceCitation, Extra,
+    ByteRange, CoreError, EVIDENCE_BLOCK_SCHEMA, EvidenceBlock, EvidenceCitation, Extra,
     FindingCommandHints, FindingOptions, LensManifest, LineRange, OmissionReason, OmittedRegion,
-    PreviewPolicy, RedactionState, Result, SEARCH_VERSION, SearchHit, SearchResponse, pointer,
+    PreviewPolicy, RedactionState, Result, SEARCH_SCHEMA, SearchHit, SearchResponse, pointer,
     project, ranked_findings, ranked_findings_with_lens,
 };
 
@@ -136,7 +136,7 @@ pub fn search_payload_with_lens(
     };
 
     Ok(SearchResponse {
-        schema_version: SEARCH_VERSION.to_string(),
+        schema: SEARCH_SCHEMA.to_string(),
         cursor: traversal.cursor,
         query: options.query.clone(),
         kind: options.kind.clone(),
@@ -195,7 +195,7 @@ pub fn evidence_block(
     let excerpt = projection.preview;
 
     Ok(EvidenceBlock {
-        schema_version: EVIDENCE_BLOCK_VERSION.to_string(),
+        schema: EVIDENCE_BLOCK_SCHEMA.to_string(),
         cursor,
         path: path.to_string(),
         kind,

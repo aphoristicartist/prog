@@ -1,7 +1,6 @@
 {
-  "schema_version": "prog.lens_manifest.v1",
+  "schema": "prog.lens_manifest",
   "id": "junit",
-  "version": 1,
   "match": {"source_id": "observe", "artifact_kind": "junit_xml"},
   "view": {"limit": 20, "depth": 4, "fields": {"testcases": "/testcases", "count": "/testcase_count", "head": "/head", "tail": "/tail"}},
   "omit": [{"path": "/text", "reason": "large_string", "detail": "raw JUnit XML remains cursor-expandable", "expandable": true}],

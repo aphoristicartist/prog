@@ -53,7 +53,7 @@ impl Default for ImportContext {
 /// Import result with metadata.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportReport {
-    pub schema_version: String,
+    pub schema: String,
     pub source_id: String,
     pub kind: SourceKind,
     pub operations_imported: usize,
@@ -162,10 +162,10 @@ pub fn import_openapi(
 
     let operations_imported = operations.len();
     let profile = SourceProfile {
-        schema_version: crate::contracts::SOURCE_PROFILE_VERSION.to_string(),
+        schema: crate::contracts::SOURCE_PROFILE_SCHEMA.to_string(),
         id: source_id.clone(),
         kind: SourceKind::Http,
-        version: 1,
+        revision: 1,
         description,
         operations,
         auth,
@@ -200,7 +200,7 @@ pub fn import_openapi(
     Ok((
         profile,
         ImportReport {
-            schema_version: crate::contracts::DISCLOSURE_VERSION.to_string(),
+            schema: crate::contracts::DISCLOSURE_SCHEMA.to_string(),
             source_id,
             kind: SourceKind::Http,
             operations_imported,
@@ -265,10 +265,10 @@ pub fn import_json_schema(
     };
 
     let profile = SourceProfile {
-        schema_version: crate::contracts::SOURCE_PROFILE_VERSION.to_string(),
+        schema: crate::contracts::SOURCE_PROFILE_SCHEMA.to_string(),
         id: source_id.clone(),
         kind: SourceKind::Http,
-        version: 1,
+        revision: 1,
         description: schema
             .get("title")
             .and_then(Value::as_str)
@@ -290,7 +290,7 @@ pub fn import_json_schema(
     Ok((
         profile,
         ImportReport {
-            schema_version: crate::contracts::DISCLOSURE_VERSION.to_string(),
+            schema: crate::contracts::DISCLOSURE_SCHEMA.to_string(),
             source_id,
             kind: SourceKind::Http,
             operations_imported: 1,
@@ -422,10 +422,10 @@ pub fn import_mcp_schemas(
 
     let operations_imported = operations.len();
     let profile = SourceProfile {
-        schema_version: crate::contracts::SOURCE_PROFILE_VERSION.to_string(),
+        schema: crate::contracts::SOURCE_PROFILE_SCHEMA.to_string(),
         id: source_id.clone(),
         kind: SourceKind::Mcp,
-        version: 1,
+        revision: 1,
         description: Some("MCP schema import".to_string()),
         operations,
         auth: Vec::new(),
@@ -445,7 +445,7 @@ pub fn import_mcp_schemas(
     Ok((
         profile,
         ImportReport {
-            schema_version: crate::contracts::DISCLOSURE_VERSION.to_string(),
+            schema: crate::contracts::DISCLOSURE_SCHEMA.to_string(),
             source_id,
             kind: SourceKind::Mcp,
             operations_imported,
@@ -493,10 +493,10 @@ pub fn import_cli_help(
 
     let operations_imported = operations.len();
     let profile = SourceProfile {
-        schema_version: crate::contracts::SOURCE_PROFILE_VERSION.to_string(),
+        schema: crate::contracts::SOURCE_PROFILE_SCHEMA.to_string(),
         id: source_id.clone(),
         kind: SourceKind::Cli,
-        version: 1,
+        revision: 1,
         description: Some(format!("CLI help import: {command_base}")),
         operations,
         auth: Vec::new(),
@@ -528,7 +528,7 @@ pub fn import_cli_help(
     Ok((
         profile,
         ImportReport {
-            schema_version: crate::contracts::DISCLOSURE_VERSION.to_string(),
+            schema: crate::contracts::DISCLOSURE_SCHEMA.to_string(),
             source_id,
             kind: SourceKind::Cli,
             operations_imported,
@@ -590,7 +590,7 @@ pub fn refine_with_examples(
     }
 
     ImportReport {
-        schema_version: crate::contracts::DISCLOSURE_VERSION.to_string(),
+        schema: crate::contracts::DISCLOSURE_SCHEMA.to_string(),
         source_id: profile.id.clone(),
         kind: profile.kind,
         operations_imported: 0,

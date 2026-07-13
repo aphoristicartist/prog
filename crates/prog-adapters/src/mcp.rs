@@ -7,7 +7,7 @@ use std::{
 
 use prog_core::{
     CachePolicy, CoreError, EffectSet, EvidenceGrade, Extra, OperationProfile, PreviewPolicy,
-    Result, SOURCE_PROFILE_VERSION, SourceKind, SourceProfile, TrustSettings, mcp_read_effects,
+    Result, SOURCE_PROFILE_SCHEMA, SourceKind, SourceProfile, TrustSettings, mcp_read_effects,
     mcp_tool_annotation_effects, project, redact_sensitive_text, stamp_evidence_grade,
 };
 use rmcp::{
@@ -158,10 +158,10 @@ impl McpSource {
 
         Ok(McpDiscoveryResult {
             profile: SourceProfile {
-                schema_version: SOURCE_PROFILE_VERSION.to_string(),
+                schema: SOURCE_PROFILE_SCHEMA.to_string(),
                 id: self.id.clone(),
                 kind: SourceKind::Mcp,
-                version: 1,
+                revision: 1,
                 description: server_info
                     .as_ref()
                     .and_then(|info| info.instructions.clone())

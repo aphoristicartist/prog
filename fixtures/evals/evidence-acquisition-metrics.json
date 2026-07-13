@@ -1,5 +1,5 @@
 {
-  "schema_version": "prog.evidence_acquisition_eval.v1",
+  "schema": "prog.evidence_acquisition_eval",
   "scenarios": [
     {
       "name": "cargo_compile_error",
@@ -10,9 +10,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 635,
-      "findings_output_tokens": 679,
-      "inspect_output_tokens": 1341
+      "baseline_output_tokens": 633,
+      "findings_output_tokens": 676,
+      "inspect_output_tokens": 1336
     },
     {
       "name": "cargo_test_failure",
@@ -23,9 +23,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 646,
-      "findings_output_tokens": 676,
-      "inspect_output_tokens": 1338
+      "baseline_output_tokens": 643,
+      "findings_output_tokens": 674,
+      "inspect_output_tokens": 1332
     },
     {
       "name": "noisy_log_root_error",
@@ -36,9 +36,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 837,
-      "findings_output_tokens": 474,
-      "inspect_output_tokens": 672
+      "baseline_output_tokens": 834,
+      "findings_output_tokens": 471,
+      "inspect_output_tokens": 667
     },
     {
       "name": "pytest_assertion_failure",
@@ -49,9 +49,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 681,
-      "findings_output_tokens": 716,
-      "inspect_output_tokens": 1392
+      "baseline_output_tokens": 678,
+      "findings_output_tokens": 713,
+      "inspect_output_tokens": 1387
     },
     {
       "name": "sarif_security_error",
@@ -62,9 +62,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 648,
-      "findings_output_tokens": 624,
-      "inspect_output_tokens": 677
+      "baseline_output_tokens": 645,
+      "findings_output_tokens": 621,
+      "inspect_output_tokens": 671
     }
   ],
   "summary": {
@@ -73,8 +73,8 @@
     "baseline_tool_calls": 15,
     "findings_tool_calls": 10,
     "inspect_tool_calls": 15,
-    "baseline_output_tokens": 3447,
-    "findings_output_tokens": 3169,
-    "inspect_output_tokens": 5420
+    "baseline_output_tokens": 3433,
+    "findings_output_tokens": 3155,
+    "inspect_output_tokens": 5393
   }
 }

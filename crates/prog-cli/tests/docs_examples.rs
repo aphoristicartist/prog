@@ -99,7 +99,7 @@ fn readme_cli_quickstart_commands_stay_copy_pasteable() {
     );
     assert_success(&call);
     let envelope = json(&call);
-    assert_eq!(envelope["schema_version"], "prog.disclosure.v1");
+    assert_eq!(envelope["schema"], "prog.disclosure");
     assert_eq!(envelope["source_id"], "demo_cli");
     assert_eq!(envelope["operation"], "list");
     assert_eq!(envelope["cache"]["status"], "stored");

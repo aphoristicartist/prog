@@ -1,7 +1,6 @@
 {
-  "schema_version": "prog.lens_manifest.v1",
+  "schema": "prog.lens_manifest",
   "id": "kubectl-json",
-  "version": 1,
   "match": {"source_id": "observe", "artifact_kind": "json"},
   "view": {"root": "/items", "limit": 20, "depth": 5, "fields": {"name": "/metadata/name", "namespace": "/metadata/namespace", "phase": "/status/phase", "reason": "/status/reason", "conditions": "/status/conditions", "containers": "/status/containerStatuses"}},
   "omit": [{"path": "/items/*/metadata/managedFields", "reason": "deep_object", "detail": "managed fields remain cursor-expandable", "expandable": true}],

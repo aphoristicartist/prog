@@ -19,12 +19,12 @@ use prog_core::importers::{
 };
 use prog_core::{
     AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance,
-    CommandHintConfig, CoreError, DISCLOSURE_VERSION, DisclosureEnvelope, EffectSet, EvidenceBlock,
+    CommandHintConfig, CoreError, DISCLOSURE_SCHEMA, DisclosureEnvelope, EffectSet, EvidenceBlock,
     EvidenceGrade, EvidenceRef, ExpansionScope, Extra, FindingOptions, InspectRequest,
     InspectResponse, LensManifest, NewSessionEvent, NextAction, ObservationCompleteness,
     ObservationFreshness, ObservationMetadata, ObservationPayloadStatus, ObservationSafety,
     ObservationTrust, OmissionReason, OmittedRegion, OperationProfile, PersistedPayload,
-    PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, Result, SOURCE_PROFILE_VERSION,
+    PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, Result, SOURCE_PROFILE_SCHEMA,
     ScopedSlice, SearchOptions, SearchResponse, SliceRequest, SourceProfile, Store, Summary,
     TrustSettings, ValidatedCursor, ValueScanReport, build_inspect_response, cache_allowed,
     call_effect_warnings, canonical_json, check_call, check_discovery, cli_adapter_effects,
@@ -827,10 +827,10 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
 
 #[derive(Clone, Serialize)]
 struct DiscoverReport {
-    schema_version: &'static str,
+    schema: &'static str,
     source_id: String,
     kind: prog_core::SourceKind,
-    profile_version: u64,
+    profile_revision: u64,
     operations_found: usize,
     operations_probed: usize,
     shapes_learned: usize,
@@ -843,7 +843,7 @@ struct DiscoverReport {
 
 #[derive(Serialize)]
 struct SourceAddReport {
-    schema_version: &'static str,
+    schema: &'static str,
     source_id: String,
     kind: prog_core::SourceKind,
     operation: String,
@@ -864,9 +864,9 @@ struct StructuredOutputHint {
 
 #[derive(Serialize)]
 struct HintsResponse {
-    schema_version: &'static str,
+    schema: &'static str,
     source_id: String,
-    profile_version: u64,
+    profile_revision: u64,
     hints: Value,
     omitted: Vec<OmittedRegion>,
     cursor: Option<String>,
@@ -1073,7 +1073,7 @@ struct EvidenceRefInput<'a> {
 #[derive(Debug, Deserialize)]
 struct ModelCostProfile {
     #[serde(default)]
-    schema_version: Option<String>,
+    schema: Option<String>,
     model: String,
     #[serde(default)]
     input_price_per_million_tokens: Option<f64>,
@@ -1092,7 +1092,7 @@ struct ModelCostProfile {
 
 #[derive(Debug, Serialize)]
 struct CostReport {
-    schema_version: &'static str,
+    schema: &'static str,
     model: CostModelSummary,
     input: CostInputSummary,
     scenarios: Vec<CostScenario>,
@@ -1150,7 +1150,7 @@ struct CostFlowEstimate {
 
 #[derive(Debug, Serialize)]
 struct InitReport {
-    schema_version: &'static str,
+    schema: &'static str,
     agent: &'static str,
     scope: &'static str,
     root: String,
@@ -1172,7 +1172,7 @@ struct InitFileReport {
 
 #[derive(Debug, Serialize)]
 struct PathsResponse {
-    schema_version: &'static str,
+    schema: &'static str,
     cursor: String,
     source_id: String,
     operation: String,
@@ -1252,10 +1252,10 @@ async fn discover_from_import(
         merge_profiles(current, profile.clone())
     })?;
     Ok(DiscoverReport {
-        schema_version: DISCLOSURE_VERSION,
+        schema: DISCLOSURE_SCHEMA,
         source_id,
         kind: profile.kind,
-        profile_version: profile.version,
+        profile_revision: profile.revision,
         operations_found: report.operations_imported,
         operations_probed: 0,
         shapes_learned: 0,
@@ -1304,10 +1304,10 @@ async fn discover_from_seed(
     })?;
 
     Ok(DiscoverReport {
-        schema_version: DISCLOSURE_VERSION,
+        schema: DISCLOSURE_SCHEMA,
         source_id: source_id.to_string(),
         kind: profile.kind,
-        profile_version: profile.version,
+        profile_revision: profile.revision,
         operations_found,
         operations_probed,
         shapes_learned,
@@ -1368,7 +1368,7 @@ async fn source_add_http(
     warnings.extend(discovery.warnings.clone());
     let next_steps = source_add_next_steps(dir, &args.source_id, &operation, !read_only);
     Ok(SourceAddReport {
-        schema_version: DISCLOSURE_VERSION,
+        schema: DISCLOSURE_SCHEMA,
         source_id: args.source_id.clone(),
         kind: prog_core::SourceKind::Http,
         operation,
@@ -1446,7 +1446,7 @@ async fn source_add_cli(
     warnings.extend(discovery.warnings.clone());
     let next_steps = source_add_next_steps(dir, &args.source_id, &operation, !read_only);
     Ok(SourceAddReport {
-        schema_version: DISCLOSURE_VERSION,
+        schema: DISCLOSURE_SCHEMA,
         source_id: args.source_id.clone(),
         kind: prog_core::SourceKind::Cli,
         operation,
@@ -1774,9 +1774,9 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
     };
 
     Ok(HintsResponse {
-        schema_version: DISCLOSURE_VERSION,
+        schema: DISCLOSURE_SCHEMA,
         source_id: args.source_id.clone(),
-        profile_version: profile.version,
+        profile_revision: profile.revision,
         hints: projection.preview,
         omitted: projection.omitted,
         cursor,
@@ -3464,7 +3464,7 @@ fn init_integration(args: &InitArgs) -> Result<InitReport> {
     }
 
     Ok(InitReport {
-        schema_version: "prog.init.v1",
+        schema: "prog.init",
         agent: args.agent.as_str(),
         scope: "project",
         root: root.to_string_lossy().to_string(),
@@ -3510,7 +3510,7 @@ fn agent_project_init_files(agent: AgentKind) -> Vec<InitFileSpec> {
         uninstall_path.clone(),
     ];
     let manifest = json!({
-        "schema_version": "prog.integration.v1",
+        "schema": "prog.integration",
         "agent": agent.as_str(),
         "scope": "project",
         "mcp": {
@@ -3841,7 +3841,7 @@ fn cost_report(args: &CostArgs) -> Result<CostReport> {
     }
 
     Ok(CostReport {
-        schema_version: "prog.cost_report.v1",
+        schema: "prog.cost_report",
         model: CostModelSummary {
             model: profile.model,
             input_price_per_million_tokens: input_price,
@@ -3923,8 +3923,8 @@ fn read_model_cost_profile(path: &Path) -> Result<(ModelCostProfile, Vec<String>
             ),
         })?;
     let mut warnings = Vec::new();
-    if profile.schema_version.as_deref() != Some("prog.model_profile.v1") {
-        warnings.push("model profile schema_version should be prog.model_profile.v1".to_string());
+    if profile.schema.as_deref() != Some("prog.model_profile") {
+        warnings.push("model profile schema should be prog.model_profile".to_string());
     }
     if profile.pricing_source.is_none() || profile.priced_at.is_none() {
         warnings
@@ -3957,7 +3957,7 @@ fn estimate_prog_cost_flow(
     let payload_bytes = redacted_bytes.len().try_into().unwrap_or(u64::MAX);
     let projection = project(redacted.as_value(), &PreviewPolicy::default(), "");
     let observe_envelope = json!({
-        "schema_version": DISCLOSURE_VERSION,
+        "schema": DISCLOSURE_SCHEMA,
         "source_id": "observe",
         "operation": "cost",
         "summary": {
@@ -3979,7 +3979,7 @@ fn estimate_prog_cost_flow(
     annotate_path_omissions(&mut paths, &root_projection.omitted);
     append_missing_omitted_paths(&mut paths, &root_projection.omitted, 200);
     let paths_doc = json!({
-        "schema_version": DISCLOSURE_VERSION,
+        "schema": DISCLOSURE_SCHEMA,
         "cursor": "pc1_cost_example",
         "prefix": "",
         "paths": paths,
@@ -4002,14 +4002,14 @@ fn estimate_prog_cost_flow(
         let (target_path, selected) = slice_value(&redacted, &scoped)?;
         let expansion = project(&selected, &PreviewPolicy::default(), &target_path);
         let expansion_envelope = json!({
-            "schema_version": DISCLOSURE_VERSION,
+            "schema": DISCLOSURE_SCHEMA,
             "source_id": "observe",
             "operation": "cost",
             "data_preview": expansion.preview,
             "omitted": expansion.omitted,
             "cursor": "pc1_cost_example",
             "evidence_ref": {
-                "schema_version": "prog.evidence_ref.v1",
+                "schema": "prog.evidence_ref",
                 "path": target_path
             }
         });
@@ -4091,7 +4091,7 @@ fn evidence_ref(input: EvidenceRefInput<'_>) -> EvidenceRef {
     let age_seconds = input.cache.and_then(|cache| cache.age_seconds);
     let stale = cache_is_stale(input.cache);
     EvidenceRef {
-        schema_version: "prog.evidence_ref.v1".to_string(),
+        schema: "prog.evidence_ref".to_string(),
         source_id: input.source_id.to_string(),
         operation: input.operation.to_string(),
         cursor: input.cursor.map(str::to_string),
@@ -4670,7 +4670,7 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
     )?;
 
     Ok(PathsResponse {
-        schema_version: DISCLOSURE_VERSION,
+        schema: DISCLOSURE_SCHEMA,
         cursor: args.cursor.clone(),
         source_id: record.source_id.clone(),
         operation: record.operation.clone(),
@@ -5357,6 +5357,13 @@ async fn prepare_discovery(
     seed: Value,
 ) -> Result<PreparedDiscovery> {
     if seed.get("schema_version").is_some() {
+        return Err(CoreError::BadArgs {
+            operation: "source discovery seed".to_string(),
+            reason: "schema_version is unsupported; regenerate this pre-release profile"
+                .to_string(),
+        });
+    }
+    if seed.get("schema").is_some() {
         let mut profile: SourceProfile = serde_json::from_value(seed)?;
         profile.id = source_id.to_string();
         profile.kind = core_kind(kind);
@@ -5448,10 +5455,10 @@ fn prepare_http_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery>
 
     Ok(PreparedDiscovery {
         profile: SourceProfile {
-            schema_version: SOURCE_PROFILE_VERSION.to_string(),
+            schema: SOURCE_PROFILE_SCHEMA.to_string(),
             id: source_id.to_string(),
             kind: prog_core::SourceKind::Http,
-            version: 1,
+            revision: 1,
             description: optional_string(seed, "description")?,
             operations,
             auth: auth.clone(),
@@ -5567,10 +5574,10 @@ fn prepare_cli_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery> 
 
     Ok(PreparedDiscovery {
         profile: SourceProfile {
-            schema_version: SOURCE_PROFILE_VERSION.to_string(),
+            schema: SOURCE_PROFILE_SCHEMA.to_string(),
             id: source_id.to_string(),
             kind: prog_core::SourceKind::Cli,
-            version: 1,
+            revision: 1,
             description: optional_string(seed, "description")?,
             operations,
             auth: Vec::new(),
@@ -7258,7 +7265,6 @@ fn cursor_lens_extra(lens: Option<&LensManifest>) -> Extra {
     let mut extra = Extra::new();
     if let Some(lens) = lens {
         extra.insert("lens_id".to_string(), json!(lens.id));
-        extra.insert("lens_version".to_string(), json!(lens.version));
     }
     extra
 }
@@ -7399,8 +7405,7 @@ fn make_envelope(
         extra.insert(
             "lens".to_string(),
             json!({
-                "id": lens.id,
-                "version": lens.version
+                "id": lens.id
             }),
         );
     }
@@ -7423,7 +7428,7 @@ fn make_envelope(
         );
     }
     DisclosureEnvelope {
-        schema_version: DISCLOSURE_VERSION.to_string(),
+        schema: DISCLOSURE_SCHEMA.to_string(),
         source_id: Some(input.source_id.clone()),
         operation: Some(input.operation.clone()),
         summary: Summary {
@@ -8008,7 +8013,7 @@ fn build_hints_document(profile: &SourceProfile, operation_filter: Option<&str>)
     Ok(json!({
         "source_id": profile.id,
         "kind": profile.kind,
-        "version": profile.version,
+        "revision": profile.revision,
         "operation_count": profile.operations.len(),
         "operations": operations,
         "suggested_next_calls": selected.iter().take(10).map(|operation| {

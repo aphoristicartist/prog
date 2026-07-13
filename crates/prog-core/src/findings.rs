@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::BTreeMap};
 use serde_json::{Map, Value, json};
 
 use crate::{
-    Extra, Finding, FindingCommandHints, INSPECT_VERSION, InspectResponse, LineRange,
+    Extra, Finding, FindingCommandHints, INSPECT_SCHEMA, InspectResponse, LineRange,
     RedactionState, Result, pointer,
 };
 
@@ -192,8 +192,8 @@ pub fn ranked_findings(payload: &Value, options: &FindingOptions) -> Result<Vec<
 ///
 /// This is the single boundary the `prog inspect` CLI command calls.
 /// The engine is pure and store-less: it projects a ranked view over `payload`
-/// (consumed AFTER redact -> infer -> store -> project), stamps `schema_version`
-/// from [`INSPECT_VERSION`], and derives `normalized_goal` via
+/// (consumed AFTER redact -> infer -> store -> project), stamps `schema`
+/// from [`INSPECT_SCHEMA`], and derives `normalized_goal` via
 /// [`normalized_goal`]. `omitted` / `cache` / `warnings` are left default; the
 /// bounded 16 KiB envelope is preserved via `request.limit` (default
 /// [`DEFAULT_LIMIT`]) and [`MAX_REASON_CHARS`] truncation. Each [`Finding`]
@@ -212,7 +212,7 @@ pub fn build_inspect_response(
     };
     let findings = ranked_findings(payload, &options)?;
     Ok(InspectResponse {
-        schema_version: INSPECT_VERSION.to_string(),
+        schema: INSPECT_SCHEMA.to_string(),
         cursor: request.cursor.clone(),
         goal: request.goal.clone().unwrap_or_default(),
         normalized_goal: normalized_goal(request.goal.as_deref()),

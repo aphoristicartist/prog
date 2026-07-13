@@ -4,7 +4,7 @@ use std::{
 };
 
 use prog_core::{
-    LENS_MANIFEST_VERSION, LensManifest, PreviewPolicy, RawPayload, RedactedPayload,
+    LENS_MANIFEST_SCHEMA, LensManifest, PreviewPolicy, RawPayload, RedactedPayload,
     RedactionPolicy, SliceRequest, lens_slice_request, project_with_lens, validate_lens_manifest,
 };
 use serde_json::{Value, json};
@@ -40,9 +40,8 @@ fn redacted(value: Value) -> RedactedPayload {
 #[test]
 fn lens_manifest_projects_fields_omissions_actions_and_redaction() {
     let lens = manifest(json!({
-        "schema_version": LENS_MANIFEST_VERSION,
+        "schema": LENS_MANIFEST_SCHEMA,
         "id": "github.issues.triage",
-        "version": 1,
         "view": {
             "root": "/items",
             "limit": 1,
@@ -130,22 +129,20 @@ fn lens_manifest_projects_fields_omissions_actions_and_redaction() {
 
 #[test]
 fn lens_manifest_validation_rejects_bad_contracts_and_escaping_paths() {
-    let missing_version = manifest(json!({
-        "schema_version": LENS_MANIFEST_VERSION,
-        "id": "bad",
-        "version": 0
+    let wrong_schema = manifest(json!({
+        "schema": "prog.wrong",
+        "id": "bad"
     }));
     assert!(
-        validate_lens_manifest(&missing_version)
+        validate_lens_manifest(&wrong_schema)
             .unwrap_err()
             .to_string()
-            .contains("version")
+            .contains("schema")
     );
 
     let bad_selector = manifest(json!({
-        "schema_version": LENS_MANIFEST_VERSION,
+        "schema": LENS_MANIFEST_SCHEMA,
         "id": "bad-selector",
-        "version": 1,
         "view": {
             "fields": {"title": "title"}
         }
@@ -158,9 +155,8 @@ fn lens_manifest_validation_rejects_bad_contracts_and_escaping_paths() {
     );
 
     let escaping_omit = manifest(json!({
-        "schema_version": LENS_MANIFEST_VERSION,
+        "schema": LENS_MANIFEST_SCHEMA,
         "id": "escaping",
-        "version": 1,
         "view": {"root": "/items"},
         "omit": [{"path": "/meta", "reason": "deep_object"}]
     }));
@@ -175,9 +171,8 @@ fn lens_manifest_validation_rejects_bad_contracts_and_escaping_paths() {
 #[test]
 fn missing_lens_fields_are_not_fabricated() {
     let lens = manifest(json!({
-        "schema_version": LENS_MANIFEST_VERSION,
+        "schema": LENS_MANIFEST_SCHEMA,
         "id": "missing-fields",
-        "version": 1,
         "view": {
             "root": "/items",
             "fields": {

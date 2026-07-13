@@ -67,7 +67,7 @@ Consumers must ignore unknown object fields. The contracts intentionally allow e
 
 Consumers should branch on stable required fields first:
 
-- `schema_version`
+- `schema`
 - `source_id`
 - `operation`
 - `summary`

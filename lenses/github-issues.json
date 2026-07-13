@@ -1,7 +1,6 @@
 {
-  "schema_version": "prog.lens_manifest.v1",
+  "schema": "prog.lens_manifest",
   "id": "github-issues",
-  "version": 1,
   "match": {"source_kind": "cli", "source_id": "run", "operation": "gh", "artifact_kind": "run"},
   "view": {"limit": 12, "depth": 4, "fields": {"command": "/command", "stdout_head": "/stdout/head", "stderr_head": "/stderr/head", "failures": "/failure_sections"}},
   "omit": [{"path": "/stdout/text", "reason": "large_string", "detail": "full gh JSON output remains cursor-expandable", "expandable": true}],

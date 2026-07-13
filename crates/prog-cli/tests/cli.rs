@@ -365,7 +365,7 @@ fn evidence_refs_are_stable_refresh_sensitive_and_redaction_safe() {
     assert!(expanded.status.success(), "{}", stdout(&expanded));
     let expanded_value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
     let evidence = &expanded_value["evidence_ref"];
-    assert_eq!(evidence["schema_version"], "prog.evidence_ref.v1");
+    assert_eq!(evidence["schema"], "prog.evidence_ref");
     assert_eq!(evidence["source_id"], "observe");
     assert_eq!(evidence["operation"], "evidence");
     assert_eq!(evidence["cursor"], cursor);
@@ -1602,7 +1602,7 @@ fn init_codex_project_dry_run_reports_reviewable_files_without_writing() {
     assert!(output.status.success(), "{}", stdout(&output));
     assert_eq!(stderr(&output), "");
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], "prog.init.v1");
+    assert_eq!(report["schema"], "prog.init");
     assert_eq!(report["agent"], "codex");
     assert_eq!(report["scope"], "project");
     assert_eq!(report["dry_run"], true);
@@ -1674,7 +1674,7 @@ fn init_codex_project_creates_hook_skill_manifest_and_preserves_existing_files()
         );
     }
     let manifest_value: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
-    assert_eq!(manifest_value["schema_version"], "prog.integration.v1");
+    assert_eq!(manifest_value["schema"], "prog.integration");
     assert_eq!(manifest_value["agent"], "codex");
     assert_eq!(manifest_value["mcp"]["status"], "optional");
     assert!(
@@ -1824,7 +1824,7 @@ fn cost_planner_reports_profile_driven_savings_and_repeated_cache_hits() {
     fs::write(
         &profile,
         serde_json::to_vec_pretty(&json!({
-            "schema_version": "prog.model_profile.v1",
+            "schema": "prog.model_profile",
             "model": "fable-class-test",
             "input_price_per_million_tokens": 10.0,
             "output_price_per_million_tokens": 50.0,
@@ -1864,7 +1864,7 @@ fn cost_planner_reports_profile_driven_savings_and_repeated_cache_hits() {
     assert!(output.status.success(), "{}", stdout(&output));
     assert_eq!(stderr(&output), "");
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], "prog.cost_report.v1");
+    assert_eq!(report["schema"], "prog.cost_report");
     assert_eq!(report["model"]["model"], "fable-class-test");
     assert_eq!(report["input"]["expand_paths"][0], "/items/3/body");
     assert!(
@@ -1914,7 +1914,7 @@ fn cost_planner_validates_prices_and_reports_tiny_payload_counterexample() {
     fs::write(
         &missing_price,
         serde_json::to_vec_pretty(&json!({
-            "schema_version": "prog.model_profile.v1",
+            "schema": "prog.model_profile",
             "model": "bad",
             "output_price_per_million_tokens": 1.0,
             "context_window_tokens": 1000
@@ -1943,7 +1943,7 @@ fn cost_planner_validates_prices_and_reports_tiny_payload_counterexample() {
     fs::write(
         &profile,
         serde_json::to_vec_pretty(&json!({
-            "schema_version": "prog.model_profile.v1",
+            "schema": "prog.model_profile",
             "model": "tiny-test",
             "input_price_per_million_tokens": 0.25,
             "output_price_per_million_tokens": 1.0,
@@ -3199,7 +3199,7 @@ fn rediscover_preserves_learned_shape() {
 
     let profile = read_profile(dir.path(), "local");
     assert!(profile["operations"][0]["output_shape"].is_object());
-    assert_eq!(profile["version"], 2);
+    assert_eq!(profile["revision"], 2);
 }
 
 #[test]
@@ -3713,9 +3713,8 @@ print(json.dumps({"items": items, "meta": {"count": len(items)}}))
     fs::write(
         lens_dir.join("cli-items.json"),
         r#"{
-          "schema_version": "prog.lens_manifest.v1",
+          "schema": "prog.lens_manifest",
           "id": "cli.items",
-          "version": 1,
           "match": {
             "source_kind": "cli",
             "operation": "list"
@@ -3746,9 +3745,8 @@ print(json.dumps({"items": items, "meta": {"count": len(items)}}))
     .unwrap();
     fs::write(
         lens_dir.join("unused.yaml"),
-        r#"schema_version: prog.lens_manifest.v1
+        r#"schema: prog.lens_manifest
 id: unused.yaml
-version: 1
 view:
   root: /items
 "#,
@@ -3972,9 +3970,8 @@ fn call_rejects_lens_manifest_that_escapes_its_root() {
     fs::write(
         lens_dir.join("bad.json"),
         r#"{
-          "schema_version": "prog.lens_manifest.v1",
+          "schema": "prog.lens_manifest",
           "id": "bad",
-          "version": 1,
           "view": {"root": "/items"},
           "omit": [{"path": "/meta", "reason": "deep_object"}]
         }"#,
@@ -4556,7 +4553,7 @@ fn evidence_navigation_workflow_is_offline_scoped_bounded_and_session_backed() {
     ]);
     assert!(evidence.status.success(), "{}", stdout(&evidence));
     let evidence_value: Value = serde_json::from_slice(&evidence.stdout).unwrap();
-    assert_eq!(evidence_value["schema_version"], "prog.evidence.v1");
+    assert_eq!(evidence_value["schema"], "prog.evidence");
     assert_eq!(evidence_value["line_range"]["start"], 1);
     assert!(
         evidence_value["source_command"]
