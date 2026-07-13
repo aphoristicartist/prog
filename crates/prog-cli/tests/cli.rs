@@ -2914,6 +2914,40 @@ fn source_add_cli_creates_working_profile_from_command_line() {
 }
 
 #[test]
+fn call_persists_cli_error_evidence_but_returns_non_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("fail.py");
+    fs::write(
+        &script,
+        "import sys\nprint('useful stdout')\nsys.stderr.write('useful stderr\\n')\nsys.exit(7)\n",
+    )
+    .unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+
+    let added = prog(&[
+        "--dir",
+        dir_arg,
+        "source",
+        "add-cli",
+        "failing",
+        "--operation",
+        "run",
+        "--read-only",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+    ]);
+    assert!(added.status.success(), "{}", stdout(&added));
+
+    let output = prog(&["--dir", dir_arg, "call", "failing", "run", "--args", "{}"]);
+    assert!(!output.status.success());
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["received_error"], true);
+    let cursor = envelope["cursor"].as_str().unwrap();
+    assert!(stdout(&prog(&["--dir", dir_arg, "evidence", cursor])).contains("useful stderr"));
+}
+
+#[test]
 fn source_add_preserves_fail_closed_defaults_and_reports_invalid_inputs() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();

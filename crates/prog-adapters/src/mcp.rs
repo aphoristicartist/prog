@@ -64,6 +64,7 @@ pub struct McpCallResult {
     pub data: Value,
     pub provenance: McpProvenance,
     pub diagnostics: McpDiagnostics,
+    pub received_error: bool,
     #[serde(default)]
     pub warnings: Vec<String>,
 }
@@ -211,6 +212,7 @@ impl McpSource {
                 normalized.structured_content,
             ),
             diagnostics,
+            received_error: normalized.received_error,
             warnings: normalized.warnings,
         })
     }
@@ -243,6 +245,7 @@ impl McpSource {
                 normalized.structured_content,
             ),
             diagnostics,
+            received_error: false,
             warnings: normalized.warnings,
         })
     }
@@ -354,14 +357,8 @@ impl McpSource {
         tool_name: &str,
         result: CallToolResult,
     ) -> Result<NormalizedMcpData> {
-        if result.is_error.unwrap_or(false) {
-            return Err(CoreError::McpToolError {
-                operation: tool_name.to_string(),
-                content_preview: self.preview_content_blocks(&result.content),
-            });
-        }
-
-        if let Some(data) = result.structured_content {
+        let received_error = result.is_error.unwrap_or(false);
+        let mut normalized = if let Some(data) = result.structured_content {
             let response_bytes = serde_json::to_vec(&data).map_or(0, |bytes| bytes.len());
             if response_bytes > self.max_content_bytes {
                 let projection = project(
@@ -372,7 +369,7 @@ impl McpSource {
                     },
                     "",
                 );
-                return Ok(NormalizedMcpData {
+                NormalizedMcpData {
                     data: json!({
                         "format": "structured_content",
                         "preview": projection.preview,
@@ -387,18 +384,28 @@ impl McpSource {
                         "structuredContent exceeded max_content_bytes ({}); content was truncated",
                         self.max_content_bytes
                     )],
-                });
+                    received_error: false,
+                }
+            } else {
+                NormalizedMcpData {
+                    data,
+                    response_bytes,
+                    truncated: false,
+                    structured_content: true,
+                    warnings: Vec::new(),
+                    received_error: false,
+                }
             }
-            return Ok(NormalizedMcpData {
-                data,
-                response_bytes,
-                truncated: false,
-                structured_content: true,
-                warnings: Vec::new(),
-            });
+        } else {
+            self.normalize_content_blocks(&result.content)
+        };
+        if received_error {
+            normalized.warnings.push(format!(
+                "MCP tool '{tool_name}' returned isError content; captured as error evidence"
+            ));
+            normalized.received_error = true;
         }
-
-        Ok(self.normalize_content_blocks(&result.content))
+        Ok(normalized)
     }
 
     fn normalize_resource_result(&self, result: ReadResourceResult) -> Result<NormalizedMcpData> {
@@ -414,6 +421,7 @@ impl McpSource {
             truncated: false,
             structured_content: false,
             warnings: Vec::new(),
+            received_error: false,
         })
     }
 
@@ -430,6 +438,7 @@ impl McpSource {
             truncated: false,
             structured_content: false,
             warnings: Vec::new(),
+            received_error: false,
         }
     }
 
@@ -448,6 +457,7 @@ impl McpSource {
                 truncated,
                 structured_content: false,
                 warnings: Vec::new(),
+                received_error: false,
             };
         }
         let lines: Vec<String> = bounded
@@ -481,11 +491,8 @@ impl McpSource {
             truncated,
             structured_content: false,
             warnings,
+            received_error: false,
         }
-    }
-
-    fn preview_content_blocks(&self, content: &[ContentBlock]) -> Value {
-        self.normalize_content_blocks(content).data
     }
 
     fn provenance(
@@ -559,6 +566,7 @@ struct NormalizedMcpData {
     truncated: bool,
     structured_content: bool,
     warnings: Vec<String>,
+    received_error: bool,
 }
 
 #[derive(Default)]

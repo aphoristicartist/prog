@@ -295,7 +295,7 @@ async fn text_response_redacts_common_secret_formats() {
 }
 
 #[tokio::test]
-async fn maps_non_success_status_to_structured_error_with_bounded_preview() {
+async fn captures_non_success_status_as_navigable_error_evidence() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/missing"))
@@ -321,12 +321,13 @@ async fn maps_non_success_status_to_structured_error_with_bounded_preview() {
         },
     );
 
-    let err = source
+    let result = source
         .execute_with_env("missing", &json!({}), &|_| None)
         .await
-        .unwrap_err();
-    assert_eq!(err.kind(), "http_status");
-    let rendered = serde_json::to_string(&err.envelope()).unwrap();
+        .unwrap();
+    assert!(result.received_error);
+    assert_eq!(result.provenance.status, 404);
+    let rendered = serde_json::to_string(&result).unwrap();
     assert!(rendered.contains("not found"));
     assert!(rendered.len() < 16 * 1024);
 }

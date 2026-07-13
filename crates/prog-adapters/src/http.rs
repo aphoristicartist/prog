@@ -4,8 +4,7 @@ use std::{
 };
 
 use prog_core::{
-    AuthRef, CoreError, PreviewPolicy, Projection, RawPayload, RedactionPolicy, Result,
-    ScopedSlice, SliceRequest, expand, is_sensitive_name, redact_sensitive_text,
+    AuthRef, CoreError, RedactionPolicy, Result, is_sensitive_name, redact_sensitive_text,
 };
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
@@ -58,6 +57,7 @@ pub struct HttpOperation {
 pub struct HttpCallResult {
     pub data: Value,
     pub provenance: HttpProvenance,
+    pub received_error: bool,
     #[serde(default)]
     pub pagination: Option<Value>,
     #[serde(default)]
@@ -190,17 +190,16 @@ impl HttpSource {
         };
 
         if !status.is_success() {
-            let projection = bounded_preview(&data)?;
-            return Err(CoreError::HttpStatus {
-                operation: operation.id.clone(),
-                status: status.as_u16(),
-                body_preview: projection.preview,
-            });
+            warnings.push(format!(
+                "upstream returned HTTP status {}; response captured as error evidence",
+                status.as_u16()
+            ));
         }
 
         Ok(HttpCallResult {
             data,
             provenance,
+            received_error: !status.is_success(),
             pagination,
             warnings,
         })
@@ -332,17 +331,16 @@ impl HttpSource {
         };
 
         if !status.is_success() {
-            let projection = bounded_preview(&data)?;
-            return Err(CoreError::HttpStatus {
-                operation: operation.id.clone(),
-                status: status.as_u16(),
-                body_preview: projection.preview,
-            });
+            warnings.push(format!(
+                "upstream returned HTTP status {}; response captured as error evidence",
+                status.as_u16()
+            ));
         }
 
         Ok(HttpCallResult {
             data,
             provenance,
+            received_error: !status.is_success(),
             pagination,
             warnings,
         })
@@ -664,21 +662,6 @@ fn selected_headers(
         }
     }
     selected
-}
-
-fn bounded_preview(data: &Value) -> Result<Projection> {
-    let payload = RawPayload::new(data.clone())
-        .redact(&RedactionPolicy::default())
-        .payload;
-    let slice = ScopedSlice::root(SliceRequest {
-        path: None,
-        limit: None,
-        depth: Some(2),
-        fields: Vec::new(),
-        omit: Vec::new(),
-        extra: Map::new(),
-    })?;
-    expand(&payload, &slice, &PreviewPolicy::default())
 }
 
 fn redacted_args(args: &Map<String, Value>, sensitive: &[String]) -> Value {

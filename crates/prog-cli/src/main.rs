@@ -602,10 +602,14 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
         }
         Command::Call(args) => {
             let store = Store::open(&cli.dir)?;
-            let mut envelope = call_source(&store, &cli.lens_dir, args).await?;
-            record_envelope_event(&store, &mut envelope, "call");
-            write_success(&envelope, cli.pretty)?;
-            Ok(ExitCode::SUCCESS)
+            let mut result = call_source(&store, &cli.lens_dir, args).await?;
+            record_envelope_event(&store, &mut result.envelope, "call");
+            write_success(&result.envelope, cli.pretty)?;
+            Ok(if result.received_error {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            })
         }
         Command::Observe(args) => {
             let store = Store::open(&cli.dir)?;
@@ -909,6 +913,12 @@ struct AdapterCall {
     duration_ms: Option<u64>,
     pagination: Option<Value>,
     warnings: Vec<String>,
+    received_error: bool,
+}
+
+struct CallSourceResult {
+    envelope: DisclosureEnvelope,
+    received_error: bool,
 }
 
 struct EnvelopeInput {
@@ -1784,11 +1794,7 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
     })
 }
 
-async fn call_source(
-    store: &Store,
-    lens_dir: &Path,
-    args: &CallArgs,
-) -> Result<DisclosureEnvelope> {
+async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<CallSourceResult> {
     let profile = store
         .read_profile(&args.source_id)?
         .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
@@ -1890,12 +1896,19 @@ async fn call_source(
                 }
                 compact_pagination_extra_to_budget(&mut envelope)?;
             }
-            return Ok(envelope);
+            let received_error = entry.provenance.as_ref().is_some_and(|provenance| {
+                provenance.extra.get("received_error") == Some(&Value::Bool(true))
+            });
+            return Ok(CallSourceResult {
+                envelope,
+                received_error,
+            });
         }
     }
 
     let source = callable_source_from_profile(&profile)?;
     let adapter_call = execute_callable(&source, &operation, &call_args).await?;
+    let received_error = adapter_call.received_error;
     let first_pagination = adapter_call.pagination.clone();
     let redaction = resolve_redaction(Some(&profile));
     let redacted = RawPayload::new(adapter_call.data).redact(&redaction);
@@ -1911,6 +1924,9 @@ async fn call_source(
         adapter_call.duration_ms,
         adapter_call.provenance,
     );
+    provenance
+        .extra
+        .insert("received_error".to_string(), Value::Bool(received_error));
     let mut warnings = adapter_call.warnings;
     warnings.extend(call_effect_warnings(&operation));
     if args.no_cache {
@@ -2019,7 +2035,7 @@ async fn call_source(
     // redacted -> inferred -> stored -> projected (I2/I8), their shapes merged
     // monotonically (I5), and each is reachable via its own pc1_ page cursor
     // (I9) or the surfaced continuation NextAction.
-    if args.pages > 1 {
+    if args.pages > 1 && !received_error {
         if prog_core::pagination_allowed(&operation.effects) {
             let caps = prog_core::PageCaps {
                 max_pages: args.pages.min(50),
@@ -2309,7 +2325,15 @@ async fn call_source(
         }
     }
 
-    Ok(envelope)
+    if received_error {
+        envelope
+            .extra
+            .insert("received_error".to_string(), Value::Bool(true));
+    }
+    Ok(CallSourceResult {
+        envelope,
+        received_error,
+    })
 }
 
 fn observe_artifact(
@@ -6973,6 +6997,7 @@ async fn execute_callable(
                 duration_ms: Some(result.provenance.duration_ms),
                 pagination: result.pagination,
                 warnings: result.warnings,
+                received_error: result.received_error,
             })
         }
         CallableSource::Cli(source) => {
@@ -6991,6 +7016,7 @@ async fn execute_callable(
                 duration_ms: Some(result.provenance.duration_ms),
                 pagination: None,
                 warnings: result.warnings,
+                received_error: result.received_error,
             })
         }
         CallableSource::Mcp(source) => {
@@ -7033,6 +7059,7 @@ async fn execute_callable(
                 duration_ms: Some(result.provenance.duration_ms),
                 pagination: None,
                 warnings: result.warnings,
+                received_error: result.received_error,
             })
         }
     }
@@ -7058,6 +7085,7 @@ async fn execute_callable_url(
                 duration_ms: Some(result.provenance.duration_ms),
                 pagination: result.pagination,
                 warnings: result.warnings,
+                received_error: result.received_error,
             }))
         }
         // CLI and MCP sources have no URL continuation model.
