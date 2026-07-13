@@ -2233,6 +2233,18 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
         },
         cursor,
     )?;
+    if args.refresh {
+        let validity = if received_error {
+            "refresh_failed"
+        } else if revalidation.is_some() {
+            "source_changed"
+        } else {
+            "validator_unavailable"
+        };
+        envelope
+            .extra
+            .insert("source_validity".to_string(), json!(validity));
+    }
 
     // Auto-pagination: when --pages > 1 on a read-only operation, prefetch up
     // to N pages into the cache under hard page/byte/time caps (I10). The
