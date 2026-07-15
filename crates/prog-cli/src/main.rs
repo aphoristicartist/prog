@@ -5150,6 +5150,7 @@ fn inspect_cursor(store: &Store, lens_dir: &Path, args: &InspectArgs) -> Result<
             }));
         }
     }
+    let cache_stale = cache_is_stale(Some(&context.cache));
     response.cache = Some(context.cache);
     let scoped_value = prog_core::pointer::get(context.payload.as_value(), &context.target_path)?
         .expect("cursor_context validated the target path");
@@ -5164,7 +5165,7 @@ fn inspect_cursor(store: &Store, lens_dir: &Path, args: &InspectArgs) -> Result<
             "inspect findings are partial; narrow --path to traverse a smaller subtree".to_string(),
         );
     }
-    if context.age_seconds > 0 {
+    if cache_stale {
         response.warnings.push(format!(
             "cached payload age_seconds={}; inspect did not contact upstream",
             context.age_seconds
@@ -5219,8 +5220,9 @@ fn evidence_cursor(store: &Store, lens_dir: &Path, args: &EvidenceArgs) -> Resul
     }));
     block.source_command = source_command_from_provenance(context.entry.provenance.as_ref());
     block.provenance = context.entry.provenance;
+    let cache_stale = cache_is_stale(Some(&context.cache));
     block.cache = Some(context.cache);
-    if context.age_seconds > 0 {
+    if cache_stale {
         block.warnings.push(format!(
             "cached payload age_seconds={}; evidence did not contact upstream",
             context.age_seconds
@@ -5266,8 +5268,9 @@ fn search_cursor(
         lens.as_ref(),
     )?;
     response.warnings.extend(lens_warnings);
+    let cache_stale = cache_is_stale(Some(&context.cache));
     response.cache = Some(context.cache);
-    if context.age_seconds > 0 {
+    if cache_stale {
         response.warnings.push(format!(
             "cached payload age_seconds={}; search did not contact upstream",
             context.age_seconds
