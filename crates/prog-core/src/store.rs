@@ -16,8 +16,8 @@ use crate::{
     CacheEntryMeta, CallProvenance, CaptureCompleteness, CoreError, CursorRecord,
     EvidenceAvailability, OBSERVATION_SCHEMA, ObservationLineage, ObservationRecord,
     PersistedPayload, RedactedPayload, RedactionPolicy, Result, SESSION_SCHEMA, SessionEvent,
-    SessionTrail, SourceProfile, VERIFICATION_SCHEMA, ValidatedCursor, VerificationObligation,
-    canonical_json, validate_source_profile,
+    SessionTrail, SourceProfile, StorageBudget, VERIFICATION_SCHEMA, ValidatedCursor,
+    VerificationObligation, canonical_json, validate_source_profile,
 };
 
 const PAYLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("payloads");
@@ -33,6 +33,7 @@ const OBLIGATIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("obligati
 const STATE: TableDefinition<&str, &[u8]> = TableDefinition::new("state");
 const CURRENT_SESSION_KEY: &str = "current_session";
 const STORE_SCHEMA_KEY: &str = "store_schema";
+const STORAGE_BUDGET_KEY: &str = "storage_budget";
 // Pre-release storage is intentionally reset, rather than migrated, whenever
 // an immutable-record invariant changes. This is a contract identity, not a
 // compatibility version.
@@ -112,6 +113,19 @@ pub struct StorageQuotaSummary {
     pub evicted_payloads: usize,
     pub evicted_cursors: usize,
     pub metadata_only_observations: usize,
+}
+
+/// The actual result of applying the store's durable retention policy. Age and
+/// byte limits are independent: an absent summary means that dimension was
+/// unbounded rather than silently borrowing another budget.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct StorageBudgetSummary {
+    pub budget: StorageBudget,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub age_purge: Option<PurgeSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota: Option<StorageQuotaSummary>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -225,6 +239,52 @@ impl Store {
         }
         write.commit().map_err(CoreError::storage)?;
         Ok(hash)
+    }
+
+    /// Read the durable retention policy. Stores created before this policy
+    /// existed behave explicitly as unbounded defaults.
+    pub fn storage_budget(&self) -> Result<StorageBudget> {
+        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let state = read.open_table(STATE).map_err(CoreError::storage)?;
+        let Some(value) = state.get(STORAGE_BUDGET_KEY).map_err(CoreError::storage)? else {
+            return Ok(StorageBudget::default());
+        };
+        Ok(serde_json::from_slice(value.value())?)
+    }
+
+    /// Persist a retention policy. Applying it immediately prevents a policy
+    /// update from leaving a store above its declared limits until a later
+    /// capture happens.
+    pub fn set_storage_budget(&self, budget: &StorageBudget) -> Result<StorageBudgetSummary> {
+        let bytes = serde_json::to_vec(budget)?;
+        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        {
+            let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
+            state
+                .insert(STORAGE_BUDGET_KEY, bytes.as_slice())
+                .map_err(CoreError::storage)?;
+        }
+        write.commit().map_err(CoreError::storage)?;
+        self.enforce_storage_budget(Utc::now())
+    }
+
+    /// Apply the durable retention policy. This is intentionally callable on
+    /// every write and after policy changes; each component is idempotent.
+    pub fn enforce_storage_budget(&self, now: DateTime<Utc>) -> Result<StorageBudgetSummary> {
+        let budget = self.storage_budget()?;
+        let age_purge = budget
+            .max_age_seconds
+            .map(|max_age_seconds| self.purge_entries_older_than(now, max_age_seconds))
+            .transpose()?;
+        let quota = budget
+            .max_payload_bytes
+            .map(|max_payload_bytes| self.enforce_payload_quota(max_payload_bytes))
+            .transpose()?;
+        Ok(StorageBudgetSummary {
+            budget,
+            age_purge,
+            quota,
+        })
     }
 
     /// Return the digest used for persisted payload identity without storing
@@ -349,9 +409,12 @@ impl Store {
         Ok(format!("sha256:{}", hex_sha256(&bytes)))
     }
 
-    pub fn put_entry(&self, key: &str, meta: &CacheEntryMeta) -> Result<()> {
+    /// Persist a cache entry and enforce the durable retention policy before
+    /// returning. `false` means the new entry was immediately evicted by that
+    /// policy and must not be used to mint a cursor.
+    pub fn put_entry(&self, key: &str, meta: &CacheEntryMeta) -> Result<bool> {
         if !meta.cacheable || meta.sensitive {
-            return Ok(());
+            return Ok(false);
         }
         let bytes = serde_json::to_vec(meta)?;
         let write = self.db.begin_write().map_err(CoreError::storage)?;
@@ -362,7 +425,8 @@ impl Store {
                 .map_err(CoreError::storage)?;
         }
         write.commit().map_err(CoreError::storage)?;
-        Ok(())
+        self.enforce_storage_budget(Utc::now())?;
+        Ok(self.read_entry(key)?.is_some())
     }
 
     pub fn get_entry(&self, key: &str) -> Result<Option<CacheEntryMeta>> {
@@ -730,6 +794,10 @@ impl Store {
                 .map_err(CoreError::storage)?;
             let mut obligations = write.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
             let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
+            let storage_budget = state
+                .get(STORAGE_BUDGET_KEY)
+                .map_err(CoreError::storage)?
+                .map(|value| value.value().to_vec());
             summary = PurgeSummary {
                 purged_entries: retain_none(&mut entries)?,
                 purged_payloads: retain_none(&mut payloads)?,
@@ -744,6 +812,11 @@ impl Store {
             state
                 .insert(STORE_SCHEMA_KEY, STORE_SCHEMA.as_bytes())
                 .map_err(CoreError::storage)?;
+            if let Some(storage_budget) = storage_budget {
+                state
+                    .insert(STORAGE_BUDGET_KEY, storage_budget.as_slice())
+                    .map_err(CoreError::storage)?;
+            }
         }
         write.commit().map_err(CoreError::storage)?;
         Ok(summary)
@@ -751,6 +824,28 @@ impl Store {
 
     pub fn purge_expired(&self, now: DateTime<Utc>) -> Result<PurgeSummary> {
         let expired = self.expired_entries(now)?;
+        let keys = expired
+            .iter()
+            .map(|entry| entry.key.clone())
+            .collect::<Vec<_>>();
+        let summary = self.purge_entries_and_cursors(&keys, None)?;
+        self.mark_observations_expired(
+            expired
+                .iter()
+                .filter_map(|entry| entry.observation_id.as_deref()),
+        )?;
+        Ok(summary)
+    }
+
+    fn purge_entries_older_than(
+        &self,
+        now: DateTime<Utc>,
+        max_age_seconds: u64,
+    ) -> Result<PurgeSummary> {
+        let max_age = chrono::Duration::from_std(Duration::from_secs(max_age_seconds))
+            .map_err(CoreError::storage)?;
+        let cutoff = now - max_age;
+        let expired = self.entries_created_at_or_before(cutoff)?;
         let keys = expired
             .iter()
             .map(|entry| entry.key.clone())
@@ -937,6 +1032,20 @@ impl Store {
             let meta: CacheEntryMeta = serde_json::from_slice(value.value())?;
             if parse_time(&meta.expires_at)? <= now {
                 debug_assert_eq!(key.value(), meta.key);
+                entries.push(meta);
+            }
+        }
+        Ok(entries)
+    }
+
+    fn entries_created_at_or_before(&self, cutoff: DateTime<Utc>) -> Result<Vec<CacheEntryMeta>> {
+        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let table = read.open_table(ENTRIES).map_err(CoreError::storage)?;
+        let mut entries = Vec::new();
+        for entry in table.iter().map_err(CoreError::storage)? {
+            let (_, value) = entry.map_err(CoreError::storage)?;
+            let meta: CacheEntryMeta = serde_json::from_slice(value.value())?;
+            if parse_time(&meta.created_at)? <= cutoff {
                 entries.push(meta);
             }
         }

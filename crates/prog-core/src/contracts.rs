@@ -254,9 +254,9 @@ pub struct ObservationMetadata {
     pub safety: ObservationSafety,
     pub payload: ObservationPayloadStatus,
     pub availability: EvidenceAvailability,
-    /// Detailed byte accounting is omitted from envelopes only for the
-    /// canonical `recoverable` + complete capture state, which availability
-    /// already identifies. The immutable observation record always retains it.
+    /// Applied capture limits and resulting byte accounting. This is retained
+    /// even for complete captures so agents never have to infer one budget
+    /// layer from another.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture: Option<CaptureCompleteness>,
     #[serde(default, flatten)]
@@ -964,6 +964,100 @@ pub enum CaptureStopReason {
     Unavailable,
 }
 
+/// Where an applied execution or retention limit came from. Limits are kept
+/// separate from their outcome so callers can distinguish "the source ended"
+/// from "prog stopped at the configured cap".
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetSource {
+    #[default]
+    Default,
+    Profile,
+    Operation,
+    Invocation,
+    StorePolicy,
+    Unavailable,
+}
+
+/// One independently bounded capture channel. `max_work_units` is reserved
+/// for sources whose work is not naturally measured in bytes or time, such as
+/// pages or stream messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CaptureLimit {
+    pub scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_work_units: Option<u64>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+/// The limits that governed one capture. This is immutable observation
+/// evidence, not a request to alter future executions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CaptureBudget {
+    #[serde(default)]
+    pub source: BudgetSource,
+    #[serde(default)]
+    pub limits: Vec<CaptureLimit>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+impl CaptureBudget {
+    pub fn unavailable() -> Self {
+        Self {
+            source: BudgetSource::Unavailable,
+            limits: Vec::new(),
+            extra: Extra::new(),
+        }
+    }
+}
+
+impl Default for CaptureBudget {
+    fn default() -> Self {
+        Self {
+            source: BudgetSource::Default,
+            limits: Vec::new(),
+            extra: Extra::new(),
+        }
+    }
+}
+
+/// Persistent retention limits for redacted payload blobs. `None` means that
+/// dimension is deliberately unbounded; this never borrows a capture or
+/// disclosure limit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct StorageBudget {
+    #[serde(default)]
+    pub source: BudgetSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_payload_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_age_seconds: Option<u64>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+impl Default for StorageBudget {
+    fn default() -> Self {
+        Self {
+            source: BudgetSource::Default,
+            max_payload_bytes: None,
+            max_age_seconds: None,
+            extra: Extra::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct CaptureScope {
@@ -989,6 +1083,8 @@ pub struct CaptureCompleteness {
     pub stored_bytes: u64,
     pub stop_reason: CaptureStopReason,
     #[serde(default)]
+    pub budget: CaptureBudget,
+    #[serde(default)]
     pub affected: Vec<CaptureScope>,
     pub can_prove_absence: bool,
     #[serde(default, flatten)]
@@ -1002,6 +1098,7 @@ impl CaptureCompleteness {
             captured_bytes: stored_bytes,
             stored_bytes,
             stop_reason: CaptureStopReason::Complete,
+            budget: CaptureBudget::default(),
             affected: Vec::new(),
             can_prove_absence: true,
             extra: Extra::new(),
@@ -1014,6 +1111,7 @@ impl CaptureCompleteness {
             captured_bytes: 0,
             stored_bytes,
             stop_reason: CaptureStopReason::Unavailable,
+            budget: CaptureBudget::unavailable(),
             affected: Vec::new(),
             can_prove_absence: false,
             extra: Extra::new(),
@@ -1289,7 +1387,12 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<ObservationRecord>(&mut schemas, "ObservationRecord")?;
     insert_schema::<ObservationLineage>(&mut schemas, "ObservationLineage")?;
     insert_schema::<EvidenceAvailability>(&mut schemas, "EvidenceAvailability")?;
+    insert_schema::<BudgetSource>(&mut schemas, "BudgetSource")?;
+    insert_schema::<CaptureLimit>(&mut schemas, "CaptureLimit")?;
+    insert_schema::<CaptureBudget>(&mut schemas, "CaptureBudget")?;
+    insert_schema::<StorageBudget>(&mut schemas, "StorageBudget")?;
     insert_schema::<crate::StorageQuotaSummary>(&mut schemas, "StorageQuotaSummary")?;
+    insert_schema::<crate::StorageBudgetSummary>(&mut schemas, "StorageBudgetSummary")?;
     insert_schema::<CaptureStopReason>(&mut schemas, "CaptureStopReason")?;
     insert_schema::<CaptureScope>(&mut schemas, "CaptureScope")?;
     insert_schema::<CaptureCompleteness>(&mut schemas, "CaptureCompleteness")?;

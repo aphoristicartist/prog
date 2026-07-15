@@ -1720,6 +1720,10 @@ fn run_timeout_and_missing_command_return_structured_envelopes() {
         "run",
         "--timeout-ms",
         "50",
+        "--max-stdout-bytes",
+        "123",
+        "--max-stderr-bytes",
+        "45",
         "--",
         "python3",
         "-c",
@@ -1732,6 +1736,27 @@ fn run_timeout_and_missing_command_return_structured_envelopes() {
         value["data_preview"]["failure_sections"][0]["kind"],
         "timeout"
     );
+    assert_eq!(
+        value["observation"]["capture"]["budget"]["source"],
+        "invocation"
+    );
+    assert_eq!(
+        value["observation"]["capture"]["budget"]["limits"][0]["max_bytes"],
+        123
+    );
+    assert_eq!(
+        value["observation"]["capture"]["budget"]["limits"][0]["max_duration_ms"],
+        50
+    );
+    assert_eq!(
+        value["observation"]["capture"]["budget"]["limits"][1]["max_bytes"],
+        45
+    );
+    assert_eq!(
+        value["capture_budget"],
+        value["observation"]["capture"]["budget"]
+    );
+    assert_eq!(value["storage_budget"]["source"], "default");
 
     let missing = prog(&[
         "--dir",
@@ -2218,8 +2243,15 @@ fn envelopes_expose_observation_metadata_for_agent_safety() {
     );
     assert_eq!(complete_value["observation"]["payload"]["cached"], true);
     assert_eq!(complete_value["observation"]["availability"], "recoverable");
-    assert!(complete_value["observation"].get("capture").is_none());
-    assert!(complete_value.get("evidence_ref").is_none());
+    assert_eq!(
+        complete_value["observation"]["capture"]["stop_reason"],
+        "complete"
+    );
+    assert_eq!(
+        complete_value["observation"]["capture"]["budget"]["source"],
+        "default"
+    );
+    assert!(complete_value["evidence_ref"].is_object());
     assert_eq!(
         complete_value["observation"]["trust"]["profile_backed"],
         false
@@ -3059,6 +3091,23 @@ async fn source_add_http_creates_working_profile_from_url() {
     let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
     assert_eq!(envelope["source_id"], "api");
     assert_eq!(envelope["operation"], "list");
+    assert_eq!(
+        envelope["observation"]["capture"]["budget"]["source"],
+        "profile"
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["budget"]["limits"][0]["scope"],
+        "body"
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["budget"]["limits"][0]["max_bytes"],
+        2 * 1024 * 1024
+    );
+    assert_eq!(
+        envelope["capture_budget"],
+        envelope["observation"]["capture"]["budget"]
+    );
+    assert_eq!(envelope["storage_budget"]["source"], "default");
 }
 
 #[test]
@@ -3133,6 +3182,18 @@ fn source_add_cli_creates_working_profile_from_command_line() {
     assert!(call.status.success(), "{}", stdout(&call));
     let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
     assert_eq!(envelope["data_preview"]["items"][0]["state"], "open");
+    assert_eq!(
+        envelope["observation"]["capture"]["budget"]["source"],
+        "profile"
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["budget"]["limits"][0]["scope"],
+        "stdout"
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["budget"]["limits"][1]["scope"],
+        "stderr"
+    );
 }
 
 #[test]
@@ -3642,6 +3703,95 @@ fn cache_payload_budget_evicts_payloads_but_retains_observation_lineage() {
 }
 
 #[test]
+fn persistent_retention_budget_evicts_on_write_without_minting_broken_cursors() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let configured = prog(&[
+        "--dir",
+        dir_arg,
+        "cache",
+        "retention",
+        "--max-payload-bytes",
+        "0",
+        "--max-age-seconds",
+        "60",
+    ]);
+    assert!(configured.status.success(), "{}", stdout(&configured));
+    let configured: Value = serde_json::from_slice(&configured.stdout).unwrap();
+    assert_eq!(configured["budget"]["source"], "store_policy");
+    assert_eq!(configured["budget"]["max_payload_bytes"], 0);
+    assert_eq!(configured["budget"]["max_age_seconds"], 60);
+    assert_eq!(configured["storage_budget"], configured["budget"]);
+
+    let file = dir.path().join("retained.json");
+    fs::write(&file, br#"{"items":["retention test"]}"#).unwrap();
+    let observed = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--name",
+        "retained",
+    ]);
+    assert!(observed.status.success(), "{}", stdout(&observed));
+    let observed: Value = serde_json::from_slice(&observed.stdout).unwrap();
+    assert!(observed["cursor"].is_null());
+    assert_eq!(observed["cache"]["status"], "skipped");
+    assert_eq!(observed["observation"]["availability"], "metadata_only");
+    assert_eq!(observed["storage_budget"]["max_payload_bytes"], 0);
+    assert_eq!(
+        observed["capture_budget"],
+        observed["observation"]["capture"]["budget"]
+    );
+    assert!(
+        observed["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning
+                    .as_str()
+                    .unwrap()
+                    .contains("retention policy evicted")
+            })
+    );
+
+    let reopened = prog(&["--dir", dir_arg, "cache", "retention"]);
+    assert!(reopened.status.success(), "{}", stdout(&reopened));
+    let reopened: Value = serde_json::from_slice(&reopened.stdout).unwrap();
+    assert_eq!(reopened["max_payload_bytes"], 0);
+    assert_eq!(reopened["max_age_seconds"], 60);
+
+    let cleared = prog(&[
+        "--dir",
+        dir_arg,
+        "cache",
+        "retention",
+        "--clear-max-payload-bytes",
+        "--clear-max-age-seconds",
+    ]);
+    assert!(cleared.status.success(), "{}", stdout(&cleared));
+    let cleared: Value = serde_json::from_slice(&cleared.stdout).unwrap();
+    assert!(cleared["budget"]["max_payload_bytes"].is_null());
+    assert!(cleared["budget"]["max_age_seconds"].is_null());
+
+    let recovered = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--name",
+        "retained-after-clear",
+    ]);
+    assert!(recovered.status.success(), "{}", stdout(&recovered));
+    let recovered: Value = serde_json::from_slice(&recovered.stdout).unwrap();
+    assert_eq!(recovered["cache"]["status"], "stored");
+    assert!(recovered["cursor"].as_str().is_some());
+}
+
+#[test]
 fn captures_surface_immutable_observation_identity_across_cursor_and_listing() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
@@ -4022,6 +4172,8 @@ fn disclosure_budget_precedence_and_token_estimate_are_explicit() {
         from_environment["disclosure_budget"]["token_estimator"],
         "bytes_div_4_approximate"
     );
+    assert_eq!(from_environment["capture_budget"]["source"], "unavailable");
+    assert_eq!(from_environment["storage_budget"]["source"], "default");
 
     let byte_flag_wins = prog_with_env(
         &[

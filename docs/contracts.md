@@ -2,10 +2,12 @@
 
 `prog meta` is the source of truth for public JSON contracts. It generates schemas from the Rust types and returns them in the same `DisclosureEnvelope` used for adapter responses.
 
-Every JSON response also has a compact top-level `disclosure_budget` block. It
-identifies the applied source and byte ceiling, labels the optional bytes/4
-token estimate, and records the final emitted stdout byte count. See
-`prog --help` for `--budget-bytes` and `--budget-tokens`.
+Every JSON response also has compact top-level budget blocks. `disclosure_budget`
+identifies the applied response byte ceiling, labels the optional bytes/4 token
+estimate, and records the final emitted stdout byte count. `capture_budget`
+identifies the source and limits that governed source capture when one was
+performed. `storage_budget` identifies the durable retention policy used by the
+local store. See `prog --help` for `--budget-bytes` and `--budget-tokens`.
 
 List available contracts:
 
@@ -38,6 +40,11 @@ The current public contracts include:
 - `ObservationMetadata`
 - `ObservationRecord`
 - `EvidenceAvailability`
+- `BudgetSource`
+- `CaptureLimit`
+- `CaptureBudget`
+- `StorageBudget`
+- `StorageBudgetSummary`
 - `CaptureStopReason`
 - `CaptureScope`
 - `CaptureCompleteness`

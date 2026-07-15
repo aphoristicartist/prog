@@ -229,6 +229,7 @@ mod tests {
                     captured_bytes: 1,
                     stored_bytes: 1,
                     stop_reason: crate::CaptureStopReason::ByteLimit,
+                    budget: crate::CaptureBudget::default(),
                     affected: Vec::new(),
                     can_prove_absence: false,
                     extra: Extra::new(),

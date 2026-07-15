@@ -2,11 +2,11 @@ use std::{fs, sync::Arc, thread};
 
 use chrono::{Duration, SecondsFormat, Utc};
 use prog_core::{
-    CacheEntryMeta, CachePolicy, CaptureCompleteness, CursorRecord, EffectSet,
+    BudgetSource, CacheEntryMeta, CachePolicy, CaptureCompleteness, CursorRecord, EffectSet,
     EvidenceAvailability, ExpansionScope, NewObservation, NewSessionEvent, ObservationLineage,
     OperationProfile, PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, ScopedSlice,
-    SliceRequest, SourceKind, SourceProfile, Store, TrustSettings, expand, new_cache_entry,
-    store_reset_notice,
+    SliceRequest, SourceKind, SourceProfile, StorageBudget, Store, TrustSettings, expand,
+    new_cache_entry, store_reset_notice,
 };
 
 #[test]
@@ -454,6 +454,95 @@ fn payload_quota_evicts_whole_shared_groups_and_preserves_metadata_lineage() {
     assert_eq!(repeated.evicted_entries, 0);
     assert_eq!(repeated.evicted_payloads, 0);
     assert_eq!(repeated.payload_bytes_retained, new_bytes);
+}
+
+#[test]
+fn storage_budget_persists_and_enforces_independent_age_and_byte_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let old_payload = redacted(json!({"body": "old".repeat(128)}));
+    let retained_payload = redacted(json!({"body": "new".repeat(32)}));
+    let old_hash = store.put_payload(&old_payload).unwrap();
+    let retained_hash = store.put_payload(&retained_payload).unwrap();
+    let retained_bytes = serde_json::to_vec(retained_payload.as_value())
+        .unwrap()
+        .len() as u64;
+
+    let old_observation = store
+        .record_observation(NewObservation {
+            payload_hash: old_hash.clone(),
+            availability: EvidenceAvailability::Recoverable,
+            invocation_fingerprint: "sha256:old-retention".to_string(),
+            source_id: "source".to_string(),
+            operation: "read".to_string(),
+            capture: CaptureCompleteness::complete(1),
+            ..NewObservation::default()
+        })
+        .unwrap();
+    let mut old_entry = entry("old-retention", &old_hash, 86_400);
+    old_entry.created_at = "2020-01-01T00:00:00Z".to_string();
+    old_entry.observation_id = Some(old_observation.observation_id.clone());
+    store.put_entry(&old_entry.key, &old_entry).unwrap();
+    let mut retained_entry = entry("retained", &retained_hash, 86_400);
+    retained_entry.created_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    store
+        .put_entry(&retained_entry.key, &retained_entry)
+        .unwrap();
+
+    let summary = store
+        .set_storage_budget(&StorageBudget {
+            source: BudgetSource::StorePolicy,
+            max_payload_bytes: Some(retained_bytes),
+            max_age_seconds: Some(60),
+            extra: serde_json::Map::new(),
+        })
+        .unwrap();
+    assert_eq!(summary.budget.source, BudgetSource::StorePolicy);
+    assert_eq!(summary.budget.max_payload_bytes, Some(retained_bytes));
+    assert_eq!(summary.budget.max_age_seconds, Some(60));
+    assert_eq!(summary.age_purge.unwrap().purged_entries, 1);
+    assert_eq!(
+        summary.quota.unwrap().payload_bytes_retained,
+        retained_bytes
+    );
+    assert!(store.get_entry("old-retention").unwrap().is_none());
+    assert!(store.get_payload(&old_hash).unwrap().is_none());
+    assert!(store.get_entry("retained").unwrap().is_some());
+    assert!(store.get_payload(&retained_hash).unwrap().is_some());
+    assert_eq!(
+        store
+            .get_observation(&old_observation.observation_id)
+            .unwrap()
+            .unwrap()
+            .availability,
+        EvidenceAvailability::MetadataOnly
+    );
+
+    drop(store);
+    let reopened = Store::open(dir.path()).unwrap();
+    assert_eq!(
+        reopened.storage_budget().unwrap(),
+        StorageBudget {
+            source: BudgetSource::StorePolicy,
+            max_payload_bytes: Some(retained_bytes),
+            max_age_seconds: Some(60),
+            extra: serde_json::Map::new(),
+        }
+    );
+    let repeated = reopened.enforce_storage_budget(Utc::now()).unwrap();
+    assert_eq!(repeated.age_purge.unwrap().purged_entries, 0);
+    assert_eq!(repeated.quota.unwrap().evicted_payloads, 0);
+
+    reopened.purge_all().unwrap();
+    assert_eq!(
+        reopened.storage_budget().unwrap(),
+        StorageBudget {
+            source: BudgetSource::StorePolicy,
+            max_payload_bytes: Some(retained_bytes),
+            max_age_seconds: Some(60),
+            extra: serde_json::Map::new(),
+        }
+    );
 }
 
 #[test]
