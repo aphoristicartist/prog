@@ -86,8 +86,8 @@ For development, replace `prog` with `cargo run --` in the examples below.
 - **Windows is not supported.** The process-group, permissions, and signal
   semantics `prog` relies on are not implemented for Windows; see
   [#140](https://github.com/aphoristicartist/prog/issues/140).
-- **MSRV** is pinned at Rust **1.85** (`rust-version = "1.85"` in the workspace
-  `Cargo.toml`) and verified by a dedicated CI job on `rust-toolchain@1.85.0`.
+- **MSRV** is pinned at Rust **1.89** (`rust-version = "1.89"` in the workspace
+  `Cargo.toml`) and verified by a dedicated CI job on `rust-toolchain@1.89.0`.
 
 See [`docs/release-notes.md`](docs/release-notes.md) for the full per-release
 reference.

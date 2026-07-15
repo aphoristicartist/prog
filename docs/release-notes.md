@@ -13,7 +13,7 @@ per-version changes, see [`../CHANGELOG.md`](../CHANGELOG.md).
 - **macOS**. Built and tested on `macos-latest` in CI.
 
 Both platforms run the full formatting + Clippy + test gate, plus an MSRV
-(`rust-toolchain@1.85.0`) build/test on Ubuntu. Release tarballs are cut for
+(`rust-toolchain@1.89.0`) build/test on Ubuntu. Release tarballs are cut for
 both platforms on every `v*` tag (see
 [`.github/workflows/release.yml`](../.github/workflows/release.yml)).
 
@@ -22,9 +22,9 @@ that `prog` relies on are not implemented for Windows, and there is no timeline
 for it. This is tracked under the release-readiness parent
 ([#140](https://github.com/aphoristicartist/prog/issues/140)).
 
-**Minimum Supported Rust Version (MSRV)** is pinned at **1.85**. The workspace
-declares `rust-version = "1.85"` in `Cargo.toml`, and the `msrv` CI job builds
-and tests the workspace on `rust-toolchain@1.85.0`. A bump is a breaking change
+**Minimum Supported Rust Version (MSRV)** is pinned at **1.89**. The workspace
+declares `rust-version = "1.89"` in `Cargo.toml`, and the `msrv` CI job builds
+and tests the workspace on `rust-toolchain@1.89.0`. A bump is a breaking change
 and will be called out in the CHANGELOG.
 
 ## Known limitations

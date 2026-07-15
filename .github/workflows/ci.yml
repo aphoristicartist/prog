@@ -30,9 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.0
-      - run: cargo +1.85.0 build --workspace --all-features
-      - run: cargo +1.85.0 test --workspace
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - run: cargo +1.89.0 build --workspace --all-features
+      - run: cargo +1.89.0 test --workspace
 
   version-consistency:
     # Guards against drift between Cargo.toml version, the CHANGELOG, and git
