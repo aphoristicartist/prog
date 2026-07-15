@@ -5500,12 +5500,12 @@ fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
             args.limit
         ));
     }
-    if age > 0 {
+    let cache = cache_info(CacheStatus::Hit, &entry, Some(age));
+    if cache_is_stale(Some(&cache)) {
         warnings.push(format!(
             "cached payload age_seconds={age}; re-run the original observation or call to refresh"
         ));
     }
-    let cache = cache_info(CacheStatus::Hit, &entry, Some(age));
     attach_path_evidence_refs(
         &mut paths,
         value,
@@ -5933,7 +5933,7 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
         let receipt = RawPayload::new(receipt)
             .redact(&RedactionPolicy::default())
             .payload;
-        return envelope_for_payload(
+        let mut envelope = envelope_for_payload(
             store,
             EnvelopeInput {
                 value_scan: None,
@@ -5945,7 +5945,10 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
                 slice: SliceRequest {
                     path: None,
                     limit: Some(5),
-                    depth: Some(2),
+                    // The receipt contains a nested EvidenceRef. Keep the
+                    // small receipt intact so its completeness describes the
+                    // exported selection rather than a formatter omission.
+                    depth: Some(8),
                     fields: Vec::new(),
                     omit: Vec::new(),
                     extra: Extra::new(),
@@ -5966,7 +5969,12 @@ fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope>
                 lens: None,
             },
             None,
-        );
+        )?;
+        if let Some(observation) = envelope.observation.as_mut() {
+            observation.completeness.root_path = target_path;
+            observation.completeness.path_scoped = !observation.completeness.root_path.is_empty();
+        }
+        return Ok(envelope);
     }
 
     envelope_for_payload(
@@ -9933,5 +9941,23 @@ mod capture_lifecycle_tests {
             CaptureStopReason::Unavailable
         );
         assert!(!reference.capture.can_prove_absence);
+    }
+
+    #[test]
+    fn refresh_warning_requires_an_expired_cache_budget() {
+        let fresh = CacheInfo {
+            status: CacheStatus::Hit,
+            ttl_seconds: Some(60),
+            expires_at: None,
+            age_seconds: Some(59),
+        };
+        let expired = CacheInfo {
+            age_seconds: Some(60),
+            ..fresh.clone()
+        };
+
+        assert!(!cache_is_stale(Some(&fresh)));
+        assert!(cache_is_stale(Some(&expired)));
+        assert!(!cache_is_stale(None));
     }
 }

@@ -235,6 +235,112 @@ fn observe_json_file_uses_envelope_cache_redaction_and_expand() {
 }
 
 #[test]
+fn scalar_expansion_receipts_preserve_scope_and_freshness_truth() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let exact_boundary = "x".repeat(384);
+    let short_scalar = "short scalar";
+    let file = dir.path().join("scalars.json");
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({
+            "nested": {
+                "exact": exact_boundary,
+                "short": short_scalar,
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let observed = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--mime",
+        "application/json",
+        "--name",
+        "scalars",
+    ]);
+    assert!(observed.status.success(), "{}", stdout(&observed));
+    let observed: Value = serde_json::from_slice(&observed.stdout).unwrap();
+    let cursor = observed["cursor"].as_str().unwrap();
+
+    for (path, expected, limit) in [
+        ("/nested/exact", "x".repeat(384), "384"),
+        ("/nested/short", short_scalar.to_string(), "384"),
+    ] {
+        let expanded = prog(&[
+            "--dir", dir_arg, "expand", cursor, "--path", path, "--limit", limit,
+        ]);
+        assert!(expanded.status.success(), "{}", stdout(&expanded));
+        let value: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+        assert_eq!(value["data_preview"], expected);
+        assert!(value["omitted"].as_array().unwrap().is_empty());
+        assert_eq!(value["observation"]["completeness"]["root_path"], path);
+        assert_eq!(
+            value["observation"]["completeness"]["preview_complete"],
+            true
+        );
+        assert_eq!(value["observation"]["freshness"]["stale"], false);
+        assert_eq!(
+            value["observation"]["freshness"]["refresh_recommended"],
+            false
+        );
+        assert!(
+            value["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|warning| !warning.as_str().unwrap().contains("refresh"))
+        );
+    }
+
+    let export = dir.path().join("exact.json");
+    let exported = prog(&[
+        "--dir",
+        dir_arg,
+        "expand",
+        cursor,
+        "--path",
+        "/nested/exact",
+        "--out",
+        export.to_str().unwrap(),
+    ]);
+    assert!(exported.status.success(), "{}", stdout(&exported));
+    let receipt: Value = serde_json::from_slice(&exported.stdout).unwrap();
+    assert!(receipt["omitted"].as_array().unwrap().is_empty());
+    assert_eq!(
+        receipt["observation"]["completeness"]["root_path"],
+        "/nested/exact"
+    );
+    assert_eq!(
+        receipt["observation"]["completeness"]["preview_complete"],
+        true
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(export).unwrap()).unwrap(),
+        json!("x".repeat(384))
+    );
+
+    let paths = prog(&[
+        "--dir", dir_arg, "paths", cursor, "--prefix", "/nested", "--limit", "10",
+    ]);
+    assert!(paths.status.success(), "{}", stdout(&paths));
+    let paths: Value = serde_json::from_slice(&paths.stdout).unwrap();
+    assert_eq!(paths["cache"]["status"], "hit");
+    assert!(
+        paths["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|warning| !warning.as_str().unwrap().contains("refresh"))
+    );
+}
+
+#[test]
 fn observe_csv_file_yields_table_envelope_with_expandable_rows() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
