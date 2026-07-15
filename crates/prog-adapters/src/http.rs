@@ -13,6 +13,12 @@ use serde_json::{Map, Value, json};
 
 const DEFAULT_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
+/// Default maximum response body size retained by HTTP sources.
+///
+/// This is public so profile producers can use the same value as direct
+/// `HttpSource` deserialization instead of silently applying a second policy.
+pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct HttpSource {
@@ -794,7 +800,7 @@ fn default_timeout_ms() -> u64 {
 }
 
 fn default_max_response_bytes() -> usize {
-    2 * 1024 * 1024
+    DEFAULT_MAX_RESPONSE_BYTES
 }
 
 fn default_method() -> String {
