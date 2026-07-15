@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Pinned MSRV at Rust 1.85 (`rust-version = "1.85"` in the workspace manifest), propagated to all crates, and added a dedicated CI job that builds and tests on `rust-toolchain@1.85.0` (#167).
+- Extended macOS CI to match Ubuntu: `cargo fmt --all --check` and `cargo clippy --all-targets --all-features -- -D warnings` now run before tests on both platforms (#167).
+- Added a tag-triggered release pipeline (`release.yml`): cross-platform tarballs with SHA256SUMS, CycloneDX SBOM, build-provenance attestations, a `cargo package` leak guard, and a release-candidate smoke test that reopens the local store across process exits (#167).
+- Added a version-consistency CI guard (`check-version-consistency.sh`) asserting CHANGELOG, Cargo.toml version, and git tag alignment on tag builds (#167).
+- Documented supported platforms (Ubuntu, macOS supported; Windows unsupported, linking #140), the schema/store-reset policy, and release notes (#167).
 - Added the complete evidence-navigation loop: initial envelope findings, offline `inspect`, cached text/regex/type `search` and `find`, compact `evidence` blocks, declarative lens finding providers, ten domain lens packs, deterministic recipes, task-level session trails, structured-output autodetection, and a five-scenario evidence-acquisition regression suite (#87, #90-#99).
 - Fixed false findings for null error fields and command argv, duplicate flattened `kind` keys in run next-actions, and unbounded generic finding traversal.
 - Added the generic findings ranking engine boundary: a stable `build_inspect_response(payload, &InspectRequest)` assembler plus `InspectRequest`/`CommandHintConfig` input types, honest command hints (`FindingCommandHints.evidence` is `None` by default until `prog evidence` ships; `NAV_ALL` opts back in), three new signal kinds (`compile_error`, `test_name`, `diff_hunk`) with strict rustc precedence, a `docs/findings.md` ranking reference, and determinism/order-independence/contiguity proptests with golden snapshots (#89).

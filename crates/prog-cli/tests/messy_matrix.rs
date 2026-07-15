@@ -297,8 +297,8 @@ fn messy_case(id: usize) -> Value {
                 "body": repeated("body", id, index, 32 + ((id + index) % 9) * 80),
                 "score": numeric_value(id, index),
                 "flags": {
-                    "even": index.is_multiple_of(2),
-                    "third": index.is_multiple_of(3)
+                    "even": index % 2 == 0,
+                    "third": index % 3 == 0
                 }
             })
         })

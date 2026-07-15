@@ -3,8 +3,10 @@ name = "prog-cli"
 description = "prog: a universal progressive-disclosure gateway for HTTP APIs, CLIs, and MCP servers"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+include = ["src/**/*.rs", "Cargo.toml"]
 
 [[bin]]
 name = "prog"

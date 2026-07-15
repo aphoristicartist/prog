@@ -67,7 +67,30 @@ cargo install --path crates/prog-cli
 prog --help
 ```
 
+Prebuilt binaries for Ubuntu and macOS are published on the
+[GitHub Releases page](https://github.com/aphoristicartist/prog/releases).
+Each release ships a tarball per platform, a combined `SHA256SUMS`, a CycloneDX
+SBOM, and a build-provenance attestation. Verify a download before use:
+
+```sh
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify prog-*.tar.gz --owner aphoristicartist
+```
+
 For development, replace `prog` with `cargo run --` in the examples below.
+
+## Supported platforms
+
+- **Ubuntu** (linux-x86_64) and **macOS** are supported and CI-verified on every
+  push and pull request (formatting, Clippy, full test suite, and an MSRV gate).
+- **Windows is not supported.** The process-group, permissions, and signal
+  semantics `prog` relies on are not implemented for Windows; see
+  [#140](https://github.com/aphoristicartist/prog/issues/140).
+- **MSRV** is pinned at Rust **1.89** (`rust-version = "1.89"` in the workspace
+  `Cargo.toml`) and verified by a dedicated CI job on `rust-toolchain@1.89.0`.
+
+See [`docs/release-notes.md`](docs/release-notes.md) for the full per-release
+reference.
 
 ## Quickstart
 
