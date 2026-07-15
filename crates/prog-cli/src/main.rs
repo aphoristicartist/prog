@@ -5549,6 +5549,22 @@ fn evaluate_obligation(
             None,
         ));
     }
+    if let Some(captured_workspace) = &evidence.workspace_state {
+        let current_workspace = captured_workspace
+            .root
+            .as_deref()
+            .map(prog_core::capture_workspace)
+            .unwrap_or_else(|| prog_core::capture_workspace("."));
+        let comparison = prog_core::compare_workspace(captured_workspace, &current_workspace);
+        if comparison.validity != prog_core::WorkspaceValidity::Unchanged {
+            return Ok(obligation_evaluation(
+                obligation,
+                VerificationStatus::Stale,
+                comparison.reasons,
+                None,
+            ));
+        }
+    }
     if let Some(family) = obligation.comparison_family.as_deref()
         && evidence.invocation_fingerprint != family
     {

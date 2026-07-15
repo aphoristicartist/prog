@@ -1186,7 +1186,7 @@ pub struct ObservationRecord {
     #[serde(default)]
     pub lens: Option<String>,
     #[serde(default)]
-    pub workspace_state: Option<String>,
+    pub workspace_state: Option<crate::WorkspaceState>,
     #[serde(default)]
     pub source_state: Option<SourceStateToken>,
     #[serde(default)]
@@ -1401,6 +1401,10 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<EffectSet>(&mut schemas, "EffectSet")?;
     insert_schema::<ObservationMetadata>(&mut schemas, "ObservationMetadata")?;
     insert_schema::<ObservationRecord>(&mut schemas, "ObservationRecord")?;
+    insert_schema::<crate::WorkspaceState>(&mut schemas, "WorkspaceState")?;
+    insert_schema::<crate::WorkspacePathState>(&mut schemas, "WorkspacePathState")?;
+    insert_schema::<crate::WorkspaceValidity>(&mut schemas, "WorkspaceValidity")?;
+    insert_schema::<crate::WorkspaceComparison>(&mut schemas, "WorkspaceComparison")?;
     insert_schema::<ObservationLineage>(&mut schemas, "ObservationLineage")?;
     insert_schema::<EvidenceAvailability>(&mut schemas, "EvidenceAvailability")?;
     insert_schema::<BudgetSource>(&mut schemas, "BudgetSource")?;

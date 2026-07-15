@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     ComparabilityAssessment, DeltaFinding, DeltaFindingStatus, EvidenceAvailability, Extra,
     Finding, OBSERVATION_DELTA_SCHEMA, ObservationDelta, ObservationRecord, ScopeRelationship,
-    SourceStateKind, SubjectIdentity,
+    SourceStateKind, SubjectIdentity, WorkspaceValidity, compare_workspace,
 };
 
 const MAX_DELTA_FINDINGS: usize = 100;
@@ -95,10 +95,14 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
     let normalization_compatible = baseline.parser == subject.parser
         && baseline.lens == subject.lens
         && baseline.provider == subject.provider;
-    let workspace_validity = if baseline.workspace_state == subject.workspace_state {
-        "unchanged"
-    } else {
-        "unknown"
+    let workspace_validity = match (&baseline.workspace_state, &subject.workspace_state) {
+        (Some(baseline), Some(subject)) => match compare_workspace(baseline, subject).validity {
+            WorkspaceValidity::Unchanged => "unchanged",
+            WorkspaceValidity::Changed => "changed",
+            WorkspaceValidity::NotApplicable => "not_applicable",
+            WorkspaceValidity::Unknown => "unknown",
+        },
+        _ => "unknown",
     }
     .to_string();
     let source_validity = source_validity(baseline, subject);

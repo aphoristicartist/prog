@@ -79,7 +79,7 @@ pub struct NewObservation {
     pub provider: Option<String>,
     pub parser: Option<String>,
     pub lens: Option<String>,
-    pub workspace_state: Option<String>,
+    pub workspace_state: Option<crate::WorkspaceState>,
     pub source_state: Option<crate::SourceStateToken>,
     pub environment_state: Option<String>,
     pub lineage: ObservationLineage,
@@ -319,7 +319,9 @@ impl Store {
             provider: input.provider,
             parser: input.parser,
             lens: input.lens,
-            workspace_state: input.workspace_state,
+            workspace_state: input
+                .workspace_state
+                .or_else(|| std::env::current_dir().ok().map(crate::capture_workspace)),
             source_state: input.source_state,
             environment_state: input.environment_state,
             lineage: input.lineage,
