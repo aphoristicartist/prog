@@ -3,8 +3,8 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{ExitCode, Stdio},
-    sync::OnceLock,
     sync::atomic::{AtomicU64, Ordering},
+    sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -19,23 +19,24 @@ use prog_core::importers::{
     ImportContext, ImportReport, import_cli_help, import_json_schema, import_openapi,
 };
 use prog_core::{
-    AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CacheStatus, CallFlags, CallProvenance,
-    CaptureCompleteness, CaptureScope, CaptureStopReason, CommandHintConfig, CoreError,
-    DISCLOSURE_SCHEMA, DisclosureEnvelope, EffectSet, EvidenceAvailability, EvidenceBlock,
-    EvidenceGrade, EvidenceRef, ExpansionScope, Extra, FindingOptions, InspectRequest,
-    InspectResponse, LensManifest, NewObservation, NewSessionEvent, NextAction,
-    ObligationEvaluation, ObservationCompleteness, ObservationFreshness, ObservationMetadata,
-    ObservationPayloadStatus, ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion,
-    OperationProfile, PersistedPayload, PreviewPolicy, RawPayload, ReadinessReport,
-    RedactedPayload, RedactionPolicy, Result, SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions,
-    SearchResponse, SliceRequest, SourceProfile, SourceStateToken, Store, Summary, TrustSettings,
-    VERIFICATION_SCHEMA, ValidatedCursor, ValueScanReport, VerificationObligation,
-    VerificationStatus, build_inspect_response, cache_allowed, call_effect_warnings,
-    canonical_json, check_call, check_discovery, cli_adapter_effects, cli_hardening_effects,
-    effective_effects, evidence_block, expand, http_adapter_effects, http_hardening_effects,
-    http_source_state, infer, join, lens_slice_request, new_cache_entry, project,
-    project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
-    search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
+    AuthRef, BudgetSource, CacheEntryMeta, CacheInfo, CachePolicy, CacheStatus, CallFlags,
+    CallProvenance, CaptureBudget, CaptureCompleteness, CaptureLimit, CaptureScope,
+    CaptureStopReason, CommandHintConfig, CoreError, DISCLOSURE_SCHEMA, DisclosureEnvelope,
+    EffectSet, EvidenceAvailability, EvidenceBlock, EvidenceGrade, EvidenceRef, ExpansionScope,
+    Extra, FindingOptions, InspectRequest, InspectResponse, LensManifest, NewObservation,
+    NewSessionEvent, NextAction, ObligationEvaluation, ObservationCompleteness,
+    ObservationFreshness, ObservationMetadata, ObservationPayloadStatus, ObservationSafety,
+    ObservationTrust, OmissionReason, OmittedRegion, OperationProfile, PersistedPayload,
+    PreviewPolicy, RawPayload, ReadinessReport, RedactedPayload, RedactionPolicy, Result,
+    SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions, SearchResponse, SliceRequest, SourceProfile,
+    SourceStateToken, StorageBudget, Store, Summary, TrustSettings, VERIFICATION_SCHEMA,
+    ValidatedCursor, ValueScanReport, VerificationObligation, VerificationStatus,
+    build_inspect_response, cache_allowed, call_effect_warnings, canonical_json, check_call,
+    check_discovery, cli_adapter_effects, cli_hardening_effects, effective_effects, evidence_block,
+    expand, http_adapter_effects, http_hardening_effects, http_source_state, infer, join,
+    lens_slice_request, new_cache_entry, project, project_with_lens, public_contract_schemas,
+    ranked_findings_with_lens, render_hints, search_payload_with_lens, slice_value,
+    tighten_effects, validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -50,6 +51,8 @@ use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
 static RUN_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static DISCLOSURE_BUDGET: OnceLock<EffectiveDisclosureBudget> = OnceLock::new();
+static RESPONSE_STORAGE_BUDGET: OnceLock<Mutex<StorageBudget>> = OnceLock::new();
+static RESPONSE_CAPTURE_BUDGET: OnceLock<Mutex<CaptureBudget>> = OnceLock::new();
 const PROG_AGENT_SKILL: &str = include_str!("../../../skills/prog/SKILL.md");
 const DEFAULT_DISCLOSURE_BUDGET_BYTES: usize = 16 * 1024;
 const MAX_DISCLOSURE_BUDGET_BYTES: usize = 64 * 1024;
@@ -601,6 +604,7 @@ enum CacheCommand {
     Observations(CacheObservationsArgs),
     Get(CacheGetArgs),
     Purge(CachePurgeArgs),
+    Retention(CacheRetentionArgs),
 }
 
 #[derive(Debug, Args)]
@@ -629,6 +633,25 @@ struct CachePurgeArgs {
     /// oldest payload-reference groups while preserving metadata lineage.
     #[arg(long)]
     payload_budget_bytes: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+struct CacheRetentionArgs {
+    /// Persist a maximum number of redacted payload bytes. Omit to keep the
+    /// current value; use --clear-max-payload-bytes to remove the cap.
+    #[arg(long, conflicts_with = "clear_max_payload_bytes")]
+    max_payload_bytes: Option<u64>,
+
+    /// Persist a maximum cache-entry age in seconds. Omit to keep the current
+    /// value; use --clear-max-age-seconds to remove the cap.
+    #[arg(long, conflicts_with = "clear_max_age_seconds")]
+    max_age_seconds: Option<u64>,
+
+    #[arg(long)]
+    clear_max_payload_bytes: bool,
+
+    #[arg(long)]
+    clear_max_age_seconds: bool,
 }
 
 #[derive(Debug, Args)]
@@ -741,6 +764,42 @@ fn response_budget_bytes() -> usize {
         .saturating_sub(BUDGET_METADATA_RESERVE_BYTES)
 }
 
+fn response_storage_budget() -> StorageBudget {
+    RESPONSE_STORAGE_BUDGET
+        .get_or_init(|| Mutex::new(StorageBudget::default()))
+        .lock()
+        .expect("response storage budget mutex is not poisoned")
+        .clone()
+}
+
+fn set_response_storage_budget(budget: StorageBudget) {
+    *RESPONSE_STORAGE_BUDGET
+        .get_or_init(|| Mutex::new(StorageBudget::default()))
+        .lock()
+        .expect("response storage budget mutex is not poisoned") = budget;
+}
+
+fn response_capture_budget() -> CaptureBudget {
+    RESPONSE_CAPTURE_BUDGET
+        .get_or_init(|| Mutex::new(CaptureBudget::unavailable()))
+        .lock()
+        .expect("response capture budget mutex is not poisoned")
+        .clone()
+}
+
+fn set_response_capture_budget(budget: CaptureBudget) {
+    *RESPONSE_CAPTURE_BUDGET
+        .get_or_init(|| Mutex::new(CaptureBudget::unavailable()))
+        .lock()
+        .expect("response capture budget mutex is not poisoned") = budget;
+}
+
+fn open_store(dir: &Path) -> Result<Store> {
+    let store = Store::open(dir)?;
+    set_response_storage_budget(store.storage_budget()?);
+    Ok(store)
+}
+
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("off"));
     let _ = tracing_subscriber::fmt()
@@ -752,25 +811,25 @@ fn init_tracing() {
 async fn run(cli: &Cli) -> Result<ExitCode> {
     match &cli.command {
         Command::Discover(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let report = discover_source(&store, args).await?;
             write_success(&report, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Source { command } => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let report = source_command(&store, &cli.dir, command).await?;
             write_success(&report, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Hints(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let response = hints_source(&store, args)?;
             write_success(&response, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Call(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let mut result = call_source(&store, &cli.lens_dir, args).await?;
             record_envelope_event(&store, &mut result.envelope, "call");
             write_success(&result.envelope, cli.pretty)?;
@@ -781,14 +840,14 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             })
         }
         Command::Observe(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let mut envelope = observe_artifact(&store, &cli.lens_dir, args)?;
             record_envelope_event(&store, &mut envelope, "observe");
             write_success(&envelope, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Run(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let mut result = run_command(&store, &cli.lens_dir, args).await?;
             record_envelope_event(&store, &mut result.envelope, "run");
             write_success(&result.envelope, cli.pretty)?;
@@ -799,7 +858,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             })
         }
         Command::Recipe(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let mut envelope = run_recipe(&store, &cli.lens_dir, args).await?;
             record_envelope_event(&store, &mut envelope, "recipe");
             write_success(&envelope, cli.pretty)?;
@@ -816,7 +875,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Paths(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let response = paths_cursor(&store, args)?;
             record_navigation_event(
                 &store,
@@ -830,7 +889,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Inspect(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let response = inspect_cursor(&store, &cli.lens_dir, args)?;
             record_navigation_event(
                 &store,
@@ -848,7 +907,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Evidence(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let response = evidence_cursor(&store, &cli.lens_dir, args)?;
             record_navigation_event(
                 &store,
@@ -865,7 +924,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Search(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let response = search_cursor(
                 &store,
                 &cli.lens_dir,
@@ -889,7 +948,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Find(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let response = search_cursor(
                 &store,
                 &cli.lens_dir,
@@ -917,13 +976,13 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Delta(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let delta = delta_observations(&store, args)?;
             write_success(&delta, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Session { command } => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             match command {
                 SessionCommand::Start(args) => {
                     let trail = store.start_session(args.goal.clone())?;
@@ -977,7 +1036,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Expand(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let mut envelope = expand_cursor(&store, args)?;
             record_envelope_event(&store, &mut envelope, "expand");
             write_success(&envelope, cli.pretty)?;
@@ -985,17 +1044,17 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
         }
         Command::Cache { command } => match command {
             CacheCommand::List => {
-                let store = Store::open(&cli.dir)?;
+                let store = open_store(&cli.dir)?;
                 write_success(&store.list_entries(100)?, cli.pretty)?;
                 Ok(ExitCode::SUCCESS)
             }
             CacheCommand::Observations(args) => {
-                let store = Store::open(&cli.dir)?;
+                let store = open_store(&cli.dir)?;
                 write_success(&store.list_observations(args.limit)?, cli.pretty)?;
                 Ok(ExitCode::SUCCESS)
             }
             CacheCommand::Get(args) => {
-                let store = Store::open(&cli.dir)?;
+                let store = open_store(&cli.dir)?;
                 let entry = store
                     .get_entry(&args.key)?
                     .ok_or_else(|| CoreError::CacheMiss(args.key.clone()))?;
@@ -1015,7 +1074,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 Ok(ExitCode::SUCCESS)
             }
             CacheCommand::Purge(args) => {
-                let store = Store::open(&cli.dir)?;
+                let store = open_store(&cli.dir)?;
                 let selected = usize::from(args.all)
                     + usize::from(args.expired)
                     + usize::from(args.source.is_some())
@@ -1041,9 +1100,36 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 write_success(&summary, cli.pretty)?;
                 Ok(ExitCode::SUCCESS)
             }
+            CacheCommand::Retention(args) => {
+                let store = open_store(&cli.dir)?;
+                let changes = usize::from(args.max_payload_bytes.is_some())
+                    + usize::from(args.max_age_seconds.is_some())
+                    + usize::from(args.clear_max_payload_bytes)
+                    + usize::from(args.clear_max_age_seconds);
+                if changes == 0 {
+                    write_success(&store.storage_budget()?, cli.pretty)?;
+                    return Ok(ExitCode::SUCCESS);
+                }
+                let mut budget = store.storage_budget()?;
+                budget.source = BudgetSource::StorePolicy;
+                if let Some(max_payload_bytes) = args.max_payload_bytes {
+                    budget.max_payload_bytes = Some(max_payload_bytes);
+                } else if args.clear_max_payload_bytes {
+                    budget.max_payload_bytes = None;
+                }
+                if let Some(max_age_seconds) = args.max_age_seconds {
+                    budget.max_age_seconds = Some(max_age_seconds);
+                } else if args.clear_max_age_seconds {
+                    budget.max_age_seconds = None;
+                }
+                let summary = store.set_storage_budget(&budget)?;
+                set_response_storage_budget(summary.budget.clone());
+                write_success(&summary, cli.pretty)?;
+                Ok(ExitCode::SUCCESS)
+            }
         },
         Command::Meta(args) => {
-            let store = Store::open(&cli.dir)?;
+            let store = open_store(&cli.dir)?;
             let envelope = meta_contracts(&store, args)?;
             write_success(&envelope, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
@@ -2012,6 +2098,7 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         86_400,
     );
     let (availability, capture) = complete_capture(entry.payload_bytes, true, false);
+    set_response_capture_budget(capture.budget.clone());
     let observation_id = record_capture(
         store,
         payload_hash,
@@ -2028,8 +2115,8 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         None,
     )?;
     entry.observation_id = Some(observation_id.clone());
-    store.put_entry(&cache_key, &entry)?;
-    let cursor = if projection.omitted.is_empty() {
+    let cache_retained = store.put_entry(&cache_key, &entry)?;
+    let cursor = if projection.omitted.is_empty() || !cache_retained {
         None
     } else {
         Some(store.create_cursor(&cache_key, &args.source_id, "hints", "", 1, 86_400)?)
@@ -2092,6 +2179,11 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                 .as_ref()
                 .is_some_and(|value| cached_pagination_satisfies(value, args.pages));
         if cache_satisfies_request {
+            if let Some(observation_id) = &entry.observation_id
+                && let Some(observation) = store.get_observation(observation_id)?
+            {
+                set_response_capture_budget(observation.capture.budget);
+            }
             let payload = store
                 .get_payload(&entry.payload_hash)?
                 .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
@@ -2202,6 +2294,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                     reason: "received HTTP 304 but cached observation metadata is unavailable"
                         .to_string(),
                 })?;
+        set_response_capture_budget(prior_observation.capture.budget.clone());
         let payload = store
             .get_payload(&prior.payload_hash)?
             .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
@@ -2237,7 +2330,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
         let mut entry = prior.clone();
         entry.observation_id = Some(observation_id.clone());
         entry.provenance = Some(provenance.clone());
-        store.put_entry(&cache_key, &entry)?;
+        let cache_retained = store.put_entry(&cache_key, &entry)?;
         let cursor = cursor_for_projection(
             store,
             CursorInput {
@@ -2248,10 +2341,12 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                 payload: &payload,
                 slice: &view,
                 cache: &effective_cache,
-                may_cache,
+                may_cache: cache_retained,
                 lens: lens.as_ref(),
             },
         )?;
+        let retention_warning =
+            "cache retention policy evicted this payload before it could be reused".to_string();
         let mut envelope = envelope_for_payload(
             store,
             EnvelopeInput {
@@ -2265,19 +2360,34 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                 payload_bytes: entry.payload_bytes,
                 observation_id: Some(observation_id),
                 provenance: Some(provenance),
-                cache: Some(cache_info(
-                    CacheStatus::Hit,
-                    &entry,
-                    Some(age_seconds(&entry.created_at)?),
-                )),
+                cache: Some(if cache_retained {
+                    cache_info(
+                        CacheStatus::Hit,
+                        &entry,
+                        Some(age_seconds(&entry.created_at)?),
+                    )
+                } else {
+                    CacheInfo {
+                        status: CacheStatus::Skipped,
+                        ttl_seconds: None,
+                        expires_at: None,
+                        age_seconds: None,
+                    }
+                }),
                 effects: Some(effective_effects),
                 auto_upgrade_audit,
                 redacted_paths: 0,
-                cache_disabled_reason: None,
-                warnings: vec![
-                    "HTTP validator confirmed the source is unchanged (304 Not Modified)"
-                        .to_string(),
-                ],
+                cache_disabled_reason: (!cache_retained).then_some(retention_warning.clone()),
+                warnings: {
+                    let mut warnings = vec![
+                        "HTTP validator confirmed the source is unchanged (304 Not Modified)"
+                            .to_string(),
+                    ];
+                    if !cache_retained {
+                        warnings.push(retention_warning);
+                    }
+                    warnings
+                },
                 schema_hints: operation
                     .output_shape
                     .as_ref()
@@ -2359,13 +2469,15 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
     } else {
         provenance.cache_key = None;
     }
-    let (availability, capture) = adapter_capture(
+    let (availability, mut capture) = adapter_capture(
         Some(&provenance),
         payload.as_value(),
         payload_bytes,
         may_cache,
         !redacted_paths.is_empty(),
     );
+    capture.budget = capture_budget_for_call(&profile, &operation);
+    set_response_capture_budget(capture.budget.clone());
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
@@ -2389,7 +2501,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
     )?;
 
     let mut cache_disabled_reason = None;
-    let cache_status = if may_cache {
+    let cache_retained = if may_cache {
         let ttl = ttl_seconds(&effective_cache);
         let mut entry = new_cache_entry(
             cache_key.clone(),
@@ -2401,12 +2513,33 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
         );
         entry.observation_id = Some(observation_id.clone());
         entry.provenance = Some(provenance.clone());
-        store.put_entry(&cache_key, &entry)?;
-        Some(cache_info(CacheStatus::Stored, &entry, Some(0)))
+        let retained = store.put_entry(&cache_key, &entry)?;
+        if !retained {
+            let reason =
+                "cache retention policy evicted this payload before it could be reused".to_string();
+            warnings.push(reason.clone());
+            cache_disabled_reason = Some(reason);
+        }
+        retained
     } else {
+        false
+    };
+    let cache_status = if cache_retained {
+        let entry = store
+            .get_entry(&cache_key)?
+            .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?;
+        Some(cache_info(CacheStatus::Stored, &entry, Some(0)))
+    } else if !may_cache {
         let reason = cache_skip_warning(args.no_cache, &operation);
         warnings.push(reason.clone());
         cache_disabled_reason = Some(reason);
+        Some(CacheInfo {
+            status: CacheStatus::Skipped,
+            ttl_seconds: None,
+            expires_at: None,
+            age_seconds: None,
+        })
+    } else {
         Some(CacheInfo {
             status: CacheStatus::Skipped,
             ttl_seconds: None,
@@ -2425,7 +2558,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
             payload: &payload,
             slice: &view,
             cache: &effective_cache,
-            may_cache,
+            may_cache: cache_retained,
             lens: lens.as_ref(),
         },
     )?;
@@ -2605,13 +2738,15 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                     page_call.duration_ms,
                     page_call.provenance.clone(),
                 );
-                let (availability, capture) = adapter_capture(
+                let (availability, mut capture) = adapter_capture(
                     Some(&page_provenance),
                     page_payload.as_value(),
                     page_bytes,
                     may_cache,
                     false,
                 );
+                capture.budget = capture_budget_for_call(&profile, &operation);
+                set_response_capture_budget(capture.budget.clone());
                 let page_observation_id = record_capture(
                     store,
                     page_hash.clone(),
@@ -2645,7 +2780,13 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                     );
                     entry.observation_id = Some(page_observation_id.clone());
                     entry.provenance = Some(page_provenance);
-                    store.put_entry(&page_cache_key, &entry)?;
+                    let page_retained = store.put_entry(&page_cache_key, &entry)?;
+                    if !page_retained {
+                        prefetch_warnings.push(format!(
+                            "page {} was not retained because the cache retention policy evicted it",
+                            pages_fetched + 1
+                        ));
+                    }
                     // Mint a pc1_ cursor carrying page metadata (I9 fail-closed
                     // reuse; extra is observability only).
                     let mut cursor_extra = Map::new();
@@ -2655,15 +2796,19 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                         "args".to_string(),
                         redacted_profile_args(&operation, &page_key_args),
                     );
-                    Some(store.create_cursor_with_extra(
-                        &page_cache_key,
-                        &args.source_id,
-                        &args.operation,
-                        &root_path,
-                        RedactionPolicy::default().version,
-                        ttl,
-                        cursor_extra,
-                    )?)
+                    page_retained
+                        .then(|| {
+                            store.create_cursor_with_extra(
+                                &page_cache_key,
+                                &args.source_id,
+                                &args.operation,
+                                &root_path,
+                                RedactionPolicy::default().version,
+                                ttl,
+                                cursor_extra,
+                            )
+                        })
+                        .transpose()?
                 } else {
                     None
                 };
@@ -2866,6 +3011,7 @@ fn observe_artifact(
         redacted_paths.len(),
     ));
     let (availability, capture) = complete_capture(payload_bytes, true, !redacted_paths.is_empty());
+    set_response_capture_budget(capture.budget.clone());
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
@@ -2882,7 +3028,7 @@ fn observe_artifact(
         None,
     )?;
     entry.observation_id = Some(observation_id.clone());
-    store.put_entry(&cache_key, &entry)?;
+    let cache_retained = store.put_entry(&cache_key, &entry)?;
 
     let requested_view = SliceRequest {
         path: None,
@@ -2897,21 +3043,30 @@ fn observe_artifact(
         None => requested_view,
     };
     let root_path = slice.path.clone().unwrap_or_default();
-    let cursor = Some(store.create_cursor_with_extra(
-        &cache_key,
-        "observe",
-        &input.name,
-        &root_path,
-        RedactionPolicy::default().version,
-        ttl,
-        cursor_lens_extra(lens.as_ref()),
-    )?);
+    let cursor = cache_retained
+        .then(|| {
+            store.create_cursor_with_extra(
+                &cache_key,
+                "observe",
+                &input.name,
+                &root_path,
+                RedactionPolicy::default().version,
+                ttl,
+                cursor_lens_extra(lens.as_ref()),
+            )
+        })
+        .transpose()?;
     let mut warnings = normalized.warnings;
     if !redacted_paths.is_empty() {
         warnings.push(format!(
             "redacted {} sensitive path(s) before persistence",
             redacted_paths.len()
         ));
+    }
+    if !cache_retained {
+        warnings.push(
+            "cache retention policy evicted this payload before it could be reused".to_string(),
+        );
     }
     envelope_for_payload(
         store,
@@ -2926,7 +3081,16 @@ fn observe_artifact(
             payload_bytes,
             observation_id: Some(observation_id),
             provenance: entry.provenance.clone(),
-            cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
+            cache: Some(if cache_retained {
+                cache_info(CacheStatus::Stored, &entry, Some(0))
+            } else {
+                CacheInfo {
+                    status: CacheStatus::Skipped,
+                    ttl_seconds: None,
+                    expires_at: None,
+                    age_seconds: None,
+                }
+            }),
             effects: None,
             auto_upgrade_audit: None,
             redacted_paths: redacted_paths.len(),
@@ -3100,12 +3264,14 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         ttl,
     );
     entry.provenance = Some(provenance.clone());
-    let (availability, capture) = run_capture_completeness(
+    let (availability, mut capture) = run_capture_completeness(
         &run.stdout,
         &run.stderr,
         payload_bytes,
         !policy_redactions.is_empty(),
     );
+    capture.budget = capture_budget_for_run(args);
+    set_response_capture_budget(capture.budget.clone());
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
@@ -3122,16 +3288,20 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         None,
     )?;
     entry.observation_id = Some(observation_id.clone());
-    store.put_entry(&cache_key, &entry)?;
-    let cursor = Some(store.create_cursor_with_extra(
-        &cache_key,
-        "run",
-        &operation,
-        &root_path,
-        RedactionPolicy::default().version,
-        ttl,
-        cursor_lens_extra(lens.as_ref()),
-    )?);
+    let cache_retained = store.put_entry(&cache_key, &entry)?;
+    let cursor = cache_retained
+        .then(|| {
+            store.create_cursor_with_extra(
+                &cache_key,
+                "run",
+                &operation,
+                &root_path,
+                RedactionPolicy::default().version,
+                ttl,
+                cursor_lens_extra(lens.as_ref()),
+            )
+        })
+        .transpose()?;
     provenance.cache_key = Some(cache_key.clone());
 
     let mut warnings = run_warnings(&run.status, args, &run.stdout, &run.stderr);
@@ -3153,6 +3323,11 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
     if args.out.is_some() {
         warnings.push("wrote redacted structured run capture to --out path".to_string());
     }
+    if !cache_retained {
+        warnings.push(
+            "cache retention policy evicted this payload before it could be reused".to_string(),
+        );
+    }
     let mut next_actions = run_next_actions(cursor.as_deref(), &failure_sections);
     next_actions.extend(pytest_target_actions(&args.command, &failure_sections));
     let envelope = envelope_for_payload(
@@ -3168,7 +3343,16 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
             payload_bytes,
             observation_id: Some(observation_id),
             provenance: Some(provenance),
-            cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
+            cache: Some(if cache_retained {
+                cache_info(CacheStatus::Stored, &entry, Some(0))
+            } else {
+                CacheInfo {
+                    status: CacheStatus::Skipped,
+                    ttl_seconds: None,
+                    expires_at: None,
+                    age_seconds: None,
+                }
+            }),
             effects: Some(run_effects()),
             auto_upgrade_audit: None,
             redacted_paths,
@@ -6038,6 +6222,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
         86_400,
     );
     let (availability, capture) = complete_capture(payload_bytes, true, false);
+    set_response_capture_budget(capture.budget.clone());
     let observation_id = record_capture(
         store,
         payload_hash,
@@ -6054,7 +6239,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
         None,
     )?;
     entry.observation_id = Some(observation_id);
-    store.put_entry(&cache_key, &entry)?;
+    let cache_retained = store.put_entry(&cache_key, &entry)?;
     let slice = SliceRequest {
         path: None,
         limit: None,
@@ -6065,7 +6250,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
     };
     let scoped = ScopedSlice::root(slice.clone())?;
     let projection = expand(&payload, &scoped, &PreviewPolicy::default())?;
-    let cursor = if projection.omitted.is_empty() {
+    let cursor = if projection.omitted.is_empty() || !cache_retained {
         None
     } else {
         Some(store.create_cursor(&cache_key, "prog", &operation, "", 1, 86_400)?)
@@ -6083,7 +6268,16 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
             payload_bytes,
             observation_id: entry.observation_id.clone(),
             provenance: entry.provenance.clone(),
-            cache: Some(cache_info(CacheStatus::Stored, &entry, Some(0))),
+            cache: Some(if cache_retained {
+                cache_info(CacheStatus::Stored, &entry, Some(0))
+            } else {
+                CacheInfo {
+                    status: CacheStatus::Skipped,
+                    ttl_seconds: None,
+                    expires_at: None,
+                    age_seconds: None,
+                }
+            }),
             effects: None,
             auto_upgrade_audit: None,
             redacted_paths: 0,
@@ -8055,6 +8249,108 @@ fn adapter_config<'a>(profile: &'a SourceProfile, kind: &str) -> Option<&'a Map<
         .and_then(Value::as_object)
 }
 
+fn capture_budget_for_call(profile: &SourceProfile, operation: &OperationProfile) -> CaptureBudget {
+    let (kind, byte_fields, defaults): (&str, &[&str], &[u64]) = match profile.kind {
+        prog_core::SourceKind::Http => (
+            "http",
+            &["max_response_bytes"],
+            &[DEFAULT_MAX_RESPONSE_BYTES as u64],
+        ),
+        prog_core::SourceKind::Cli => (
+            "cli",
+            &["max_stdout_bytes", "max_stderr_bytes"],
+            &[1024 * 1024, 1024 * 1024],
+        ),
+        prog_core::SourceKind::Mcp => (
+            "mcp",
+            &["max_content_bytes", "max_stderr_bytes"],
+            &[1024 * 1024, 64 * 1024],
+        ),
+    };
+    let adapter = adapter_config(profile, kind);
+    let invocation = operation
+        .extra
+        .get("invocation")
+        .and_then(|value| value.get(kind))
+        .and_then(Value::as_object);
+    let operation_overrides = invocation.is_some_and(|config| {
+        byte_fields
+            .iter()
+            .chain(std::iter::once(&"timeout_ms"))
+            .any(|field| config.contains_key(*field))
+    });
+    let source = if operation_overrides {
+        BudgetSource::Operation
+    } else if adapter.is_some() {
+        BudgetSource::Profile
+    } else {
+        BudgetSource::Default
+    };
+    let timeout_ms = invocation
+        .and_then(|config| config.get("timeout_ms"))
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            adapter
+                .and_then(|config| config.get("timeout_ms"))
+                .and_then(Value::as_u64)
+        })
+        .unwrap_or(30_000);
+    let scopes: &[&str] = match profile.kind {
+        prog_core::SourceKind::Http => &["body"],
+        prog_core::SourceKind::Cli => &["stdout", "stderr"],
+        prog_core::SourceKind::Mcp => &["content", "stderr"],
+    };
+    let limits = scopes
+        .iter()
+        .zip(byte_fields.iter().zip(defaults.iter()))
+        .map(|(scope, (field, default))| CaptureLimit {
+            scope: (*scope).to_string(),
+            max_bytes: Some(
+                invocation
+                    .and_then(|config| config.get(*field))
+                    .and_then(Value::as_u64)
+                    .or_else(|| {
+                        adapter
+                            .and_then(|config| config.get(*field))
+                            .and_then(Value::as_u64)
+                    })
+                    .unwrap_or(*default),
+            ),
+            max_duration_ms: Some(timeout_ms),
+            max_work_units: None,
+            extra: Extra::new(),
+        })
+        .collect();
+    CaptureBudget {
+        source,
+        limits,
+        extra: Extra::new(),
+    }
+}
+
+fn capture_budget_for_run(args: &RunArgs) -> CaptureBudget {
+    CaptureBudget {
+        source: BudgetSource::Invocation,
+        limits: vec![
+            CaptureLimit {
+                scope: "stdout".to_string(),
+                max_bytes: Some(args.max_stdout_bytes as u64),
+                max_duration_ms: Some(args.timeout_ms),
+                max_work_units: None,
+                extra: Extra::new(),
+            },
+            CaptureLimit {
+                scope: "stderr".to_string(),
+                max_bytes: Some(args.max_stderr_bytes as u64),
+                max_duration_ms: Some(args.timeout_ms),
+                max_work_units: None,
+                extra: Extra::new(),
+            },
+        ],
+        extra: Extra::new(),
+    }
+}
+
 fn invocation_config<'a>(
     operation: &'a OperationProfile,
     kind: &str,
@@ -8363,6 +8659,7 @@ fn adapter_capture(
                 captured_bytes,
                 stored_bytes,
                 stop_reason,
+                budget: CaptureBudget::default(),
                 affected: vec![CaptureScope {
                     scope: "body".to_string(),
                     total_bytes,
@@ -8419,6 +8716,7 @@ fn cli_adapter_capture(
             captured_bytes,
             stored_bytes,
             stop_reason: CaptureStopReason::ByteLimit,
+            budget: CaptureBudget::default(),
             affected,
             can_prove_absence: false,
             extra: Extra::new(),
@@ -8476,6 +8774,7 @@ fn run_capture_completeness(
             captured_bytes,
             stored_bytes,
             stop_reason: reason,
+            budget: CaptureBudget::default(),
             affected: vec![
                 CaptureScope {
                     scope: "stdout".to_string(),
@@ -8706,14 +9005,7 @@ fn make_envelope(
             }),
         );
     }
-    // A complete, recoverable observation already exposes the same lifecycle
-    // facts in `observation`; repeating a root citation would cost more than
-    // the bounded preview it is meant to help navigate. Path-specific outputs
-    // (expand, evidence, inspect, paths, and export receipts) always retain
-    // their EvidenceRef.
-    if let Some(cursor) = cursor.as_deref()
-        && !observation_record.is_some_and(has_implicit_complete_capture)
-    {
+    if let Some(cursor) = cursor.as_deref() {
         let evidence_path = input.slice.path.as_deref().unwrap_or(&input.root_path);
         extra.insert(
             "evidence_ref".to_string(),
@@ -8917,31 +9209,21 @@ fn observation_metadata(
         availability: observation_record
             .map(|record| record.availability)
             .unwrap_or(EvidenceAvailability::Unavailable),
-        capture: observation_record
-            .map(|record| {
-                if has_implicit_complete_capture(record) {
-                    return None;
-                }
-                Some(record.capture.clone())
-            })
-            .unwrap_or(Some(CaptureCompleteness {
+        capture: Some(observation_record.map_or_else(
+            || CaptureCompleteness {
                 total_bytes: None,
                 captured_bytes: 0,
                 stored_bytes: input.payload_bytes,
                 stop_reason: CaptureStopReason::Unavailable,
+                budget: CaptureBudget::unavailable(),
                 affected: Vec::new(),
                 can_prove_absence: false,
                 extra: Extra::new(),
-            })),
+            },
+            |record| record.capture.clone(),
+        )),
         extra: metadata_extra,
     }
-}
-
-fn has_implicit_complete_capture(record: &prog_core::ObservationRecord) -> bool {
-    record.availability == EvidenceAvailability::Recoverable
-        && record.capture.stop_reason == CaptureStopReason::Complete
-        && record.capture.can_prove_absence
-        && record.capture.affected.is_empty()
 }
 
 fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Result<usize> {
@@ -9778,6 +10060,8 @@ fn render_budgeted_json(mut value: Value, pretty: bool) -> Result<String> {
         value = json!({"result": value});
     }
     let budget = disclosure_budget();
+    let capture_budget = response_capture_budget();
+    let storage_budget = response_storage_budget();
     let mut metadata = json!({
         "source": budget.source,
         "requested_bytes": budget.requested_bytes,
@@ -9790,6 +10074,20 @@ fn render_budgeted_json(mut value: Value, pretty: bool) -> Result<String> {
         .as_object_mut()
         .expect("response value is an object")
         .insert("disclosure_budget".to_string(), metadata.clone());
+    value
+        .as_object_mut()
+        .expect("response value is an object")
+        .insert(
+            "capture_budget".to_string(),
+            serde_json::to_value(capture_budget)?,
+        );
+    value
+        .as_object_mut()
+        .expect("response value is an object")
+        .insert(
+            "storage_budget".to_string(),
+            serde_json::to_value(storage_budget)?,
+        );
     let mut use_pretty = pretty;
     for _ in 0..8 {
         let rendered = if use_pretty {

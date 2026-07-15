@@ -23,7 +23,8 @@ for one invocation. `--budget-tokens N` and `PROG_BUDGET_TOKENS=N` are a
 convenience conversion using the explicitly labeled `bytes_div_4_approximate`
 estimator; they are not tokenizer measurements. Command flags override the
 environment, and a 64 KiB safety ceiling still applies. Every JSON response
-reports its applied `disclosure_budget`, including actual emitted stdout bytes.
+reports its applied `disclosure_budget`, `capture_budget`, and `storage_budget`,
+including actual emitted stdout bytes.
 
 ## Why prog
 
@@ -247,6 +248,8 @@ and `evidence` have smaller dedicated JSON contracts.
   "findings": [],
   "cursor": "pc1_...",
   "cache": { "status": "stored", "ttl_seconds": 86400 },
+  "capture_budget": { "source": "default", "limits": [] },
+  "storage_budget": { "source": "default" },
   "next_actions": []
 }
 ```
@@ -349,7 +352,10 @@ The safety model is enforced in code and mapped to executable tests in
   require source-profile trust.
 - Traversal, search, findings, pagination, command capture, and envelopes have
   explicit bounds.
-- `cache purge --all` removes cache state and session trails.
+- `cache retention` persists independent payload-byte and age limits which are
+  enforced on every cache write; evicted evidence remains metadata-only.
+- `cache purge --all` removes cache state and session trails while preserving
+  the retention policy.
 
 Source profiles can be committed when they contain stable configuration and
 environment references rather than literal credentials. The `.prog/` runtime

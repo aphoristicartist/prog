@@ -36,9 +36,9 @@ cursors fail closed.
 Capture, storage, and disclosure have independent limits. A small first-view
 envelope does not mean the captured payload was incomplete, and a cursor cannot
 recover bytes that an adapter did not capture. Every observation envelope
-reports `observation.availability`; nonstandard lifecycle states also include
-the detailed `observation.capture` record. The immutable observation record
-always retains full capture accounting. `capture_truncated`, `redacted`, `metadata_only`, `expired`, and
+reports `observation.availability` and the detailed `observation.capture`
+record, including the applied `capture.budget`. The immutable observation
+record always retains the same capture accounting. `capture_truncated`, `redacted`, `metadata_only`, `expired`, and
 `unavailable` evidence never grants `can_prove_absence`; only recoverable,
 complete evidence can participate in a resolved delta or verification claim.
 
@@ -49,11 +49,9 @@ underlying observation can support an absence claim. A ref with no attached
 immutable observation explicitly reports `availability: unavailable` and a
 non-proving capture record.
 
-For a canonical recoverable and complete observation, the initial envelope
-omits its redundant root `EvidenceRef`; `observation` already carries the same
-lifecycle facts and the cursor remains available for navigation. Path-specific
-responses still emit their refs. Nonstandard lifecycle states retain the root
-ref so the limitation is visible immediately.
+Initial envelopes emit a root `EvidenceRef` whenever a cursor exists. Its
+lifecycle facts match the immutable observation record, so a caller can retain
+a compact citation without inferring completeness from another response field.
 
 For CLI runs, capture records report separate `stdout` and `stderr` byte facts.
 For HTTP, the default response-body capture limit is 2 MiB for both direct
@@ -68,21 +66,25 @@ size, reports `storage_limit`, and still disallows absence claims. Preview
 omissions remain in `observation.completeness` and describe only model
 disclosure, not upstream capture completeness.
 
-To apply a durable storage limit over redacted payload blobs, run:
+To configure the durable storage limits applied on every cache write, run:
 
 ```bash
-prog cache purge --payload-budget-bytes 33554432
+prog cache retention --max-payload-bytes 33554432 --max-age-seconds 604800
 ```
 
-No payload quota is enforced until this explicit command is run. This keeps
-normal capture behavior independent from retention policy; the command output
-is the durable accounting record for the quota pass.
+Omit an option to retain its current value. Use
+`--clear-max-payload-bytes` or `--clear-max-age-seconds` to remove one cap.
+`prog cache retention` with no options reports the persisted policy. The policy
+survives `cache purge --all`; that command clears captured state and session
+trails, not configuration.
 
-The quota groups identical payload hashes, evicts oldest groups first, removes
+Byte quota groups identical payload hashes, evicts oldest groups first, removes
 their dependent cursors, and retains immutable observations as
 `metadata_only`. It never leaves one surviving cache entry pointing at a
-deleted shared blob. This is distinct from capture limits and the per-response
-disclosure budget.
+deleted shared blob. Age expiry uses the same lifecycle transition. A response
+whose new payload is immediately evicted reports `cache.status: "skipped"`, no
+cursor, and an explicit warning. Storage limits are distinct from capture and
+per-response disclosure budgets.
 
 ## Workflow
 

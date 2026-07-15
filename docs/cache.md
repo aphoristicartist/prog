@@ -21,6 +21,27 @@ The envelope reports cache state:
 
 Expired entries are treated as unavailable. Re-run the original call to refresh them.
 
+## Durable retention
+
+Configure bounds that are enforced on every cache write:
+
+```bash
+prog --dir /tmp/prog-demo cache retention \
+  --max-payload-bytes 33554432 \
+  --max-age-seconds 604800
+```
+
+`max_payload_bytes` limits the total bytes of deduplicated, redacted payload
+blobs. `max_age_seconds` expires old entries. Omit either option to leave its
+current setting unchanged; clear one with `--clear-max-payload-bytes` or
+`--clear-max-age-seconds`. Run `cache retention` with no options to inspect the
+persisted policy.
+
+Eviction is oldest-first, removes dependent cursors, and keeps observation
+lineage as `metadata_only`. A just-captured payload that exceeds the policy is
+reported as skipped and does not receive a reusable cursor. `cache purge --all`
+clears data and sessions but preserves the retention policy.
+
 ## Refresh and bypass
 
 Use `--refresh` when you want a new upstream call even if a cached entry exists:
