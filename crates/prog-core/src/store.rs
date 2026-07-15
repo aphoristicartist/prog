@@ -374,7 +374,7 @@ impl Store {
             return Ok(None);
         };
         if parse_time(&meta.expires_at)? <= now {
-            self.mark_observations_expired(meta.observation_id.as_deref().into_iter())?;
+            self.mark_observations_expired(meta.observation_id.as_deref())?;
             return Ok(None);
         }
         Ok(Some(meta))
@@ -482,7 +482,7 @@ impl Store {
         drop(table);
         drop(read);
         if parse_time(&record.expires_at)? <= now {
-            self.mark_observations_expired(record.observation_id.as_deref().into_iter())?;
+            self.mark_observations_expired(record.observation_id.as_deref())?;
             return Err(CoreError::CursorExpired(
                 token.to_string(),
                 record.expires_at.clone(),
