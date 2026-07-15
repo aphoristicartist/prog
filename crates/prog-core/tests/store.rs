@@ -88,7 +88,7 @@ fn existing_or_pre_capture_lifecycle_store_is_reset() {
             .insert("sha256:legacy", legacy_payload.as_slice())
             .unwrap();
         state
-            .insert("store_schema", b"prog.store.observations".as_slice())
+            .insert("store_schema", b"prog.store.capture_lifecycle".as_slice())
             .unwrap();
     }
     write.commit().unwrap();
@@ -109,6 +109,71 @@ fn existing_or_pre_capture_lifecycle_store_is_reset() {
     );
     // The dropped count flows through verbatim.
     assert!(!store_reset_notice(dir.path(), 0).contains("2 records dropped"));
+}
+
+#[test]
+fn session_predecessor_requires_matching_comparison_family() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    store.start_session(None).unwrap();
+    let payload_hash = store.put_payload(&redacted(json!({"ok": true}))).unwrap();
+    let family_a = store
+        .record_observation(NewObservation {
+            payload_hash: payload_hash.clone(),
+            availability: EvidenceAvailability::Recoverable,
+            invocation_fingerprint: "sha256:same".to_string(),
+            source_id: "source".to_string(),
+            operation: "read".to_string(),
+            comparison_family: Some("family-a".to_string()),
+            capture: CaptureCompleteness::complete(11),
+            ..NewObservation::default()
+        })
+        .unwrap();
+    store
+        .record_session_event(NewSessionEvent {
+            kind: "call".to_string(),
+            extra: serde_json::Map::from_iter([(
+                "observation_id".to_string(),
+                json!(family_a.observation_id),
+            )]),
+            ..NewSessionEvent::default()
+        })
+        .unwrap();
+    let family_b = store
+        .record_observation(NewObservation {
+            payload_hash,
+            availability: EvidenceAvailability::Recoverable,
+            invocation_fingerprint: "sha256:same".to_string(),
+            source_id: "source".to_string(),
+            operation: "read".to_string(),
+            comparison_family: Some("family-b".to_string()),
+            capture: CaptureCompleteness::complete(11),
+            ..NewObservation::default()
+        })
+        .unwrap();
+    store
+        .record_session_event(NewSessionEvent {
+            kind: "call".to_string(),
+            extra: serde_json::Map::from_iter([(
+                "observation_id".to_string(),
+                json!(family_b.observation_id),
+            )]),
+            ..NewSessionEvent::default()
+        })
+        .unwrap();
+
+    assert!(
+        store
+            .latest_session_predecessor("sha256:same", Some("family-a"), &family_b.observation_id)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .latest_session_predecessor("sha256:same", Some("family-c"), &family_b.observation_id)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]

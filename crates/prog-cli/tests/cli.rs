@@ -1748,6 +1748,8 @@ fn run_timeout_and_missing_command_return_structured_envelopes() {
         value["data_preview"]["failure_sections"][0]["kind"],
         "timeout"
     );
+    assert_eq!(value["observation"]["capture"]["stop_reason"], "timeout");
+    assert_eq!(value["observation"]["capture"]["can_prove_absence"], false);
     assert_eq!(
         value["observation"]["capture"]["budget"]["source"],
         "invocation"
@@ -3894,11 +3896,11 @@ fn explicit_delta_reports_new_and_resolved_findings_for_repeated_command() {
     assert_eq!(delta["assessment"]["can_prove_absence"], true);
     assert_eq!(delta["counts"]["new"], 1);
     assert_eq!(delta["counts"]["resolved"], 1);
-    assert!(
-        delta["findings"].as_array().unwrap().iter().all(|finding| {
-            matches!(finding["status"].as_str(), Some("new") | Some("resolved"))
-        })
-    );
+    assert!(delta["findings"].as_array().unwrap().iter().all(|finding| {
+        matches!(finding["status"].as_str(), Some("new") | Some("resolved"))
+            && finding["evidence_ref"]["path"].is_string()
+            && finding["availability"] == "recoverable"
+    }));
 }
 
 #[test]
@@ -3927,6 +3929,75 @@ fn automatic_delta_never_matches_similar_but_different_command_invocations() {
     assert!(second.status.success(), "{}", stdout(&second));
     let second: Value = serde_json::from_slice(&second.stdout).unwrap();
     assert!(second.get("changes_since").is_none());
+}
+
+#[test]
+fn automatic_delta_requires_the_same_comparison_family() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let state = dir.path().join("state.txt");
+    let script = dir.path().join("emit.py");
+    fs::write(
+        &script,
+        "from pathlib import Path\nprint(Path(__import__('sys').argv[1]).read_text())\n",
+    )
+    .unwrap();
+    fs::write(&state, "error old failure\n").unwrap();
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--comparison-family",
+        "targeted",
+        "--selection-scope",
+        "/failure_sections",
+        "--selection-exhaustive",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+
+    fs::write(&state, "error new failure\n").unwrap();
+    let second = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--comparison-family",
+        "full-suite",
+        "--selection-scope",
+        "/failure_sections",
+        "--selection-exhaustive",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(second.status.success(), "{}", stdout(&second));
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert!(second.get("changes_since").is_none());
+
+    let observations = prog(&["--dir", dir_arg, "cache", "observations"]);
+    assert!(observations.status.success(), "{}", stdout(&observations));
+    let observations: Value = serde_json::from_slice(&observations.stdout).unwrap();
+    let families = observations["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|observation| observation["comparison_family"].as_str())
+        .collect::<Vec<_>>();
+    assert!(families.contains(&"targeted"));
+    assert!(families.contains(&"full-suite"));
+    assert!(
+        observations["observations"].as_array().unwrap().iter().all(
+            |observation| observation["selection"]
+                == json!({
+                    "scopes": ["/failure_sections"],
+                    "exhaustive": true,
+                })
+        )
+    );
 }
 
 #[test]

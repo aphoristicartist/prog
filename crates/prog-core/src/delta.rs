@@ -29,7 +29,11 @@ pub fn compare_observations(
             (None, Some(_)) => DeltaFindingStatus::New,
             (Some(_), Some(_)) => DeltaFindingStatus::Persisting,
             (Some(_), None) if assessment.can_prove_absence => DeltaFindingStatus::Resolved,
-            (Some(_), None) if assessment.subject_complete => DeltaFindingStatus::NotObserved,
+            (Some(finding), None)
+                if finding_is_outside_subject_coverage(finding, subject, &assessment) =>
+            {
+                DeltaFindingStatus::NotObserved
+            }
             (Some(_), None) => DeltaFindingStatus::Unknown,
             (None, None) => unreachable!("union contains this fingerprint"),
         };
@@ -37,12 +41,20 @@ pub fn compare_observations(
             .or(baseline_finding)
             .and_then(|finding| finding.title.clone())
             .map(|title| truncate(&title, 180));
+        let evidence = subject_finding.or(baseline_finding);
+        let availability = if subject_finding.is_some() {
+            subject.availability
+        } else {
+            baseline.availability
+        };
         findings.push(DeltaFinding {
             status,
             fingerprint: fingerprint.clone(),
             title,
             baseline_path: baseline_finding.map(|finding| finding.path.clone()),
             subject_path: subject_finding.map(|finding| finding.path.clone()),
+            evidence_ref: evidence.and_then(|finding| finding.evidence_ref.clone()),
+            availability,
             reasons: if matches!(status, DeltaFindingStatus::Resolved) {
                 vec!["absence is proven by the comparability assessment".to_string()]
             } else if matches!(
@@ -81,17 +93,18 @@ pub fn compare_observations(
 
 fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> ComparabilityAssessment {
     let invocation_match = baseline.invocation_fingerprint == subject.invocation_fingerprint;
+    let comparison_family_match = baseline.comparison_family == subject.comparison_family;
     let subject_identity =
         if baseline.source_id == subject.source_id && baseline.operation == subject.operation {
             SubjectIdentity::Same
         } else {
             SubjectIdentity::Different
         };
-    let scope_relationship = if invocation_match {
-        ScopeRelationship::Equal
-    } else {
-        ScopeRelationship::Unknown
-    };
+    let scope_relationship = scope_relationship(
+        baseline,
+        subject,
+        invocation_match && comparison_family_match,
+    );
     let normalization_compatible = baseline.parser == subject.parser
         && baseline.lens == subject.lens
         && baseline.provider == subject.provider;
@@ -112,6 +125,11 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
     if !invocation_match {
         reasons.push("canonical invocation fingerprints differ".to_string());
     }
+    if !comparison_family_match {
+        reasons.push("comparison families differ".to_string());
+    }
+    capture_reasons("baseline", baseline, &mut reasons);
+    capture_reasons("subject", subject, &mut reasons);
     if !baseline.capture.can_prove_absence || !subject.capture.can_prove_absence {
         reasons.push("one or both observations are incomplete or truncated".to_string());
     }
@@ -125,7 +143,12 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
         reasons.push("one or both redacted payloads are no longer available".to_string());
     }
     let can_prove_absence = invocation_match
+        && comparison_family_match
         && matches!(subject_identity, SubjectIdentity::Same)
+        && matches!(
+            scope_relationship,
+            ScopeRelationship::Equal | ScopeRelationship::Superset
+        )
         && baseline.capture.can_prove_absence
         && subject.capture.can_prove_absence
         && normalization_compatible
@@ -143,6 +166,113 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
         can_prove_absence,
         reasons,
         extra: Extra::new(),
+    }
+}
+
+fn scope_relationship(
+    baseline: &ObservationRecord,
+    subject: &ObservationRecord,
+    same_invocation_and_family: bool,
+) -> ScopeRelationship {
+    let baseline_scopes = normalized_scopes(baseline);
+    let subject_scopes = normalized_scopes(subject);
+    if baseline.selection.exhaustive
+        && subject.selection.exhaustive
+        && !baseline_scopes.is_empty()
+        && !subject_scopes.is_empty()
+    {
+        if baseline_scopes == subject_scopes {
+            return ScopeRelationship::Equal;
+        }
+        if baseline_scopes.is_subset(&subject_scopes) {
+            return ScopeRelationship::Superset;
+        }
+        if subject_scopes.is_subset(&baseline_scopes) {
+            return ScopeRelationship::Subset;
+        }
+        if baseline_scopes.is_disjoint(&subject_scopes) {
+            return ScopeRelationship::Disjoint;
+        }
+        return ScopeRelationship::Overlap;
+    }
+    if same_invocation_and_family {
+        ScopeRelationship::Equal
+    } else {
+        ScopeRelationship::Unknown
+    }
+}
+
+fn normalized_scopes(observation: &ObservationRecord) -> BTreeSet<String> {
+    observation
+        .selection
+        .scopes
+        .iter()
+        .map(|scope| scope.trim())
+        .filter(|scope| !scope.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn finding_is_outside_subject_coverage(
+    finding: &Finding,
+    subject: &ObservationRecord,
+    assessment: &ComparabilityAssessment,
+) -> bool {
+    match assessment.scope_relationship {
+        ScopeRelationship::Disjoint => true,
+        ScopeRelationship::Subset | ScopeRelationship::Overlap => {
+            if !subject.selection.exhaustive {
+                return false;
+            }
+            let scopes = normalized_scopes(subject);
+            !scopes.is_empty()
+                && !scopes
+                    .iter()
+                    .any(|scope| path_is_within_scope(&finding.path, scope))
+        }
+        ScopeRelationship::Equal | ScopeRelationship::Superset | ScopeRelationship::Unknown => {
+            false
+        }
+    }
+}
+
+fn path_is_within_scope(path: &str, scope: &str) -> bool {
+    path == scope
+        || path
+            .strip_prefix(scope)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn capture_reasons(prefix: &str, observation: &ObservationRecord, reasons: &mut Vec<String>) {
+    let capture = &observation.capture;
+    if capture.stop_reason != crate::CaptureStopReason::Complete {
+        reasons.push(format!(
+            "{prefix} capture stopped: {}",
+            capture_stop_reason_name(capture.stop_reason)
+        ));
+    }
+    for affected in &capture.affected {
+        reasons.push(format!(
+            "{prefix} capture scope '{}' stopped: {}",
+            affected.scope,
+            capture_stop_reason_name(affected.stop_reason)
+        ));
+    }
+    if !observation.selection.scopes.is_empty() && !observation.selection.exhaustive {
+        reasons.push(format!("{prefix} selection is not exhaustive"));
+    }
+}
+
+fn capture_stop_reason_name(reason: crate::CaptureStopReason) -> &'static str {
+    match reason {
+        crate::CaptureStopReason::Complete => "complete",
+        crate::CaptureStopReason::ByteLimit => "byte_limit",
+        crate::CaptureStopReason::Timeout => "timeout",
+        crate::CaptureStopReason::Cancelled => "cancelled",
+        crate::CaptureStopReason::Redacted => "redacted",
+        crate::CaptureStopReason::StorageLimit => "storage_limit",
+        crate::CaptureStopReason::Expired => "expired",
+        crate::CaptureStopReason::Unavailable => "unavailable",
     }
 }
 
@@ -210,6 +340,7 @@ mod tests {
     use super::*;
     use crate::{
         CaptureCompleteness, EvidenceAvailability, FindingCommandHints, ObservationLineage,
+        SelectionCoverage,
     };
 
     fn observation(id: &str, invocation: &str, complete: bool) -> ObservationRecord {
@@ -221,6 +352,8 @@ mod tests {
             invocation_fingerprint: invocation.to_string(),
             source_id: "run".to_string(),
             operation: "test".to_string(),
+            comparison_family: Some("test".to_string()),
+            selection: SelectionCoverage::default(),
             subject_keys: Vec::new(),
             captured_at: "2026-07-13T12:00:00Z".to_string(),
             duration_ms: None,
@@ -330,5 +463,155 @@ mod tests {
             assert!(!delta.assessment.can_prove_absence, "{availability:?}");
             assert_eq!(delta.findings[0].status, DeltaFindingStatus::Unknown);
         }
+    }
+
+    #[test]
+    fn scope_matrix_computes_every_declared_relationship() {
+        let cases = [
+            (vec!["/items/a"], vec!["/items/a"], ScopeRelationship::Equal),
+            (
+                vec!["/items/a"],
+                vec!["/items/a", "/items/b"],
+                ScopeRelationship::Superset,
+            ),
+            (
+                vec!["/items/a", "/items/b"],
+                vec!["/items/a"],
+                ScopeRelationship::Subset,
+            ),
+            (
+                vec!["/items/a", "/items/b"],
+                vec!["/items/b", "/items/c"],
+                ScopeRelationship::Overlap,
+            ),
+            (
+                vec!["/items/a"],
+                vec!["/items/b"],
+                ScopeRelationship::Disjoint,
+            ),
+        ];
+        for (baseline_scopes, subject_scopes, expected) in cases {
+            let mut baseline = observation("a", "same", true);
+            baseline.selection = selection(&baseline_scopes);
+            let mut subject = observation("b", "different", true);
+            subject.selection = selection(&subject_scopes);
+            assert_eq!(
+                compare_observations(&baseline, &subject, &[], &[])
+                    .assessment
+                    .scope_relationship,
+                expected
+            );
+        }
+
+        let unknown = compare_observations(
+            &observation("a", "one", true),
+            &observation("b", "two", true),
+            &[],
+            &[],
+        );
+        assert_eq!(
+            unknown.assessment.scope_relationship,
+            ScopeRelationship::Unknown
+        );
+    }
+
+    #[test]
+    fn incomplete_subject_marks_only_proven_outside_selection_not_observed() {
+        let mut baseline = observation("a", "same", true);
+        baseline.selection = selection(&["/items/a", "/items/b"]);
+        let mut subject = observation("b", "different", false);
+        subject.selection = selection(&["/items/a"]);
+
+        let outside =
+            compare_observations(&baseline, &subject, &[finding_at("old", "/items/b")], &[]);
+        assert_eq!(outside.findings[0].status, DeltaFindingStatus::NotObserved);
+        let inside =
+            compare_observations(&baseline, &subject, &[finding_at("old", "/items/a")], &[]);
+        assert_eq!(inside.findings[0].status, DeltaFindingStatus::Unknown);
+    }
+
+    #[test]
+    fn self_comparison_has_only_persisting_findings() {
+        let observation = observation("same", "same", true);
+        let delta = compare_observations(
+            &observation,
+            &observation,
+            &[finding("known")],
+            &[finding("known")],
+        );
+        assert_eq!(
+            delta.counts,
+            BTreeMap::from([(String::from("persisting"), 1)])
+        );
+    }
+
+    #[test]
+    fn exact_twelve_to_three_plus_one_delta_is_counted() {
+        let baseline_findings = (0..12)
+            .map(|index| finding(&format!("before-{index}")))
+            .collect::<Vec<_>>();
+        let subject_findings = (0..3)
+            .map(|index| finding(&format!("before-{index}")))
+            .chain(std::iter::once(finding("after-0")))
+            .collect::<Vec<_>>();
+        let delta = compare_observations(
+            &observation("a", "same", true),
+            &observation("b", "same", true),
+            &baseline_findings,
+            &subject_findings,
+        );
+        assert_eq!(
+            delta.counts,
+            BTreeMap::from([
+                (String::from("new"), 1),
+                (String::from("persisting"), 3),
+                (String::from("resolved"), 9),
+            ])
+        );
+    }
+
+    #[test]
+    fn pagination_provider_and_family_changes_never_resolve() {
+        let baseline = observation("a", "same", true);
+        let mut pagination_capped = observation("b", "same", false);
+        pagination_capped.capture.stop_reason = crate::CaptureStopReason::ByteLimit;
+        let mut provider_changed = observation("c", "same", true);
+        provider_changed.provider = Some("other".to_string());
+        let mut family_changed = observation("d", "same", true);
+        family_changed.comparison_family = Some("other".to_string());
+        for subject in [pagination_capped, provider_changed, family_changed] {
+            let delta = compare_observations(&baseline, &subject, &[finding("old")], &[]);
+            assert!(!delta.assessment.can_prove_absence);
+            assert_ne!(delta.findings[0].status, DeltaFindingStatus::Resolved);
+        }
+    }
+
+    #[test]
+    fn unkeyed_collections_remain_unknown() {
+        let delta = compare_observations(
+            &observation("a", "first", true),
+            &observation("b", "second", true),
+            &[finding("old")],
+            &[],
+        );
+        assert_eq!(delta.findings[0].status, DeltaFindingStatus::Unknown);
+        assert_eq!(
+            delta.assessment.scope_relationship,
+            ScopeRelationship::Unknown
+        );
+    }
+
+    fn selection(scopes: &[&str]) -> SelectionCoverage {
+        SelectionCoverage {
+            scopes: scopes.iter().map(|scope| (*scope).to_string()).collect(),
+            exhaustive: true,
+            extra: Extra::new(),
+        }
+    }
+
+    fn finding_at(fingerprint: &str, path: &str) -> Finding {
+        let mut finding = finding(fingerprint);
+        finding.path = path.to_string();
+        finding
     }
 }

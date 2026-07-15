@@ -37,7 +37,7 @@ const STORAGE_BUDGET_KEY: &str = "storage_budget";
 // Pre-release storage is intentionally reset, rather than migrated, whenever
 // an immutable-record invariant changes. This is a contract identity, not a
 // compatibility version.
-const STORE_SCHEMA: &str = "prog.store.capture_lifecycle";
+const STORE_SCHEMA: &str = "prog.store.delta_contract";
 
 #[derive(Debug)]
 pub struct Store {
@@ -71,6 +71,7 @@ pub struct NewObservation {
     pub source_id: String,
     pub operation: String,
     pub comparison_family: Option<String>,
+    pub selection: crate::SelectionCoverage,
     pub subject_keys: Vec<String>,
     pub captured_at: Option<String>,
     pub duration_ms: Option<u64>,
@@ -312,6 +313,7 @@ impl Store {
             source_id: input.source_id,
             operation: input.operation,
             comparison_family: input.comparison_family,
+            selection: input.selection,
             subject_keys: input.subject_keys,
             captured_at: input.captured_at.unwrap_or_else(|| format_time(Utc::now())),
             duration_ms: input.duration_ms,
