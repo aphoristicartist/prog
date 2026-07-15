@@ -1171,6 +1171,13 @@ pub struct ObservationRecord {
     pub source_id: String,
     pub operation: String,
     #[serde(default)]
+    pub comparison_family: Option<String>,
+    /// The explicit selection represented by this observation. A non-empty,
+    /// exhaustive selection lets delta comparison distinguish partial coverage
+    /// from a complete observation of the same invocation.
+    #[serde(default)]
+    pub selection: SelectionCoverage,
+    #[serde(default)]
     pub subject_keys: Vec<String>,
     pub captured_at: String,
     #[serde(default)]
@@ -1265,6 +1272,21 @@ pub enum ScopeRelationship {
     Unknown,
 }
 
+/// Declares the exact logical scopes included in an observation. Scope values
+/// are source-defined stable identifiers, commonly JSON Pointer prefixes or
+/// provider entity identifiers. An empty selection is deliberately unknown;
+/// callers must not infer coverage from payload shape alone.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct SelectionCoverage {
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub exhaustive: bool,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeltaFindingStatus {
@@ -1304,6 +1326,12 @@ pub struct DeltaFinding {
     pub baseline_path: Option<String>,
     #[serde(default)]
     pub subject_path: Option<String>,
+    /// Exact evidence for the version of the finding used in this delta.
+    #[serde(default)]
+    pub evidence_ref: Option<EvidenceRef>,
+    /// Whether the evidence named above remains recoverable.
+    #[serde(default)]
+    pub availability: EvidenceAvailability,
     #[serde(default)]
     pub reasons: Vec<String>,
     #[serde(default, flatten)]

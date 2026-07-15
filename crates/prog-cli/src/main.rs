@@ -28,15 +28,15 @@ use prog_core::{
     ObservationFreshness, ObservationMetadata, ObservationPayloadStatus, ObservationSafety,
     ObservationTrust, OmissionReason, OmittedRegion, OperationProfile, PersistedPayload,
     PreviewPolicy, RawPayload, ReadinessReport, RedactedPayload, RedactionPolicy, Result,
-    SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions, SearchResponse, SliceRequest, SourceProfile,
-    SourceStateToken, StorageBudget, Store, Summary, TrustSettings, VERIFICATION_SCHEMA,
-    ValidatedCursor, ValueScanReport, VerificationObligation, VerificationStatus,
-    build_inspect_response, cache_allowed, call_effect_warnings, canonical_json, check_call,
-    check_discovery, cli_adapter_effects, cli_hardening_effects, effective_effects, evidence_block,
-    expand, http_adapter_effects, http_hardening_effects, http_source_state, infer, join,
-    lens_slice_request, new_cache_entry, project, project_with_lens, public_contract_schemas,
-    ranked_findings_with_lens, render_hints, search_payload_with_lens, slice_value,
-    tighten_effects, validate_lens_manifest,
+    SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions, SearchResponse, SelectionCoverage,
+    SliceRequest, SourceProfile, SourceStateToken, StorageBudget, Store, Summary, TrustSettings,
+    VERIFICATION_SCHEMA, ValidatedCursor, ValueScanReport, VerificationObligation,
+    VerificationStatus, build_inspect_response, cache_allowed, call_effect_warnings,
+    canonical_json, check_call, check_discovery, cli_adapter_effects, cli_hardening_effects,
+    effective_effects, evidence_block, expand, http_adapter_effects, http_hardening_effects,
+    http_source_state, infer, join, lens_slice_request, new_cache_entry, project,
+    project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
+    search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -270,6 +270,18 @@ struct CallArgs {
     #[arg(long)]
     refresh: bool,
 
+    /// Canonical family used to decide whether successive observations may be compared.
+    #[arg(long)]
+    comparison_family: Option<String>,
+
+    /// Stable logical scope included in this capture; repeat for collections.
+    #[arg(long = "selection-scope")]
+    selection_scopes: Vec<String>,
+
+    /// Assert that all supplied selection scopes are exhaustively represented.
+    #[arg(long, requires = "selection_scopes")]
+    selection_exhaustive: bool,
+
     /// Follow pagination links for read-only operations, prefetching up to N
     /// pages into the local cache under hard page/byte/time caps.
     #[arg(long, default_value_t = 1)]
@@ -292,6 +304,18 @@ struct ObserveArgs {
 
     #[arg(long)]
     lens: Option<String>,
+
+    /// Canonical family used to decide whether successive observations may be compared.
+    #[arg(long)]
+    comparison_family: Option<String>,
+
+    /// Stable logical scope included in this capture; repeat for collections.
+    #[arg(long = "selection-scope")]
+    selection_scopes: Vec<String>,
+
+    /// Assert that all supplied selection scopes are exhaustively represented.
+    #[arg(long, requires = "selection_scopes")]
+    selection_exhaustive: bool,
 
     #[arg(long, default_value_t = 86_400)]
     ttl_seconds: u64,
@@ -319,6 +343,18 @@ struct RunArgs {
 
     #[arg(long)]
     lens: Option<String>,
+
+    /// Canonical family used to decide whether successive observations may be compared.
+    #[arg(long)]
+    comparison_family: Option<String>,
+
+    /// Stable logical scope included in this capture; repeat for collections.
+    #[arg(long = "selection-scope")]
+    selection_scopes: Vec<String>,
+
+    /// Assert that all supplied selection scopes are exhaustively represented.
+    #[arg(long, requires = "selection_scopes")]
+    selection_exhaustive: bool,
 
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
     command: Vec<String>,
@@ -376,6 +412,18 @@ struct RecipeArgs {
 
     #[arg(long, default_value_t = 86_400)]
     ttl_seconds: u64,
+
+    /// Canonical family used to decide whether successive observations may be compared.
+    #[arg(long)]
+    comparison_family: Option<String>,
+
+    /// Stable logical scope included in this capture; repeat for collections.
+    #[arg(long = "selection-scope")]
+    selection_scopes: Vec<String>,
+
+    /// Assert that all supplied selection scopes are exhaustively represented.
+    #[arg(long, requires = "selection_scopes")]
+    selection_exhaustive: bool,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<String>,
@@ -2152,6 +2200,8 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
         cache_key.clone(),
         args.source_id.clone(),
         "hints".to_string(),
+        None,
+        SelectionCoverage::default(),
         entry.provenance.clone(),
         Some(cache_key.clone()),
         false,
@@ -2358,6 +2408,8 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                 invocation_fingerprint: cache_key.clone(),
                 source_id: args.source_id.clone(),
                 operation: args.operation.clone(),
+                comparison_family: args.comparison_family.clone(),
+                selection: selection_coverage(&args.selection_scopes, args.selection_exhaustive),
                 captured_at: Some(provenance.captured_at.clone()),
                 duration_ms: provenance.duration_ms,
                 status: provenance.status.clone(),
@@ -2532,6 +2584,8 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
         cache_key.clone(),
         args.source_id.clone(),
         args.operation.clone(),
+        args.comparison_family.clone(),
+        selection_coverage(&args.selection_scopes, args.selection_exhaustive),
         Some(provenance.clone()),
         may_cache.then(|| cache_key.clone()),
         !redacted_paths.is_empty(),
@@ -2801,6 +2855,8 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                     page_cache_key.clone(),
                     args.source_id.clone(),
                     args.operation.clone(),
+                    args.comparison_family.clone(),
+                    selection_coverage(&args.selection_scopes, args.selection_exhaustive),
                     Some(page_provenance.clone()),
                     may_cache.then(|| page_cache_key.clone()),
                     false,
@@ -3066,6 +3122,8 @@ fn observe_artifact(
         cache_key.clone(),
         "observe".to_string(),
         input.name.clone(),
+        args.comparison_family.clone(),
+        selection_coverage(&args.selection_scopes, args.selection_exhaustive),
         entry.provenance.clone(),
         Some(cache_key.clone()),
         !redacted_paths.is_empty(),
@@ -3315,6 +3373,7 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         &run.stderr,
         payload_bytes,
         !policy_redactions.is_empty(),
+        &run.status,
     );
     capture.budget = capture_budget_for_run(args);
     set_response_capture_budget(capture.budget.clone());
@@ -3326,6 +3385,8 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         invocation_fingerprint,
         "run".to_string(),
         operation.clone(),
+        args.comparison_family.clone(),
+        selection_coverage(&args.selection_scopes, args.selection_exhaustive),
         Some(provenance.clone()),
         Some(cache_key.clone()),
         !policy_redactions.is_empty(),
@@ -3458,6 +3519,9 @@ async fn run_recipe(
                 mime: Some(mime.to_string()),
                 name: Some(args.recipe.as_str().to_string()),
                 lens: Some(lens.to_string()),
+                comparison_family: args.comparison_family.clone(),
+                selection_scopes: args.selection_scopes.clone(),
+                selection_exhaustive: args.selection_exhaustive,
                 ttl_seconds: args.ttl_seconds,
             };
             (
@@ -3502,6 +3566,9 @@ async fn run_recipe(
                 preserve_exit_code: false,
                 out: None,
                 lens: Some(lens.to_string()),
+                comparison_family: args.comparison_family.clone(),
+                selection_scopes: args.selection_scopes.clone(),
+                selection_exhaustive: args.selection_exhaustive,
                 command: command.clone(),
             };
             (
@@ -5083,6 +5150,7 @@ fn inspect_cursor(store: &Store, lens_dir: &Path, args: &InspectArgs) -> Result<
             }));
         }
     }
+    let cache_stale = cache_is_stale(Some(&context.cache));
     response.cache = Some(context.cache);
     let scoped_value = prog_core::pointer::get(context.payload.as_value(), &context.target_path)?
         .expect("cursor_context validated the target path");
@@ -5097,7 +5165,7 @@ fn inspect_cursor(store: &Store, lens_dir: &Path, args: &InspectArgs) -> Result<
             "inspect findings are partial; narrow --path to traverse a smaller subtree".to_string(),
         );
     }
-    if context.age_seconds > 0 {
+    if cache_stale {
         response.warnings.push(format!(
             "cached payload age_seconds={}; inspect did not contact upstream",
             context.age_seconds
@@ -5152,8 +5220,9 @@ fn evidence_cursor(store: &Store, lens_dir: &Path, args: &EvidenceArgs) -> Resul
     }));
     block.source_command = source_command_from_provenance(context.entry.provenance.as_ref());
     block.provenance = context.entry.provenance;
+    let cache_stale = cache_is_stale(Some(&context.cache));
     block.cache = Some(context.cache);
-    if context.age_seconds > 0 {
+    if cache_stale {
         block.warnings.push(format!(
             "cached payload age_seconds={}; evidence did not contact upstream",
             context.age_seconds
@@ -5199,8 +5268,9 @@ fn search_cursor(
         lens.as_ref(),
     )?;
     response.warnings.extend(lens_warnings);
+    let cache_stale = cache_is_stale(Some(&context.cache));
     response.cache = Some(context.cache);
-    if context.age_seconds > 0 {
+    if cache_stale {
         response.warnings.push(format!(
             "cached payload age_seconds={}; search did not contact upstream",
             context.age_seconds
@@ -5378,8 +5448,11 @@ fn record_envelope_event(store: &Store, envelope: &mut DisclosureEnvelope, kind:
         .as_ref()
         .and_then(|observation| observation.observation_id.as_deref())
         && let Ok(Some(subject)) = store.get_observation(observation_id)
-        && let Ok(Some(baseline)) =
-            store.latest_session_predecessor(&subject.invocation_fingerprint, observation_id)
+        && let Ok(Some(baseline)) = store.latest_session_predecessor(
+            &subject.invocation_fingerprint,
+            subject.comparison_family.as_deref(),
+            observation_id,
+        )
         && let Ok(mut delta) =
             compare_observation_ids(store, &baseline.observation_id, &subject.observation_id)
     {
@@ -6293,6 +6366,8 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
         cache_key.clone(),
         "prog".to_string(),
         operation.clone(),
+        None,
+        SelectionCoverage::default(),
         entry.provenance.clone(),
         Some(cache_key.clone()),
         false,
@@ -6376,27 +6451,48 @@ fn compare_observation_ids(
             operation: "delta".to_string(),
             reason: format!("unknown subject observation '{subject_id}'"),
         })?;
-    let findings_for =
-        |observation: &prog_core::ObservationRecord| -> Result<Vec<prog_core::Finding>> {
-            let Some(payload) = store.get_payload(&observation.payload_hash)? else {
-                return Ok(Vec::new());
-            };
-            prog_core::ranked_findings(
-                payload.as_value(),
-                &FindingOptions {
-                    limit: 100,
-                    ..FindingOptions::default()
-                },
-            )
-        };
-    let baseline_findings = findings_for(&baseline)?;
-    let subject_findings = findings_for(&subject)?;
+    let baseline_findings = delta_findings_for_observation(store, &baseline)?;
+    let subject_findings = delta_findings_for_observation(store, &subject)?;
     Ok(prog_core::compare_observations(
         &baseline,
         &subject,
         &baseline_findings,
         &subject_findings,
     ))
+}
+
+fn delta_findings_for_observation(
+    store: &Store,
+    observation: &prog_core::ObservationRecord,
+) -> Result<Vec<prog_core::Finding>> {
+    let Some(payload) = store.get_payload(&observation.payload_hash)? else {
+        return Ok(Vec::new());
+    };
+    let mut findings = prog_core::ranked_findings(
+        payload.as_value(),
+        &FindingOptions {
+            limit: 100,
+            ..FindingOptions::default()
+        },
+    )?;
+    for finding in &mut findings {
+        let Some(value) = prog_core::pointer::get(payload.as_value(), &finding.path)? else {
+            continue;
+        };
+        finding.evidence_ref = Some(evidence_ref(EvidenceRefInput {
+            source_id: &observation.source_id,
+            operation: &observation.operation,
+            cursor: None,
+            path: &finding.path,
+            value,
+            observation: Some(observation),
+            provenance: observation.provenance.as_ref(),
+            cache: None,
+            omitted: &[],
+            redacted_paths: 0,
+        }));
+    }
+    Ok(findings)
 }
 
 fn read_seed(seed: &str) -> Result<Value> {
@@ -8611,6 +8707,8 @@ fn record_capture(
     invocation_fingerprint: String,
     source_id: String,
     operation: String,
+    comparison_family: Option<String>,
+    selection: SelectionCoverage,
     provenance: Option<CallProvenance>,
     cache_key: Option<String>,
     redacted: bool,
@@ -8628,6 +8726,8 @@ fn record_capture(
             invocation_fingerprint,
             source_id,
             operation,
+            comparison_family,
+            selection,
             captured_at,
             duration_ms,
             status,
@@ -8641,6 +8741,22 @@ fn record_capture(
             ..NewObservation::default()
         })?
         .observation_id)
+}
+
+fn selection_coverage(scopes: &[String], exhaustive: bool) -> SelectionCoverage {
+    let scopes = scopes
+        .iter()
+        .map(|scope| scope.trim())
+        .filter(|scope| !scope.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    SelectionCoverage {
+        scopes,
+        exhaustive,
+        extra: Extra::new(),
+    }
 }
 
 fn complete_capture(
@@ -8813,18 +8929,21 @@ fn run_capture_completeness(
     stderr: &RunCapture,
     stored_bytes: u64,
     redacted: bool,
+    status: &RunProcessStatus,
 ) -> (EvidenceAvailability, CaptureCompleteness) {
     let truncated = stdout.truncated || stderr.truncated;
     let captured_bytes = stdout.bytes.len().saturating_add(stderr.bytes.len()) as u64;
     let total_bytes = stdout.total_bytes.saturating_add(stderr.total_bytes) as u64;
-    let reason = if truncated {
+    let reason = if matches!(status, RunProcessStatus::TimedOut) {
+        CaptureStopReason::Timeout
+    } else if truncated {
         CaptureStopReason::ByteLimit
     } else if redacted {
         CaptureStopReason::Redacted
     } else {
         CaptureStopReason::Complete
     };
-    let availability = if truncated {
+    let availability = if matches!(status, RunProcessStatus::TimedOut) || truncated {
         EvidenceAvailability::CaptureTruncated
     } else if redacted {
         EvidenceAvailability::Redacted
@@ -8863,7 +8982,9 @@ fn run_capture_completeness(
                     extra: Extra::new(),
                 },
             ],
-            can_prove_absence: !truncated && !redacted,
+            can_prove_absence: !matches!(status, RunProcessStatus::TimedOut)
+                && !truncated
+                && !redacted,
             extra: Extra::new(),
         },
     )
