@@ -1,8 +1,8 @@
 use prog_core::{
     CachePolicy, CallFlags, EffectSet, EvidenceGrade, Extra, OperationProfile, TrustSettings,
-    apply_auto_upgrade, cache_allowed, call_effect_warnings, check_call, check_discovery,
-    cli_adapter_effects, effective_effects, http_adapter_effects, http_hardening_effects,
-    stamp_evidence_grade, tighten_effects,
+    cache_allowed, call_effect_warnings, check_call, check_discovery, cli_adapter_effects,
+    effective_effects, http_adapter_effects, http_hardening_effects, stamp_evidence_grade,
+    tighten_effects,
 };
 use proptest::prelude::*;
 use serde_json::{Value, json};
@@ -275,7 +275,7 @@ fn auto_upgrade_relaxes_proven_read_only_confirmation() {
     effects
         .extra
         .insert("evidence_grade".to_string(), json!("proven"));
-    let (relaxed, note) = apply_auto_upgrade(&effects, &TrustSettings::default());
+    let (relaxed, note) = effective_effects(&effects, &TrustSettings::default());
     assert!(!relaxed.requires_confirmation);
     assert!(note.is_some());
     assert_eq!(
@@ -297,10 +297,10 @@ fn auto_upgrade_never_relaxes_non_proven_or_mutating_or_shell_or_sensitive() {
     assumed
         .extra
         .insert("evidence_grade".to_string(), json!("assumed"));
-    assert!(apply_auto_upgrade(&assumed, &trust).0.requires_confirmation);
+    assert!(effective_effects(&assumed, &trust).0.requires_confirmation);
     // Unproven (no grade at all) -> not relaxed.
     assert!(
-        apply_auto_upgrade(&gated_read_only(), &trust)
+        effective_effects(&gated_read_only(), &trust)
             .0
             .requires_confirmation
     );
@@ -311,18 +311,14 @@ fn auto_upgrade_never_relaxes_non_proven_or_mutating_or_shell_or_sensitive() {
         .insert("evidence_grade".to_string(), json!("proven"));
     mutating.read_only = false;
     mutating.mutating = true;
-    assert!(
-        apply_auto_upgrade(&mutating, &trust)
-            .0
-            .requires_confirmation
-    );
+    assert!(effective_effects(&mutating, &trust).0.requires_confirmation);
 
     let mut shell = gated_read_only();
     shell
         .extra
         .insert("evidence_grade".to_string(), json!("proven"));
     shell.shell = true;
-    assert!(apply_auto_upgrade(&shell, &trust).0.requires_confirmation);
+    assert!(effective_effects(&shell, &trust).0.requires_confirmation);
 
     let mut sensitive = gated_read_only();
     sensitive
@@ -330,7 +326,7 @@ fn auto_upgrade_never_relaxes_non_proven_or_mutating_or_shell_or_sensitive() {
         .insert("evidence_grade".to_string(), json!("proven"));
     sensitive.sensitive = true;
     assert!(
-        apply_auto_upgrade(&sensitive, &trust)
+        effective_effects(&sensitive, &trust)
             .0
             .requires_confirmation
     );
@@ -346,7 +342,7 @@ fn auto_upgrade_disabled_leaves_confirmation_in_place() {
         auto_upgrade: false,
         ..TrustSettings::default()
     };
-    let (relaxed, note) = apply_auto_upgrade(&effects, &trust);
+    let (relaxed, note) = effective_effects(&effects, &trust);
     assert!(relaxed.requires_confirmation);
     assert!(note.is_none());
 }

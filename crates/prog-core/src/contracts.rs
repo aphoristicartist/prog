@@ -914,7 +914,7 @@ pub struct CallProvenance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct CacheInfo {
     pub status: CacheStatus,
     #[serde(default)]
@@ -923,8 +923,6 @@ pub struct CacheInfo {
     pub expires_at: Option<String>,
     #[serde(default)]
     pub age_seconds: Option<u64>,
-    #[serde(default, flatten)]
-    pub extra: Extra,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

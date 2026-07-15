@@ -171,6 +171,7 @@ impl Store {
         drop(read);
         if store_schema.as_deref() != Some(STORE_SCHEMA) {
             let write = db.begin_write().map_err(CoreError::storage)?;
+            let dropped;
             {
                 let mut entries = write.open_table(ENTRIES).map_err(CoreError::storage)?;
                 let mut payloads = write.open_table(PAYLOADS).map_err(CoreError::storage)?;
@@ -186,22 +187,27 @@ impl Store {
                     .map_err(CoreError::storage)?;
                 let mut obligations = write.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
                 let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
-                if store_existed {
-                    retain_none(&mut entries)?;
-                    retain_none(&mut payloads)?;
-                    retain_none(&mut cursors)?;
-                    retain_none(&mut sessions)?;
-                    retain_none(&mut observations)?;
-                    retain_none(&mut observation_subjects)?;
-                    retain_none(&mut observation_lineage)?;
-                    retain_none(&mut obligations)?;
-                    retain_none(&mut state)?;
-                }
+                dropped = if store_existed {
+                    retain_none(&mut entries)?
+                        + retain_none(&mut payloads)?
+                        + retain_none(&mut cursors)?
+                        + retain_none(&mut sessions)?
+                        + retain_none(&mut observations)?
+                        + retain_none(&mut observation_subjects)?
+                        + retain_none(&mut observation_lineage)?
+                        + retain_none(&mut obligations)?
+                        + retain_none(&mut state)?
+                } else {
+                    0
+                };
                 state
                     .insert(STORE_SCHEMA_KEY, STORE_SCHEMA.as_bytes())
                     .map_err(CoreError::storage)?;
             }
             write.commit().map_err(CoreError::storage)?;
+            if store_existed {
+                eprintln!("{}", store_reset_notice(&dir, dropped));
+            }
         }
 
         Ok(Self { dir, db })
@@ -1022,6 +1028,18 @@ fn retain_none<K: redb::Key + 'static, V: redb::Value + 'static>(
         })
         .map_err(CoreError::storage)?;
     Ok(count)
+}
+
+/// Actionable one-line notice emitted when an unidentified pre-release store is
+/// reset. Pure (no I/O): kept separate from the reset site so the exact wording
+/// is unit-testable. The caller is responsible for gating this on `store_existed`
+/// so first-run creation stays silent.
+pub fn store_reset_notice(dir: &Path, dropped: usize) -> String {
+    format!(
+        "prog: unidentified pre-release store at {} was reset ({} records dropped); rerun your source to repopulate",
+        dir.display(),
+        dropped
+    )
 }
 
 fn validate_observation_input(input: &NewObservation) -> Result<()> {

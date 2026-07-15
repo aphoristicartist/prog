@@ -2412,7 +2412,6 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
             ttl_seconds: None,
             expires_at: None,
             age_seconds: None,
-            extra: Extra::new(),
         })
     };
 
@@ -8193,7 +8192,6 @@ fn cache_info(
         ttl_seconds: ttl_between(&entry.created_at, &entry.expires_at).ok(),
         expires_at: Some(entry.expires_at.clone()),
         age_seconds,
-        extra: Extra::new(),
     }
 }
 

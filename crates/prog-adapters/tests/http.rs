@@ -472,9 +472,16 @@ async fn pagination_signals_are_hints_and_not_auto_followed() {
         .await
         .unwrap();
 
-    assert_eq!(result.pagination.as_ref().unwrap()["next_page"], 2);
+    // Pagination signals surface as normalized hints, not auto-followed. The
+    // numeric `next_page` body field is not a usable cursor token and is no
+    // longer copied through raw; the Link header is surfaced as link_rel_next.
+    let pagination = result.pagination.as_ref().unwrap();
     assert!(
-        result.pagination.as_ref().unwrap()["link_rel_next"]
+        pagination.get("next_page").is_none(),
+        "raw numeric next_page must not be copied through"
+    );
+    assert!(
+        pagination["link_rel_next"]
             .as_str()
             .unwrap()
             .contains("rel=\"next\"")

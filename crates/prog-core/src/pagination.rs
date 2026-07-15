@@ -27,47 +27,10 @@ const CURSOR_FAMILY: &[&str] = &[
 ];
 
 /// Scan order for a cursor token inside an already-built hints object. The
-/// normalized `next_cursor` key (produced by [`extract_pagination_hints`]) is
-/// tried first; the raw family fields follow so direct/legacy hint shapes
-/// still resolve. `next` is included last so a non-URL `next` string is still
-/// usable as a token while a URL-valued `next` falls through to the URL arms.
-const CURSOR_TOKEN_PRIORITY: &[&str] = &[
-    "next_cursor",
-    "cursor",
-    "next_token",
-    "continuation",
-    "continuation_token",
-    "nextPageToken",
-    "next_page",
-    "starting_after",
-    "after",
-    "next",
-    "page_token",
-];
-
-/// Body fields copied through verbatim for observability and legacy callers
-/// (the adapter used to surface `next`/`next_page`/`nextPageToken`/`has_more`
-/// unchanged). Keeping the raw values means existing consumers and golden
-/// fixtures do not break when the normalized keys are added alongside.
-const PASSTHROUGH_FIELDS: &[&str] = &[
-    "next",
-    "next_page",
-    "nextPageToken",
-    "has_more",
-    "hasMore",
-    "cursor",
-    "next_cursor",
-    "next_token",
-    "continuation",
-    "continuation_token",
-    "starting_after",
-    "after",
-    "page",
-    "per_page",
-    "page_size",
-    "offset",
-    "limit",
-];
+/// resolver consumes only the normalized `next_cursor` key produced by
+/// [`extract_pagination_hints`]; the raw family fields are normalized there and
+/// are not re-read here.
+const CURSOR_TOKEN_PRIORITY: &[&str] = &["next_cursor"];
 
 /// Hard caps for a pagination follow loop. Reaching any cap stops the loop and
 /// surfaces a continuation rather than running away.
@@ -144,9 +107,6 @@ impl StopReason {
 /// - `has_more`: boolean "more pages exist" flag (`has_more` or `hasMore`).
 /// - `page_strategy`: `"page_number"` (body echoes `page` + `per_page` /
 ///   `page_size`) or `"offset_limit"` (body echoes `offset` + `limit`).
-///
-/// Any recognized raw field present in the body is also copied through so
-/// callers and fixtures that consumed the legacy hint shape keep working.
 pub fn extract_pagination_hints(body: &Value, link_header: Option<&str>) -> Option<Value> {
     let mut hints = Map::new();
 
@@ -211,13 +171,6 @@ pub fn extract_pagination_hints(body: &Value, link_header: Option<&str>) -> Opti
                 Value::String("offset_limit".to_string()),
             );
         }
-
-        // Raw passthrough of recognized fields (legacy compat + observability).
-        for &key in PASSTHROUGH_FIELDS {
-            if let Some(value) = map.get(key) {
-                hints.insert(key.to_string(), value.clone());
-            }
-        }
     }
 
     if hints.is_empty() {
@@ -253,8 +206,8 @@ pub fn parse_link_rel_next(link_header: &str) -> Option<String> {
 ///
 /// Resolution order: a cursor token (written to the caller's existing
 /// cursor-ish param, or `page_token`), then a page-number increment, then an
-/// offset/limit increment, then a Link `rel="next"` URL, then a full-URL
-/// `next` field. Cursor/page are tried FIRST because the follow loop can chase
+/// offset/limit increment, then a Link `rel="next"` URL, then a normalized
+/// `next_url`. Cursor/page are tried FIRST because the follow loop can chase
 /// them directly; URL continuation requires the adapter `execute_url` path, so
 /// it is only chosen when no followable cursor/page is present (otherwise a
 /// Link header would silently preempt a usable cursor). Returns `None` when
@@ -315,13 +268,6 @@ pub fn next_args_from_hints(hints: &Value, current_args: &Value) -> Option<PageT
     // 5. Normalized next_url.
     if let Some(url) = hints.get("next_url").and_then(Value::as_str) {
         return Some(PageTarget::Url(url.to_string()));
-    }
-
-    // 6. Legacy raw `next` URL.
-    if let Some(next) = hints.get("next").and_then(Value::as_str)
-        && is_url(next)
-    {
-        return Some(PageTarget::Url(next.to_string()));
     }
 
     None
@@ -408,7 +354,9 @@ mod tests {
 
     #[test]
     fn next_page_url_from_next_field() {
-        let hints = json!({"next": "https://api/items?cursor=xyz"});
+        // Resolver consumes the normalized `next_url` key (produced by
+        // extract_pagination_hints); raw `next` is no longer passed through.
+        let hints = json!({"next_url": "https://api/items?cursor=xyz"});
         let target = next_args_from_hints(&hints, &json!({"limit": 10})).unwrap();
         assert_eq!(
             target,
@@ -418,7 +366,7 @@ mod tests {
 
     #[test]
     fn cursor_token_written_to_existing_param() {
-        let hints = json!({"nextPageToken": "TOKEN-2"});
+        let hints = json!({"next_cursor": "TOKEN-2"});
         // Use a non-default cursor param (starting_after) so the test fails if
         // the cursor_param candidate scan regresses.
         let target =
@@ -434,7 +382,7 @@ mod tests {
 
     #[test]
     fn cursor_token_defaults_to_page_token_param() {
-        let hints = json!({"next_page": "abc"});
+        let hints = json!({"next_cursor": "abc"});
         let target = next_args_from_hints(&hints, &json!({"limit": 5})).unwrap();
         match target {
             PageTarget::Args(args) => assert_eq!(args["page_token"], json!("abc")),
@@ -449,7 +397,7 @@ mod tests {
         // on the URL continuation when a token is available.
         let hints = json!({
             "link_rel_next": "<https://api/p2>; rel=\"next\"",
-            "nextPageToken": "CURSOR-2"
+            "next_cursor": "CURSOR-2"
         });
         let target = next_args_from_hints(&hints, &json!({"page_token": "CURSOR-1"})).unwrap();
         match target {
@@ -531,23 +479,29 @@ mod tests {
     }
 
     #[test]
-    fn extract_pagination_hints_copies_raw_fields_and_link_through() {
-        // Legacy 4-key shape is preserved (adapter contract) plus the Link header.
-        let body = json!({"items": [1], "next_page": 2});
+    fn extract_pagination_hints_emits_only_normalized_keys() {
+        // The hint shape carries only the normalized keys the resolver consumes
+        // (`next_cursor`/`cursor_param`/`next_url`/`has_more`/`page_strategy`/
+        // `link_rel_next`); raw body fields are no longer copied through.
+        let body = json!({"items": [1], "next_page": "tok_2", "has_more": true});
         let hints = extract_pagination_hints(
             &body,
             Some("<https://api.example.com/items?page=2>; rel=\"next\""),
         )
         .unwrap();
-        assert_eq!(hints["next_page"], json!(2));
+        // Normalized: the string-valued `next_page` is promoted to next_cursor.
+        assert_eq!(hints["next_cursor"], json!("tok_2"));
+        assert_eq!(hints["cursor_param"], json!("next_page"));
+        assert_eq!(hints["has_more"], json!(true));
         assert!(
             hints["link_rel_next"]
                 .as_str()
                 .unwrap()
                 .contains("rel=\"next\"")
         );
-        // next_page is a number here, so it is NOT promoted to next_cursor.
-        assert!(hints.get("next_cursor").is_none());
+        // The raw `next_page` field is NOT copied through verbatim.
+        assert!(hints.get("next_page").is_none());
+        assert!(hints.get("items").is_none());
     }
 
     #[test]

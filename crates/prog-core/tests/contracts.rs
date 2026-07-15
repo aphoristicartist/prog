@@ -185,10 +185,6 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
         }),
         "x_future",
     );
-    assert_extra_roundtrips::<CacheInfo>(
-        json!({"status": "stored", "x_future": "kept"}),
-        "x_future",
-    );
 }
 
 #[test]
@@ -211,6 +207,19 @@ fn lens_manifest_input_rejects_legacy_and_unknown_fields() {
     ] {
         assert!(serde_json::from_value::<LensManifest>(value).is_err());
     }
+}
+
+#[test]
+fn cache_info_rejects_unknown_fields() {
+    // CacheInfo is a closed result-envelope struct (mirroring LensManifest):
+    // an unknown field must fail to deserialize rather than silently round-trip
+    // through the flattened `extra`.
+    let error = serde_json::from_value::<CacheInfo>(json!({
+        "status": "stored",
+        "x_future": "kept"
+    }))
+    .unwrap_err();
+    assert!(error.to_string().contains("unknown field"));
 }
 
 #[test]
