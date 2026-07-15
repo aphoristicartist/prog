@@ -213,6 +213,126 @@ fn purge_expired_cascades_to_cursors() {
 }
 
 #[test]
+fn expiry_marks_only_still_recoverable_observations_expired() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let now = Utc::now();
+    let payload_hash = store.put_payload(&redacted(json!({"ok": true}))).unwrap();
+
+    let expired_observation = store
+        .record_observation(NewObservation {
+            payload_hash: payload_hash.clone(),
+            availability: EvidenceAvailability::Recoverable,
+            invocation_fingerprint: "sha256:expired".to_string(),
+            source_id: "source".to_string(),
+            operation: "read".to_string(),
+            capture: CaptureCompleteness::complete(11),
+            ..NewObservation::default()
+        })
+        .unwrap();
+    let fresh_observation = store
+        .record_observation(NewObservation {
+            payload_hash: payload_hash.clone(),
+            availability: EvidenceAvailability::Recoverable,
+            invocation_fingerprint: "sha256:fresh".to_string(),
+            source_id: "source".to_string(),
+            operation: "read".to_string(),
+            capture: CaptureCompleteness::complete(11),
+            ..NewObservation::default()
+        })
+        .unwrap();
+
+    let mut expired_entry = entry("expired-observation", &payload_hash, 60);
+    expired_entry.expires_at = format_time(now - Duration::seconds(1));
+    expired_entry.observation_id = Some(expired_observation.observation_id.clone());
+    store.put_entry(&expired_entry.key, &expired_entry).unwrap();
+    let mut fresh_entry = entry("fresh-observation", &payload_hash, 60);
+    fresh_entry.observation_id = Some(fresh_observation.observation_id.clone());
+    store.put_entry(&fresh_entry.key, &fresh_entry).unwrap();
+
+    assert!(
+        store
+            .get_entry_at(&expired_entry.key, now)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .get_observation(&expired_observation.observation_id)
+            .unwrap()
+            .unwrap()
+            .availability,
+        EvidenceAvailability::Expired
+    );
+    assert_eq!(
+        store
+            .get_observation(&fresh_observation.observation_id)
+            .unwrap()
+            .unwrap()
+            .availability,
+        EvidenceAvailability::Recoverable
+    );
+
+    // The same state transition occurs when only a cursor discovers expiry.
+    let cursor_observation = store
+        .record_observation(NewObservation {
+            payload_hash: payload_hash.clone(),
+            availability: EvidenceAvailability::Recoverable,
+            invocation_fingerprint: "sha256:cursor-expired".to_string(),
+            source_id: "source".to_string(),
+            operation: "read".to_string(),
+            capture: CaptureCompleteness::complete(11),
+            ..NewObservation::default()
+        })
+        .unwrap();
+    store
+        .put_cursor(
+            "pc1_expired_observation",
+            &CursorRecord {
+                cache_key: fresh_entry.key.clone(),
+                source_id: "source".to_string(),
+                operation: "read".to_string(),
+                root_path: "".to_string(),
+                redaction_version: 1,
+                created_at: format_time(now - Duration::seconds(2)),
+                expires_at: format_time(now - Duration::seconds(1)),
+                observation_id: Some(cursor_observation.observation_id.clone()),
+                extra: serde_json::Map::new(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .get_cursor_at("pc1_expired_observation", 1, now)
+            .unwrap_err()
+            .kind(),
+        "cursor_expired"
+    );
+    assert_eq!(
+        store
+            .get_observation(&cursor_observation.observation_id)
+            .unwrap()
+            .unwrap()
+            .availability,
+        EvidenceAvailability::Expired
+    );
+
+    // Purging the stale entry keeps the shared payload and its lifecycle fact.
+    let summary = store.purge_expired(now).unwrap();
+    assert_eq!(summary.purged_entries, 1);
+    assert_eq!(summary.purged_payloads, 0);
+    assert!(store.get_payload(&payload_hash).unwrap().is_some());
+    assert_eq!(
+        store
+            .get_observation(&expired_observation.observation_id)
+            .unwrap()
+            .unwrap()
+            .availability,
+        EvidenceAvailability::Expired
+    );
+}
+
+#[test]
 fn purge_keeps_payload_blob_shared_with_a_surviving_entry() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
