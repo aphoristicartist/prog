@@ -14,6 +14,8 @@ const DEFAULT_DIRTY_FILE_CAP: usize = 128;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkspaceState {
+    #[serde(default)]
+    pub applicable: bool,
     pub root: Option<String>,
     pub git_dir: Option<String>,
     pub head: Option<String>,
@@ -55,6 +57,7 @@ pub struct SubmoduleState {
 pub enum WorkspaceValidity {
     Unchanged,
     Changed,
+    NotApplicable,
     Unknown,
 }
 
@@ -135,6 +138,7 @@ pub fn capture_workspace_with_cap(path: &Path, dirty_file_cap: usize) -> Workspa
         });
     }
     WorkspaceState {
+        applicable: true,
         root: Some(root.to_string_lossy().into_owned()),
         git_dir,
         head,
@@ -152,6 +156,16 @@ pub fn compare_workspace(
     current: &WorkspaceState,
 ) -> WorkspaceComparison {
     let mut reasons = Vec::new();
+    if !captured.applicable && !current.applicable {
+        return WorkspaceComparison {
+            validity: WorkspaceValidity::NotApplicable,
+            reasons: vec!["workspace capture is not applicable outside a Git worktree".to_string()],
+            extra: Extra::new(),
+        };
+    }
+    if !captured.applicable || !current.applicable {
+        reasons.push("workspace applicability changed".to_string());
+    }
     if captured.unavailable_reason.is_some() || current.unavailable_reason.is_some() {
         reasons.push("workspace capture unavailable".to_string());
     }
@@ -199,6 +213,7 @@ pub fn compare_workspace(
 
 fn unavailable(reason: String) -> WorkspaceState {
     WorkspaceState {
+        applicable: false,
         root: None,
         git_dir: None,
         head: None,

@@ -29,13 +29,13 @@ fn repo() -> tempfile::TempDir {
 }
 
 #[test]
-fn non_git_workspace_is_unknown() {
+fn non_git_workspace_is_not_applicable() {
     let dir = tempfile::tempdir().unwrap();
     let state = capture_workspace(dir.path());
     assert!(state.unavailable_reason.is_some());
     assert_eq!(
         compare_workspace(&state, &state).validity,
-        WorkspaceValidity::Unknown
+        WorkspaceValidity::NotApplicable
     );
 }
 
