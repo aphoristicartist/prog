@@ -1171,6 +1171,8 @@ pub struct ObservationRecord {
     pub source_id: String,
     pub operation: String,
     #[serde(default)]
+    pub comparison_family: Option<String>,
+    #[serde(default)]
     pub subject_keys: Vec<String>,
     pub captured_at: String,
     #[serde(default)]

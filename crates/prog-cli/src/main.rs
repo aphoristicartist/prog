@@ -5378,8 +5378,11 @@ fn record_envelope_event(store: &Store, envelope: &mut DisclosureEnvelope, kind:
         .as_ref()
         .and_then(|observation| observation.observation_id.as_deref())
         && let Ok(Some(subject)) = store.get_observation(observation_id)
-        && let Ok(Some(baseline)) =
-            store.latest_session_predecessor(&subject.invocation_fingerprint, observation_id)
+        && let Ok(Some(baseline)) = store.latest_session_predecessor(
+            &subject.invocation_fingerprint,
+            subject.comparison_family.as_deref(),
+            observation_id,
+        )
         && let Ok(mut delta) =
             compare_observation_ids(store, &baseline.observation_id, &subject.observation_id)
     {

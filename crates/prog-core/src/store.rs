@@ -70,6 +70,7 @@ pub struct NewObservation {
     pub invocation_fingerprint: String,
     pub source_id: String,
     pub operation: String,
+    pub comparison_family: Option<String>,
     pub subject_keys: Vec<String>,
     pub captured_at: Option<String>,
     pub duration_ms: Option<u64>,
@@ -310,6 +311,7 @@ impl Store {
             invocation_fingerprint: input.invocation_fingerprint,
             source_id: input.source_id,
             operation: input.operation,
+            comparison_family: input.comparison_family,
             subject_keys: input.subject_keys,
             captured_at: input.captured_at.unwrap_or_else(|| format_time(Utc::now())),
             duration_ms: input.duration_ms,
@@ -637,6 +639,7 @@ impl Store {
     pub fn latest_session_predecessor(
         &self,
         invocation_fingerprint: &str,
+        comparison_family: Option<&str>,
         exclude_observation_id: &str,
     ) -> Result<Option<ObservationRecord>> {
         let Some(trail) = self.get_session(None)? else {
@@ -653,7 +656,9 @@ impl Store {
             let Some(observation) = self.get_observation(observation_id)? else {
                 continue;
             };
-            if observation.invocation_fingerprint == invocation_fingerprint {
+            if observation.invocation_fingerprint == invocation_fingerprint
+                && observation.comparison_family.as_deref() == comparison_family
+            {
                 return Ok(Some(observation));
             }
         }
