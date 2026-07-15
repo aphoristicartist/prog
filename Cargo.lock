@@ -1095,6 +1095,7 @@ dependencies = [
  "libc",
  "prog-adapters",
  "prog-core",
+ "proptest",
  "schemars",
  "serde",
  "serde_json",

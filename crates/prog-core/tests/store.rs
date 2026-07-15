@@ -849,6 +849,7 @@ fn add_operation(current: Option<SourceProfile>, id: &str) -> SourceProfile {
         trust: TrustSettings::default(),
         effect_defaults: EffectSet::default(),
         redaction: prog_core::RedactionConfig::default(),
+        disclosure_budget: None,
         extra: serde_json::Map::new(),
     });
     if !profile
