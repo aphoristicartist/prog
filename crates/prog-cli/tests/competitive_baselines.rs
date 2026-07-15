@@ -152,7 +152,7 @@ async fn pagination_competitive_baseline_vs_raw_page_by_page() {
             "items": [{
                 "id": index + 1,
                 "marker": format!("page-{}-marker", index + 1),
-                "body": "x".repeat(1024)
+                "body": "x".repeat(2048)
             }],
             "next_cursor": if is_last { Value::Null } else { json!(page_tokens[index + 1]) },
             "has_more": !is_last
