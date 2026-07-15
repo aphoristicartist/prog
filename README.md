@@ -22,7 +22,8 @@ Use `--budget-bytes N` (or `PROG_BUDGET_BYTES=N`) to set a hard stdout ceiling
 for one invocation. `--budget-tokens N` and `PROG_BUDGET_TOKENS=N` are a
 convenience conversion using the explicitly labeled `bytes_div_4_approximate`
 estimator; they are not tokenizer measurements. Command flags override the
-environment, and a 64 KiB safety ceiling still applies. Every JSON response
+environment, which overrides a source profile's optional
+`disclosure_budget.max_bytes`; a 64 KiB safety ceiling still applies. Every JSON response
 reports its applied `disclosure_budget`, `capture_budget`, and `storage_budget`,
 including actual emitted stdout bytes.
 

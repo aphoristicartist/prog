@@ -21,10 +21,10 @@ use prog_core::importers::{
 use prog_core::{
     AuthRef, BudgetSource, CacheEntryMeta, CacheInfo, CachePolicy, CacheStatus, CallFlags,
     CallProvenance, CaptureBudget, CaptureCompleteness, CaptureLimit, CaptureScope,
-    CaptureStopReason, CommandHintConfig, CoreError, DISCLOSURE_SCHEMA, DisclosureEnvelope,
-    EffectSet, EvidenceAvailability, EvidenceBlock, EvidenceGrade, EvidenceRef, ExpansionScope,
-    Extra, FindingOptions, InspectRequest, InspectResponse, LensManifest, NewObservation,
-    NewSessionEvent, NextAction, ObligationEvaluation, ObservationCompleteness,
+    CaptureStopReason, CommandHintConfig, CoreError, DISCLOSURE_SCHEMA, DisclosureBudget,
+    DisclosureEnvelope, EffectSet, EvidenceAvailability, EvidenceBlock, EvidenceGrade, EvidenceRef,
+    ExpansionScope, Extra, FindingOptions, InspectRequest, InspectResponse, LensManifest,
+    NewObservation, NewSessionEvent, NextAction, ObligationEvaluation, ObservationCompleteness,
     ObservationFreshness, ObservationMetadata, ObservationPayloadStatus, ObservationSafety,
     ObservationTrust, OmissionReason, OmittedRegion, OperationProfile, PersistedPayload,
     PreviewPolicy, RawPayload, ReadinessReport, RedactedPayload, RedactionPolicy, Result,
@@ -50,7 +50,7 @@ use tokio::{
 use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
 static RUN_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-static DISCLOSURE_BUDGET: OnceLock<EffectiveDisclosureBudget> = OnceLock::new();
+static DISCLOSURE_BUDGET: OnceLock<Mutex<EffectiveDisclosureBudget>> = OnceLock::new();
 static RESPONSE_STORAGE_BUDGET: OnceLock<Mutex<StorageBudget>> = OnceLock::new();
 static RESPONSE_CAPTURE_BUDGET: OnceLock<Mutex<CaptureBudget>> = OnceLock::new();
 const PROG_AGENT_SKILL: &str = include_str!("../../../skills/prog/SKILL.md");
@@ -684,7 +684,7 @@ async fn main() -> ExitCode {
         Ok(budget) => budget,
         Err(error) => return write_error(&error, cli.pretty),
     };
-    let _ = DISCLOSURE_BUDGET.set(budget);
+    set_disclosure_budget(budget);
 
     match run(&cli).await {
         Ok(exit_code) => exit_code,
@@ -704,6 +704,14 @@ fn resolve_disclosure_budget(cli: &Cli) -> Result<EffectiveDisclosureBudget> {
     } else {
         ((None, None), "default")
     };
+    effective_disclosure_budget(requested_bytes, requested_tokens, source)
+}
+
+fn effective_disclosure_budget(
+    requested_bytes: Option<u64>,
+    requested_tokens: Option<u64>,
+    source: &'static str,
+) -> Result<EffectiveDisclosureBudget> {
     let requested = match (requested_bytes, requested_tokens) {
         (Some(bytes), None) => bytes,
         (None, Some(tokens)) => tokens.checked_mul(4).ok_or_else(|| CoreError::BadArgs {
@@ -749,13 +757,49 @@ fn budget_env(name: &str) -> Result<Option<u64>> {
     Ok(Some(parsed))
 }
 
-fn disclosure_budget() -> &'static EffectiveDisclosureBudget {
-    DISCLOSURE_BUDGET.get_or_init(|| EffectiveDisclosureBudget {
-        requested_bytes: None,
-        requested_tokens: None,
-        source: "default",
-        effective_bytes: DEFAULT_DISCLOSURE_BUDGET_BYTES,
-    })
+fn disclosure_budget() -> EffectiveDisclosureBudget {
+    DISCLOSURE_BUDGET
+        .get_or_init(|| {
+            Mutex::new(EffectiveDisclosureBudget {
+                requested_bytes: None,
+                requested_tokens: None,
+                source: "default",
+                effective_bytes: DEFAULT_DISCLOSURE_BUDGET_BYTES,
+            })
+        })
+        .lock()
+        .expect("disclosure budget mutex is not poisoned")
+        .clone()
+}
+
+fn set_disclosure_budget(budget: EffectiveDisclosureBudget) {
+    *DISCLOSURE_BUDGET
+        .get_or_init(|| {
+            Mutex::new(EffectiveDisclosureBudget {
+                requested_bytes: None,
+                requested_tokens: None,
+                source: "default",
+                effective_bytes: DEFAULT_DISCLOSURE_BUDGET_BYTES,
+            })
+        })
+        .lock()
+        .expect("disclosure budget mutex is not poisoned") = budget;
+}
+
+fn apply_profile_disclosure_budget(profile: &SourceProfile) -> Result<()> {
+    let Some(DisclosureBudget { max_bytes, .. }) = &profile.disclosure_budget else {
+        return Ok(());
+    };
+    let current = disclosure_budget();
+    if current.source != "default" {
+        return Ok(());
+    }
+    set_disclosure_budget(effective_disclosure_budget(
+        Some(*max_bytes),
+        None,
+        "profile",
+    )?);
+    Ok(())
 }
 
 fn response_budget_bytes() -> usize {
@@ -2076,6 +2120,7 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
     let profile = store
         .read_profile(&args.source_id)?
         .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
+    apply_profile_disclosure_budget(&profile)?;
     let hints = build_hints_document(&profile, args.operation.as_deref())?;
     let redacted = RawPayload::new(hints).redact(&resolve_redaction(Some(&profile)));
     let payload = redacted.payload;
@@ -2138,6 +2183,7 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
     let profile = store
         .read_profile(&args.source_id)?
         .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
+    apply_profile_disclosure_budget(&profile)?;
     let operation = profile_operation(&profile, &args.operation)?.clone();
     let call_args = parse_json_argument(&args.args, "call --args")?;
     validate_call_args(&operation, &call_args)?;
@@ -6600,6 +6646,7 @@ fn prepare_http_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery>
             },
             effect_defaults: EffectSet::default(),
             redaction: prog_core::RedactionConfig::default(),
+            disclosure_budget: None,
             extra: adapter_seed_extra(
                 "http",
                 seed,
@@ -6716,6 +6763,7 @@ fn prepare_cli_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery> 
             trust: trust.clone(),
             effect_defaults: EffectSet::default(),
             redaction: prog_core::RedactionConfig::default(),
+            disclosure_budget: None,
             extra: adapter_seed_extra(
                 "cli",
                 seed,
@@ -9582,6 +9630,10 @@ fn merge_profiles(current: Option<SourceProfile>, mut authored: SourceProfile) -
     let Some(current) = current else {
         return authored;
     };
+
+    if authored.disclosure_budget.is_none() {
+        authored.disclosure_budget = current.disclosure_budget.clone();
+    }
 
     for operation in &mut authored.operations {
         if let Some(existing) = current

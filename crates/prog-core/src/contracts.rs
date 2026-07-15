@@ -72,6 +72,21 @@ pub struct SourceProfile {
     pub effect_defaults: EffectSet,
     #[serde(default)]
     pub redaction: RedactionConfig,
+    /// Optional source-specific ceiling for model-visible JSON responses. CLI
+    /// flags and environment variables take precedence over this policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disclosure_budget: Option<DisclosureBudget>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+/// A source-owned response disclosure policy. This intentionally contains no
+/// token estimate: the byte ceiling is the enforceable contract, while token
+/// estimates remain invocation conveniences.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct DisclosureBudget {
+    pub max_bytes: u64,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
@@ -1380,6 +1395,7 @@ pub fn canonical_json(value: &Value) -> crate::Result<Vec<u8>> {
 pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     let mut schemas = Map::new();
     insert_schema::<SourceProfile>(&mut schemas, "SourceProfile")?;
+    insert_schema::<DisclosureBudget>(&mut schemas, "DisclosureBudget")?;
     insert_schema::<OperationProfile>(&mut schemas, "OperationProfile")?;
     insert_schema::<Shape>(&mut schemas, "Shape")?;
     insert_schema::<EffectSet>(&mut schemas, "EffectSet")?;

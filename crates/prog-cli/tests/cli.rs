@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use proptest::prelude::*;
 use serde_json::{Value, json};
 use wiremock::{
     Mock, MockServer, Request, Respond, ResponseTemplate,
@@ -40,6 +41,17 @@ fn prog_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
         command.env(key, value);
     }
     command.output().expect("prog binary should run")
+}
+
+fn prog_with_budget(dir: &str, budget: u32, command: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_prog"))
+        .arg("--dir")
+        .arg(dir)
+        .arg("--budget-bytes")
+        .arg(budget.to_string())
+        .args(command)
+        .output()
+        .expect("prog binary should run")
 }
 
 fn prog_with_stdin(args: &[&str], stdin: &[u8]) -> Output {
@@ -4231,6 +4243,183 @@ fn disclosure_budget_precedence_and_token_estimate_are_explicit() {
     assert!(capped.status.success(), "{}", stdout(&capped));
     let capped: Value = serde_json::from_slice(&capped.stdout).unwrap();
     assert_eq!(capped["disclosure_budget"]["effective_bytes"], 64 * 1024);
+}
+
+#[test]
+fn source_profile_disclosure_budget_is_applied_and_lower_precedence_than_env_or_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let script = dir.path().join("large-output.py");
+    fs::write(
+        &script,
+        "import json\nprint(json.dumps({'items': [{'body': 'x' * 12000}]}))\n",
+    )
+    .unwrap();
+    let seed = write_seed(
+        dir.path(),
+        "profile-budget.json",
+        &format!(
+            r#"{{
+              "kind": "cli",
+              "operations": [{{
+                "name": "list",
+                "command": "python3",
+                "args": ["{}"],
+                "effect": {{
+                  "read_only": true,
+                  "mutating": false,
+                  "network": false,
+                  "shell": false,
+                  "sensitive": false,
+                  "cacheable": true,
+                  "requires_confirmation": false
+                }}
+              }}]
+            }}"#,
+            script.to_str().unwrap()
+        ),
+    );
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "budgeted",
+        "--kind",
+        "cli",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+    let profile_path = dir.path().join("profiles/budgeted.json");
+    let mut profile: Value = serde_json::from_slice(&fs::read(&profile_path).unwrap()).unwrap();
+    profile["disclosure_budget"] = json!({"max_bytes": 3072});
+    fs::write(&profile_path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
+
+    let profile_applied = prog(&["--dir", dir_arg, "call", "budgeted", "list", "--args", "{}"]);
+    assert!(
+        profile_applied.status.success(),
+        "{}",
+        stdout(&profile_applied)
+    );
+    assert!(
+        profile_applied.stdout.len() <= 3072,
+        "{} bytes: {}",
+        profile_applied.stdout.len(),
+        stdout(&profile_applied)
+    );
+    let profile_applied: Value = serde_json::from_slice(&profile_applied.stdout).unwrap();
+    assert_eq!(profile_applied["disclosure_budget"]["source"], "profile");
+    assert_eq!(
+        profile_applied["disclosure_budget"]["effective_bytes"],
+        3072
+    );
+
+    let env_applied = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "call",
+            "budgeted",
+            "list",
+            "--args",
+            "{}",
+            "--refresh",
+        ],
+        &[("PROG_BUDGET_BYTES", "4096")],
+    );
+    assert!(env_applied.status.success(), "{}", stdout(&env_applied));
+    let env_applied: Value = serde_json::from_slice(&env_applied.stdout).unwrap();
+    assert_eq!(env_applied["disclosure_budget"]["source"], "environment");
+    assert_eq!(env_applied["disclosure_budget"]["effective_bytes"], 4096);
+
+    let flag_applied = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "--budget-bytes",
+            "3584",
+            "call",
+            "budgeted",
+            "list",
+            "--args",
+            "{}",
+            "--refresh",
+        ],
+        &[("PROG_BUDGET_BYTES", "4096")],
+    );
+    assert!(flag_applied.status.success(), "{}", stdout(&flag_applied));
+    let flag_applied: Value = serde_json::from_slice(&flag_applied.stdout).unwrap();
+    assert_eq!(flag_applied["disclosure_budget"]["source"], "flag");
+    assert_eq!(flag_applied["disclosure_budget"]["effective_bytes"], 3584);
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(8))]
+    #[test]
+    fn disclosure_budget_is_monotone_across_agent_visible_response_shapes(
+        first in 3072u32..8193,
+        second in 3072u32..8193,
+    ) {
+        let (smaller, larger) = (first.min(second), first.max(second));
+        let prepare = || {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("monotone.json");
+            fs::write(
+                &file,
+                serde_json::to_vec(&json!({
+                    "items": [{"needle": "target", "body": "x".repeat(12_000)}]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let captured = prog(&[
+                "--dir", dir.path().to_str().unwrap(), "observe", "--file",
+                file.to_str().unwrap(), "--name", "monotone",
+            ]);
+            assert!(captured.status.success(), "{}", stdout(&captured));
+            let captured: Value = serde_json::from_slice(&captured.stdout).unwrap();
+            (dir, file, captured["cursor"].as_str().unwrap().to_string())
+        };
+        let (lower_dir, lower_file, lower_cursor) = prepare();
+        let (upper_dir, upper_file, upper_cursor) = prepare();
+        let lower_dir = lower_dir.path().to_str().unwrap();
+        let upper_dir = upper_dir.path().to_str().unwrap();
+        let command_pairs = [
+            (
+                vec!["observe".to_string(), "--file".to_string(), lower_file.to_string_lossy().into_owned(), "--name".to_string(), "monotone-repeat".to_string()],
+                vec!["observe".to_string(), "--file".to_string(), upper_file.to_string_lossy().into_owned(), "--name".to_string(), "monotone-repeat".to_string()],
+            ),
+            (
+                vec!["inspect".to_string(), lower_cursor.clone(), "--goal".to_string(), "find target".to_string()],
+                vec!["inspect".to_string(), upper_cursor.clone(), "--goal".to_string(), "find target".to_string()],
+            ),
+            (
+                vec!["search".to_string(), lower_cursor.clone(), "target".to_string()],
+                vec!["search".to_string(), upper_cursor.clone(), "target".to_string()],
+            ),
+            (
+                vec!["evidence".to_string(), lower_cursor, "--path".to_string(), "/items/0/body".to_string()],
+                vec!["evidence".to_string(), upper_cursor, "--path".to_string(), "/items/0/body".to_string()],
+            ),
+        ];
+
+        for (lower_shape, upper_shape) in &command_pairs {
+            let lower_args = lower_shape.iter().map(String::as_str).collect::<Vec<_>>();
+            let upper_args = upper_shape.iter().map(String::as_str).collect::<Vec<_>>();
+            let lower = prog_with_budget(lower_dir, smaller, &lower_args);
+            let upper = prog_with_budget(upper_dir, larger, &upper_args);
+            prop_assert!(lower.status.success(), "{}", stdout(&lower));
+            prop_assert!(upper.status.success(), "{}", stdout(&upper));
+            prop_assert!(
+                lower.stdout.len() <= upper.stdout.len(),
+                "lower {smaller} emitted {} bytes; upper {larger} emitted {} bytes for {lower_shape:?}",
+                lower.stdout.len(),
+                upper.stdout.len(),
+            );
+            prop_assert!(lower.stdout.len() <= smaller as usize);
+            prop_assert!(upper.stdout.len() <= larger as usize);
+        }
+    }
 }
 
 #[test]

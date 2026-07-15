@@ -9,6 +9,11 @@ identifies the source and limits that governed source capture when one was
 performed. `storage_budget` identifies the durable retention policy used by the
 local store. See `prog --help` for `--budget-bytes` and `--budget-tokens`.
 
+For `call` and `hints`, a source profile may declare
+`"disclosure_budget": {"max_bytes": 4096}`. Precedence is command flag,
+environment variable, source profile, then the default. The response's
+`disclosure_budget.source` reports the winning tier.
+
 List available contracts:
 
 ```bash
@@ -30,6 +35,7 @@ prog --pretty meta CacheEntryMeta
 The current public contracts include:
 
 - `SourceProfile`
+- `DisclosureBudget`
 - `OperationProfile`
 - `Shape`
 - `EffectSet`

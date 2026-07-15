@@ -1,10 +1,10 @@
 use prog_core::{
     AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CallProvenance, CaptureCompleteness,
-    CursorRecord, DISCLOSURE_SCHEMA, DisclosureEnvelope, EVIDENCE_BLOCK_SCHEMA, EffectSet,
-    EvidenceAvailability, EvidenceBlock, EvidenceRef, Finding, FindingCommandHints, INSPECT_SCHEMA,
-    InspectResponse, LENS_MANIFEST_SCHEMA, LensFindingRule, LensManifest, NextAction,
-    OmittedRegion, SEARCH_SCHEMA, SearchResponse, SessionEvent, SessionTrail, SliceRequest,
-    SourceProfile, Summary, TrustSettings, canonical_json, public_contract_schemas,
+    CursorRecord, DISCLOSURE_SCHEMA, DisclosureBudget, DisclosureEnvelope, EVIDENCE_BLOCK_SCHEMA,
+    EffectSet, EvidenceAvailability, EvidenceBlock, EvidenceRef, Finding, FindingCommandHints,
+    INSPECT_SCHEMA, InspectResponse, LENS_MANIFEST_SCHEMA, LensFindingRule, LensManifest,
+    NextAction, OmittedRegion, SEARCH_SCHEMA, SearchResponse, SessionEvent, SessionTrail,
+    SliceRequest, SourceProfile, Summary, TrustSettings, canonical_json, public_contract_schemas,
     validate_source_profile,
 };
 use serde::{Serialize, de::DeserializeOwned};
@@ -188,6 +188,24 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
 }
 
 #[test]
+fn source_profile_disclosure_budget_is_typed_and_forward_compatible() {
+    let profile: SourceProfile = serde_json::from_value(json!({
+        "schema": "prog.source_profile",
+        "id": "local",
+        "kind": "cli",
+        "disclosure_budget": {"max_bytes": 4096, "x_future": "kept"}
+    }))
+    .unwrap();
+    assert_eq!(
+        profile.disclosure_budget,
+        Some(DisclosureBudget {
+            max_bytes: 4096,
+            extra: serde_json::Map::from_iter([("x_future".to_string(), json!("kept"))]),
+        })
+    );
+}
+
+#[test]
 fn lens_manifest_input_rejects_legacy_and_unknown_fields() {
     for value in [
         json!({
@@ -351,6 +369,7 @@ fn schemas_generate_for_all_public_contracts() {
     let schemas = public_contract_schemas().unwrap();
     for expected in [
         "SourceProfile",
+        "DisclosureBudget",
         "OperationProfile",
         "Shape",
         "EffectSet",
