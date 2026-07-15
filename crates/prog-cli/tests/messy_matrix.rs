@@ -234,7 +234,7 @@ fn validate_scenario(store: &Path, source_id: &str, operation: &str, id: usize) 
     );
     assert!(expanded["data_preview"].is_array());
 
-    if id % 17 == 0 {
+    if id.is_multiple_of(17) {
         let secret = prog([
             "--dir",
             store.to_str().unwrap(),
@@ -257,7 +257,7 @@ fn validate_scenario(store: &Path, source_id: &str, operation: &str, id: usize) 
         );
     }
 
-    if id % 29 == 0 {
+    if id.is_multiple_of(29) {
         let cached = prog([
             "--dir",
             store.to_str().unwrap(),
@@ -322,7 +322,7 @@ fn messy_case(id: usize) -> Value {
             "token": format!("secret-value-{id}"),
             "password": format!("password-value-{id}"),
             "nested": nested_value(id, 0),
-            "optional": if id % 4 == 0 { Value::Null } else { json!(format!("optional-{id}")) },
+            "optional": if id.is_multiple_of(4) { Value::Null } else { json!(format!("optional-{id}")) },
             "slash/key": format!("slash-{id}"),
             "tilde~key": format!("tilde-{id}"),
             "space key": format!("space-{id}")
@@ -334,18 +334,18 @@ fn messy_case(id: usize) -> Value {
         json!([
             id,
             format!("string-{id}"),
-            id % 2 == 0,
+            id.is_multiple_of(2),
             Value::Null,
             {"nested_array": [id, id + 1, id + 2]}
         ]),
     );
-    if id % 6 == 0 {
+    if id.is_multiple_of(6) {
         root.insert(
             "large_note".to_string(),
             json!(repeated("note", id, 0, 2048)),
         );
     }
-    if id % 10 == 0 {
+    if id.is_multiple_of(10) {
         root.insert("empty_object".to_string(), json!({}));
         root.insert("empty_array".to_string(), json!([]));
     }
