@@ -95,8 +95,7 @@ pub fn stamp_evidence_grade(effects: &mut EffectSet, grade: EvidenceGrade) {
 /// a human-readable note for the audit trail.
 ///
 /// This is the canonical runtime evaluator invoked by both `check_call` and
-/// `check_discovery`. `apply_auto_upgrade` is retained as a thin alias for
-/// backward compatibility.
+/// `check_discovery`.
 pub fn effective_effects(
     effects: &EffectSet,
     trust: &TrustSettings,
@@ -126,14 +125,6 @@ pub fn effective_effects(
     } else {
         (effects.clone(), None)
     }
-}
-
-/// Backward-compatible alias for [`effective_effects`].
-pub fn apply_auto_upgrade(
-    effects: &EffectSet,
-    trust: &TrustSettings,
-) -> (EffectSet, Option<String>) {
-    effective_effects(effects, trust)
 }
 
 /// Enforce the call effect policy on the EFFECTIVE effect set (after trust

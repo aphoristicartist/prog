@@ -121,6 +121,41 @@ fn continuation_absent_on_no_more() {
     assert!(extract_pagination_hints(&json!({"items": [1, 2, 3]}), None).is_none());
 }
 
+/// Regression: `next_args_from_hints` resolves a cursor (and a page-number
+/// increment) from the NORMALIZED hint keys alone. Raw body fields are no
+/// longer copied into the hint object, so resolution must succeed purely via
+/// `next_cursor` / `cursor_param` / `page_strategy` / `has_more` /
+/// `next_url` / `link_rel_next`.
+#[test]
+fn next_args_resolves_cursor_and_page_from_normalized_keys_only() {
+    // Cursor: extract_pagination_hints normalizes nextPageToken -> next_cursor.
+    let hints = extract_pagination_hints(&json!({"nextPageToken": "tok_2"}), None).unwrap();
+    assert!(
+        hints.get("nextPageToken").is_none(),
+        "raw key must not be copied"
+    );
+    assert_eq!(hints["next_cursor"], json!("tok_2"));
+    let target = next_args_from_hints(&hints, &json!({"page_token": "tok_1"})).unwrap();
+    match target {
+        PageTarget::Args(args) => assert_eq!(args["page_token"], json!("tok_2")),
+        other => panic!("expected Args (cursor), got {other:?}"),
+    }
+
+    // Page-number increment from normalized page_strategy + base args.
+    let hints =
+        extract_pagination_hints(&json!({"page": 1, "per_page": 20, "has_more": true}), None)
+            .unwrap();
+    assert_eq!(hints["page_strategy"], json!("page_number"));
+    let target = next_args_from_hints(&hints, &json!({"page": 2, "per_page": 20})).unwrap();
+    match target {
+        PageTarget::Args(args) => {
+            assert_eq!(args["page"], json!(3));
+            assert_eq!(args["per_page"], json!(20));
+        }
+        other => panic!("expected Args (page), got {other:?}"),
+    }
+}
+
 /// I9 fail-closed reuse: a page cursor minted with `create_cursor_with_extra`
 /// is rejected on redaction-version mismatch and an unknown token is rejected
 /// outright, exactly like a normal expand cursor. The page metadata in `extra`

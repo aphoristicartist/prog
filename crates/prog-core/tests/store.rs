@@ -6,6 +6,7 @@ use prog_core::{
     EvidenceAvailability, ExpansionScope, NewObservation, NewSessionEvent, ObservationLineage,
     OperationProfile, PreviewPolicy, RawPayload, RedactedPayload, RedactionPolicy, ScopedSlice,
     SliceRequest, SourceKind, SourceProfile, Store, TrustSettings, expand, new_cache_entry,
+    store_reset_notice,
 };
 
 #[test]
@@ -95,6 +96,19 @@ fn existing_or_pre_capture_lifecycle_store_is_reset() {
 
     let store = Store::open(dir.path()).unwrap();
     assert!(store.get_payload("sha256:legacy").unwrap().is_none());
+
+    // The reset emits an actionable notice naming the store dir and dropped
+    // record count (pure helper, not stderr): "reset" + "rerun" + the count.
+    let notice = store_reset_notice(dir.path(), 2);
+    assert!(notice.contains("reset"), "notice: {notice}");
+    assert!(notice.contains("rerun"), "notice: {notice}");
+    assert!(notice.contains("2 records dropped"), "notice: {notice}");
+    assert!(
+        notice.contains(dir.path().to_str().unwrap()),
+        "notice should name the store dir: {notice}"
+    );
+    // The dropped count flows through verbatim.
+    assert!(!store_reset_notice(dir.path(), 0).contains("2 records dropped"));
 }
 
 #[test]
