@@ -2552,6 +2552,10 @@ fn discover_http_seed_persists_profile_without_upstream_probe() {
     let profile = read_profile(dir.path(), "api");
     assert_eq!(profile["kind"], "http");
     assert_eq!(profile["operations"][0]["id"], "list");
+    assert_eq!(
+        profile["adapter"]["http"]["max_response_bytes"],
+        2 * 1024 * 1024
+    );
 }
 
 #[test]
@@ -3492,6 +3496,11 @@ fn cache_payload_budget_evicts_payloads_but_retains_observation_lineage() {
         .unwrap()
         .to_string();
 
+    // No quota is implicit: the freshly stored payload remains recoverable
+    // until the explicit quota command is invoked.
+    let before_quota = prog(&["--dir", dir_arg, "expand", &cursor]);
+    assert!(before_quota.status.success(), "{}", stdout(&before_quota));
+
     let quota = prog(&[
         "--dir",
         dir_arg,
@@ -4224,6 +4233,197 @@ async fn call_http_then_expand_offline_and_write_out_file() {
     );
     let file_value: Value = serde_json::from_slice(&fs::read(out).unwrap()).unwrap();
     assert_eq!(file_value.as_array().unwrap().len(), 40);
+}
+
+#[tokio::test]
+async fn http_capture_truncation_persists_unknown_total_lifecycle_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/logs"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("line1\nline2\nline3"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let seed_json = json!({
+        "kind": "http",
+        "base_url": server.uri(),
+        "operations": [{
+            "name": "logs",
+            "method": "GET",
+            "path": "/logs",
+            "effect": {
+                "read_only": true,
+                "mutating": false,
+                "network": true,
+                "shell": false,
+                "sensitive": false,
+                "cacheable": true,
+                "requires_confirmation": false
+            }
+        }]
+    });
+    let seed_contents = seed_json.to_string();
+    let seed = write_seed(dir.path(), "http-capture.json", &seed_contents);
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+
+    let profile_path = dir.path().join("profiles/api.json");
+    let mut profile: Value = serde_json::from_slice(&fs::read(&profile_path).unwrap()).unwrap();
+    profile["adapter"]["http"]["max_response_bytes"] = json!(11);
+    fs::write(&profile_path, serde_json::to_vec(&profile).unwrap()).unwrap();
+
+    let called = prog(&["--dir", dir_arg, "call", "api", "logs", "--args", "{}"]);
+    assert!(called.status.success(), "{}", stdout(&called));
+    let envelope: Value = serde_json::from_slice(&called.stdout).unwrap();
+    assert_eq!(envelope["observation"]["availability"], "capture_truncated");
+    assert_eq!(
+        envelope["observation"]["capture"]["total_bytes"],
+        Value::Null
+    );
+    assert_eq!(envelope["observation"]["capture"]["captured_bytes"], 11);
+    assert_eq!(
+        envelope["observation"]["capture"]["stop_reason"],
+        "byte_limit"
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["affected"][0]["scope"],
+        "body"
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["affected"][0]["total_bytes"],
+        Value::Null
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["affected"][0]["captured_bytes"],
+        11
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+
+    let observation_id = envelope["observation"]["observation_id"].as_str().unwrap();
+    let listed = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "1"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let record = listed["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["observation_id"] == observation_id)
+        .unwrap();
+    assert_eq!(record["availability"], "capture_truncated");
+    assert_eq!(record["capture"], envelope["observation"]["capture"]);
+}
+
+#[test]
+fn mcp_capture_truncation_persists_known_pre_projection_total() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let script = dir.path().join("large_mcp.py");
+    fs::write(
+        &script,
+        r#"import json
+import sys
+
+def reply(message_id, result):
+    print(json.dumps({"jsonrpc": "2.0", "id": message_id, "result": result}), flush=True)
+
+for line in sys.stdin:
+    request = json.loads(line)
+    message_id = request.get("id")
+    if message_id is None:
+        continue
+    method = request.get("method")
+    if method == "initialize":
+        reply(message_id, {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}, "resources": {}, "prompts": {}}, "serverInfo": {"name": "large-mcp", "version": "1.0"}})
+    elif method == "tools/list":
+        reply(message_id, {"tools": [{"name": "large", "inputSchema": {"type": "object", "properties": {}}, "annotations": {"readOnlyHint": True}}]})
+    elif method == "resources/list":
+        reply(message_id, {"resources": []})
+    elif method == "prompts/list":
+        reply(message_id, {"prompts": []})
+    elif method == "tools/call":
+        reply(message_id, {"structuredContent": {"items": [{"id": index, "body": "x" * 128} for index in range(20)]}, "content": [], "isError": False})
+    else:
+        print(json.dumps({"jsonrpc": "2.0", "id": message_id, "error": {"code": -32601, "message": "unknown method"}}), flush=True)
+"#,
+    )
+    .unwrap();
+    let seed_json = json!({
+        "command": "python3",
+        "args": [script],
+        "timeout_ms": 2_000,
+        "max_content_bytes": 256,
+        "max_stderr_bytes": 64 * 1024,
+        "max_schema_depth": 32
+    });
+    let seed_contents = seed_json.to_string();
+    let seed = write_seed(dir.path(), "mcp-capture.json", &seed_contents);
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "fixture",
+        "--kind",
+        "mcp",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+
+    let called = prog(&["--dir", dir_arg, "call", "fixture", "large", "--args", "{}"]);
+    assert!(called.status.success(), "{}", stdout(&called));
+    let envelope: Value = serde_json::from_slice(&called.stdout).unwrap();
+    let response_bytes = envelope["provenance"]["adapter"]["response_bytes"]
+        .as_u64()
+        .unwrap();
+    assert!(response_bytes > 256);
+    assert_eq!(envelope["observation"]["availability"], "capture_truncated");
+    assert_eq!(
+        envelope["observation"]["capture"]["total_bytes"],
+        response_bytes
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["captured_bytes"],
+        response_bytes
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["stop_reason"],
+        "storage_limit"
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["affected"][0]["total_bytes"],
+        response_bytes
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+
+    let observation_id = envelope["observation"]["observation_id"].as_str().unwrap();
+    let listed = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "1"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let record = listed["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["observation_id"] == observation_id)
+        .unwrap();
+    assert_eq!(record["availability"], "capture_truncated");
+    assert_eq!(record["capture"], envelope["observation"]["capture"]);
 }
 
 #[test]

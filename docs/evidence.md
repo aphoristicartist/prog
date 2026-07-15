@@ -56,16 +56,27 @@ responses still emit their refs. Nonstandard lifecycle states retain the root
 ref so the limitation is visible immediately.
 
 For CLI runs, capture records report separate `stdout` and `stderr` byte facts.
-For transport adapters, byte limits report the captured body size and retain an
-unknown total when the adapter stopped early. Preview omissions remain in
-`observation.completeness` and describe only model disclosure, not upstream
-capture completeness.
+For HTTP, the default response-body capture limit is 2 MiB for both direct
+`HttpSource` configuration and generated or loaded source profiles. A profile
+can set `adapter.http.max_response_bytes` explicitly. When that limit stops a
+response body early, the capture record reports the bytes read and an unknown
+total, because the adapter cannot truthfully infer the full body size.
+
+MCP structured content is measured before its bounded projection. When it
+exceeds `max_content_bytes`, its capture record retains that known original
+size, reports `storage_limit`, and still disallows absence claims. Preview
+omissions remain in `observation.completeness` and describe only model
+disclosure, not upstream capture completeness.
 
 To apply a durable storage limit over redacted payload blobs, run:
 
 ```bash
 prog cache purge --payload-budget-bytes 33554432
 ```
+
+No payload quota is enforced until this explicit command is run. This keeps
+normal capture behavior independent from retention policy; the command output
+is the durable accounting record for the quota pass.
 
 The quota groups identical payload hashes, evicts oldest groups first, removes
 their dependent cursors, and retains immutable observations as

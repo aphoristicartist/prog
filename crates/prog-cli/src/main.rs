@@ -12,7 +12,7 @@ use chrono::{SecondsFormat, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use prog_adapters::{
     cli::{CliOperation, CliSource},
-    http::{HttpOperation, HttpSource},
+    http::{DEFAULT_MAX_RESPONSE_BYTES, HttpOperation, HttpSource},
     mcp::McpSource,
 };
 use prog_core::importers::{
@@ -6405,7 +6405,7 @@ fn prepare_http_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery>
                 json!({"http": {
                     "base_url": base_url.clone(),
                     "timeout_ms": 30_000,
-                    "max_response_bytes": 1024 * 1024,
+                    "max_response_bytes": DEFAULT_MAX_RESPONSE_BYTES,
                     "default_headers": {},
                     "response_header_allowlist": []
                 }}),
@@ -6415,7 +6415,7 @@ fn prepare_http_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery>
             id: source_id.to_string(),
             base_url,
             timeout_ms: 30_000,
-            max_response_bytes: 1024 * 1024,
+            max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             default_headers: BTreeMap::new(),
             response_header_allowlist: Vec::new(),
             auth,
@@ -7819,7 +7819,11 @@ fn http_source_from_profile(profile: &SourceProfile) -> Result<HttpSource> {
         id: profile.id.clone(),
         base_url,
         timeout_ms: adapter_u64(adapter, "timeout_ms", 30_000),
-        max_response_bytes: adapter_usize(adapter, "max_response_bytes", 1024 * 1024),
+        max_response_bytes: adapter_usize(
+            adapter,
+            "max_response_bytes",
+            DEFAULT_MAX_RESPONSE_BYTES,
+        ),
         default_headers: profile_string_map(
             adapter.and_then(|config| config.get("default_headers")),
             "http.default_headers",

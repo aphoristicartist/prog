@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, time::Duration};
 
-use prog_adapters::http::{HttpOperation, HttpSource};
+use prog_adapters::http::{DEFAULT_MAX_RESPONSE_BYTES, HttpOperation, HttpSource};
 use prog_core::{
     AuthRef, Extra, RawPayload, RedactionPolicy, SOURCE_STATE_SCHEMA, SourceStateKind,
     SourceStateToken, Store, invocation_scope, new_cache_entry,
@@ -10,6 +10,17 @@ use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{body_json, header, method, path, query_param},
 };
+
+#[test]
+fn http_source_deserialization_uses_the_public_default_response_limit() {
+    let source: HttpSource = serde_json::from_value(json!({
+        "id": "default-limit",
+        "base_url": "https://example.test"
+    }))
+    .unwrap();
+
+    assert_eq!(source.max_response_bytes, DEFAULT_MAX_RESPONSE_BYTES);
+}
 
 #[tokio::test]
 async fn executes_json_request_with_encoded_path_query_and_body_template() {
