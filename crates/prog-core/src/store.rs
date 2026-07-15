@@ -374,6 +374,7 @@ impl Store {
             return Ok(None);
         };
         if parse_time(&meta.expires_at)? <= now {
+            self.mark_observations_expired(meta.observation_id.as_deref())?;
             return Ok(None);
         }
         Ok(Some(meta))
@@ -478,7 +479,10 @@ impl Store {
             return Err(CoreError::CursorNotFound(token.to_string()));
         };
         let record: CursorRecord = serde_json::from_slice(bytes.value())?;
+        drop(table);
+        drop(read);
         if parse_time(&record.expires_at)? <= now {
+            self.mark_observations_expired(record.observation_id.as_deref())?;
             return Err(CoreError::CursorExpired(
                 token.to_string(),
                 record.expires_at.clone(),
@@ -746,8 +750,18 @@ impl Store {
     }
 
     pub fn purge_expired(&self, now: DateTime<Utc>) -> Result<PurgeSummary> {
-        let expired = self.expired_entry_keys(now)?;
-        self.purge_entries_and_cursors(&expired, None)
+        let expired = self.expired_entries(now)?;
+        let keys = expired
+            .iter()
+            .map(|entry| entry.key.clone())
+            .collect::<Vec<_>>();
+        let summary = self.purge_entries_and_cursors(&keys, None)?;
+        self.mark_observations_expired(
+            expired
+                .iter()
+                .filter_map(|entry| entry.observation_id.as_deref()),
+        )?;
+        Ok(summary)
     }
 
     pub fn purge_source(&self, source_id: &str) -> Result<PurgeSummary> {
@@ -914,18 +928,67 @@ impl Store {
         Ok(Some(serde_json::from_slice(bytes.value())?))
     }
 
-    fn expired_entry_keys(&self, now: DateTime<Utc>) -> Result<Vec<String>> {
+    fn expired_entries(&self, now: DateTime<Utc>) -> Result<Vec<CacheEntryMeta>> {
         let read = self.db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(ENTRIES).map_err(CoreError::storage)?;
-        let mut keys = Vec::new();
+        let mut entries = Vec::new();
         for entry in table.iter().map_err(CoreError::storage)? {
             let (key, value) = entry.map_err(CoreError::storage)?;
             let meta: CacheEntryMeta = serde_json::from_slice(value.value())?;
             if parse_time(&meta.expires_at)? <= now {
-                keys.push(key.value().to_string());
+                debug_assert_eq!(key.value(), meta.key);
+                entries.push(meta);
             }
         }
-        Ok(keys)
+        Ok(entries)
+    }
+
+    /// Mark observations stale by retention only while their redacted payload
+    /// still exists. A later payload eviction is more restrictive and retains
+    /// the existing `metadata_only` lifecycle state instead.
+    fn mark_observations_expired<'a>(
+        &self,
+        ids: impl IntoIterator<Item = &'a str>,
+    ) -> Result<usize> {
+        let ids = ids.into_iter().collect::<std::collections::BTreeSet<_>>();
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let updated;
+        {
+            let payloads = write.open_table(PAYLOADS).map_err(CoreError::storage)?;
+            let mut observations = write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
+            let mut updates = Vec::new();
+            for id in &ids {
+                let Some(value) = observations.get(*id).map_err(CoreError::storage)? else {
+                    continue;
+                };
+                let mut record: ObservationRecord = serde_json::from_slice(value.value())?;
+                if payloads
+                    .get(record.payload_hash.as_str())
+                    .map_err(CoreError::storage)?
+                    .is_some()
+                    && matches!(
+                        record.availability,
+                        EvidenceAvailability::Recoverable
+                            | EvidenceAvailability::CaptureTruncated
+                            | EvidenceAvailability::Redacted
+                    )
+                {
+                    record.availability = EvidenceAvailability::Expired;
+                    updates.push(((*id).to_string(), serde_json::to_vec(&record)?));
+                }
+            }
+            updated = updates.len();
+            for (id, bytes) in updates {
+                observations
+                    .insert(id.as_str(), bytes.as_slice())
+                    .map_err(CoreError::storage)?;
+            }
+        }
+        write.commit().map_err(CoreError::storage)?;
+        Ok(updated)
     }
 
     fn purge_entries_and_cursors(
