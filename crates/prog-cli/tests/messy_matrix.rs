@@ -234,7 +234,7 @@ fn validate_scenario(store: &Path, source_id: &str, operation: &str, id: usize) 
     );
     assert!(expanded["data_preview"].is_array());
 
-    if id.is_multiple_of(17) {
+    if id % 17 == 0 {
         let secret = prog([
             "--dir",
             store.to_str().unwrap(),
@@ -257,7 +257,7 @@ fn validate_scenario(store: &Path, source_id: &str, operation: &str, id: usize) 
         );
     }
 
-    if id.is_multiple_of(29) {
+    if id % 29 == 0 {
         let cached = prog([
             "--dir",
             store.to_str().unwrap(),
@@ -297,8 +297,8 @@ fn messy_case(id: usize) -> Value {
                 "body": repeated("body", id, index, 32 + ((id + index) % 9) * 80),
                 "score": numeric_value(id, index),
                 "flags": {
-                    "even": index.is_multiple_of(2),
-                    "third": index.is_multiple_of(3)
+                    "even": index % 2 == 0,
+                    "third": index % 3 == 0
                 }
             })
         })
@@ -322,7 +322,7 @@ fn messy_case(id: usize) -> Value {
             "token": format!("secret-value-{id}"),
             "password": format!("password-value-{id}"),
             "nested": nested_value(id, 0),
-            "optional": if id.is_multiple_of(4) { Value::Null } else { json!(format!("optional-{id}")) },
+            "optional": if id % 4 == 0 { Value::Null } else { json!(format!("optional-{id}")) },
             "slash/key": format!("slash-{id}"),
             "tilde~key": format!("tilde-{id}"),
             "space key": format!("space-{id}")
@@ -334,18 +334,18 @@ fn messy_case(id: usize) -> Value {
         json!([
             id,
             format!("string-{id}"),
-            id.is_multiple_of(2),
+            id % 2 == 0,
             Value::Null,
             {"nested_array": [id, id + 1, id + 2]}
         ]),
     );
-    if id.is_multiple_of(6) {
+    if id % 6 == 0 {
         root.insert(
             "large_note".to_string(),
             json!(repeated("note", id, 0, 2048)),
         );
     }
-    if id.is_multiple_of(10) {
+    if id % 10 == 0 {
         root.insert("empty_object".to_string(), json!({}));
         root.insert("empty_array".to_string(), json!([]));
     }

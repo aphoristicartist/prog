@@ -3,6 +3,7 @@ name = "prog-core"
 description = "Contracts, shape lattice, disclosure lens, cursors, redaction, cache, and safety policy for prog"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

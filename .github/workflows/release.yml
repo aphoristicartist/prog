@@ -1,0 +1,228 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Minimal default permissions; per-job grants widen what each job needs.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    permissions:
+      id-token: write      # required by actions/attest-build-provenance
+      attestations: write  # required by actions/attest-build-provenance
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked -p prog-cli
+
+      - name: Stage tarball
+        run: |
+          # Capture the host target triple (e.g. x86_64-unknown-linux-gnu).
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          echo "target=$target" >> "$GITHUB_ENV"
+          staging="prog-${target}"
+          mkdir -p "$staging"
+          cp target/release/prog "$staging/"
+          cp LICENSE README.md CHANGELOG.md "$staging/"
+          mkdir -p "$staging/docs"
+          cp docs/release-notes.md "$staging/docs/" || true
+          tar -czf "prog-${target}.tar.gz" "$staging"
+          shasum -a 256 "prog-${target}.tar.gz" > "SHA256SUMS-${target}"
+          echo "::group::tarball contents"; tar -tzf "prog-${target}.tar.gz"; echo "::endgroup::"
+          echo "::group::checksum"; cat "SHA256SUMS-${target}"; echo "::endgroup::"
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prog-${{ env.target }}
+          path: |
+            prog-${{ env.target }}.tar.gz
+            SHA256SUMS-${{ env.target }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            prog-${{ env.target }}.tar.gz
+            SHA256SUMS-${{ env.target }}
+
+  sbom:
+    name: sbom (cyclonedx)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
+
+      - name: Generate SBOM
+        run: cargo cyclonedx --workspace --format json --output-pattern package
+
+      - name: Collect SBOM files
+        run: |
+          mkdir -p sbom
+          # cargo-cyclonedx writes <crate>.cdx.json next to each Cargo.toml.
+          find . -name '*.cdx.json' -exec cp {} sbom/ \;
+          ls -la sbom/
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/*.cdx.json
+
+  cargo-package-dryrun:
+    name: cargo package (dry-run leak check)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: cargo package --workspace
+        run: cargo package --workspace --no-verify --allow-dirty
+
+      - name: Assert no runtime artifacts leak into .crate archives
+        run: |
+          # No redb stores, local .prog/ directories, or workspace-level
+          # fixtures should be bundled into a published crate. Test fixtures
+          # under tests/fixtures/ are legitimate crate test data and allowed.
+          found=0
+          for crate in target/package/*.crate; do
+            echo "inspecting $crate"
+            # Hard bans: runtime stores and local prog dirs never belong.
+            if tar -tzf "$crate" | grep -E '\.redb$|\.prog/'; then
+              echo "::error::runtime artifact leaked into $crate"
+              found=1
+            fi
+            # fixtures/ outside tests/ is a workspace-level leak.
+            if tar -tzf "$crate" | grep -E 'fixtures/' | grep -vE 'tests/fixtures/'; then
+              echo "::error::workspace fixtures/ leaked into $crate"
+              found=1
+            fi
+          done
+          exit "$found"
+
+  rc-smoke:
+    name: rc smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target triple
+        run: |
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          echo "target=$target" >> "$GITHUB_ENV"
+
+      - name: Download matching build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: prog-${{ env.target }}
+
+      - name: Extract binary
+        run: |
+          tar -xzf "prog-${{ env.target }}.tar.gz"
+          chmod +x "prog-${{ env.target }}/prog"
+          echo "$PWD/prog-${{ env.target }}" >> "$GITHUB_PATH"
+
+      - name: prog --help exits 0
+        run: prog --help
+
+      - name: Bounded observation produces a non-null cursor
+        run: |
+          rm -rf /tmp/prog-rc-smoke
+          prog --dir /tmp/prog-rc-smoke source add-cli demo_cli \
+            --operation list --read-only -- \
+            python3 fixtures/cli/list_items.py
+          result="$(prog --dir /tmp/prog-rc-smoke call demo_cli list --args '{}')"
+          cursor="$(printf '%s' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin)["cursor"])')"
+          test -n "$cursor"
+          echo "cursor=${cursor}"
+          # Persist the cursor for the reopen step via GITHUB_ENV.
+          echo "cursor=${cursor}" >> "$GITHUB_ENV"
+
+      - name: Store reopens and inspect succeeds after process exit
+        run: |
+          # A fresh process reads the cursor from the local store, proving the
+          # on-disk cache reopens across invocations.
+          prog --dir /tmp/prog-rc-smoke inspect "${cursor}" --goal "find important evidence"
+
+  release:
+    name: publish github release
+    runs-on: ubuntu-latest
+    needs: [build, sbom, cargo-package-dryrun, rc-smoke]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write   # required to create the release and upload assets
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Assemble release bundle
+        run: |
+          mkdir -p release/sbom
+          # Collect the per-platform tarballs and SBOM files.
+          find dist -name '*.tar.gz' -exec cp {} release/ \;
+          find dist -name '*.cdx.json' -exec cp {} release/sbom/ \;
+          # Recompute SHA256SUMS over the tarballs we actually ship, so the file
+          # is self-consistent regardless of where it was assembled. The per-
+          # target checksums produced in the build jobs are attested separately
+          # and serve as a cross-check; this combined file is what users verify.
+          (cd release && shasum -a 256 *.tar.gz > SHA256SUMS)
+          echo "::group::release contents"; ls -laR release; echo "::endgroup::"
+          echo "::group::SHA256SUMS"; cat release/SHA256SUMS; echo "::endgroup::"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.tar.gz
+            release/SHA256SUMS
+            release/sbom/*.cdx.json
+          body: |
+            ## Release artifacts
+
+            Prebuilt binaries for Ubuntu (linux-x86_64) and macOS are attached as
+            tarballs, alongside a combined `SHA256SUMS` and CycloneDX SBOM files.
+
+            ### Verify an artifact
+
+            ```sh
+            # Checksum
+            sha256sum -c SHA256SUMS --ignore-missing
+            # Build provenance (requires gh CLI)
+            gh attestation verify <tarball> --owner aphoristicartist
+            ```
+
+            See `docs/release-notes.md` for supported platforms, known
+            limitations, the schema/store-reset policy, and benchmark scope.
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

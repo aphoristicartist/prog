@@ -20,7 +20,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-targets --all-features
+
+  msrv:
+    # Verifies the rust-version pin declared in Cargo.toml actually builds and
+    # tests cleanly on the declared floor, rather than being dead metadata.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - run: cargo +1.85.0 build --workspace --all-features
+      - run: cargo +1.85.0 test --workspace
+
+  version-consistency:
+    # Guards against drift between Cargo.toml version, the CHANGELOG, and git
+    # tags. See .github/scripts/check-version-consistency.sh for the contract.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-version-consistency.sh
 
   dependency-policy:
     runs-on: ubuntu-latest
