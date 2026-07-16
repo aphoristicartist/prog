@@ -188,6 +188,27 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
 }
 
 #[test]
+fn next_action_exactness_variants_roundtrip_as_typed_values() {
+    for (exactness, expected) in [
+        ("exact", prog_core::ActionExactness::Exact),
+        ("filter", prog_core::ActionExactness::Filter),
+        ("approximate", prog_core::ActionExactness::Approximate),
+    ] {
+        let action: NextAction = serde_json::from_value(json!({
+            "kind": "rerun",
+            "exactness": exactness,
+            "argv": ["tool", "argument"]
+        }))
+        .expect("next action should deserialize");
+        assert_eq!(action.exactness, Some(expected));
+        assert_eq!(
+            serde_json::to_value(action).unwrap()["exactness"],
+            exactness
+        );
+    }
+}
+
+#[test]
 fn source_profile_disclosure_budget_is_typed_and_forward_compatible() {
     let profile: SourceProfile = serde_json::from_value(json!({
         "schema": "prog.source_profile",

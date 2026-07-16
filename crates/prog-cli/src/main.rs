@@ -3436,7 +3436,11 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
         );
     }
     let mut next_actions = run_next_actions(cursor.as_deref(), &failure_sections);
-    next_actions.extend(pytest_target_actions(&args.command, &failure_sections));
+    next_actions.extend(targeted_rerun_actions(
+        store,
+        &args.command,
+        &failure_sections,
+    ));
     let envelope = envelope_for_payload(
         store,
         EnvelopeInput {
@@ -4005,7 +4009,11 @@ fn collect_failure_sections(
     let lines = text.lines().map(str::to_string).collect::<Vec<_>>();
     for (index, line) in lines.iter().enumerate() {
         let lower = line.to_ascii_lowercase();
-        let detected = if line.contains("error[") || line.contains("panicked at") {
+        let detected = if line.trim_start().starts_with("--- FAIL:") {
+            Some(("go", 90, "Go test failure"))
+        } else if line.trim_start().starts_with("FAIL ") {
+            Some(("jest_vitest", 85, "Jest or Vitest failure"))
+        } else if line.contains("error[") || line.contains("panicked at") {
             Some(("rust", 90, "Rust compiler or test failure"))
         } else if line.contains("Traceback (most recent call last):") {
             Some(("python", 90, "Python traceback"))
@@ -4096,7 +4104,41 @@ fn run_next_actions(cursor: Option<&str>, sections: &[RunFailureSection]) -> Vec
         .collect()
 }
 
-fn pytest_target_actions(command: &[String], sections: &[RunFailureSection]) -> Vec<NextAction> {
+type RerunActionEmitter = fn(&[String], &[RunFailureSection], &[String]) -> Vec<NextAction>;
+
+const RERUN_ACTION_EMITTERS: &[RerunActionEmitter] = &[
+    pytest_target_actions,
+    go_test_target_actions,
+    cargo_test_target_actions,
+    jest_vitest_target_actions,
+];
+
+fn targeted_rerun_actions(
+    store: &Store,
+    command: &[String],
+    sections: &[RunFailureSection],
+) -> Vec<NextAction> {
+    let does_not_satisfy = store
+        .list_obligations(None)
+        .map(|list| {
+            list.obligations
+                .into_iter()
+                .filter(|obligation| obligation.required && obligation.required_scope != "target")
+                .map(|obligation| obligation.id)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    RERUN_ACTION_EMITTERS
+        .iter()
+        .flat_map(|emitter| emitter(command, sections, &does_not_satisfy))
+        .collect()
+}
+
+fn pytest_target_actions(
+    command: &[String],
+    sections: &[RunFailureSection],
+    does_not_satisfy: &[String],
+) -> Vec<NextAction> {
     // This is deliberately narrower than command equivalence: only the
     // literal pytest executable and a complete node ID printed by pytest are
     // evidence enough for an exact argv recommendation.
@@ -4133,11 +4175,378 @@ fn pytest_target_actions(command: &[String], sections: &[RunFailureSection]) -> 
             scope: Some("target_test".to_string()),
             exactness: Some(prog_core::ActionExactness::Exact),
             derived_from: Some("pytest.failed_node_id".to_string()),
-            does_not_satisfy: vec!["affected_suite".to_string(), "regression_suite".to_string()],
+            does_not_satisfy: does_not_satisfy.to_vec(),
             cwd: None,
             extra: Extra::new(),
         })
         .collect()
+}
+
+fn go_test_target_actions(
+    command: &[String],
+    sections: &[RunFailureSection],
+    does_not_satisfy: &[String],
+) -> Vec<NextAction> {
+    if command.first().map(String::as_str) != Some("go")
+        || command.get(1).map(String::as_str) != Some("test")
+    {
+        return Vec::new();
+    }
+    let Some(package) = go_test_package(command, sections) else {
+        return Vec::new();
+    };
+    let test_names = sections
+        .iter()
+        .flat_map(|section| section.lines.iter())
+        .filter_map(|line| go_test_name(line))
+        .collect::<BTreeSet<_>>();
+    test_names
+        .into_iter()
+        .take(3)
+        .map(|name| NextAction {
+            kind: "rerun".to_string(),
+            operation: None,
+            path: None,
+            reason: Some("rerun this exact Go test in its known package scope".to_string()),
+            argv: Some(vec![
+                "go".to_string(),
+                "test".to_string(),
+                package.clone(),
+                "-run".to_string(),
+                anchored_go_test_pattern(&name),
+            ]),
+            scope: Some("target_test".to_string()),
+            exactness: Some(prog_core::ActionExactness::Exact),
+            derived_from: Some("go_test.failed_name_and_package".to_string()),
+            does_not_satisfy: does_not_satisfy.to_vec(),
+            cwd: None,
+            extra: Extra::new(),
+        })
+        .collect()
+}
+
+fn cargo_test_target_actions(
+    command: &[String],
+    sections: &[RunFailureSection],
+    does_not_satisfy: &[String],
+) -> Vec<NextAction> {
+    if command.first().map(String::as_str) != Some("cargo")
+        || command.get(1).map(String::as_str) != Some("test")
+    {
+        return Vec::new();
+    }
+    let test_names = sections
+        .iter()
+        .flat_map(|section| section.lines.iter())
+        .filter_map(|line| cargo_test_name(line))
+        .collect::<BTreeSet<_>>();
+    let exact_target = cargo_exact_target_args(command);
+    test_names
+        .into_iter()
+        .take(3)
+        .filter(|name| safe_positional_identity(name))
+        .map(|name| {
+            let (argv, exactness, derived_from, reason) = if let Some(target) = &exact_target {
+                let mut argv = vec!["cargo".to_string(), "test".to_string()];
+                argv.extend(target.clone());
+                argv.extend([name.clone(), "--".to_string(), "--exact".to_string()]);
+                (
+                    argv,
+                    prog_core::ActionExactness::Exact,
+                    "cargo_test.failed_name_and_harness",
+                    "rerun this exact libtest name in the known Cargo harness",
+                )
+            } else {
+                (
+                    vec!["cargo".to_string(), "test".to_string(), name.clone()],
+                    prog_core::ActionExactness::Filter,
+                    "cargo_test.failed_name_filter",
+                    "filter Cargo tests by this failed name; the harness scope is not proven exact",
+                )
+            };
+            NextAction {
+                kind: "rerun".to_string(),
+                operation: None,
+                path: None,
+                reason: Some(reason.to_string()),
+                argv: Some(argv),
+                scope: Some("target_test".to_string()),
+                exactness: Some(exactness),
+                derived_from: Some(derived_from.to_string()),
+                does_not_satisfy: does_not_satisfy.to_vec(),
+                cwd: None,
+                extra: Extra::new(),
+            }
+        })
+        .collect()
+}
+
+fn jest_vitest_target_actions(
+    command: &[String],
+    sections: &[RunFailureSection],
+    does_not_satisfy: &[String],
+) -> Vec<NextAction> {
+    let Some(runner) = command
+        .first()
+        .filter(|item| matches!(item.as_str(), "jest" | "vitest"))
+    else {
+        return Vec::new();
+    };
+    let paths = sections
+        .iter()
+        .flat_map(|section| section.lines.iter())
+        .filter_map(|line| jest_vitest_path(line))
+        .collect::<BTreeSet<_>>();
+    let names = sections
+        .iter()
+        .flat_map(|section| section.lines.iter())
+        .filter_map(|line| jest_vitest_name(line))
+        .collect::<BTreeSet<_>>();
+    let mut actions = Vec::new();
+    if paths.len() == 1 && names.len() == 1 {
+        let path = paths.first().expect("checked exactly one path");
+        let name = names.first().expect("checked exactly one name");
+        if safe_positional_identity(path) && safe_flag_value(name) {
+            actions.push(NextAction {
+                kind: "rerun".to_string(),
+                operation: None,
+                path: None,
+                reason: Some("rerun this exact test name in its failed test file".to_string()),
+                argv: Some(vec![
+                    runner.clone(),
+                    path.clone(),
+                    "--testNamePattern".to_string(),
+                    anchored_regex(name),
+                ]),
+                scope: Some("target_test".to_string()),
+                exactness: Some(prog_core::ActionExactness::Exact),
+                derived_from: Some("jest_vitest.failed_path_and_name".to_string()),
+                does_not_satisfy: does_not_satisfy.to_vec(),
+                cwd: None,
+                extra: Extra::new(),
+            });
+        }
+        return actions;
+    }
+    if paths.is_empty() && names.len() == 1 {
+        let name = names.first().expect("checked exactly one name");
+        if safe_flag_value(name) {
+            actions.push(NextAction {
+                kind: "rerun".to_string(),
+                operation: None,
+                path: None,
+                reason: Some(
+                    "filter test names by this failed title; file scope is unknown".to_string(),
+                ),
+                argv: Some(vec![
+                    runner.clone(),
+                    "--testNamePattern".to_string(),
+                    anchored_regex(name),
+                ]),
+                scope: Some("target_test".to_string()),
+                exactness: Some(prog_core::ActionExactness::Filter),
+                derived_from: Some("jest_vitest.failed_name_filter".to_string()),
+                does_not_satisfy: does_not_satisfy.to_vec(),
+                cwd: None,
+                extra: Extra::new(),
+            });
+        }
+        return actions;
+    }
+    if paths.len() == 1 && names.is_empty() {
+        let path = paths.first().expect("checked exactly one path");
+        if safe_positional_identity(path) {
+            actions.push(NextAction {
+                kind: "rerun".to_string(),
+                operation: None,
+                path: None,
+                reason: Some(
+                    "rerun this failed test file; no individual test name was proven".to_string(),
+                ),
+                argv: Some(vec![runner.clone(), path.clone()]),
+                scope: Some("target_file".to_string()),
+                exactness: Some(prog_core::ActionExactness::Approximate),
+                derived_from: Some("jest_vitest.failed_path".to_string()),
+                does_not_satisfy: does_not_satisfy.to_vec(),
+                cwd: None,
+                extra: Extra::new(),
+            });
+        }
+    }
+    actions
+}
+
+fn go_test_package(command: &[String], sections: &[RunFailureSection]) -> Option<String> {
+    let mut supplied = BTreeSet::new();
+    let mut skip_value = false;
+    for argument in command
+        .iter()
+        .skip(2)
+        .take_while(|argument| argument.as_str() != "--")
+    {
+        if skip_value {
+            skip_value = false;
+            continue;
+        }
+        if go_test_flag_takes_value(argument) {
+            skip_value = true;
+            continue;
+        }
+        if argument.starts_with('-') {
+            continue;
+        }
+        if safe_positional_identity(argument) {
+            supplied.insert(argument);
+        }
+    }
+    if supplied.len() == 1 {
+        let package = supplied.first()?.to_string();
+        if package != "./..." && !package.contains("...") {
+            return Some(package);
+        }
+    }
+    let output_packages = sections
+        .iter()
+        .flat_map(|section| section.lines.iter())
+        .filter_map(|line| line.trim_start().strip_prefix("FAIL\t"))
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|package| safe_positional_identity(package) && !package.contains("..."))
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    (output_packages.len() == 1)
+        .then(|| output_packages.into_iter().next())
+        .flatten()
+}
+
+fn go_test_flag_takes_value(argument: &str) -> bool {
+    matches!(
+        argument,
+        "-run"
+            | "-bench"
+            | "-count"
+            | "-cpu"
+            | "-timeout"
+            | "-parallel"
+            | "-shuffle"
+            | "-tags"
+            | "-mod"
+    )
+}
+
+fn go_test_name(line: &str) -> Option<String> {
+    let name = line.trim_start().strip_prefix("--- FAIL: ")?;
+    let name = name.split(" (").next()?.trim();
+    safe_flag_value(name).then(|| name.to_string())
+}
+
+fn cargo_test_name(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let name = trimmed
+        .strip_prefix("test ")
+        .and_then(|line| line.strip_suffix(" ... FAILED"))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("---- ")
+                .and_then(|line| line.strip_suffix(" stdout ----"))
+        })?
+        .trim();
+    safe_positional_identity(name).then(|| name.to_string())
+}
+
+fn cargo_exact_target_args(command: &[String]) -> Option<Vec<String>> {
+    let args = command
+        .get(2..)?
+        .iter()
+        .take_while(|argument| argument.as_str() != "--");
+    let args = args.cloned().collect::<Vec<_>>();
+    let mut target = Vec::new();
+    let mut exact_harness = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--lib" => {
+                exact_harness = true;
+                target.push(args[index].clone());
+            }
+            "--bin" | "--example" | "--test" | "--bench" => {
+                let value = args.get(index + 1)?;
+                if !safe_positional_identity(value) {
+                    return None;
+                }
+                exact_harness = true;
+                target.extend([args[index].clone(), value.clone()]);
+                index += 1;
+            }
+            "-p" | "--package" => {
+                let value = args.get(index + 1)?;
+                if !safe_positional_identity(value) {
+                    return None;
+                }
+                target.extend([args[index].clone(), value.clone()]);
+                index += 1;
+            }
+            _ => return None,
+        }
+        index += 1;
+    }
+    exact_harness.then_some(target)
+}
+
+fn jest_vitest_path(line: &str) -> Option<String> {
+    let path = line.trim_start().strip_prefix("FAIL ")?.trim();
+    let path = path.split_whitespace().next().unwrap_or_default();
+    safe_positional_identity(path).then(|| path.to_string())
+}
+
+fn jest_vitest_name(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let name = ["\u{25cf} ", "\u{2715} ", "\u{00d7} "]
+        .iter()
+        .find_map(|marker| trimmed.strip_prefix(marker))?
+        .trim();
+    let name = name
+        .rsplit_once(" (")
+        .filter(|(_, suffix)| suffix.ends_with("ms)"))
+        .map(|(name, _)| name)
+        .unwrap_or(name)
+        .trim();
+    safe_flag_value(name).then(|| name.to_string())
+}
+
+fn anchored_go_test_pattern(name: &str) -> String {
+    name.split('/')
+        .map(anchored_regex)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn anchored_regex(value: &str) -> String {
+    format!("^{}$", regex_escape(value))
+}
+
+fn regex_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(
+            character,
+            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
+fn safe_positional_identity(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('-')
+        && !value.contains('\0')
+        && !value.contains(char::is_whitespace)
+}
+
+fn safe_flag_value(value: &str) -> bool {
+    !value.trim().is_empty() && !value.contains('\0')
 }
 
 fn run_provenance(
@@ -10446,5 +10855,167 @@ mod capture_lifecycle_tests {
         assert!(!cache_is_stale(Some(&fresh)));
         assert!(cache_is_stale(Some(&expired)));
         assert!(!cache_is_stale(None));
+    }
+
+    fn section(lines: &[&str]) -> RunFailureSection {
+        RunFailureSection {
+            kind: "test",
+            stream: "stdout",
+            line_start: 1,
+            line_end: lines.len(),
+            lines: lines.iter().map(|line| (*line).to_string()).collect(),
+            reason: "test failure".to_string(),
+            priority: 90,
+        }
+    }
+
+    #[test]
+    fn rerun_emitters_escape_identities_and_label_exactness_conservatively() {
+        let go = go_test_target_actions(
+            &[
+                "go".to_string(),
+                "test".to_string(),
+                "-run".to_string(),
+                "old".to_string(),
+                "./pkg".to_string(),
+            ],
+            &[section(&[
+                "--- FAIL: TestÜnicode[case].x/child+value (0.00s)",
+                "FAIL\t./pkg\t0.003s",
+            ])],
+            &["affected".to_string()],
+        );
+        assert_eq!(go.len(), 1);
+        assert_eq!(go[0].exactness, Some(prog_core::ActionExactness::Exact));
+        assert_eq!(
+            go[0].argv,
+            Some(vec![
+                "go".to_string(),
+                "test".to_string(),
+                "./pkg".to_string(),
+                "-run".to_string(),
+                "^TestÜnicode\\[case\\]\\.x$/^child\\+value$".to_string(),
+            ])
+        );
+        assert_eq!(go[0].does_not_satisfy, vec!["affected"]);
+
+        let cargo_exact = cargo_test_target_actions(
+            &[
+                "cargo".to_string(),
+                "test".to_string(),
+                "--test".to_string(),
+                "integration".to_string(),
+            ],
+            &[section(&["test crate::quoted_name ... FAILED"])],
+            &[],
+        );
+        assert_eq!(
+            cargo_exact[0].exactness,
+            Some(prog_core::ActionExactness::Exact)
+        );
+        assert_eq!(
+            cargo_exact[0].argv,
+            Some(vec![
+                "cargo".to_string(),
+                "test".to_string(),
+                "--test".to_string(),
+                "integration".to_string(),
+                "crate::quoted_name".to_string(),
+                "--".to_string(),
+                "--exact".to_string(),
+            ])
+        );
+
+        let cargo_filter = cargo_test_target_actions(
+            &["cargo".to_string(), "test".to_string()],
+            &[section(&[
+                "test duplicate_name ... FAILED",
+                "test duplicate_name ... FAILED",
+            ])],
+            &[],
+        );
+        assert_eq!(cargo_filter.len(), 1);
+        assert_eq!(
+            cargo_filter[0].exactness,
+            Some(prog_core::ActionExactness::Filter)
+        );
+
+        let exact_jest = jest_vitest_target_actions(
+            &["jest".to_string()],
+            &[section(&[
+                "FAIL src/math.test.ts",
+                "  ✕ handles \"quoted\" [case] (5 ms)",
+            ])],
+            &[],
+        );
+        assert_eq!(
+            exact_jest[0].exactness,
+            Some(prog_core::ActionExactness::Exact)
+        );
+        assert_eq!(
+            exact_jest[0].argv,
+            Some(vec![
+                "jest".to_string(),
+                "src/math.test.ts".to_string(),
+                "--testNamePattern".to_string(),
+                "^handles \"quoted\" \\[case\\]$".to_string(),
+            ])
+        );
+
+        let filtered_vitest = jest_vitest_target_actions(
+            &["vitest".to_string()],
+            &[section(&["  ✕ only a name (4 ms)"])],
+            &[],
+        );
+        assert_eq!(
+            filtered_vitest[0].exactness,
+            Some(prog_core::ActionExactness::Filter)
+        );
+
+        let approximate_jest = jest_vitest_target_actions(
+            &["jest".to_string()],
+            &[section(&["FAIL src/whole-file.test.ts"])],
+            &[],
+        );
+        assert_eq!(
+            approximate_jest[0].exactness,
+            Some(prog_core::ActionExactness::Approximate)
+        );
+    }
+
+    #[test]
+    fn rerun_emitters_reject_ambiguous_or_option_like_identities() {
+        let go = go_test_target_actions(
+            &["go".to_string(), "test".to_string(), "./...".to_string()],
+            &[section(&["--- FAIL: -not-a-test (0.00s)"])],
+            &[],
+        );
+        assert!(go.is_empty());
+
+        let ambiguous_go_package = go_test_target_actions(
+            &["go".to_string(), "test".to_string()],
+            &[section(&[
+                "--- FAIL: TestOne (0.00s)",
+                "FAIL\t./first\t0.003s",
+                "FAIL\t./second\t0.004s",
+            ])],
+            &[],
+        );
+        assert!(ambiguous_go_package.is_empty());
+
+        let cargo = cargo_test_target_actions(
+            &["cargo".to_string(), "test".to_string()],
+            &[section(&["test -not-a-filter ... FAILED"])],
+            &[],
+        );
+        assert!(cargo.is_empty());
+
+        let store_dir = tempfile::tempdir().unwrap();
+        let unknown_tool = targeted_rerun_actions(
+            &Store::open(store_dir.path()).unwrap(),
+            &["jest-30".to_string()],
+            &[section(&["FAIL src/file.test.ts"])],
+        );
+        assert!(unknown_tool.is_empty());
     }
 }
