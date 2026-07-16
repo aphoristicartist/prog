@@ -511,6 +511,11 @@ pub struct SourceSpan {
     /// The deterministic extractor that produced this span.
     pub origin: String,
     pub exactness: SourceSpanExactness,
+    /// Redaction observed while deriving this location or its label. Location
+    /// metadata is evidence too; callers must not assume it escaped the
+    /// redaction boundary merely because the enclosing finding was safe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redaction_state: Option<RedactionState>,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
@@ -631,6 +636,12 @@ pub struct SearchHit {
     pub line_range: Option<LineRange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub byte_range: Option<ByteRange>,
+    /// Source location for the matched structured diagnostic, distinct from
+    /// line/byte ranges in the cached observation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_span: Option<SourceSpan>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_spans: Vec<SourceSpan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redaction_state: Option<RedactionState>,
     #[serde(default)]

@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::BTreeMap};
+use std::{cmp::Ordering, collections::BTreeMap, path::PathBuf};
 
 use regex::{Regex, RegexBuilder};
 use serde_json::{Value, json};
@@ -6,8 +6,9 @@ use serde_json::{Value, json};
 use crate::{
     ByteRange, CoreError, EVIDENCE_BLOCK_SCHEMA, EvidenceBlock, EvidenceCitation, Extra,
     FindingCommandHints, FindingOptions, LensManifest, LineRange, OmissionReason, OmittedRegion,
-    PreviewPolicy, RedactionState, Result, SEARCH_SCHEMA, SearchHit, SearchResponse, pointer,
-    project, ranked_findings, ranked_findings_with_lens,
+    PreviewPolicy, RedactionState, Result, SEARCH_SCHEMA, SearchHit, SearchResponse,
+    extract_source_spans_with_workspace_root, pointer, project, ranked_findings,
+    ranked_findings_with_lens,
 };
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
@@ -25,6 +26,9 @@ pub struct SearchOptions {
     pub regex: bool,
     pub max_nodes: usize,
     pub max_depth: usize,
+    /// Trusted root used to normalize absolute diagnostic paths. Without it,
+    /// absolute source locations remain unavailable.
+    pub workspace_root: Option<PathBuf>,
 }
 
 impl Default for SearchOptions {
@@ -38,6 +42,7 @@ impl Default for SearchOptions {
             regex: false,
             max_nodes: DEFAULT_MAX_NODES,
             max_depth: DEFAULT_MAX_DEPTH,
+            workspace_root: None,
         }
     }
 }
@@ -90,6 +95,7 @@ pub fn search_payload_with_lens(
         truncated: false,
         hits: Vec::new(),
         cursor: cursor.into(),
+        workspace_root: options.workspace_root.clone(),
     };
     traversal.visit(target, scope_path, None, 0);
 
@@ -250,6 +256,7 @@ struct SearchTraversal {
     truncated: bool,
     hits: Vec<SearchHit>,
     cursor: String,
+    workspace_root: Option<PathBuf>,
 }
 
 impl SearchTraversal {
@@ -266,6 +273,11 @@ impl SearchTraversal {
         if kind_matches && query_match.matched {
             let score = (query_match.score + semantic.map_or(0.0, |item| item.confidence * 0.5))
                 .clamp(0.0, 1.0);
+            let (primary_span, related_spans) = semantic
+                .map(|item| (item.primary_span.clone(), item.related_spans.clone()))
+                .unwrap_or_else(|| {
+                    extract_source_spans_with_workspace_root(value, self.workspace_root.as_deref())
+                });
             self.hits.push(SearchHit {
                 rank: 0,
                 path: path.to_string(),
@@ -276,6 +288,8 @@ impl SearchTraversal {
                 finding_kind: semantic.map(|item| item.kind.clone()),
                 line_range: object_line_range(value),
                 byte_range: object_byte_range(value),
+                primary_span,
+                related_spans,
                 redaction_state: redaction_state(value),
                 commands: navigation_commands(
                     &self.cursor,
@@ -322,6 +336,8 @@ struct SemanticMatch {
     kind: String,
     severity: Option<String>,
     confidence: f64,
+    primary_span: Option<crate::SourceSpan>,
+    related_spans: Vec<crate::SourceSpan>,
 }
 
 fn semantic_findings(
@@ -332,6 +348,7 @@ fn semantic_findings(
     let finding_options = FindingOptions {
         scope_path: options.scope_path.clone(),
         limit: options.max_nodes.min(1_000),
+        workspace_root: options.workspace_root.clone(),
         ..FindingOptions::default()
     };
     let findings = ranked_findings_with_lens(payload, &finding_options, lens)?;
@@ -341,6 +358,8 @@ fn semantic_findings(
             kind: finding.kind,
             severity: finding.severity,
             confidence: finding.confidence,
+            primary_span: finding.primary_span,
+            related_spans: finding.related_spans,
         };
         match semantic.get(&finding.path) {
             Some(existing) if existing.confidence >= candidate.confidence => {}

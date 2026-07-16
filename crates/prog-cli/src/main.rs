@@ -5532,6 +5532,7 @@ fn inspect_cursor(store: &Store, lens_dir: &Path, args: &InspectArgs) -> Result<
         scope_path: Some(context.target_path.clone()),
         limit: args.limit.saturating_mul(4).min(100),
         hints: CommandHintConfig::NAV_ALL,
+        workspace_root: std::env::current_dir().ok(),
     };
     response.findings =
         ranked_findings_with_lens(context.payload.as_value(), &options, lens.as_ref())?;
@@ -5672,6 +5673,7 @@ fn search_cursor(
             limit,
             case_sensitive,
             regex,
+            workspace_root: std::env::current_dir().ok(),
             ..SearchOptions::default()
         },
         lens.as_ref(),
@@ -9491,6 +9493,7 @@ fn envelope_for_payload(
             scope_path: Some(input.root_path.clone()),
             limit: 3,
             hints: CommandHintConfig::NAV_ALL,
+            workspace_root: std::env::current_dir().ok(),
         },
         input.lens.as_ref(),
     )
