@@ -1413,14 +1413,29 @@ fn pytest_node_id_hint_is_exact_argv_and_never_claims_broader_verification() {
         dir.path().display(),
         std::env::var("PATH").unwrap()
     );
-    let output = prog_with_env(
-        &[
+    let store = dir.path().join("store");
+    let store_arg = store.to_str().unwrap();
+    let session = prog(&["--dir", store_arg, "session", "start"]);
+    assert!(session.status.success(), "{}", stdout(&session));
+    for (id, scope) in [
+        ("affected-check", "affected-suite"),
+        ("full-check", "regression-suite"),
+    ] {
+        let obligation = prog(&[
             "--dir",
-            dir.path().join("store").to_str().unwrap(),
-            "run",
-            "--",
-            "pytest",
-        ],
+            store_arg,
+            "session",
+            "obligation-add",
+            id,
+            "--check",
+            "rerun verification",
+            "--scope",
+            scope,
+        ]);
+        assert!(obligation.status.success(), "{}", stdout(&obligation));
+    }
+    let output = prog_with_env(
+        &["--dir", store_arg, "run", "--", "pytest"],
         &[("PATH", &path)],
     );
     assert!(output.status.success(), "{}", stdout(&output));
@@ -1443,9 +1458,62 @@ fn pytest_node_id_hint_is_exact_argv_and_never_claims_broader_verification() {
     assert_eq!(hint["derived_from"], "pytest.failed_node_id");
     assert_eq!(
         hint["does_not_satisfy"],
-        json!(["affected_suite", "regression_suite"])
+        json!(["affected-check", "full-check"])
     );
     assert!(hint.get("command").is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn go_test_hint_is_an_escaped_exact_argv_recommendation() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let go = dir.path().join("go");
+    fs::write(
+        &go,
+        "#!/bin/sh\nprintf '%s\\n' '--- FAIL: TestParser[unicode].case (0.00s)' 'FAIL\t./internal/parser\t0.003s'\nexit 1\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&go).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&go, permissions).unwrap();
+    let path = format!(
+        "{}:{}",
+        dir.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let output = prog_with_env(
+        &[
+            "--dir",
+            dir.path().join("store").to_str().unwrap(),
+            "run",
+            "--",
+            "go",
+            "test",
+            "./internal/parser",
+        ],
+        &[("PATH", &path)],
+    );
+    assert!(output.status.success(), "{}", stdout(&output));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let hint = envelope["next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|action| action["derived_from"] == "go_test.failed_name_and_package")
+        .expect("exact Go test hint");
+    assert_eq!(
+        hint["argv"],
+        json!([
+            "go",
+            "test",
+            "./internal/parser",
+            "-run",
+            "^TestParser\\[unicode\\]\\.case$"
+        ])
+    );
+    assert_eq!(hint["exactness"], "exact");
 }
 
 #[test]
