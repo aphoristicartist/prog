@@ -8972,53 +8972,104 @@ async fn mcp_task_command(store: &Store, command: &McpTaskCommand) -> Result<Mcp
         }
         McpTaskCommand::Get(args) => {
             let profile = mcp_task_profile(store, &args.source_id)?;
-            let result = mcp_source_from_profile(&profile)?
+            match mcp_source_from_profile(&profile)?
                 .get_task(&args.task_id)
-                .await?;
-            record_mcp_task_observation(
-                store,
-                &profile,
-                "mcp_task.get",
-                serde_json::to_value(&result)?,
-                Some(task_status(&result)?),
-                Some(result.provenance.duration_ms),
-                Some(&args.task_id),
-                args.parent_observation.clone(),
-            )
+                .await
+            {
+                Ok(result) => record_mcp_task_observation(
+                    store,
+                    &profile,
+                    "mcp_task.get",
+                    serde_json::to_value(&result)?,
+                    Some(task_status(&result)?),
+                    Some(result.provenance.duration_ms),
+                    Some(&args.task_id),
+                    args.parent_observation.clone(),
+                ),
+                Err(error) if mcp_task_result_unavailable(&error) => {
+                    record_mcp_task_unavailable_observation(
+                        store,
+                        &profile,
+                        "mcp_task.get",
+                        &error,
+                        &args.task_id,
+                        args.parent_observation.clone(),
+                    )
+                }
+                Err(error) => Err(error),
+            }
         }
         McpTaskCommand::Result(args) => {
             let profile = mcp_task_profile(store, &args.source_id)?;
-            let result = mcp_source_from_profile(&profile)?
+            match mcp_source_from_profile(&profile)?
                 .get_task_result(&args.task_id)
-                .await?;
-            record_mcp_task_observation(
-                store,
-                &profile,
-                "mcp_task.result",
-                serde_json::to_value(&result)?,
-                None,
-                Some(result.provenance.duration_ms),
-                Some(&args.task_id),
-                args.parent_observation.clone(),
-            )
+                .await
+            {
+                Ok(result) => record_mcp_task_observation(
+                    store,
+                    &profile,
+                    "mcp_task.result",
+                    serde_json::to_value(&result)?,
+                    None,
+                    Some(result.provenance.duration_ms),
+                    Some(&args.task_id),
+                    args.parent_observation.clone(),
+                ),
+                Err(error) if mcp_task_result_unavailable(&error) => {
+                    record_mcp_task_unavailable_observation(
+                        store,
+                        &profile,
+                        "mcp_task.result",
+                        &error,
+                        &args.task_id,
+                        args.parent_observation.clone(),
+                    )
+                }
+                Err(error) => Err(error),
+            }
         }
         McpTaskCommand::Cancel(args) => {
             let profile = mcp_task_profile(store, &args.source_id)?;
-            let result = mcp_source_from_profile(&profile)?
+            match mcp_source_from_profile(&profile)?
                 .cancel_task(&args.task_id)
-                .await?;
-            record_mcp_task_observation(
-                store,
-                &profile,
-                "mcp_task.cancel",
-                serde_json::to_value(&result)?,
-                Some(task_status(&result)?),
-                Some(result.provenance.duration_ms),
-                Some(&args.task_id),
-                args.parent_observation.clone(),
-            )
+                .await
+            {
+                Ok(result) => record_mcp_task_observation(
+                    store,
+                    &profile,
+                    "mcp_task.cancel",
+                    serde_json::to_value(&result)?,
+                    Some(task_status(&result)?),
+                    Some(result.provenance.duration_ms),
+                    Some(&args.task_id),
+                    args.parent_observation.clone(),
+                ),
+                Err(error) if mcp_task_result_unavailable(&error) => {
+                    record_mcp_task_unavailable_observation(
+                        store,
+                        &profile,
+                        "mcp_task.cancel",
+                        &error,
+                        &args.task_id,
+                        args.parent_observation.clone(),
+                    )
+                }
+                Err(error) => Err(error),
+            }
         }
     }
+}
+
+/// A task reference can cease to resolve independently of the original tool
+/// call. Preserve that attempted lifecycle transition as unavailable evidence
+/// instead of treating a protocol, transport, or timeout failure as a result.
+fn mcp_task_result_unavailable(error: &CoreError) -> bool {
+    matches!(
+        error,
+        CoreError::McpTimeout { .. }
+            | CoreError::McpTransport { .. }
+            | CoreError::McpProtocol { .. }
+    )
 }
 
 fn mcp_task_profile(store: &Store, source_id: &str) -> Result<SourceProfile> {
@@ -9056,13 +9107,74 @@ fn record_mcp_task_observation(
     task_id: Option<&str>,
     parent_id: Option<String>,
 ) -> Result<McpTaskCommandOutput> {
+    record_mcp_task_observation_with_availability(
+        store,
+        profile,
+        operation,
+        value,
+        status,
+        duration_ms,
+        task_id,
+        parent_id,
+        false,
+    )
+}
+
+fn record_mcp_task_unavailable_observation(
+    store: &Store,
+    profile: &SourceProfile,
+    operation: &str,
+    error: &CoreError,
+    task_id: &str,
+    parent_id: Option<String>,
+) -> Result<McpTaskCommandOutput> {
+    record_mcp_task_observation_with_availability(
+        store,
+        profile,
+        operation,
+        json!({
+            "status": "unavailable",
+            "error": {
+                "kind": error.kind(),
+                "message": error.to_string(),
+                "hint": error.hint(),
+            },
+        }),
+        Some("unavailable".to_string()),
+        None,
+        Some(task_id),
+        parent_id,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_mcp_task_observation_with_availability(
+    store: &Store,
+    profile: &SourceProfile,
+    operation: &str,
+    value: Value,
+    status: Option<String>,
+    duration_ms: Option<u64>,
+    task_id: Option<&str>,
+    parent_id: Option<String>,
+    unavailable: bool,
+) -> Result<McpTaskCommandOutput> {
     let redacted = RawPayload::new(value).redact(&resolve_redaction(Some(profile)));
     let payload = redacted.payload;
     let payload_bytes = json_len_u64(payload.as_value())?;
     let payload_hash = store.put_payload(&payload)?;
-    let (availability, mut capture) =
-        complete_capture(payload_bytes, true, !redacted.redacted_paths.is_empty());
-    capture.budget = CaptureBudget::default();
+    let (availability, mut capture) = if unavailable {
+        (
+            EvidenceAvailability::Unavailable,
+            CaptureCompleteness::unavailable(payload_bytes),
+        )
+    } else {
+        complete_capture(payload_bytes, true, !redacted.redacted_paths.is_empty())
+    };
+    if !unavailable {
+        capture.budget = CaptureBudget::default();
+    }
     let task_ref = task_id
         .map(|task_id| {
             Store::cache_key(
@@ -11312,6 +11424,102 @@ mod capture_lifecycle_tests {
             CaptureStopReason::Unavailable
         );
         assert!(!reference.capture.can_prove_absence);
+    }
+
+    #[test]
+    fn unavailable_mcp_task_result_is_durable_but_cannot_claim_completion() {
+        let store_dir = tempfile::tempdir().unwrap();
+        let store = Store::open(store_dir.path()).unwrap();
+        let profile: SourceProfile = serde_json::from_value(json!({
+            "schema": SOURCE_PROFILE_SCHEMA,
+            "id": "task_source",
+            "kind": "mcp"
+        }))
+        .unwrap();
+        let output = record_mcp_task_unavailable_observation(
+            &store,
+            &profile,
+            "mcp_task.result",
+            &CoreError::McpProtocol {
+                operation: "tasks/result".to_string(),
+                message: "task expired".to_string(),
+                preview: json!({"code": -32002}),
+            },
+            "external-task-42",
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(output.availability, EvidenceAvailability::Unavailable);
+        assert_eq!(output.payload["status"], "unavailable");
+        assert_eq!(output.payload["error"]["kind"], "mcp_protocol");
+
+        let observation = store
+            .get_observation(&output.observation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(observation.availability, EvidenceAvailability::Unavailable);
+        assert_eq!(observation.status.as_deref(), Some("unavailable"));
+        assert_eq!(
+            observation.capture.stop_reason,
+            CaptureStopReason::Unavailable
+        );
+        assert!(!observation.capture.can_prove_absence);
+        assert!(observation.subject_keys.is_empty());
+        let task_reference = observation.lineage.extra["mcp_task_ref"].as_str().unwrap();
+        assert!(task_reference.starts_with("sha256:"));
+        assert!(!task_reference.contains("external-task-42"));
+
+        let evaluation = evaluate_obligation(
+            &store,
+            VerificationObligation {
+                schema: VERIFICATION_SCHEMA.to_string(),
+                id: "task-result".to_string(),
+                session_id: "session-1".to_string(),
+                required: true,
+                intended_check: "retrieve task result".to_string(),
+                required_scope: "target".to_string(),
+                declared_by: ObligationDeclarer::User,
+                expected_operation: Some(VerificationOperation::SourceOperation(
+                    "mcp_task.result".to_string(),
+                )),
+                required_state: VerificationStateRelationship::Any,
+                advisory_actions: Vec::new(),
+                comparison_family: None,
+                origin_observation_id: None,
+                expected_absent_fingerprint: None,
+                evidence_observation_id: Some(output.observation_id),
+                created_at: "2026-07-17T00:00:00Z".to_string(),
+                extra: Extra::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(evaluation.status, VerificationStatus::Unverifiable);
+        assert_eq!(
+            evaluation.reasons,
+            vec!["the evidence payload is no longer available".to_string()]
+        );
+    }
+
+    #[test]
+    fn only_mcp_result_retrieval_failures_become_unavailable_evidence() {
+        assert!(mcp_task_result_unavailable(&CoreError::McpTimeout {
+            operation: "tasks/result".to_string(),
+            timeout_ms: 1,
+        }));
+        assert!(mcp_task_result_unavailable(&CoreError::McpTransport {
+            operation: "tasks/result".to_string(),
+            message: "connection closed".to_string(),
+        }));
+        assert!(mcp_task_result_unavailable(&CoreError::McpProtocol {
+            operation: "tasks/result".to_string(),
+            message: "task expired".to_string(),
+            preview: Value::Null,
+        }));
+        assert!(!mcp_task_result_unavailable(&CoreError::BadArgs {
+            operation: "mcp-task".to_string(),
+            reason: "invalid task reference".to_string(),
+        }));
     }
 
     #[test]
