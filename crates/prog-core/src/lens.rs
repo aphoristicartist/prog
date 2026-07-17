@@ -1,15 +1,14 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 
 use crate::{
     CoreError, ExpandablePayload, ExpansionScope, Extra, Finding, FindingCommandHints,
-    FindingOptions, LENS_MANIFEST_SCHEMA, LensFindingRule, LensManifest, LensOmission, NextAction,
-    OmittedRegion, PreviewPolicy, Projection, RedactionPolicy, RedactionState, Result, ScopedSlice,
-    SliceRequest,
+    FindingIdentityContext, FindingOptions, LENS_MANIFEST_SCHEMA, LensFindingRule, LensManifest,
+    LensOmission, NextAction, OmittedRegion, PreviewPolicy, Projection, RedactionPolicy,
+    RedactionState, Result, ScopedSlice, SliceRequest,
     disclosure::{expand, project},
-    extract_source_spans_with_workspace_root,
+    extract_source_spans_with_workspace_root, fingerprint_finding,
     pointer::{get, is_within, parse},
     ranked_findings,
 };
@@ -94,10 +93,8 @@ pub fn ranked_findings_with_lens(
             let (primary_span, related_spans) =
                 extract_source_spans_with_workspace_root(value, options.workspace_root.as_deref());
             findings.push(Finding {
-                occurrence_id: lens_fingerprint(manifest, rule, value)
-                    .as_ref()
-                    .map(|fingerprint| format!("fi_{fingerprint}")),
-                fingerprint: lens_fingerprint(manifest, rule, value),
+                occurrence_id: None,
+                fingerprint: lens_fingerprint(manifest, rule, value, primary_span.as_ref()),
                 rank: 0,
                 kind: rule.kind.clone(),
                 path: path.clone(),
@@ -153,6 +150,7 @@ pub fn ranked_findings_with_lens(
     findings.truncate(options.limit);
     for (index, finding) in findings.iter_mut().enumerate() {
         finding.rank = index as u64 + 1;
+        finding.occurrence_id = Some(format!("fo_{:08}", index + 1));
     }
     Ok(findings)
 }
@@ -161,27 +159,19 @@ fn lens_fingerprint(
     manifest: &LensManifest,
     rule: &LensFindingRule,
     value: &Value,
+    primary_span: Option<&crate::SourceSpan>,
 ) -> Option<String> {
-    let message = match value {
-        Value::String(value) => value.split_whitespace().collect::<Vec<_>>().join(" "),
-        Value::Object(object) => ["message", "reason", "summary"]
-            .into_iter()
-            .find_map(|field| object.get(field).and_then(Value::as_str))?
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" "),
-        _ => return None,
-    };
-    if message.is_empty() {
-        return None;
-    }
-    let mut hash = Sha256::new();
-    hash.update(manifest.id.as_bytes());
-    hash.update([0]);
-    hash.update(rule.kind.as_bytes());
-    hash.update([0]);
-    hash.update(message.as_bytes());
-    Some(format!("sha256:{:x}", hash.finalize()))
+    fingerprint_finding(
+        &rule.kind,
+        &format!("lens:{}", manifest.id),
+        value,
+        primary_span,
+        Some(&rule.identity_selectors),
+        &FindingIdentityContext {
+            lens: Some(manifest.id.clone()),
+            ..FindingIdentityContext::default()
+        },
+    )
 }
 
 pub fn lens_slice_request(
@@ -335,6 +325,22 @@ fn validate_finding_rule(manifest: &LensManifest, rule: &LensFindingRule) -> Res
         return Err(lens_error(
             manifest,
             "findings[].contains_any allows at most 32 non-empty terms of at most 128 characters",
+        ));
+    }
+    if rule.identity_selectors.len() > 4
+        || rule.identity_selectors.iter().any(|(component, pointer)| {
+            !matches!(
+                component.as_str(),
+                "subject" | "diagnostic_type" | "message_template" | "file"
+            ) || pointer.is_empty()
+                || pointer.contains('*')
+                || validate_pointer(pointer, false, manifest, "findings[].identity_selectors")
+                    .is_err()
+        })
+    {
+        return Err(lens_error(
+            manifest,
+            "findings[].identity_selectors allows at most four bounded JSON pointers named subject, diagnostic_type, message_template, or file",
         ));
     }
     if rule.severity.as_deref().is_some_and(|severity| {
@@ -535,7 +541,6 @@ fn redaction_state(value: &Value) -> Option<RedactionState> {
         redacted: true,
         redacted_paths: count,
         lossy: false,
-        redaction_version: None,
         extra: Extra::new(),
     })
 }

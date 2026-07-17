@@ -310,14 +310,11 @@ fn redaction_config_round_trips() {
 }
 
 #[test]
-fn default_policy_keeps_version_one() {
-    // Pinned: the matcher was broadened (#74) but the version is intentionally
-    // NOT bumped, so existing cursors/caches stay valid by design.
-    assert_eq!(RedactionPolicy::default().version, 1);
-    assert_eq!(
-        RedactionPolicy::from_config(&RedactionConfig::default()).version,
-        1
-    );
+fn default_policy_has_no_compatibility_version() {
+    let default = RedactionPolicy::default();
+    let configured = RedactionPolicy::from_config(&RedactionConfig::default());
+    assert_eq!(default.rules, configured.rules);
+    assert_eq!(default.allowlist, configured.allowlist);
 }
 
 #[test]

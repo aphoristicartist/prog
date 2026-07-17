@@ -37,7 +37,7 @@ const STORAGE_BUDGET_KEY: &str = "storage_budget";
 // Pre-release storage is intentionally reset, rather than migrated, whenever
 // an immutable-record invariant changes. This is a contract identity, not a
 // compatibility version.
-const STORE_SCHEMA: &str = "prog.store.delta_contract";
+const STORE_SCHEMA: &str = "prog.store.pre_release_contract_reset";
 
 #[derive(Debug)]
 pub struct Store {
@@ -472,7 +472,6 @@ impl Store {
         source_id: &str,
         operation: &str,
         root_path: &str,
-        redaction_version: u32,
         ttl_seconds: i64,
     ) -> Result<String> {
         self.create_cursor_with_extra(
@@ -480,7 +479,6 @@ impl Store {
             source_id,
             operation,
             root_path,
-            redaction_version,
             ttl_seconds,
             serde_json::Map::new(),
         )
@@ -490,7 +488,7 @@ impl Store {
     /// Used by auto-pagination to stamp each page cursor with
     /// `{kind:"page", page:N, args:...}` so the page cursors are observably
     /// distinct from a normal expand cursor while reusing the exact same
-    /// fail-closed validation path (I9: stale/foreign/redaction-mismatch).
+    /// fail-closed validation path (I9: stale/foreign/expired).
     #[allow(clippy::too_many_arguments)] // one more than create_cursor's 7-arg limit, for the page metadata map
     pub fn create_cursor_with_extra(
         &self,
@@ -498,7 +496,6 @@ impl Store {
         source_id: &str,
         operation: &str,
         root_path: &str,
-        redaction_version: u32,
         ttl_seconds: i64,
         extra: serde_json::Map<String, serde_json::Value>,
     ) -> Result<String> {
@@ -512,7 +509,6 @@ impl Store {
             source_id: source_id.to_string(),
             operation: operation.to_string(),
             root_path: root_path.to_string(),
-            redaction_version,
             created_at: format_time(now),
             expires_at: format_time(now + chrono::Duration::seconds(ttl_seconds)),
             observation_id,
@@ -535,16 +531,11 @@ impl Store {
         Ok(())
     }
 
-    pub fn get_cursor(&self, token: &str, redaction_version: u32) -> Result<ValidatedCursor> {
-        self.get_cursor_at(token, redaction_version, Utc::now())
+    pub fn get_cursor(&self, token: &str) -> Result<ValidatedCursor> {
+        self.get_cursor_at(token, Utc::now())
     }
 
-    pub fn get_cursor_at(
-        &self,
-        token: &str,
-        redaction_version: u32,
-        now: DateTime<Utc>,
-    ) -> Result<ValidatedCursor> {
+    pub fn get_cursor_at(&self, token: &str, now: DateTime<Utc>) -> Result<ValidatedCursor> {
         let read = self.db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(CURSORS).map_err(CoreError::storage)?;
         let Some(bytes) = table.get(token).map_err(CoreError::storage)? else {
@@ -559,13 +550,6 @@ impl Store {
                 token.to_string(),
                 record.expires_at.clone(),
             ));
-        }
-        if record.redaction_version != redaction_version {
-            return Err(CoreError::RedactionVersionMismatch {
-                cursor: token.to_string(),
-                cursor_version: record.redaction_version,
-                store_version: redaction_version,
-            });
         }
         Ok(ValidatedCursor::new(token.to_string(), record))
     }
@@ -674,10 +658,27 @@ impl Store {
             || obligation.id.trim().is_empty()
             || obligation.session_id.trim().is_empty()
             || obligation.intended_check.trim().is_empty()
+            || obligation.required_scope.trim().is_empty()
         {
             return Err(CoreError::BadArgs {
                 operation: "verification obligation".to_string(),
-                reason: "schema, id, session_id, and intended_check are required".to_string(),
+                reason: "schema, id, session_id, intended_check, and required_scope are required"
+                    .to_string(),
+            });
+        }
+        if obligation.required && obligation.declared_by != crate::ObligationDeclarer::User {
+            return Err(CoreError::BadArgs {
+                operation: "verification obligation".to_string(),
+                reason: "recipe, normalizer, and harness declarations must remain advisory"
+                    .to_string(),
+            });
+        }
+        if let Some(crate::VerificationOperation::Argv(argv)) = &obligation.expected_operation
+            && (argv.is_empty() || argv.iter().any(|value| value.is_empty()))
+        {
+            return Err(CoreError::BadArgs {
+                operation: "verification obligation".to_string(),
+                reason: "expected argv must contain only non-empty arguments".to_string(),
             });
         }
         let key = obligation_key(&obligation.session_id, &obligation.id)?;

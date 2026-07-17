@@ -61,18 +61,9 @@ fn validated_cursor_creates_expansion_scope_capability() {
     let entry = entry(key.clone(), hash);
     store.put_entry(&key, &entry).unwrap();
     let cursor = store
-        .create_cursor(
-            &key,
-            "source",
-            "op",
-            "/items",
-            RedactionPolicy::default().version,
-            60,
-        )
+        .create_cursor(&key, "source", "op", "/items", 60)
         .unwrap();
-    let validated = store
-        .get_cursor(&cursor, RedactionPolicy::default().version)
-        .unwrap();
+    let validated = store.get_cursor(&cursor).unwrap();
     let persisted = store.get_payload(&entry.payload_hash).unwrap().unwrap();
     let scoped = ScopedSlice::new(
         ExpansionScope::from_cursor(&validated).unwrap(),

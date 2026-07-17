@@ -1,7 +1,7 @@
 [
   {
-    "occurrence_id": "fi_sha256:fbb16d103db55873bb89611ab629dbc5d06e1fa88f0346bc253c3cc0d501dc18",
-    "fingerprint": "sha256:fbb16d103db55873bb89611ab629dbc5d06e1fa88f0346bc253c3cc0d501dc18",
+    "occurrence_id": "fo_00000001",
+    "fingerprint": "sha256:b97044e3ee33a1ef3cb74e675e3cceb01bb28e4e10c4793983f7933bc7f50eb6",
     "rank": 1,
     "kind": "compile_error",
     "path": "/diagnostics/0/message",
@@ -18,6 +18,7 @@
     }
   },
   {
+    "occurrence_id": "fo_00000002",
     "rank": 2,
     "kind": "generic_error_field",
     "path": "/errors",
@@ -34,8 +35,8 @@
     }
   },
   {
-    "occurrence_id": "fi_sha256:18022b563e25f7e11469af8b8b52343ddd5b72db28de044d83abce1877d85517",
-    "fingerprint": "sha256:18022b563e25f7e11469af8b8b52343ddd5b72db28de044d83abce1877d85517",
+    "occurrence_id": "fo_00000003",
+    "fingerprint": "sha256:41e0221cf0acf877352b97e7b216f79d14ee69b5cace20a163e4f5d3f219521d",
     "rank": 3,
     "kind": "log_error",
     "path": "/errors/0/message",
@@ -52,8 +53,8 @@
     }
   },
   {
-    "occurrence_id": "fi_sha256:019bd642ecb1497039d924897a0fd17f9d8a54026a51f530f893519a6e92d513",
-    "fingerprint": "sha256:019bd642ecb1497039d924897a0fd17f9d8a54026a51f530f893519a6e92d513",
+    "occurrence_id": "fo_00000004",
+    "fingerprint": "sha256:b088be0e513159df246e2a353cb1d7e0c05a0c523be1de57dcccaada327659df",
     "rank": 4,
     "kind": "diagnostic",
     "path": "/diagnostics/0",
@@ -70,6 +71,7 @@
     }
   },
   {
+    "occurrence_id": "fo_00000005",
     "rank": 5,
     "kind": "diagnostic",
     "path": "/diagnostics",
@@ -86,8 +88,7 @@
     }
   },
   {
-    "occurrence_id": "fi_sha256:aa304bcce8deff3259be22942e3850ae9b326b610e655e89b3a0c884a4332217",
-    "fingerprint": "sha256:aa304bcce8deff3259be22942e3850ae9b326b610e655e89b3a0c884a4332217",
+    "occurrence_id": "fo_00000006",
     "rank": 6,
     "kind": "diff_hunk",
     "path": "/review/diff",
@@ -103,8 +104,8 @@
     }
   },
   {
-    "occurrence_id": "fi_sha256:88979c65c715f5eb55089f2ddde87f9a437a1bcd4ac419ead838507d1f2980f3",
-    "fingerprint": "sha256:88979c65c715f5eb55089f2ddde87f9a437a1bcd4ac419ead838507d1f2980f3",
+    "occurrence_id": "fo_00000007",
+    "fingerprint": "sha256:8151a48507dd5649a73ac0a4686dcf29e782400d62b879ef89811cbbd857c85e",
     "rank": 7,
     "kind": "warning",
     "path": "/log",

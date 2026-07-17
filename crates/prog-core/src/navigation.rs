@@ -192,7 +192,6 @@ pub fn evidence_block(
         redacted: false,
         redacted_paths: 0,
         lossy: false,
-        redaction_version: None,
         extra: Extra::new(),
     }));
     let line_range = object_line_range(value);
@@ -588,7 +587,6 @@ fn redaction_state(value: &Value) -> Option<RedactionState> {
         redacted: true,
         redacted_paths: count,
         lossy: false,
-        redaction_version: None,
         extra: Extra::new(),
     })
 }

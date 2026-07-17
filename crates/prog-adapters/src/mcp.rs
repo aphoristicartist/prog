@@ -13,9 +13,11 @@ use prog_core::{
 use rmcp::{
     RoleClient, ServiceError,
     model::{
-        CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo, ContentBlock,
-        Implementation, Prompt, ReadResourceRequestParams, ReadResourceResult, Resource,
-        ResourceContents, ServerInfo, Tool, ToolAnnotations,
+        CallToolRequestParams, CallToolResult, CancelTaskParams, ClientCapabilities, ClientInfo,
+        ClientRequest, ContentBlock, GetTaskParams, GetTaskPayloadParams, Implementation, Prompt,
+        ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents, ServerInfo,
+        ServerResult, Task, TaskMetadata, TaskRequestsCapability, TaskStatus, TasksCapability,
+        Tool, ToolAnnotations, ToolsTaskCapability,
     },
     serve_client,
     service::RunningService,
@@ -65,8 +67,117 @@ pub struct McpCallResult {
     pub provenance: McpProvenance,
     pub diagnostics: McpDiagnostics,
     pub received_error: bool,
+    /// `Some(false)` means a received `structuredContent` contradicted the
+    /// tool's declared output schema; the payload remains captured evidence.
+    #[serde(default)]
+    pub output_schema_valid: Option<bool>,
     #[serde(default)]
     pub warnings: Vec<String>,
+}
+
+/// A task lifecycle snapshot returned by an MCP server. The identifier stays
+/// external task lineage, rather than becoming a cross-source subject key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct McpTask {
+    pub task_id: String,
+    pub status: McpTaskStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_message: Option<String>,
+    pub created_at: String,
+    pub last_updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll_interval_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpTaskStatus {
+    Working,
+    InputRequired,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct McpTaskResult {
+    pub task: McpTask,
+    pub provenance: McpProvenance,
+    pub diagnostics: McpDiagnostics,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+impl From<Task> for McpTask {
+    fn from(task: Task) -> Self {
+        Self {
+            task_id: task.task_id,
+            status: task.status.into(),
+            status_message: task.status_message,
+            created_at: task.created_at,
+            last_updated_at: task.last_updated_at,
+            ttl_ms: task.ttl,
+            poll_interval_ms: task.poll_interval,
+        }
+    }
+}
+
+impl From<TaskStatus> for McpTaskStatus {
+    fn from(status: TaskStatus) -> Self {
+        match status {
+            TaskStatus::Working => Self::Working,
+            TaskStatus::InputRequired => Self::InputRequired,
+            TaskStatus::Completed => Self::Completed,
+            TaskStatus::Failed => Self::Failed,
+            TaskStatus::Cancelled => Self::Cancelled,
+            _ => Self::Failed,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TaskAction {
+    CallTool,
+    Get,
+    Cancel,
+}
+
+fn require_task_capability(
+    server_info: Option<&ServerInfo>,
+    operation: &str,
+    action: TaskAction,
+) -> Result<()> {
+    let Some(tasks) = server_info.and_then(|info| info.capabilities.tasks.as_ref()) else {
+        return Err(CoreError::BadArgs {
+            operation: operation.to_string(),
+            reason: "MCP peer did not negotiate the Tasks extension".to_string(),
+        });
+    };
+    let supported = match action {
+        TaskAction::CallTool => tasks.supports_tools_call(),
+        TaskAction::Get => true,
+        TaskAction::Cancel => tasks.supports_cancel(),
+    };
+    if supported {
+        Ok(())
+    } else {
+        Err(CoreError::BadArgs {
+            operation: operation.to_string(),
+            reason: "MCP peer did not negotiate support for this task action".to_string(),
+        })
+    }
+}
+
+fn unexpected_task_response(operation: &str) -> CoreError {
+    CoreError::McpProtocol {
+        operation: operation.to_string(),
+        message: "MCP server returned an unexpected task response".to_string(),
+        preview: Value::Null,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -183,6 +294,15 @@ impl McpSource {
     }
 
     pub async fn call_tool(&self, tool_name: &str, args: &Value) -> Result<McpCallResult> {
+        self.call_tool_with_schema(tool_name, args, None).await
+    }
+
+    pub async fn call_tool_with_schema(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        declared_output_schema: Option<&Value>,
+    ) -> Result<McpCallResult> {
         let args = args.as_object().ok_or_else(|| CoreError::BadArgs {
             operation: tool_name.to_string(),
             reason: "MCP tool arguments must be a JSON object".to_string(),
@@ -199,7 +319,15 @@ impl McpSource {
                 ),
             )
             .await?;
-        let normalized = self.normalize_tool_result(tool_name, result)?;
+        let mut normalized = self.normalize_tool_result(tool_name, result)?;
+        let output_schema_valid = normalized.structured_value.as_ref().and_then(|value| {
+            declared_output_schema.map(|schema| validate_declared_output(schema, value))
+        });
+        if let Some(Err(issue)) = output_schema_valid.as_ref() {
+            normalized.warnings.push(format!(
+                "MCP tool '{tool_name}' structuredContent does not match its declared output schema: {issue}"
+            ));
+        }
         let diagnostics = session.shutdown(self.timeout_ms).await;
 
         Ok(McpCallResult {
@@ -214,7 +342,200 @@ impl McpSource {
             ),
             diagnostics,
             received_error: normalized.received_error,
+            output_schema_valid: output_schema_valid.map(|result| result.is_ok()),
             warnings: normalized.warnings,
+        })
+    }
+
+    /// Explicitly ask a task-capable server to run one tool asynchronously.
+    /// This method never polls, retries, or cancels: subsequent lifecycle
+    /// actions must be selected by the caller.
+    pub async fn call_tool_as_task(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        ttl_ms: Option<u64>,
+    ) -> Result<McpTaskResult> {
+        let args = args.as_object().ok_or_else(|| CoreError::BadArgs {
+            operation: tool_name.to_string(),
+            reason: "MCP tool arguments must be a JSON object".to_string(),
+        })?;
+        let operation = format!("tools/call-task:{tool_name}");
+        let started = Instant::now();
+        let mut session = self.connect(&operation).await?;
+        require_task_capability(
+            session.server_info().as_ref(),
+            &operation,
+            TaskAction::CallTool,
+        )?;
+        let mut task = TaskMetadata::new();
+        task.ttl = ttl_ms;
+        let result = self
+            .request(
+                &operation,
+                session
+                    .client
+                    .peer()
+                    .send_request(ClientRequest::CallToolRequest(rmcp::model::Request::new(
+                        CallToolRequestParams::new(tool_name.to_string())
+                            .with_arguments(args.clone())
+                            .with_task(task),
+                    ))),
+            )
+            .await?;
+        let task = match result {
+            ServerResult::CreateTaskResult(result) => result.task,
+            _ => return Err(unexpected_task_response(&operation)),
+        };
+        let diagnostics = session.shutdown(self.timeout_ms).await;
+        Ok(McpTaskResult {
+            task: task.into(),
+            provenance: self.provenance(
+                &operation,
+                session.protocol_version(),
+                elapsed_ms(started),
+                0,
+                false,
+                false,
+            ),
+            diagnostics,
+            warnings: Vec::new(),
+        })
+    }
+
+    /// Fetch exactly one task status snapshot. Callers own polling cadence and
+    /// must honor the server-provided `poll_interval_ms` and `ttl_ms` fields.
+    pub async fn get_task(&self, task_id: &str) -> Result<McpTaskResult> {
+        let operation = "tasks/get";
+        let started = Instant::now();
+        let mut session = self.connect(operation).await?;
+        require_task_capability(session.server_info().as_ref(), operation, TaskAction::Get)?;
+        let result = self
+            .request(
+                operation,
+                session
+                    .client
+                    .peer()
+                    .send_request(ClientRequest::GetTaskRequest(rmcp::model::Request::new(
+                        GetTaskParams::new(task_id),
+                    ))),
+            )
+            .await?;
+        let task = match result {
+            ServerResult::GetTaskResult(result) => result.task,
+            _ => return Err(unexpected_task_response(operation)),
+        };
+        let diagnostics = session.shutdown(self.timeout_ms).await;
+        Ok(McpTaskResult {
+            task: task.into(),
+            provenance: self.provenance(
+                operation,
+                session.protocol_version(),
+                elapsed_ms(started),
+                0,
+                false,
+                false,
+            ),
+            diagnostics,
+            warnings: Vec::new(),
+        })
+    }
+
+    /// Explicitly fetch the terminal payload of a task created through
+    /// `call_tool_as_task`. A non-terminal status is rejected so intermediate
+    /// lifecycle data can never masquerade as a completed tool observation.
+    pub async fn get_task_result(&self, task_id: &str) -> Result<McpCallResult> {
+        let operation = "tasks/result";
+        let started = Instant::now();
+        let mut session = self.connect(operation).await?;
+        require_task_capability(session.server_info().as_ref(), operation, TaskAction::Get)?;
+        let result = self
+            .request(
+                operation,
+                session
+                    .client
+                    .peer()
+                    .send_request(ClientRequest::GetTaskPayloadRequest(
+                        rmcp::model::Request::new(GetTaskPayloadParams::new(task_id)),
+                    )),
+            )
+            .await?;
+        let tool_result = match result {
+            // A task created from tools/call commonly matches the original
+            // CallToolResult variant before the generic payload catch-all.
+            ServerResult::CallToolResult(result) => result,
+            // Other valid task payloads first land in rmcp's open catch-all;
+            // only accept them when they really deserialize as tools/call.
+            ServerResult::CustomResult(result) => {
+                serde_json::from_value(result.0).map_err(|error| CoreError::McpProtocol {
+                    operation: operation.to_string(),
+                    message: "task result was not a tools/call result".to_string(),
+                    preview: json!({"error": error.to_string()}),
+                })?
+            }
+            _ => return Err(unexpected_task_response(operation)),
+        };
+        let mut normalized = self.normalize_tool_result("task result", tool_result)?;
+        let diagnostics = session.shutdown(self.timeout_ms).await;
+        Ok(McpCallResult {
+            data: normalized.data,
+            provenance: self.provenance(
+                operation,
+                session.protocol_version(),
+                elapsed_ms(started),
+                normalized.response_bytes,
+                normalized.truncated,
+                normalized.structured_content,
+            ),
+            diagnostics,
+            received_error: normalized.received_error,
+            output_schema_valid: None,
+            warnings: std::mem::take(&mut normalized.warnings),
+        })
+    }
+
+    /// Explicitly request cancellation once. No retry or follow-up poll is
+    /// performed, so the returned snapshot is the only claimed transition.
+    pub async fn cancel_task(&self, task_id: &str) -> Result<McpTaskResult> {
+        let operation = "tasks/cancel";
+        let started = Instant::now();
+        let mut session = self.connect(operation).await?;
+        require_task_capability(
+            session.server_info().as_ref(),
+            operation,
+            TaskAction::Cancel,
+        )?;
+        let result = self
+            .request(
+                operation,
+                session
+                    .client
+                    .peer()
+                    .send_request(ClientRequest::CancelTaskRequest(rmcp::model::Request::new(
+                        CancelTaskParams::new(task_id),
+                    ))),
+            )
+            .await?;
+        let task = match result {
+            ServerResult::CancelTaskResult(result) => result.task,
+            // Both task-status response types are structurally identical, so
+            // rmcp's untagged decoder may select GetTaskResult first.
+            ServerResult::GetTaskResult(result) => result.task,
+            _ => return Err(unexpected_task_response(operation)),
+        };
+        let diagnostics = session.shutdown(self.timeout_ms).await;
+        Ok(McpTaskResult {
+            task: task.into(),
+            provenance: self.provenance(
+                operation,
+                session.protocol_version(),
+                elapsed_ms(started),
+                0,
+                false,
+                false,
+            ),
+            diagnostics,
+            warnings: Vec::new(),
         })
     }
 
@@ -247,6 +568,7 @@ impl McpSource {
             ),
             diagnostics,
             received_error: false,
+            output_schema_valid: None,
             warnings: normalized.warnings,
         })
     }
@@ -265,8 +587,21 @@ impl McpSource {
             })?;
         let stderr_task =
             stderr.map(|stderr| tokio::spawn(read_bounded(stderr, self.max_stderr_bytes)));
+        // Advertising this capability is a prerequisite for a later,
+        // explicit task command. Nothing in the synchronous path adds task
+        // fields or polls/cancels a task implicitly.
+        let mut tool_requests = ToolsTaskCapability::default();
+        tool_requests.call = Some(Default::default());
+        let mut requests = TaskRequestsCapability::default();
+        requests.tools = Some(tool_requests);
+        let mut tasks = TasksCapability::default();
+        tasks.requests = Some(requests);
+        tasks.list = Some(Default::default());
+        tasks.cancel = Some(Default::default());
+        let mut capabilities = ClientCapabilities::default();
+        capabilities.tasks = Some(tasks);
         let client_info = ClientInfo::new(
-            ClientCapabilities::default(),
+            capabilities,
             Implementation::new("prog", env!("CARGO_PKG_VERSION")),
         );
 
@@ -359,6 +694,7 @@ impl McpSource {
         result: CallToolResult,
     ) -> Result<NormalizedMcpData> {
         let received_error = result.is_error.unwrap_or(false);
+        let content = self.normalize_content_metadata(&result.content);
         let mut normalized = if let Some(data) = result.structured_content {
             let response_bytes = serde_json::to_vec(&data).map_or(0, |bytes| bytes.len());
             if response_bytes > self.max_content_bytes {
@@ -386,9 +722,11 @@ impl McpSource {
                         self.max_content_bytes
                     )],
                     received_error: false,
+                    structured_value: Some(data),
                 }
             } else {
                 NormalizedMcpData {
+                    structured_value: Some(data.clone()),
                     data,
                     response_bytes,
                     truncated: false,
@@ -400,6 +738,17 @@ impl McpSource {
         } else {
             self.normalize_content_blocks(&result.content)
         };
+        if let Some(content) = content {
+            normalized.response_bytes = normalized.response_bytes.saturating_add(content.bytes);
+            normalized.truncated |= content.truncated;
+            if content.truncated {
+                normalized.warnings.push(format!(
+                    "MCP content blocks exceeded max_content_bytes ({}); metadata was projected",
+                    self.max_content_bytes
+                ));
+            }
+            normalized.data = attach_content_metadata(normalized.data, content.value);
+        }
         if received_error {
             normalized.warnings.push(format!(
                 "MCP tool '{tool_name}' returned isError content; captured as error evidence"
@@ -423,6 +772,7 @@ impl McpSource {
             structured_content: false,
             warnings: Vec::new(),
             received_error: false,
+            structured_value: None,
         })
     }
 
@@ -440,7 +790,43 @@ impl McpSource {
             structured_content: false,
             warnings: Vec::new(),
             received_error: false,
+            structured_value: None,
         }
+    }
+
+    fn normalize_content_metadata(&self, content: &[ContentBlock]) -> Option<BoundedContent> {
+        if content.is_empty() {
+            return None;
+        }
+        let raw = serde_json::to_value(content).ok()?;
+        let safe = sanitize_mcp_metadata(raw);
+        let bytes = serde_json::to_vec(&safe).map_or(0, |bytes| bytes.len());
+        if bytes <= self.max_content_bytes {
+            return Some(BoundedContent {
+                value: safe,
+                bytes,
+                truncated: false,
+            });
+        }
+        let projection = project(
+            &safe,
+            &PreviewPolicy {
+                max_envelope_bytes: self.max_content_bytes,
+                ..PreviewPolicy::default()
+            },
+            "",
+        );
+        Some(BoundedContent {
+            value: json!({
+                "format": "content_blocks",
+                "preview": projection.preview,
+                "omitted": projection.omitted,
+                "byte_count": bytes,
+                "truncated": true,
+            }),
+            bytes,
+            truncated: true,
+        })
     }
 
     fn normalize_text(&self, text: String) -> NormalizedMcpData {
@@ -459,6 +845,7 @@ impl McpSource {
                 structured_content: false,
                 warnings: Vec::new(),
                 received_error: false,
+                structured_value: None,
             };
         }
         let lines: Vec<String> = bounded
@@ -493,6 +880,7 @@ impl McpSource {
             structured_content: false,
             warnings,
             received_error: false,
+            structured_value: None,
         }
     }
 
@@ -568,6 +956,133 @@ struct NormalizedMcpData {
     structured_content: bool,
     warnings: Vec<String>,
     received_error: bool,
+    /// Original structured content, retained only long enough to validate the
+    /// declared output schema before bounded projection.
+    structured_value: Option<Value>,
+}
+
+struct BoundedContent {
+    value: Value,
+    bytes: usize,
+    truncated: bool,
+}
+
+const CONTENT_METADATA_KEY: &str = "_prog_mcp_content";
+
+fn attach_content_metadata(data: Value, content: Value) -> Value {
+    match data {
+        Value::Object(mut object) if !object.contains_key(CONTENT_METADATA_KEY) => {
+            object.insert(CONTENT_METADATA_KEY.to_string(), content);
+            Value::Object(object)
+        }
+        data => json!({
+            "structured_content": data,
+            CONTENT_METADATA_KEY: content,
+        }),
+    }
+}
+
+/// Retain only protocol-defined display annotations. Arbitrary `_meta` is
+/// server-controlled extension data and cannot become persisted trusted state.
+/// This allowlist is deliberately empty until an extension earns a dedicated
+/// contract; the fact of removal is not hidden because the block remains.
+fn sanitize_mcp_metadata(value: Value) -> Value {
+    match value {
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(sanitize_mcp_metadata).collect())
+        }
+        Value::Object(values) => Value::Object(
+            values
+                .into_iter()
+                .filter(|(key, _)| key != "_meta")
+                .map(|(key, value)| (key, sanitize_mcp_metadata(value)))
+                .collect(),
+        ),
+        scalar => scalar,
+    }
+}
+
+const MAX_OUTPUT_SCHEMA_DEPTH: usize = 32;
+
+/// Validate the conservative, local subset of a declared JSON Schema used by
+/// MCP tools. Unknown schema keywords are intentionally ignored: they neither
+/// bless nor discard evidence. The work/depth bound prevents a server-owned
+/// schema from turning result capture into unbounded validation.
+fn validate_declared_output(schema: &Value, value: &Value) -> std::result::Result<(), String> {
+    validate_schema_at(schema, value, "", 0)
+}
+
+fn validate_schema_at(
+    schema: &Value,
+    value: &Value,
+    path: &str,
+    depth: usize,
+) -> std::result::Result<(), String> {
+    if depth >= MAX_OUTPUT_SCHEMA_DEPTH {
+        return Err(format!("schema validation exceeded depth limit at {path}"));
+    }
+    let Some(schema) = schema.as_object() else {
+        return Ok(());
+    };
+    if let Some(constant) = schema.get("const")
+        && value != constant
+    {
+        return Err(format!("{path} does not equal declared const"));
+    }
+    if let Some(values) = schema.get("enum").and_then(Value::as_array)
+        && !values.iter().any(|candidate| candidate == value)
+    {
+        return Err(format!("{path} is not one of the declared enum values"));
+    }
+    if let Some(expected) = schema.get("type").and_then(Value::as_str)
+        && !json_type_matches(expected, value)
+    {
+        return Err(format!("{path} must be {expected}"));
+    }
+    if let Some(required) = schema.get("required").and_then(Value::as_array) {
+        let object = value
+            .as_object()
+            .ok_or_else(|| format!("{path} must be an object to satisfy required fields"))?;
+        for field in required.iter().filter_map(Value::as_str) {
+            if !object.contains_key(field) {
+                return Err(format!("{path}/{field} is required"));
+            }
+        }
+    }
+    if let (Some(properties), Some(object)) = (
+        schema.get("properties").and_then(Value::as_object),
+        value.as_object(),
+    ) {
+        for (field, field_schema) in properties {
+            if let Some(field_value) = object.get(field) {
+                validate_schema_at(
+                    field_schema,
+                    field_value,
+                    &format!("{path}/{field}"),
+                    depth + 1,
+                )?;
+            }
+        }
+    }
+    if let (Some(item_schema), Some(items)) = (schema.get("items"), value.as_array()) {
+        for (index, item) in items.iter().enumerate() {
+            validate_schema_at(item_schema, item, &format!("{path}/{index}"), depth + 1)?;
+        }
+    }
+    Ok(())
+}
+
+fn json_type_matches(expected: &str, value: &Value) -> bool {
+    match expected {
+        "object" => value.is_object(),
+        "array" => value.is_array(),
+        "string" => value.is_string(),
+        "number" => value.is_number(),
+        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        "boolean" => value.is_boolean(),
+        "null" => value.is_null(),
+        _ => true,
+    }
 }
 
 #[derive(Default)]

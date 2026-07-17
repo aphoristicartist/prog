@@ -157,7 +157,6 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
             "source_id": "local",
             "operation": "list",
             "root_path": "",
-            "redaction_version": 1,
             "created_at": "2026-07-04T00:00:00Z",
             "expires_at": "2026-07-05T00:00:00Z",
             "x_future": "kept"

@@ -346,8 +346,9 @@ The safety model is enforced in code and mapped to executable tests in
 - Secret-like object keys and supported embedded Bearer, PEM, JWT, name/value,
   and URL-parameter patterns are redacted before persistence.
 - Sensitive or non-cacheable operation results are not persisted.
-- Cursor expansion is provenance-scoped and rejects stale, foreign, expired,
-  or redaction-version-incompatible cursors.
+- Cursor expansion is provenance-scoped and rejects stale, foreign, or expired
+  cursors. A pre-release store-contract change resets the local store instead
+  of interpreting stale cursor records.
 - Discovery probes only operations allowed by the read-only effect policy.
 - Mutating operations require `--yes`; shell-backed operations additionally
   require source-profile trust.

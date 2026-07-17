@@ -69,6 +69,23 @@ TOOLS = [
         "annotations": {"readOnlyHint": True},
     },
     {
+        "name": "schema_mismatch",
+        "description": "Returns structured content that violates outputSchema",
+        "inputSchema": {"type": "object", "properties": {}},
+        "outputSchema": {
+            "type": "object",
+            "required": ["results"],
+            "properties": {"results": {"type": "array"}},
+        },
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "content_metadata",
+        "description": "Returns annotated content and a resource link",
+        "inputSchema": {"type": "object", "properties": {}},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
         "name": "slow",
         "description": "Sleeps past the client timeout",
         "inputSchema": {"type": "object", "properties": {}},
@@ -117,6 +134,20 @@ def structured_results():
     }
 
 
+def task(task_id, status, message=None):
+    value = {
+        "taskId": task_id,
+        "status": status,
+        "createdAt": "2026-07-17T00:00:00Z",
+        "lastUpdatedAt": "2026-07-17T00:00:01Z",
+        "ttl": 1000,
+        "pollInterval": 25,
+    }
+    if message is not None:
+        value["statusMessage"] = message
+    return value
+
+
 for line in sys.stdin:
     message = json.loads(line)
     method = message.get("method")
@@ -127,9 +158,21 @@ for line in sys.stdin:
         continue
 
     if method == "initialize":
+        if MODE == "task_capability":
+            task_cap = message.get("params", {}).get("capabilities", {}).get("tasks", {})
+            if not task_cap.get("requests", {}).get("tools", {}).get("call") == {}:
+                send_error(message_id, -32602, "client did not negotiate task tool calls")
+                continue
+        capabilities = {"tools": {}, "resources": {}, "prompts": {}}
+        if MODE == "task_lifecycle":
+            capabilities["tasks"] = {
+                "requests": {"tools": {"call": {}}},
+                "list": {},
+                "cancel": {},
+            }
         send_result(message_id, {
             "protocolVersion": "2025-11-25",
-            "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
+            "capabilities": capabilities,
             "serverInfo": {"name": "fixture-mcp", "version": "1.0.0"},
             "instructions": "Fixture MCP server",
         })
@@ -143,7 +186,9 @@ for line in sys.stdin:
         send_result(message_id, {"prompts": PROMPTS})
     elif method == "tools/call":
         name = message.get("params", {}).get("name")
-        if name == "search_docs":
+        if MODE == "task_lifecycle" and message.get("params", {}).get("task") is not None:
+            send_result(message_id, {"task": task("created", "working", "accepted")})
+        elif name == "search_docs":
             send_result(message_id, {
                 "content": [{"type": "text", "text": "structured result"}],
                 "structuredContent": structured_results(),
@@ -159,11 +204,62 @@ for line in sys.stdin:
                 "content": [{"type": "text", "text": "bad fixture input"}],
                 "isError": True,
             })
+        elif name == "schema_mismatch":
+            send_result(message_id, {
+                "content": [{"type": "text", "text": "schema mismatch retained"}],
+                "structuredContent": {"unexpected": True},
+                "isError": False,
+            })
+        elif name == "content_metadata":
+            send_result(message_id, {
+                "content": [
+                    {"type": "text", "text": "annotated text", "annotations": {"audience": ["assistant"], "priority": 0.8}, "_meta": {"untrusted": "discard"}},
+                    {"type": "resource_link", "name": "report", "uri": "fixture://report", "mimeType": "application/json", "annotations": {"lastModified": "2026-07-17T00:00:00Z"}, "_meta": {"secret": "discard"}}
+                ],
+                "isError": False,
+            })
         elif name == "slow":
             time.sleep(5)
             send_result(message_id, {"content": [{"type": "text", "text": "late"}]})
         else:
             send_error(message_id, -32602, "unknown tool")
+    elif method == "tasks/get":
+        task_id = message.get("params", {}).get("taskId")
+        statuses = {
+            "working": "working",
+            "input": "input_required",
+            "completed": "completed",
+            "failed": "failed",
+            "cancelled": "cancelled",
+        }
+        if task_id == "expired":
+            send_error(message_id, -32002, "task expired")
+        elif task_id in statuses:
+            send_result(message_id, task(task_id, statuses[task_id]))
+        else:
+            send_error(message_id, -32602, "unknown task")
+    elif method == "tasks/result":
+        task_id = message.get("params", {}).get("taskId")
+        if task_id == "completed":
+            send_result(message_id, {
+                "content": [{"type": "text", "text": "completed result"}],
+                "structuredContent": {"ok": True},
+                "isError": False,
+            })
+        elif task_id == "failed":
+            send_error(message_id, -32001, "task failed")
+        elif task_id == "expired":
+            send_error(message_id, -32002, "task expired")
+        else:
+            send_error(message_id, -32602, "task is not terminal")
+    elif method == "tasks/cancel":
+        task_id = message.get("params", {}).get("taskId")
+        if task_id == "completed":
+            send_error(message_id, -32602, "terminal task cannot be cancelled")
+        elif task_id == "expired":
+            send_error(message_id, -32002, "task expired")
+        else:
+            send_result(message_id, task(task_id, "cancelled", "cancelled by caller"))
     elif method == "resources/read":
         send_result(message_id, {
             "contents": [{
@@ -349,6 +445,128 @@ async fn tool_is_error_returns_captured_error_evidence() {
     let rendered = serde_json::to_string(&result).unwrap();
     assert!(rendered.contains("bad fixture input"));
     assert!(rendered.len() < 2048);
+}
+
+#[tokio::test]
+async fn structured_content_schema_mismatch_is_explicit_and_retained() {
+    let fixture = fixture("normal");
+    let discovery = fixture.source.discover().await.unwrap();
+    let schema = operation(&discovery.profile, "schema_mismatch")
+        .declared_output_schema
+        .as_ref()
+        .unwrap();
+    let result = fixture
+        .source
+        .call_tool_with_schema("schema_mismatch", &json!({}), Some(schema))
+        .await
+        .unwrap();
+
+    assert_eq!(result.output_schema_valid, Some(false));
+    assert_eq!(result.data["unexpected"], true);
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("does not match its declared output schema"))
+    );
+}
+
+#[tokio::test]
+async fn content_block_types_annotations_and_links_are_retained_without_meta() {
+    let fixture = fixture("normal");
+    let result = fixture
+        .source
+        .call_tool("content_metadata", &json!({}))
+        .await
+        .unwrap();
+    let blocks = result.data["_prog_mcp_content"].as_array().unwrap();
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0]["type"], "text");
+    assert_eq!(blocks[0]["annotations"]["audience"], json!(["assistant"]));
+    assert_eq!(blocks[1]["type"], "resource_link");
+    assert_eq!(blocks[1]["uri"], "fixture://report");
+    assert!(blocks.iter().all(|block| block.get("_meta").is_none()));
+}
+
+#[tokio::test]
+async fn client_explicitly_negotiates_task_capability_without_using_tasks() {
+    let fixture = fixture("task_capability");
+    let discovery = fixture.source.discover().await.unwrap();
+    assert_eq!(
+        discovery.provenance.protocol_version.as_deref(),
+        Some("2025-11-25")
+    );
+}
+
+#[tokio::test]
+async fn task_lifecycle_is_explicit_capability_gated_and_reconnect_safe() {
+    let fixture = fixture("task_lifecycle");
+
+    let accepted = fixture
+        .source
+        .call_tool_as_task("search_docs", &json!({"query": "rust"}), Some(1_000))
+        .await
+        .unwrap();
+    assert_eq!(accepted.task.task_id, "created");
+    assert_eq!(
+        accepted.task.status,
+        prog_adapters::mcp::McpTaskStatus::Working
+    );
+    assert_eq!(accepted.task.ttl_ms, Some(1_000));
+    assert_eq!(accepted.task.poll_interval_ms, Some(25));
+
+    // Each call starts a fresh MCP connection, proving task state is an
+    // external reference rather than hidden local scheduler state.
+    for (task_id, expected) in [
+        ("working", prog_adapters::mcp::McpTaskStatus::Working),
+        ("input", prog_adapters::mcp::McpTaskStatus::InputRequired),
+        ("completed", prog_adapters::mcp::McpTaskStatus::Completed),
+        ("failed", prog_adapters::mcp::McpTaskStatus::Failed),
+        ("cancelled", prog_adapters::mcp::McpTaskStatus::Cancelled),
+    ] {
+        assert_eq!(
+            fixture.source.get_task(task_id).await.unwrap().task.status,
+            expected
+        );
+    }
+
+    let result = fixture.source.get_task_result("completed").await.unwrap();
+    assert_eq!(result.data["ok"], true);
+    assert!(result.provenance.structured_content);
+
+    let cancelled = fixture.source.cancel_task("working").await.unwrap();
+    assert_eq!(
+        cancelled.task.status,
+        prog_adapters::mcp::McpTaskStatus::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn task_failures_and_unavailable_results_are_explicit_without_hidden_actions() {
+    let fixture = fixture("task_lifecycle");
+
+    for task_id in ["working", "failed", "expired"] {
+        let error = fixture.source.get_task_result(task_id).await.unwrap_err();
+        assert_eq!(error.kind(), "mcp_protocol");
+    }
+    for task_id in ["expired", "completed"] {
+        let error = fixture.source.cancel_task(task_id).await.unwrap_err();
+        assert_eq!(error.kind(), "mcp_protocol");
+    }
+    let error = fixture.source.get_task("expired").await.unwrap_err();
+    assert_eq!(error.kind(), "mcp_protocol");
+}
+
+#[tokio::test]
+async fn task_operations_never_send_extension_fields_to_older_peers() {
+    let fixture = fixture("normal");
+    let error = fixture
+        .source
+        .call_tool_as_task("search_docs", &json!({"query": "rust"}), None)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), "bad_args");
+    assert!(error.to_string().contains("did not negotiate"));
 }
 
 #[tokio::test]

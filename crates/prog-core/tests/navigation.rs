@@ -1,6 +1,6 @@
 use prog_core::{
     FindingOptions, LensManifest, SearchOptions, evidence_block, ranked_findings_with_lens,
-    search_payload,
+    search_payload, validate_lens_manifest,
 };
 use serde_json::json;
 
@@ -183,4 +183,51 @@ fn lens_findings_resolve_existing_wildcards_and_reject_path_escape() {
     }))
     .unwrap();
     assert!(prog_core::validate_lens_manifest(&escaping).is_err());
+}
+
+#[test]
+fn lens_identity_selectors_are_declarative_and_ignore_line_movement() {
+    let lens: LensManifest = serde_json::from_value(json!({
+        "schema": "prog.lens_manifest",
+        "id": "rust.diagnostics",
+        "findings": [{
+            "kind": "diagnostic",
+            "path": "/diagnostics/*",
+            "confidence": 0.9,
+            "reason": "compiler diagnostic",
+            "identity_selectors": {
+                "subject": "/code",
+                "message_template": "/message",
+                "file": "/file"
+            }
+        }]
+    }))
+    .unwrap();
+    let first = json!({"diagnostics": [{
+        "code": "E0308", "message": "mismatched types", "file": "src/a.rs", "line": 3
+    }]});
+    let moved = json!({"diagnostics": [{
+        "code": "E0308", "message": "mismatched types", "file": "src/a.rs", "line": 300
+    }]});
+    let first_finding = ranked_findings_with_lens(&first, &FindingOptions::default(), Some(&lens))
+        .unwrap()
+        .pop()
+        .unwrap();
+    let moved_finding = ranked_findings_with_lens(&moved, &FindingOptions::default(), Some(&lens))
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(first_finding.fingerprint, moved_finding.fingerprint);
+    assert!(first_finding.occurrence_id.unwrap().starts_with("fo_"));
+
+    let unsafe_selector: LensManifest = serde_json::from_value(json!({
+        "schema": "prog.lens_manifest",
+        "id": "bad.identity",
+        "findings": [{
+            "kind": "diagnostic", "path": "/diagnostics/*", "confidence": 0.9,
+            "reason": "bad", "identity_selectors": {"subject": "/items/*"}
+        }]
+    }))
+    .unwrap();
+    assert!(validate_lens_manifest(&unsafe_selector).is_err());
 }

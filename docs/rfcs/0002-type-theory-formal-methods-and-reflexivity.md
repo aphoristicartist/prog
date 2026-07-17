@@ -145,8 +145,8 @@ Two visible consequences in V1:
    (binary `prog`). Boundaries stay conceptually identical.
 2. **Cursors are stored, not encoded.** Cursor tokens are random IDs
    (`pc1_…`) referencing records in the local store (cache key, root path,
-   redaction version, expiry). Unforgeable by construction (128-bit random),
-   fail closed on expiry/redaction-version mismatch, survive across
+   expiry). Unforgeable by construction (128-bit random), fail closed on
+   expiry, survive across
    processes, and enable offline expansion. This replaces the
    encode-and-sign option; no crypto dependency needed for a local store.
 3. **MCP adapter harvests `outputSchema`** (2025-11-25) as a schema prior;

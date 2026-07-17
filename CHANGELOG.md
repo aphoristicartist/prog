@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Pinned MSRV at Rust 1.85 (`rust-version = "1.85"` in the workspace manifest), propagated to all crates, and added a dedicated CI job that builds and tests on `rust-toolchain@1.85.0` (#167).
+- Pinned MSRV at Rust 1.89 (`rust-version = "1.89"` in the workspace manifest), propagated to all crates, and added a dedicated CI job that builds and tests on `rust-toolchain@1.89.0` (#167).
 - Extended macOS CI to match Ubuntu: `cargo fmt --all --check` and `cargo clippy --all-targets --all-features -- -D warnings` now run before tests on both platforms (#167).
 - Added a tag-triggered release pipeline (`release.yml`): cross-platform tarballs with SHA256SUMS, CycloneDX SBOM, build-provenance attestations, a `cargo package` leak guard, and a release-candidate smoke test that reopens the local store across process exits (#167).
 - Added a version-consistency CI guard (`check-version-consistency.sh`) asserting CHANGELOG, Cargo.toml version, and git tag alignment on tag builds (#167).

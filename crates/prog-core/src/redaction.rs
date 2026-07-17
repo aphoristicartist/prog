@@ -6,7 +6,6 @@ use crate::Extra;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct RedactionPolicy {
-    pub version: u32,
     #[serde(default)]
     pub rules: Vec<RedactionRule>,
     /// Normalized field names that are never redacted even when they would
@@ -93,7 +92,6 @@ impl Default for RedactionConfig {
 impl Default for RedactionPolicy {
     fn default() -> Self {
         Self {
-            version: 1,
             rules: vec![RedactionRule {
                 name: "secret_field".to_string(),
                 class: RedactionClass::Persistence,
@@ -176,7 +174,6 @@ impl RedactionPolicy {
             .collect();
         allowlist.extend(config.allowlist.iter().map(|field| normalize_field(field)));
         Self {
-            version: 1,
             rules: vec![RedactionRule {
                 name: "secret_field".to_string(),
                 class: RedactionClass::Persistence,

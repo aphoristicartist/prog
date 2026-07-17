@@ -71,7 +71,6 @@ It records:
   unknown
 - captured time, cwd, environment references, and invocation metadata where
   relevant
-- redaction policy version
 - parser and indexer metadata
 - cache key and cursor roots
 - safety, freshness, trust, completeness, lossiness, and cost metadata

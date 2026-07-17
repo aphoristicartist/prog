@@ -1,7 +1,7 @@
 [
   {
-    "occurrence_id": "fi_sha256:54911b4a2ffabbe432198c3c7735c9f9862ccd1592f801d1124f955c2c7edfb8",
-    "fingerprint": "sha256:54911b4a2ffabbe432198c3c7735c9f9862ccd1592f801d1124f955c2c7edfb8",
+    "occurrence_id": "fo_00000001",
+    "fingerprint": "sha256:c7dd4327525183faf01fad143f3cc54084f00bcad95f6814f8a2cf8b9f93cfc3",
     "rank": 1,
     "kind": "rust_compile_error",
     "path": "/failure_sections/0",
@@ -25,8 +25,8 @@
     "priority": 95
   },
   {
-    "occurrence_id": "fi_sha256:a6cc719e7df0a61c15924706b4b8f3f0ee25e185063c67250e5e2ab7d71435db",
-    "fingerprint": "sha256:a6cc719e7df0a61c15924706b4b8f3f0ee25e185063c67250e5e2ab7d71435db",
+    "occurrence_id": "fo_00000002",
+    "fingerprint": "sha256:1fd6b299b90ccec4d6da8751c8990027313e3932b84e2872f2fe0e74ed847988",
     "rank": 2,
     "kind": "compile_error",
     "path": "/failure_sections/1",
@@ -50,8 +50,8 @@
     "priority": 60
   },
   {
-    "occurrence_id": "fi_sha256:5538de383e7dcc76edee2cd46dc6fa0fc9bc851cba33d696c5591e8397a5ac25",
-    "fingerprint": "sha256:5538de383e7dcc76edee2cd46dc6fa0fc9bc851cba33d696c5591e8397a5ac25",
+    "occurrence_id": "fo_00000003",
+    "fingerprint": "sha256:3410b0fedfa6216935c2cf38361e3ba712f72b072bc10c007fe9a85783a493d1",
     "rank": 3,
     "kind": "rust_compile_error",
     "path": "/failure_sections/0/lines/0",
@@ -68,8 +68,8 @@
     }
   },
   {
-    "occurrence_id": "fi_sha256:c39cad8bae9f77d6b45f879431b5c45c807d8f4d63982f20c9c9508ced86bdb5",
-    "fingerprint": "sha256:c39cad8bae9f77d6b45f879431b5c45c807d8f4d63982f20c9c9508ced86bdb5",
+    "occurrence_id": "fo_00000004",
+    "fingerprint": "sha256:330831ff86abf66189eed5a844deaa13e39decb87a9b1322b9dd5fd7269b682a",
     "rank": 4,
     "kind": "compile_error",
     "path": "/failure_sections/1/lines/0",
@@ -86,6 +86,7 @@
     }
   },
   {
+    "occurrence_id": "fo_00000005",
     "rank": 5,
     "kind": "nonzero_exit",
     "path": "/command",

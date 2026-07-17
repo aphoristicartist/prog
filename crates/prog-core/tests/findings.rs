@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use prog_core::{
-    CommandHintConfig, FindingOptions, RedactionPolicy, SourceSpanExactness, extract_source_spans,
-    extract_source_spans_with_workspace_root, ranked_findings,
+    CommandHintConfig, Extra, FindingIdentityContext, FindingOptions, RawPayload, RedactionPolicy,
+    SourceSpan, SourceSpanExactness, extract_source_spans,
+    extract_source_spans_with_workspace_root, fingerprint_finding, ranked_findings,
 };
 use serde_json::{Value, json};
 
@@ -919,4 +920,114 @@ fn generic_fingerprints_preserve_values_but_normalize_whitespace() {
     assert_eq!(first.fingerprint, whitespace.fingerprint);
     assert_ne!(first.fingerprint, different.fingerprint);
     assert_eq!(first.occurrence_id, whitespace.occurrence_id);
+}
+
+#[test]
+fn canonical_fingerprint_uses_stable_components_not_key_or_location_order() {
+    let first = json!({
+        "message": " error[E0308]: expected u32, found String ",
+        "nodeid": "tests/test_math.py::test_sum",
+        "code": "E0308"
+    });
+    let reordered = json!({
+        "code": "E0308",
+        "nodeid": "tests/test_math.py::test_sum",
+        "message": "error[E0308]:   expected u32, found String"
+    });
+    let span_at_line_8 = SourceSpan {
+        path: Some("src/math.rs".to_string()),
+        uri: None,
+        start_line: 8,
+        start_column: Some(3),
+        end_line: None,
+        end_column: None,
+        role: "primary".to_string(),
+        label: None,
+        origin: "test".to_string(),
+        exactness: SourceSpanExactness::Exact,
+        redaction_state: None,
+        extra: Extra::new(),
+    };
+    let span_at_line_800 = SourceSpan {
+        start_line: 800,
+        start_column: Some(1),
+        ..span_at_line_8.clone()
+    };
+
+    let first_fingerprint = fingerprint_finding(
+        "rust_compile_error",
+        "provider.cargo",
+        &first,
+        Some(&span_at_line_8),
+        None,
+        &FindingIdentityContext::default(),
+    );
+    let reordered_fingerprint = fingerprint_finding(
+        "rust_compile_error",
+        "provider.cargo",
+        &reordered,
+        Some(&span_at_line_800),
+        None,
+        &FindingIdentityContext::default(),
+    );
+    assert_eq!(first_fingerprint, reordered_fingerprint);
+
+    let changed_subject = json!({
+        "message": "error[E0308]: expected u32, found String",
+        "nodeid": "tests/test_math.py::test_product",
+        "code": "E0308"
+    });
+    assert_ne!(
+        first_fingerprint,
+        fingerprint_finding(
+            "rust_compile_error",
+            "provider.cargo",
+            &changed_subject,
+            Some(&span_at_line_8),
+            None,
+            &FindingIdentityContext::default(),
+        )
+    );
+}
+
+#[test]
+fn fingerprints_are_derived_after_redaction_and_occurrences_do_not_collapse() {
+    let first = RawPayload::new(json!({
+        "items": [
+            {"error": "Error: request rejected", "token": "secret-one"},
+            {"error": "Error: request rejected", "token": "secret-two"}
+        ]
+    }))
+    .redact(&RedactionPolicy::default())
+    .payload;
+    let second = RawPayload::new(json!({
+        "items": [
+            {"error": "Error: request rejected", "token": "different-secret"}
+        ]
+    }))
+    .redact(&RedactionPolicy::default())
+    .payload;
+
+    let first_findings = ranked_findings(first.as_value(), &FindingOptions::default()).unwrap();
+    let second_findings = ranked_findings(second.as_value(), &FindingOptions::default()).unwrap();
+    let matching = first_findings
+        .iter()
+        .filter(|finding| finding.kind == "generic_error_field")
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 2);
+    assert_eq!(matching[0].fingerprint, matching[1].fingerprint);
+    assert_ne!(matching[0].occurrence_id, matching[1].occurrence_id);
+    assert_eq!(
+        matching[0].fingerprint,
+        second_findings
+            .iter()
+            .find(|finding| finding.kind == "generic_error_field")
+            .unwrap()
+            .fingerprint
+    );
+    assert!(
+        !serde_json::to_string(&first_findings)
+            .unwrap()
+            .contains("secret-one")
+    );
 }

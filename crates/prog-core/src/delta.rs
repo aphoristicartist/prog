@@ -29,6 +29,13 @@ pub fn compare_observations(
             (None, Some(_)) => DeltaFindingStatus::New,
             (Some(_), Some(_)) => DeltaFindingStatus::Persisting,
             (Some(_), None) if assessment.can_prove_absence => DeltaFindingStatus::Resolved,
+            // A declared but non-exhaustive selection is a targeted rerun.
+            // Its missing findings were not observed, not resolved.
+            (Some(_), None)
+                if !subject.selection.exhaustive && !normalized_scopes(subject).is_empty() =>
+            {
+                DeltaFindingStatus::NotObserved
+            }
             (Some(finding), None)
                 if finding_is_outside_subject_coverage(finding, subject, &assessment) =>
             {
@@ -100,11 +107,7 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
         } else {
             SubjectIdentity::Different
         };
-    let scope_relationship = scope_relationship(
-        baseline,
-        subject,
-        invocation_match && comparison_family_match,
-    );
+    let scope_relationship = scope_relationship(baseline, subject);
     let normalization_compatible = baseline.parser == subject.parser
         && baseline.lens == subject.lens
         && baseline.provider == subject.provider;
@@ -142,6 +145,13 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
     if !payloads_available {
         reasons.push("one or both redacted payloads are no longer available".to_string());
     }
+    let selection_covers_absence = baseline.selection.exhaustive
+        && subject.selection.exhaustive
+        && !normalized_scopes(baseline).is_empty()
+        && !normalized_scopes(subject).is_empty();
+    if !selection_covers_absence {
+        reasons.push("selection coverage is unknown or not exhaustive".to_string());
+    }
     let can_prove_absence = invocation_match
         && comparison_family_match
         && matches!(subject_identity, SubjectIdentity::Same)
@@ -151,6 +161,7 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
         )
         && baseline.capture.can_prove_absence
         && subject.capture.can_prove_absence
+        && selection_covers_absence
         && normalization_compatible
         && payloads_available
         && source_validity == crate::SourceValidity::ConfirmedUnchanged;
@@ -172,15 +183,10 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
 fn scope_relationship(
     baseline: &ObservationRecord,
     subject: &ObservationRecord,
-    same_invocation_and_family: bool,
 ) -> ScopeRelationship {
     let baseline_scopes = normalized_scopes(baseline);
     let subject_scopes = normalized_scopes(subject);
-    if baseline.selection.exhaustive
-        && subject.selection.exhaustive
-        && !baseline_scopes.is_empty()
-        && !subject_scopes.is_empty()
-    {
+    if !baseline_scopes.is_empty() && !subject_scopes.is_empty() {
         if baseline_scopes == subject_scopes {
             return ScopeRelationship::Equal;
         }
@@ -195,11 +201,7 @@ fn scope_relationship(
         }
         return ScopeRelationship::Overlap;
     }
-    if same_invocation_and_family {
-        ScopeRelationship::Equal
-    } else {
-        ScopeRelationship::Unknown
-    }
+    ScopeRelationship::Unknown
 }
 
 fn normalized_scopes(observation: &ObservationRecord) -> BTreeSet<String> {
@@ -370,7 +372,11 @@ mod tests {
             source_id: "run".to_string(),
             operation: "test".to_string(),
             comparison_family: Some("test".to_string()),
-            selection: SelectionCoverage::default(),
+            selection: SelectionCoverage {
+                scopes: vec!["/all".to_string()],
+                exhaustive: true,
+                extra: Extra::new(),
+            },
             subject_keys: Vec::new(),
             captured_at: "2026-07-13T12:00:00Z".to_string(),
             duration_ms: None,
@@ -521,12 +527,11 @@ mod tests {
             );
         }
 
-        let unknown = compare_observations(
-            &observation("a", "one", true),
-            &observation("b", "two", true),
-            &[],
-            &[],
-        );
+        let mut baseline = observation("a", "one", true);
+        baseline.selection = SelectionCoverage::default();
+        let mut subject = observation("b", "two", true);
+        subject.selection = SelectionCoverage::default();
+        let unknown = compare_observations(&baseline, &subject, &[], &[]);
         assert_eq!(
             unknown.assessment.scope_relationship,
             ScopeRelationship::Unknown
@@ -606,12 +611,11 @@ mod tests {
 
     #[test]
     fn unkeyed_collections_remain_unknown() {
-        let delta = compare_observations(
-            &observation("a", "first", true),
-            &observation("b", "second", true),
-            &[finding("old")],
-            &[],
-        );
+        let mut baseline = observation("a", "first", true);
+        baseline.selection = SelectionCoverage::default();
+        let mut subject = observation("b", "second", true);
+        subject.selection = SelectionCoverage::default();
+        let delta = compare_observations(&baseline, &subject, &[finding("old")], &[]);
         assert_eq!(delta.findings[0].status, DeltaFindingStatus::Unknown);
         assert_eq!(
             delta.assessment.scope_relationship,

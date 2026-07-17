@@ -174,6 +174,7 @@ proptest! {
         let findings = ranked_findings(&payload, &options).unwrap();
 
         let mut seen = HashSet::new();
+        let mut occurrence_ids = HashSet::new();
         for (index, finding) in findings.iter().enumerate() {
             prop_assert_eq!(
                 finding.rank,
@@ -187,6 +188,15 @@ proptest! {
             );
             let key = (finding.path.clone(), finding.kind.clone());
             prop_assert!(seen.insert(key.clone()), "duplicate (path, kind): {:?}", key);
+            let occurrence_id = finding
+                .occurrence_id
+                .as_ref()
+                .expect("every emitted finding has an observation-local occurrence id");
+            prop_assert!(occurrence_id.starts_with("fo_"));
+            prop_assert!(
+                occurrence_ids.insert(occurrence_id.clone()),
+                "duplicate occurrence id: {occurrence_id}"
+            );
         }
     }
 }

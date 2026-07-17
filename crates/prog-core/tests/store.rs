@@ -112,6 +112,35 @@ fn existing_or_pre_capture_lifecycle_store_is_reset() {
 }
 
 #[test]
+fn reset_is_idempotent_after_the_current_contract_is_initialized() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache");
+    fs::create_dir_all(&cache).unwrap();
+    let db = redb::Database::create(cache.join("data.redb")).unwrap();
+    let write = db.begin_write().unwrap();
+    {
+        const STATE: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("state");
+        let mut state = write.open_table(STATE).unwrap();
+        state
+            .insert("store_schema", b"prog.store.delta_contract".as_slice())
+            .unwrap();
+    }
+    write.commit().unwrap();
+    drop(db);
+
+    let store = Store::open(dir.path()).unwrap();
+    let payload = redacted(json!({"current": true}));
+    let hash = store.put_payload(&payload).unwrap();
+    drop(store);
+
+    let reopened = Store::open(dir.path()).unwrap();
+    assert_eq!(
+        reopened.get_payload(&hash).unwrap().unwrap().as_value(),
+        payload.as_value()
+    );
+}
+
+#[test]
 fn session_predecessor_requires_matching_comparison_family() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
@@ -205,12 +234,12 @@ fn entries_respect_ttl_and_non_cacheable_sensitive_results_are_not_persisted() {
 }
 
 #[test]
-fn cursors_fail_closed_for_missing_expired_and_redaction_mismatch() {
+fn cursors_fail_closed_for_missing_and_expired_records() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
     let now = Utc::now();
 
-    let missing = store.get_cursor_at("pc1_missing", 1, now).unwrap_err();
+    let missing = store.get_cursor_at("pc1_missing", now).unwrap_err();
     assert_eq!(missing.kind(), "cursor_not_found");
 
     let expired = CursorRecord {
@@ -218,7 +247,6 @@ fn cursors_fail_closed_for_missing_expired_and_redaction_mismatch() {
         source_id: "source".to_string(),
         operation: "op".to_string(),
         root_path: "".to_string(),
-        redaction_version: 1,
         created_at: format_time(now - Duration::seconds(10)),
         expires_at: format_time(now - Duration::seconds(1)),
         observation_id: None,
@@ -226,23 +254,14 @@ fn cursors_fail_closed_for_missing_expired_and_redaction_mismatch() {
     };
     store.put_cursor("pc1_expired", &expired).unwrap();
     assert_eq!(
-        store
-            .get_cursor_at("pc1_expired", 1, now)
-            .unwrap_err()
-            .kind(),
+        store.get_cursor_at("pc1_expired", now).unwrap_err().kind(),
         "cursor_expired"
     );
 
-    let mut mismatched = expired;
-    mismatched.expires_at = format_time(now + Duration::seconds(60));
-    store.put_cursor("pc1_mismatch", &mismatched).unwrap();
-    assert_eq!(
-        store
-            .get_cursor_at("pc1_mismatch", 2, now)
-            .unwrap_err()
-            .kind(),
-        "redaction_version_mismatch"
-    );
+    let mut current = expired;
+    current.expires_at = format_time(now + Duration::seconds(60));
+    store.put_cursor("pc1_current", &current).unwrap();
+    assert!(store.get_cursor_at("pc1_current", now).is_ok());
 }
 
 #[test]
@@ -259,7 +278,6 @@ fn purge_expired_cascades_to_cursors() {
         source_id: entry.source_id.clone(),
         operation: entry.operation.clone(),
         root_path: "".to_string(),
-        redaction_version: 1,
         created_at: format_time(Utc::now()),
         expires_at: format_time(Utc::now() + Duration::seconds(60)),
         observation_id: None,
@@ -272,7 +290,7 @@ fn purge_expired_cascades_to_cursors() {
     assert_eq!(summary.purged_cursors, 1);
     assert!(store.get_entry(&entry.key).unwrap().is_none());
     assert_eq!(
-        store.get_cursor("pc1_cursor", 1).unwrap_err().kind(),
+        store.get_cursor("pc1_cursor").unwrap_err().kind(),
         "cursor_not_found"
     );
 }
@@ -358,7 +376,6 @@ fn expiry_marks_only_still_recoverable_observations_expired() {
                 source_id: "source".to_string(),
                 operation: "read".to_string(),
                 root_path: "".to_string(),
-                redaction_version: 1,
                 created_at: format_time(now - Duration::seconds(2)),
                 expires_at: format_time(now - Duration::seconds(1)),
                 observation_id: Some(cursor_observation.observation_id.clone()),
@@ -368,7 +385,7 @@ fn expiry_marks_only_still_recoverable_observations_expired() {
         .unwrap();
     assert_eq!(
         store
-            .get_cursor_at("pc1_expired_observation", 1, now)
+            .get_cursor_at("pc1_expired_observation", now)
             .unwrap_err()
             .kind(),
         "cursor_expired"
@@ -476,7 +493,6 @@ fn payload_quota_evicts_whole_shared_groups_and_preserves_metadata_lineage() {
                     source_id: "source".to_string(),
                     operation: "read".to_string(),
                     root_path: "".to_string(),
-                    redaction_version: 1,
                     created_at: "2020-01-01T00:00:00Z".to_string(),
                     expires_at: "2030-01-01T00:00:00Z".to_string(),
                     observation_id: Some(old_observation.observation_id.clone()),
@@ -511,7 +527,7 @@ fn payload_quota_evicts_whole_shared_groups_and_preserves_metadata_lineage() {
         EvidenceAvailability::MetadataOnly
     );
     assert_eq!(
-        store.get_cursor("pc1_old_a", 1).unwrap_err().kind(),
+        store.get_cursor("pc1_old_a").unwrap_err().kind(),
         "cursor_not_found"
     );
 

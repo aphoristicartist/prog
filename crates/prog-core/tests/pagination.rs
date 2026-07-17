@@ -157,11 +157,11 @@ fn next_args_resolves_cursor_and_page_from_normalized_keys_only() {
 }
 
 /// I9 fail-closed reuse: a page cursor minted with `create_cursor_with_extra`
-/// is rejected on redaction-version mismatch and an unknown token is rejected
+/// is rejected when missing and an unknown token is rejected
 /// outright, exactly like a normal expand cursor. The page metadata in `extra`
 /// rides along but never weakens validation.
 #[test]
-fn page_cursors_fail_closed_on_redaction_mismatch_and_foreign_source() {
+fn page_cursors_fail_closed_when_missing_or_foreign() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
 
@@ -169,38 +169,14 @@ fn page_cursors_fail_closed_on_redaction_mismatch_and_foreign_source() {
     extra.insert("kind".to_string(), json!("page"));
     extra.insert("page".to_string(), json!(2));
     let token = store
-        .create_cursor_with_extra(
-            "ck_page2",
-            "api",
-            "list",
-            "",
-            RedactionPolicy::default().version,
-            60,
-            extra,
-        )
+        .create_cursor_with_extra("ck_page2", "api", "list", "", 60, extra)
         .unwrap();
     assert!(token.starts_with("pc1_"));
 
-    // Correct version validates.
-    assert!(
-        store
-            .get_cursor(&token, RedactionPolicy::default().version)
-            .is_ok()
-    );
-
-    // Wrong redaction version fails closed.
-    let err = store
-        .get_cursor(&token, RedactionPolicy::default().version + 1)
-        .unwrap_err();
-    assert!(
-        matches!(err, prog_core::CoreError::RedactionVersionMismatch { .. }),
-        "expected RedactionVersionMismatch, got {err:?}"
-    );
+    assert!(store.get_cursor(&token).is_ok());
 
     // Foreign / unknown token fails closed.
-    let err = store
-        .get_cursor("pc1_foreign", RedactionPolicy::default().version)
-        .unwrap_err();
+    let err = store.get_cursor("pc1_foreign").unwrap_err();
     assert!(
         matches!(err, prog_core::CoreError::CursorNotFound(_)),
         "expected CursorNotFound, got {err:?}"
@@ -219,29 +195,17 @@ fn page_cursor_fails_closed_when_expired() {
     extra.insert("kind".to_string(), json!("page"));
     extra.insert("page".to_string(), json!(2));
     let token = store
-        .create_cursor_with_extra(
-            "ck_expiring",
-            "api",
-            "list",
-            "",
-            RedactionPolicy::default().version,
-            60,
-            extra,
-        )
+        .create_cursor_with_extra("ck_expiring", "api", "list", "", 60, extra)
         .unwrap();
 
     // A `now` well past the cursor's expires_at must fail closed.
     let future = chrono::Utc::now() + chrono::Duration::seconds(3600);
-    let err = store
-        .get_cursor_at(&token, RedactionPolicy::default().version, future)
-        .unwrap_err();
+    let err = store.get_cursor_at(&token, future).unwrap_err();
     assert!(
         matches!(err, prog_core::CoreError::CursorExpired(_, _)),
         "expected CursorExpired, got {err:?}"
     );
 }
-
-use prog_core::RedactionPolicy;
 
 // --- Property tests: the pure pagination laws ---
 

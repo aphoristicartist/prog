@@ -97,7 +97,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: cargo package --workspace
-        run: cargo package --workspace --no-verify --allow-dirty
+        run: cargo package --workspace --locked --no-verify --allow-dirty
 
       - name: Assert no runtime artifacts leak into .crate archives
         run: |
@@ -107,6 +107,12 @@ jobs:
           found=0
           for crate in target/package/*.crate; do
             echo "inspecting $crate"
+            # Every published crate must carry the canonical license text, not
+            # just the SPDX metadata from Cargo.toml.
+            if [ "$(tar -tzf "$crate" | grep -Ec '/LICENSE$')" -ne 1 ]; then
+              echo "::error::expected exactly one LICENSE in $crate"
+              found=1
+            fi
             # Hard bans: runtime stores and local prog dirs never belong.
             if tar -tzf "$crate" | grep -E '\.redb$|\.prog/'; then
               echo "::error::runtime artifact leaked into $crate"
@@ -132,6 +138,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Resolve target triple
         run: |

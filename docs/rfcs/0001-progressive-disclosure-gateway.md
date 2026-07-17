@@ -1,5 +1,9 @@
 # RFC 0001: Prog Progressive Disclosure Gateway
 
+> Historical note: this RFC predates the pre-release contract reset. Current
+> stores have one schema identity and reset explicitly on contract changes;
+> cursor records no longer carry a redaction-policy version.
+
 - Status: Draft v2 (revised 2026-07-03 after research review; see RFC 0002)
 - Date: 2026-07-04
 - Owner: aphoristicartist
@@ -263,7 +267,7 @@ prog expand <cursor> [--path <json-pointer>] [--limit N] [--depth N] [--fields a
 
 Responsibilities:
 
-- validate cursor (existence, expiry, redaction version)
+- validate cursor (existence, expiry)
 - check provenance boundary: the requested path must be within the cursor's root path
 - load cached payload and return a bounded expansion, reporting further omitted paths
 - work offline: expansion never contacts the upstream source
@@ -595,7 +599,6 @@ Cache metadata:
   "operation": "list_issues",
   "created_at": "2026-07-04T14:21:00Z",
   "expires_at": "2026-07-05T14:21:00Z",
-  "redaction_version": 1,
   "payload_bytes": 123456,
   "sensitive": false
 }
@@ -635,7 +638,6 @@ Cursors are opaque to agents and **stored, not encoded-and-signed**. A cursor to
   "source_id": "github",
   "operation": "list_issues",
   "root_path": "",
-  "redaction_version": 1,
   "created_at": "2026-07-04T14:21:00Z",
   "expires_at": "2026-07-05T14:21:00Z"
 }
@@ -648,7 +650,6 @@ Cursor requirements:
 - cannot be forged to access another cache entry (128-bit random id)
 - cannot escape its `root_path` provenance boundary (segment-wise containment check, I3)
 - expires with the underlying cache entry
-- fails closed if the redaction policy version changed incompatibly
 - **garbage-collected when the referenced cache entry is purged** — dangling cursors must be impossible
 - one root cursor per call; expansion addresses regions via `--path`
 
@@ -739,7 +740,7 @@ The skill does not duplicate this RFC.
 - schema join and refinement; object optionality; union widening; enum-cap absorption
 - JSON Pointer slicing and escaping; boundary containment
 - preview generation and node budgets; omitted path calculation
-- cursor lifecycle (create, expire, purge cascade, redaction-version mismatch)
+- cursor lifecycle (create, expire, purge cascade)
 - redaction classes and ordering
 - cache keys and canonicalized args
 - effect policy checks (every fail-closed rule)

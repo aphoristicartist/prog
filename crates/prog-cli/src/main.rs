@@ -13,7 +13,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use prog_adapters::{
     cli::{CliOperation, CliSource},
     http::{DEFAULT_MAX_RESPONSE_BYTES, HttpOperation, HttpSource},
-    mcp::McpSource,
+    mcp::{McpSource, McpTaskResult},
 };
 use prog_core::importers::{
     ImportContext, ImportReport, import_cli_help, import_json_schema, import_openapi,
@@ -23,14 +23,15 @@ use prog_core::{
     CallProvenance, CaptureBudget, CaptureCompleteness, CaptureLimit, CaptureScope,
     CaptureStopReason, CommandHintConfig, CoreError, DISCLOSURE_SCHEMA, DisclosureBudget,
     DisclosureEnvelope, EffectSet, EvidenceAvailability, EvidenceBlock, EvidenceGrade, EvidenceRef,
-    ExpansionScope, Extra, FindingOptions, InspectRequest, InspectResponse, LensManifest,
-    NewObservation, NewSessionEvent, NextAction, ObligationEvaluation, ObservationCompleteness,
-    ObservationFreshness, ObservationMetadata, ObservationPayloadStatus, ObservationSafety,
-    ObservationTrust, OmissionReason, OmittedRegion, OperationProfile, PersistedPayload,
-    PreviewPolicy, RawPayload, ReadinessReport, RedactedPayload, RedactionPolicy, Result,
-    SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions, SearchResponse, SelectionCoverage,
-    SliceRequest, SourceProfile, SourceStateToken, StorageBudget, Store, Summary, TrustSettings,
-    VERIFICATION_SCHEMA, ValidatedCursor, ValueScanReport, VerificationObligation,
+    ExpansionScope, Extra, FindingIdentityContext, FindingOptions, InspectRequest, InspectResponse,
+    LensManifest, NewObservation, NewSessionEvent, NextAction, ObligationDeclarer,
+    ObligationEvaluation, ObservationCompleteness, ObservationFreshness, ObservationMetadata,
+    ObservationPayloadStatus, ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion,
+    OperationProfile, PersistedPayload, PreviewPolicy, RawPayload, ReadinessReport,
+    RedactedPayload, RedactionPolicy, Result, SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions,
+    SearchResponse, SelectionCoverage, SliceRequest, SourceProfile, SourceStateToken,
+    StorageBudget, Store, Summary, TrustSettings, VERIFICATION_SCHEMA, ValidatedCursor,
+    ValueScanReport, VerificationObligation, VerificationOperation, VerificationStateRelationship,
     VerificationStatus, build_inspect_response, cache_allowed, call_effect_warnings,
     canonical_json, check_call, check_discovery, cli_adapter_effects, cli_hardening_effects,
     effective_effects, evidence_block, expand, http_adapter_effects, http_hardening_effects,
@@ -116,6 +117,10 @@ enum Command {
     Search(SearchArgs),
     Find(FindArgs),
     Delta(DeltaArgs),
+    McpTask {
+        #[command(subcommand)]
+        command: McpTaskCommand,
+    },
     Session {
         #[command(subcommand)]
         command: SessionCommand,
@@ -126,6 +131,45 @@ enum Command {
         command: CacheCommand,
     },
     Meta(MetaArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum McpTaskCommand {
+    Start(McpTaskStartArgs),
+    Get(McpTaskReferenceArgs),
+    Result(McpTaskReferenceArgs),
+    Cancel(McpTaskReferenceArgs),
+}
+
+#[derive(Debug, Args)]
+struct McpTaskStartArgs {
+    source_id: String,
+    operation: String,
+    #[arg(long)]
+    args: String,
+    #[arg(long)]
+    ttl_ms: Option<u64>,
+    #[arg(long)]
+    yes: bool,
+    #[arg(long)]
+    parent_observation: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct McpTaskReferenceArgs {
+    source_id: String,
+    task_id: String,
+    #[arg(long)]
+    parent_observation: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct McpTaskCommandOutput {
+    schema: &'static str,
+    observation_id: String,
+    availability: EvidenceAvailability,
+    payload: Value,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -562,7 +606,7 @@ enum SessionCommand {
     Start(SessionStartArgs),
     Show(SessionShowArgs),
     Note(SessionNoteArgs),
-    ObligationAdd(ObligationAddArgs),
+    ObligationAdd(Box<ObligationAddArgs>),
     ObligationList(ObligationListArgs),
 }
 
@@ -618,6 +662,66 @@ struct ObligationAddArgs {
     /// Record an advisory obligation that does not block readiness.
     #[arg(long)]
     optional: bool,
+
+    /// Declarer of this obligation. Non-user declarations are always advisory.
+    #[arg(long, value_enum, default_value_t = ObligationDeclarerArg::User)]
+    declared_by: ObligationDeclarerArg,
+
+    /// Exact argv represented by suitable evidence; never interpreted as a shell command.
+    #[arg(long, num_args = 1.., conflicts_with = "source_operation")]
+    expected_argv: Vec<String>,
+
+    /// Source-native operation represented by suitable evidence.
+    #[arg(long, conflicts_with = "expected_argv")]
+    source_operation: Option<String>,
+
+    /// Required validity relationship for workspace and source state.
+    #[arg(long, value_enum, default_value_t = StateRelationshipArg::Any)]
+    required_state: StateRelationshipArg,
+
+    /// Advisory exact argv hint. It is displayed only and is never auto-run.
+    #[arg(long, num_args = 1..)]
+    advisory_argv: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+enum ObligationDeclarerArg {
+    #[default]
+    User,
+    Recipe,
+    Normalizer,
+    Harness,
+}
+
+impl From<ObligationDeclarerArg> for ObligationDeclarer {
+    fn from(value: ObligationDeclarerArg) -> Self {
+        match value {
+            ObligationDeclarerArg::User => Self::User,
+            ObligationDeclarerArg::Recipe => Self::Recipe,
+            ObligationDeclarerArg::Normalizer => Self::Normalizer,
+            ObligationDeclarerArg::Harness => Self::Harness,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+enum StateRelationshipArg {
+    #[default]
+    Any,
+    WorkspaceUnchanged,
+    SourceUnchanged,
+    WorkspaceAndSourceUnchanged,
+}
+
+impl From<StateRelationshipArg> for VerificationStateRelationship {
+    fn from(value: StateRelationshipArg) -> Self {
+        match value {
+            StateRelationshipArg::Any => Self::Any,
+            StateRelationshipArg::WorkspaceUnchanged => Self::WorkspaceUnchanged,
+            StateRelationshipArg::SourceUnchanged => Self::SourceUnchanged,
+            StateRelationshipArg::WorkspaceAndSourceUnchanged => Self::WorkspaceAndSourceUnchanged,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -952,6 +1056,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
         Command::Recipe(args) => {
             let store = open_store(&cli.dir)?;
             let mut envelope = run_recipe(&store, &cli.lens_dir, args).await?;
+            declare_recipe_obligation(&store, args, &envelope)?;
             record_envelope_event(&store, &mut envelope, "recipe");
             write_success(&envelope, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
@@ -1073,6 +1178,12 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             write_success(&delta, cli.pretty)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::McpTask { command } => {
+            let store = open_store(&cli.dir)?;
+            let output = mcp_task_command(&store, command).await?;
+            write_success(&output, cli.pretty)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Session { command } => {
             let store = open_store(&cli.dir)?;
             match command {
@@ -1107,9 +1218,30 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                         schema: VERIFICATION_SCHEMA.to_string(),
                         id: args.id.clone(),
                         session_id: session.session_id,
-                        required: !args.optional,
+                        required: !args.optional && args.declared_by == ObligationDeclarerArg::User,
                         intended_check: args.intended_check.clone(),
                         required_scope: args.scope.clone(),
+                        declared_by: args.declared_by.into(),
+                        expected_operation: if !args.expected_argv.is_empty() {
+                            Some(VerificationOperation::Argv(args.expected_argv.clone()))
+                        } else {
+                            args.source_operation
+                                .clone()
+                                .map(VerificationOperation::SourceOperation)
+                        },
+                        required_state: args.required_state.into(),
+                        advisory_actions: (!args.advisory_argv.is_empty())
+                            .then(|| NextAction {
+                                kind: "verify".to_string(),
+                                reason: Some("advisory only; executing it does not satisfy this obligation by itself".to_string()),
+                                argv: Some(args.advisory_argv.clone()),
+                                exactness: Some(prog_core::ActionExactness::Exact),
+                                does_not_satisfy: vec![args.id.clone()],
+                                extra: Extra::new(),
+                                ..NextAction::default()
+                            })
+                            .into_iter()
+                            .collect(),
                         comparison_family: args.comparison_family.clone(),
                         origin_observation_id: args.origin_observation.clone(),
                         expected_absent_fingerprint: args.expected_absent_fingerprint.clone(),
@@ -1227,6 +1359,51 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+fn declare_recipe_obligation(
+    store: &Store,
+    args: &RecipeArgs,
+    envelope: &DisclosureEnvelope,
+) -> Result<()> {
+    let Some(observation_id) = envelope
+        .observation
+        .as_ref()
+        .and_then(|observation| observation.observation_id.as_deref())
+    else {
+        return Ok(());
+    };
+    let session = match store.get_session(None)? {
+        Some(session) => session,
+        None => store.start_session(Some(format!(
+            "recipe {} verification",
+            args.recipe.as_str()
+        )))?,
+    };
+    let id = format!(
+        "recipe.{}.{}",
+        args.recipe.as_str(),
+        &observation_id[..12.min(observation_id.len())]
+    );
+    let obligation = VerificationObligation {
+        schema: VERIFICATION_SCHEMA.to_string(),
+        id,
+        session_id: session.session_id,
+        required: false,
+        intended_check: format!("review {} recipe evidence", args.recipe.as_str()),
+        required_scope: "recipe-observation".to_string(),
+        declared_by: ObligationDeclarer::Recipe,
+        expected_operation: None,
+        required_state: VerificationStateRelationship::Any,
+        advisory_actions: Vec::new(),
+        comparison_family: args.comparison_family.clone(),
+        origin_observation_id: None,
+        expected_absent_fingerprint: None,
+        evidence_observation_id: Some(observation_id.to_string()),
+        created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        extra: Extra::new(),
+    };
+    store.put_obligation(&obligation)
 }
 
 #[derive(Clone, Serialize)]
@@ -2214,7 +2391,7 @@ fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
     let cursor = if projection.omitted.is_empty() || !cache_retained {
         None
     } else {
-        Some(store.create_cursor(&cache_key, &args.source_id, "hints", "", 1, 86_400)?)
+        Some(store.create_cursor(&cache_key, &args.source_id, "hints", "", 86_400)?)
     };
 
     Ok(HintsResponse {
@@ -2905,7 +3082,6 @@ async fn call_source(store: &Store, lens_dir: &Path, args: &CallArgs) -> Result<
                                 &args.source_id,
                                 &args.operation,
                                 &root_path,
-                                RedactionPolicy::default().version,
                                 ttl,
                                 cursor_extra,
                             )
@@ -3154,7 +3330,6 @@ fn observe_artifact(
                 "observe",
                 &input.name,
                 &root_path,
-                RedactionPolicy::default().version,
                 ttl,
                 cursor_lens_extra(lens.as_ref()),
             )
@@ -3403,7 +3578,6 @@ async fn run_command(store: &Store, lens_dir: &Path, args: &RunArgs) -> Result<R
                 "run",
                 &operation,
                 &root_path,
-                RedactionPolicy::default().version,
                 ttl,
                 cursor_lens_extra(lens.as_ref()),
             )
@@ -5455,7 +5629,7 @@ struct CursorContext {
 }
 
 fn cursor_context(store: &Store, cursor: &str, requested_path: &str) -> Result<CursorContext> {
-    let record = store.get_cursor(cursor, RedactionPolicy::default().version)?;
+    let record = store.get_cursor(cursor)?;
     let entry = store
         .get_entry(&record.cache_key)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
@@ -5533,6 +5707,20 @@ fn inspect_cursor(store: &Store, lens_dir: &Path, args: &InspectArgs) -> Result<
         limit: args.limit.saturating_mul(4).min(100),
         hints: CommandHintConfig::NAV_ALL,
         workspace_root: std::env::current_dir().ok(),
+        identity: FindingIdentityContext {
+            provider: context
+                .observation
+                .as_ref()
+                .and_then(|observation| observation.provider.clone()),
+            parser: context
+                .observation
+                .as_ref()
+                .and_then(|observation| observation.parser.clone()),
+            lens: context
+                .observation
+                .as_ref()
+                .and_then(|observation| observation.lens.clone()),
+        },
     };
     response.findings =
         ranked_findings_with_lens(context.payload.as_value(), &options, lens.as_ref())?;
@@ -5937,7 +6125,7 @@ fn session_show(store: &Store, args: &SessionShowArgs) -> Result<prog_core::Sess
         let Some(cursor) = event.cursor.as_deref() else {
             continue;
         };
-        match store.get_cursor(cursor, RedactionPolicy::default().version) {
+        match store.get_cursor(cursor) {
             Ok(_) => {
                 event
                     .extra
@@ -6033,6 +6221,22 @@ fn evaluate_obligation(
             None,
         ));
     }
+    let requires_workspace = matches!(
+        obligation.required_state,
+        VerificationStateRelationship::WorkspaceUnchanged
+            | VerificationStateRelationship::WorkspaceAndSourceUnchanged
+    );
+    if requires_workspace && evidence.workspace_state.is_none() {
+        return Ok(obligation_evaluation(
+            obligation,
+            VerificationStatus::Unverifiable,
+            vec![
+                "the obligation requires workspace-state evidence, but none was captured"
+                    .to_string(),
+            ],
+            None,
+        ));
+    }
     if let Some(captured_workspace) = &evidence.workspace_state {
         let current_workspace = captured_workspace
             .root
@@ -6040,11 +6244,44 @@ fn evaluate_obligation(
             .map(prog_core::capture_workspace)
             .unwrap_or_else(|| prog_core::capture_workspace("."));
         let comparison = prog_core::compare_workspace(captured_workspace, &current_workspace);
-        if comparison.validity != prog_core::WorkspaceValidity::Unchanged {
+        if comparison.validity != prog_core::WorkspaceValidity::Unchanged
+            && (requires_workspace
+                || obligation.required_state == VerificationStateRelationship::Any)
+        {
             return Ok(obligation_evaluation(
                 obligation,
                 VerificationStatus::Stale,
                 comparison.reasons,
+                None,
+            ));
+        }
+    }
+    let requires_source = matches!(
+        obligation.required_state,
+        VerificationStateRelationship::SourceUnchanged
+            | VerificationStateRelationship::WorkspaceAndSourceUnchanged
+    );
+    if requires_source && evidence.source_validity != prog_core::SourceValidity::ConfirmedUnchanged
+    {
+        return Ok(obligation_evaluation(
+            obligation,
+            VerificationStatus::Stale,
+            vec!["the obligation requires source state confirmed unchanged".to_string()],
+            None,
+        ));
+    }
+    if let Some(expected_operation) = &obligation.expected_operation {
+        let matches = match expected_operation {
+            VerificationOperation::Argv(expected) => {
+                evidence_argv(store, &evidence)?.is_some_and(|actual| actual == *expected)
+            }
+            VerificationOperation::SourceOperation(expected) => evidence.operation == *expected,
+        };
+        if !matches {
+            return Ok(obligation_evaluation(
+                obligation,
+                VerificationStatus::Stale,
+                vec!["evidence does not match the obligation's declared operation".to_string()],
                 None,
             ));
         }
@@ -6066,7 +6303,7 @@ fn evaluate_obligation(
     ) {
         (Some(origin_id), Some(expected_fingerprint)) => {
             let delta = compare_observation_ids(store, &origin_id, &evidence_id)?;
-            let status = delta
+            let expected_status = delta
                 .findings
                 .iter()
                 .find(|finding| finding.fingerprint == expected_fingerprint)
@@ -6078,6 +6315,18 @@ fn evaluate_obligation(
                     prog_core::DeltaFindingStatus::Unknown => VerificationStatus::Unknown,
                 })
                 .unwrap_or(VerificationStatus::Unknown);
+            let new_regressions = delta
+                .findings
+                .iter()
+                .filter(|finding| finding.status == prog_core::DeltaFindingStatus::New)
+                .cloned()
+                .collect::<Vec<_>>();
+            let status =
+                if expected_status == VerificationStatus::Passed && !new_regressions.is_empty() {
+                    VerificationStatus::New
+                } else {
+                    expected_status
+                };
             let reasons = match status {
                 VerificationStatus::Passed => vec![
                     "the expected finding is absent under a comparable, complete observation"
@@ -6085,6 +6334,10 @@ fn evaluate_obligation(
                 ],
                 VerificationStatus::Unknown => vec![
                     "the expected finding could not be evaluated from the comparable evidence"
+                        .to_string(),
+                ],
+                VerificationStatus::New if !new_regressions.is_empty() => vec![
+                    "the expected finding is absent, but comparable evidence contains new regression findings"
                         .to_string(),
                 ],
                 _ => delta
@@ -6095,12 +6348,15 @@ fn evaluate_obligation(
                     .filter(|reasons| !reasons.is_empty())
                     .unwrap_or_else(|| delta.assessment.reasons.clone()),
             };
-            Ok(obligation_evaluation(
-                obligation,
-                status,
-                reasons,
-                Some(delta.assessment),
-            ))
+            let mut evaluation =
+                obligation_evaluation(obligation, status, reasons, Some(delta.assessment));
+            if !new_regressions.is_empty() {
+                evaluation.extra.insert(
+                    "new_regressions".to_string(),
+                    serde_json::to_value(new_regressions)?,
+                );
+            }
+            Ok(evaluation)
         }
         (None, None) => match command_success(store, &evidence)? {
             Some(true) => Ok(obligation_evaluation(
@@ -6150,6 +6406,25 @@ fn command_success(
         .and_then(Value::as_bool))
 }
 
+fn evidence_argv(
+    store: &Store,
+    observation: &prog_core::ObservationRecord,
+) -> Result<Option<Vec<String>>> {
+    let Some(payload) = store.get_payload(&observation.payload_hash)? else {
+        return Ok(None);
+    };
+    Ok(payload
+        .as_value()
+        .pointer("/command/argv")
+        .and_then(Value::as_array)
+        .and_then(|argv| {
+            argv.iter()
+                .map(Value::as_str)
+                .collect::<Option<Vec<_>>>()
+                .map(|argv| argv.into_iter().map(ToOwned::to_owned).collect())
+        }))
+}
+
 fn obligation_evaluation(
     obligation: VerificationObligation,
     status: VerificationStatus,
@@ -6167,8 +6442,7 @@ fn obligation_evaluation(
 
 fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
     let filters = path_filters(args)?;
-    let redaction_version = RedactionPolicy::default().version;
-    let record = store.get_cursor(&args.cursor, redaction_version)?;
+    let record = store.get_cursor(&args.cursor)?;
     let entry = store
         .get_entry(&record.cache_key)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
@@ -6600,8 +6874,7 @@ fn omission_action_reason(region: &OmittedRegion) -> String {
 }
 
 fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope> {
-    let redaction_version = RedactionPolicy::default().version;
-    let record = store.get_cursor(&args.cursor, redaction_version)?;
+    let record = store.get_cursor(&args.cursor)?;
     let entry = store
         .get_entry(&record.cache_key)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
@@ -6801,7 +7074,7 @@ fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> 
     let cursor = if projection.omitted.is_empty() || !cache_retained {
         None
     } else {
-        Some(store.create_cursor(&cache_key, "prog", &operation, "", 1, 86_400)?)
+        Some(store.create_cursor(&cache_key, "prog", &operation, "", 86_400)?)
     };
     envelope_for_payload(
         store,
@@ -6883,6 +7156,11 @@ fn delta_findings_for_observation(
         payload.as_value(),
         &FindingOptions {
             limit: 100,
+            identity: FindingIdentityContext {
+                provider: observation.provider.clone(),
+                parser: observation.parser.clone(),
+                lens: observation.lens.clone(),
+            },
             ..FindingOptions::default()
         },
     )?;
@@ -8662,6 +8940,181 @@ fn mcp_source_from_profile(profile: &SourceProfile) -> Result<McpSource> {
     })
 }
 
+async fn mcp_task_command(store: &Store, command: &McpTaskCommand) -> Result<McpTaskCommandOutput> {
+    match command {
+        McpTaskCommand::Start(args) => {
+            let profile = mcp_task_profile(store, &args.source_id)?;
+            let operation = profile_operation(&profile, &args.operation)?.clone();
+            let invocation = invocation_config(&operation, "mcp")?;
+            if required_profile_string(invocation, "kind")? != "tool" {
+                return Err(CoreError::BadArgs {
+                    operation: args.operation.clone(),
+                    reason: "only MCP tool operations can be started as tasks".to_string(),
+                });
+            }
+            check_call(&operation, CallFlags { yes: args.yes }, &profile.trust)?;
+            let tool_name = required_profile_string(invocation, "name")?;
+            let call_args = parse_json_argument(&args.args, "mcp-task start --args")?;
+            validate_call_args(&operation, &call_args)?;
+            let result = mcp_source_from_profile(&profile)?
+                .call_tool_as_task(&tool_name, &call_args, args.ttl_ms)
+                .await?;
+            record_mcp_task_observation(
+                store,
+                &profile,
+                "mcp_task.start",
+                serde_json::to_value(&result)?,
+                Some(task_status(&result)?),
+                Some(result.provenance.duration_ms),
+                Some(&result.task.task_id),
+                args.parent_observation.clone(),
+            )
+        }
+        McpTaskCommand::Get(args) => {
+            let profile = mcp_task_profile(store, &args.source_id)?;
+            let result = mcp_source_from_profile(&profile)?
+                .get_task(&args.task_id)
+                .await?;
+            record_mcp_task_observation(
+                store,
+                &profile,
+                "mcp_task.get",
+                serde_json::to_value(&result)?,
+                Some(task_status(&result)?),
+                Some(result.provenance.duration_ms),
+                Some(&args.task_id),
+                args.parent_observation.clone(),
+            )
+        }
+        McpTaskCommand::Result(args) => {
+            let profile = mcp_task_profile(store, &args.source_id)?;
+            let result = mcp_source_from_profile(&profile)?
+                .get_task_result(&args.task_id)
+                .await?;
+            record_mcp_task_observation(
+                store,
+                &profile,
+                "mcp_task.result",
+                serde_json::to_value(&result)?,
+                None,
+                Some(result.provenance.duration_ms),
+                Some(&args.task_id),
+                args.parent_observation.clone(),
+            )
+        }
+        McpTaskCommand::Cancel(args) => {
+            let profile = mcp_task_profile(store, &args.source_id)?;
+            let result = mcp_source_from_profile(&profile)?
+                .cancel_task(&args.task_id)
+                .await?;
+            record_mcp_task_observation(
+                store,
+                &profile,
+                "mcp_task.cancel",
+                serde_json::to_value(&result)?,
+                Some(task_status(&result)?),
+                Some(result.provenance.duration_ms),
+                Some(&args.task_id),
+                args.parent_observation.clone(),
+            )
+        }
+    }
+}
+
+fn mcp_task_profile(store: &Store, source_id: &str) -> Result<SourceProfile> {
+    let profile = store
+        .read_profile(source_id)?
+        .ok_or_else(|| CoreError::UnknownSource(source_id.to_string()))?;
+    if profile.kind != prog_core::SourceKind::Mcp {
+        return Err(CoreError::BadArgs {
+            operation: "mcp-task".to_string(),
+            reason: format!("source '{source_id}' is not an MCP source"),
+        });
+    }
+    apply_profile_disclosure_budget(&profile)?;
+    Ok(profile)
+}
+
+fn task_status(result: &McpTaskResult) -> Result<String> {
+    serde_json::to_value(result.task.status)?
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| CoreError::BadArgs {
+            operation: "mcp-task".to_string(),
+            reason: "task status was not serializable".to_string(),
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_mcp_task_observation(
+    store: &Store,
+    profile: &SourceProfile,
+    operation: &str,
+    value: Value,
+    status: Option<String>,
+    duration_ms: Option<u64>,
+    task_id: Option<&str>,
+    parent_id: Option<String>,
+) -> Result<McpTaskCommandOutput> {
+    let redacted = RawPayload::new(value).redact(&resolve_redaction(Some(profile)));
+    let payload = redacted.payload;
+    let payload_bytes = json_len_u64(payload.as_value())?;
+    let payload_hash = store.put_payload(&payload)?;
+    let (availability, mut capture) =
+        complete_capture(payload_bytes, true, !redacted.redacted_paths.is_empty());
+    capture.budget = CaptureBudget::default();
+    let task_ref = task_id
+        .map(|task_id| {
+            Store::cache_key(
+                &profile.id,
+                "mcp_task_reference",
+                &json!({"task_id": task_id}),
+            )
+        })
+        .transpose()?;
+    let invocation_fingerprint = Store::cache_key(
+        &profile.id,
+        operation,
+        &json!({"task_ref": task_ref, "parent": parent_id.clone()}),
+    )?;
+    let mut lineage = prog_core::ObservationLineage {
+        parent_id,
+        ..Default::default()
+    };
+    if let Some(task_ref) = &task_ref {
+        lineage
+            .extra
+            .insert("mcp_task_ref".to_string(), json!(task_ref));
+    }
+    let observation_id = store
+        .record_observation(NewObservation {
+            payload_hash,
+            availability,
+            invocation_fingerprint,
+            source_id: profile.id.clone(),
+            operation: operation.to_string(),
+            duration_ms,
+            status,
+            capture,
+            redacted: !redacted.redacted_paths.is_empty(),
+            lineage,
+            provenance: Some(call_provenance(
+                "mcp-task",
+                None,
+                duration_ms,
+                json!({"kind": "mcp_task", "task_ref": task_ref}),
+            )),
+            ..NewObservation::default()
+        })?
+        .observation_id;
+    Ok(McpTaskCommandOutput {
+        schema: DISCLOSURE_SCHEMA,
+        observation_id,
+        availability,
+        payload: payload.as_value().clone(),
+    })
+}
+
 async fn execute_callable(
     source: &CallableSource,
     operation: &OperationProfile,
@@ -8709,7 +9162,13 @@ async fn execute_callable(
             let result = match kind.as_str() {
                 "tool" => {
                     let name = required_profile_string(invocation, "name")?;
-                    source.call_tool(&name, args).await?
+                    source
+                        .call_tool_with_schema(
+                            &name,
+                            args,
+                            operation.declared_output_schema.as_ref(),
+                        )
+                        .await?
                 }
                 "resource" => {
                     let uri = args
@@ -8735,6 +9194,9 @@ async fn execute_callable(
                     "diagnostics".to_string(),
                     serde_json::to_value(result.diagnostics)?,
                 );
+                if let Some(valid) = result.output_schema_valid {
+                    map.insert("output_schema_valid".to_string(), json!(valid));
+                }
             }
             Ok(AdapterCall {
                 data: result.data,
@@ -9463,7 +9925,6 @@ fn cursor_for_projection(store: &Store, input: CursorInput<'_>) -> Result<Option
         input.source_id,
         input.operation,
         input.root_path,
-        RedactionPolicy::default().version,
         ttl_seconds(input.cache),
         cursor_lens_extra(input.lens),
     )?))
@@ -9494,6 +9955,17 @@ fn envelope_for_payload(
             limit: 3,
             hints: CommandHintConfig::NAV_ALL,
             workspace_root: std::env::current_dir().ok(),
+            identity: FindingIdentityContext {
+                provider: observation_record
+                    .as_ref()
+                    .and_then(|observation| observation.provider.clone()),
+                parser: observation_record
+                    .as_ref()
+                    .and_then(|observation| observation.parser.clone()),
+                lens: observation_record
+                    .as_ref()
+                    .and_then(|observation| observation.lens.clone()),
+            },
         },
         input.lens.as_ref(),
     )

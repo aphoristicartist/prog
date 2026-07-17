@@ -14,8 +14,8 @@ prog evidence pc1_... --path /failure_sections/0
 
 `inspect` combines deterministic generic findings with the lens recorded on the
 cursor. `--kind` filters semantic kinds, while `--path` scopes traversal inside
-the cursor root. Missing, expired, foreign, redaction-version-mismatched, and
-out-of-scope cursors fail through the same structured errors as `expand`.
+the cursor root. Missing, expired, and foreign/out-of-scope cursors fail
+through the same structured errors as `expand`.
 
 `search` matches string values, keys, and JSON Pointer paths. Matching is
 case-insensitive by default; `--regex` uses a size-bounded Rust regex. `find`

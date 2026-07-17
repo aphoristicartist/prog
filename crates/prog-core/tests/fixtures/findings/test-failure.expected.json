@@ -1,7 +1,7 @@
 [
   {
-    "occurrence_id": "fi_sha256:05235716655710d948b1ea31989a52325af6e47c2552c2a3674af088158dbab6",
-    "fingerprint": "sha256:05235716655710d948b1ea31989a52325af6e47c2552c2a3674af088158dbab6",
+    "occurrence_id": "fo_00000001",
+    "fingerprint": "sha256:018dd6f6248ea6d7ef8c890ae030bafd57f664c086581877fe5a1eda12f07176",
     "rank": 1,
     "kind": "test_name",
     "path": "/failure_sections/0",
@@ -25,8 +25,8 @@
     "priority": 75
   },
   {
-    "occurrence_id": "fi_sha256:7c0081471ba207d4b03389b78abf19e04664b20f275732e77899052869926a0b",
-    "fingerprint": "sha256:7c0081471ba207d4b03389b78abf19e04664b20f275732e77899052869926a0b",
+    "occurrence_id": "fo_00000002",
+    "fingerprint": "sha256:febf352ef2b355a73611c1c4c02c0e5134e56cc872c9f577eac2ed8988e2ffbc",
     "rank": 2,
     "kind": "test_name",
     "path": "/failure_sections/0/lines/0",
@@ -43,8 +43,8 @@
     }
   },
   {
-    "occurrence_id": "fi_sha256:f7b92d7edc0f060d27462c4abf647f4f7578ee5f160f77632345c0dfee26e63b",
-    "fingerprint": "sha256:f7b92d7edc0f060d27462c4abf647f4f7578ee5f160f77632345c0dfee26e63b",
+    "occurrence_id": "fo_00000003",
+    "fingerprint": "sha256:e7819aa9cd53f4f46608e76113cfd9efd804b93e75ae6416fc3dce98afb75bdd",
     "rank": 3,
     "kind": "test_name",
     "path": "/summary",
@@ -61,6 +61,7 @@
     }
   },
   {
+    "occurrence_id": "fo_00000004",
     "rank": 4,
     "kind": "nonzero_exit",
     "path": "/command",

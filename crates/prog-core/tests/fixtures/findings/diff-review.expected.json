@@ -1,7 +1,6 @@
 [
   {
-    "occurrence_id": "fi_sha256:b7fd19ef8ca786099300178c3e0b1e708bd4b45ee99e527dd0b6977fc2dcfe53",
-    "fingerprint": "sha256:b7fd19ef8ca786099300178c3e0b1e708bd4b45ee99e527dd0b6977fc2dcfe53",
+    "occurrence_id": "fo_00000001",
     "rank": 1,
     "kind": "diff_hunk",
     "path": "/review/patch",

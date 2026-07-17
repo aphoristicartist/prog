@@ -28,8 +28,7 @@ The structured ref includes:
 
 The hash is an integrity hint, not a secret recovery mechanism. It is computed
 after redaction and should not be used as a capability. Expanding still requires
-the original cursor, and stale, purged, expired, or redaction-version-mismatched
-cursors fail closed.
+the original cursor, and stale, purged, or expired cursors fail closed.
 
 ## Capture lifecycle
 

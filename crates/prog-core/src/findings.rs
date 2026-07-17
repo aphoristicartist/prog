@@ -28,6 +28,16 @@ pub struct FindingOptions {
     /// into a workspace-relative source span. Without it, absolute paths fail
     /// closed rather than leaking host-specific locations.
     pub workspace_root: Option<PathBuf>,
+    /// Immutable parser/provider metadata of the observation being projected.
+    /// These are identity components, not model-visible finding prose.
+    pub identity: FindingIdentityContext,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FindingIdentityContext {
+    pub provider: Option<String>,
+    pub parser: Option<String>,
+    pub lens: Option<String>,
 }
 
 impl Default for FindingOptions {
@@ -39,6 +49,7 @@ impl Default for FindingOptions {
             limit: DEFAULT_LIMIT,
             hints: CommandHintConfig::NAV_EXPAND_ONLY,
             workspace_root: None,
+            identity: FindingIdentityContext::default(),
         }
     }
 }
@@ -186,6 +197,16 @@ pub fn ranked_findings(payload: &Value, options: &FindingOptions) -> Result<Vec<
         0,
         &mut visited,
     );
+    for candidate in &mut candidates {
+        candidate.fingerprint = fingerprint_finding(
+            &candidate.kind,
+            &candidate.source,
+            &candidate.identity_value,
+            candidate.primary_span.as_ref(),
+            None,
+            &options.identity,
+        );
+    }
 
     let mut best_by_path_kind: BTreeMap<(String, String), Candidate> = BTreeMap::new();
     for mut candidate in candidates {
@@ -206,7 +227,10 @@ pub fn ranked_findings(payload: &Value, options: &FindingOptions) -> Result<Vec<
     Ok(candidates
         .into_iter()
         .enumerate()
-        .map(|(index, candidate)| candidate.into_finding(index as u64 + 1, options))
+        .map(|(index, candidate)| {
+            let ordinal = index as u64 + 1;
+            candidate.into_finding(ordinal, ordinal, options)
+        })
         .collect())
 }
 
@@ -263,6 +287,7 @@ struct Candidate {
     related_spans: Vec<SourceSpan>,
     redaction_state: Option<RedactionState>,
     fingerprint: Option<String>,
+    identity_value: Value,
     extra: Extra,
 }
 
@@ -275,6 +300,14 @@ impl Candidate {
     ) -> Self {
         let (primary_span, related_spans) =
             extract_source_spans_with_workspace_root(value, workspace_root);
+        let fingerprint = fingerprint_finding(
+            signal.kind,
+            signal.source,
+            value,
+            primary_span.as_ref(),
+            None,
+            &FindingIdentityContext::default(),
+        );
         Self {
             kind: signal.kind.to_string(),
             path,
@@ -288,7 +321,8 @@ impl Candidate {
             primary_span,
             related_spans,
             redaction_state: redaction_state(value),
-            fingerprint: finding_fingerprint(signal.kind, signal.source, value),
+            fingerprint,
+            identity_value: value.clone(),
             extra: Extra::new(),
         }
     }
@@ -303,7 +337,19 @@ impl Candidate {
         self.related_spans = related_spans;
     }
 
-    fn into_finding(self, rank: u64, options: &FindingOptions) -> Finding {
+    fn use_identity_context(&mut self, context: &Value) {
+        self.identity_value = context.clone();
+        self.fingerprint = fingerprint_finding(
+            &self.kind,
+            &self.source,
+            context,
+            self.primary_span.as_ref(),
+            None,
+            &FindingIdentityContext::default(),
+        );
+    }
+
+    fn into_finding(self, rank: u64, occurrence: u64, options: &FindingOptions) -> Finding {
         let commands = command_hints(
             options.cursor.as_deref(),
             &self.path,
@@ -311,10 +357,9 @@ impl Candidate {
             options.hints,
         );
         Finding {
-            occurrence_id: self
-                .fingerprint
-                .as_ref()
-                .map(|fingerprint| format!("fi_{fingerprint}")),
+            // This is observation-local, never an alias for the cross-run
+            // fingerprint: equal findings in one observation remain distinct.
+            occurrence_id: Some(format!("fo_{occurrence:08}")),
             fingerprint: self.fingerprint,
             rank,
             kind: self.kind,
@@ -922,25 +967,155 @@ fn safe_external_uri(raw: &str) -> Option<String> {
 /// Generic identities intentionally preserve every non-whitespace character in
 /// the selected message. Domain packs may introduce proven templates later;
 /// generic value stripping would merge distinct failures.
-fn finding_fingerprint(kind: &str, source: &str, value: &Value) -> Option<String> {
-    let message = match value {
-        Value::String(value) => Some(value.as_str()),
-        Value::Object(object) => ["message", "reason", "summary"]
-            .into_iter()
-            .find_map(|field| object.get(field).and_then(Value::as_str)),
-        _ => None,
-    }?;
-    let message = message.split_whitespace().collect::<Vec<_>>().join(" ");
+const MAX_IDENTITY_CHARS: usize = 1_024;
+
+/// Compute a cross-observation fingerprint from an already-redacted value.
+/// The hashed bytes are canonical JSON with explicitly tagged components;
+/// delimiter concatenation cannot make component boundaries ambiguous.
+pub fn fingerprint_finding(
+    kind: &str,
+    provider: &str,
+    value: &Value,
+    primary_span: Option<&SourceSpan>,
+    selectors: Option<&BTreeMap<String, String>>,
+    identity: &FindingIdentityContext,
+) -> Option<String> {
+    let message = identity_component(value, selectors, "message_template")
+        .or_else(|| message_component(value))?;
+    let message = canonical_identity_text(&message);
     if message.is_empty() {
         return None;
     }
+
+    let subject = identity_component(value, selectors, "subject").or_else(|| {
+        named_identity_component(
+            value,
+            &[
+                "nodeid",
+                "node_id",
+                "test_id",
+                "ruleId",
+                "rule_id",
+                "diagnostic_code",
+                "code",
+            ],
+        )
+    });
+    let diagnostic_type = identity_component(value, selectors, "diagnostic_type").or_else(|| {
+        named_identity_component(
+            value,
+            &["exception_type", "diagnostic_type", "error_type", "type"],
+        )
+    });
+    // File is a fallback subject only; raw line/column values never take part
+    // in cross-run equivalence.
+    let file = if subject.is_none() {
+        identity_component(value, selectors, "file").or_else(|| {
+            primary_span.and_then(|span| span.path.clone().or_else(|| span.uri.clone()))
+        })
+    } else {
+        None
+    };
+
+    let mut components = Vec::new();
+    push_identity_component(&mut components, "finding_kind", kind);
+    push_identity_component(&mut components, "classifier", provider);
+    if let Some(value) = identity.provider.as_deref() {
+        push_identity_component(&mut components, "provider", value);
+    }
+    if let Some(value) = identity.parser.as_deref() {
+        push_identity_component(&mut components, "parser", value);
+    }
+    if let Some(value) = identity.lens.as_deref() {
+        push_identity_component(&mut components, "lens", value);
+    }
+    if let Some(value) = subject
+        .as_deref()
+        .map(canonical_identity_text)
+        .filter(|value| !value.is_empty())
+    {
+        push_identity_component(&mut components, "subject", &value);
+    }
+    if let Some(value) = diagnostic_type
+        .as_deref()
+        .map(canonical_identity_text)
+        .filter(|value| !value.is_empty())
+    {
+        push_identity_component(&mut components, "diagnostic_type", &value);
+    }
+    if let Some(value) = file
+        .as_deref()
+        .map(canonical_identity_text)
+        .filter(|value| !value.is_empty())
+    {
+        push_identity_component(&mut components, "file", &value);
+    }
+    push_identity_component(&mut components, "message_template", &message);
+
+    let mut document = BTreeMap::new();
+    document.insert(
+        "algorithm".to_string(),
+        Value::String("prog.finding_identity.v1".to_string()),
+    );
+    document.insert("components".to_string(), Value::Array(components));
     let mut hash = Sha256::new();
-    hash.update(kind.as_bytes());
-    hash.update([0]);
-    hash.update(source.as_bytes());
-    hash.update([0]);
-    hash.update(message.as_bytes());
+    hash.update(serde_json::to_vec(&document).expect("identity document serializes"));
     Some(format!("sha256:{:x}", hash.finalize()))
+}
+
+fn push_identity_component(components: &mut Vec<Value>, tag: &str, value: &str) {
+    let mut component = BTreeMap::new();
+    component.insert("tag".to_string(), Value::String(tag.to_string()));
+    component.insert("value".to_string(), Value::String(value.to_string()));
+    components.push(serde_json::to_value(component).expect("identity component serializes"));
+}
+
+fn identity_component(
+    value: &Value,
+    selectors: Option<&BTreeMap<String, String>>,
+    key: &str,
+) -> Option<String> {
+    let pointer = selectors?.get(key)?;
+    pointer::get(value, pointer)
+        .ok()
+        .flatten()
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn message_component(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Object(object) => ["message", "reason", "summary"]
+            .into_iter()
+            .find_map(|field| {
+                object
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            }),
+        _ => None,
+    }
+}
+
+fn named_identity_component(value: &Value, names: &[&str]) -> Option<String> {
+    let object = value.as_object()?;
+    names.iter().find_map(|name| {
+        object
+            .get(*name)
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn canonical_identity_text(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(MAX_IDENTITY_CHARS)
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1358,6 +1533,7 @@ fn collect_generic_signals(
                     let mut candidate =
                         Candidate::from_signal(child_path.clone(), child, signal, workspace_root);
                     candidate.inherit_source_spans(value, workspace_root);
+                    candidate.use_identity_context(value);
                     out.push(candidate);
                 }
                 collect_generic_signals(
@@ -1753,7 +1929,6 @@ fn redaction_state(value: &Value) -> Option<RedactionState> {
         redacted: true,
         redacted_paths: count,
         lossy: false,
-        redaction_version: None,
         extra: Extra::new(),
     })
 }

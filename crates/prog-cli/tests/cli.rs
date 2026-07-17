@@ -34,6 +34,14 @@ fn prog(args: &[&str]) -> Output {
         .expect("prog binary should run")
 }
 
+fn prog_in_dir(dir: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_prog"))
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .expect("prog binary should run")
+}
+
 fn prog_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_prog"));
     command.args(args);
@@ -1299,6 +1307,9 @@ fn run_repeated_identical_commands_create_distinct_cache_entries() {
         "--dir",
         dir_arg,
         "run",
+        "--selection-scope",
+        "full-suite",
+        "--selection-exhaustive",
         "--",
         "python3",
         "-c",
@@ -1590,6 +1601,9 @@ fn run_redacts_compound_secret_flags_in_recorded_argv() {
         "--dir",
         dir_arg,
         "run",
+        "--selection-scope",
+        "full-suite",
+        "--selection-exhaustive",
         "--",
         "python3",
         "-c",
@@ -3927,6 +3941,9 @@ fn explicit_delta_reports_new_and_resolved_findings_for_repeated_command() {
         "--dir",
         dir_arg,
         "run",
+        "--selection-scope",
+        "full-suite",
+        "--selection-exhaustive",
         "--",
         "python3",
         script.to_str().unwrap(),
@@ -3943,6 +3960,9 @@ fn explicit_delta_reports_new_and_resolved_findings_for_repeated_command() {
         "--dir",
         dir_arg,
         "run",
+        "--selection-scope",
+        "full-suite",
+        "--selection-exhaustive",
         "--",
         "python3",
         script.to_str().unwrap(),
@@ -4084,6 +4104,9 @@ fn verification_readiness_requires_every_declared_scope() {
         "--dir",
         dir_arg,
         "run",
+        "--selection-scope",
+        "full-suite",
+        "--selection-exhaustive",
         "--",
         "python3",
         script.to_str().unwrap(),
@@ -4101,6 +4124,9 @@ fn verification_readiness_requires_every_declared_scope() {
         "--dir",
         dir_arg,
         "run",
+        "--selection-scope",
+        "full-suite",
+        "--selection-exhaustive",
         "--",
         "python3",
         script.to_str().unwrap(),
@@ -4167,7 +4193,14 @@ fn verification_readiness_requires_every_declared_scope() {
         .iter()
         .find(|evaluation| evaluation["obligation"]["id"] == "target-failure")
         .unwrap();
-    assert_eq!(target["status"], "passed");
+    assert_eq!(target["status"], "new");
+    assert!(
+        target["new_regressions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|finding| finding["evidence_ref"].is_object())
+    );
     let affected = readiness["evaluations"]
         .as_array()
         .unwrap()
@@ -4245,6 +4278,318 @@ fn verification_accepts_a_complete_successful_command_as_evidence() {
     let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
     assert_eq!(readiness["ready"], true);
     assert_eq!(readiness["evaluations"][0]["status"], "passed");
+}
+
+#[test]
+fn verification_obligation_enforces_declared_operation_and_surfaces_advisory_hints() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let run = prog(&["--dir", dir_arg, "run", "--", "true"]);
+    assert!(run.status.success(), "{}", stdout(&run));
+    let run: Value = serde_json::from_slice(&run.stdout).unwrap();
+    let observation_id = run["observation"]["observation_id"].as_str().unwrap();
+
+    let declared = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "normalizer-advice",
+        "--check",
+        "normalizer suggestion",
+        "--scope",
+        "target",
+        "--declared-by",
+        "normalizer",
+        "--evidence-observation",
+        observation_id,
+        "--advisory-argv",
+        "true",
+    ]);
+    assert!(declared.status.success(), "{}", stdout(&declared));
+    let declared: Value = serde_json::from_slice(&declared.stdout).unwrap();
+    assert_eq!(declared["required"], false);
+    assert_eq!(declared["declared_by"], "normalizer");
+    assert_eq!(declared["advisory_actions"][0]["argv"], json!(["true"]));
+    assert_eq!(
+        declared["advisory_actions"][0]["does_not_satisfy"],
+        json!(["normalizer-advice"])
+    );
+
+    let mismatched = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "wrong-operation",
+        "--check",
+        "the expected command passes",
+        "--scope",
+        "target",
+        "--evidence-observation",
+        observation_id,
+        "--expected-argv",
+        "false",
+    ]);
+    assert!(mismatched.status.success(), "{}", stdout(&mismatched));
+    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    let mismatch = readiness["evaluations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|evaluation| evaluation["obligation"]["id"] == "wrong-operation")
+        .unwrap();
+    assert_eq!(mismatch["status"], "stale");
+    assert!(
+        mismatch["reasons"][0]
+            .as_str()
+            .unwrap()
+            .contains("declared operation")
+    );
+}
+
+#[test]
+fn recipe_declares_an_advisory_obligation_without_auto_execution() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let lens_dir = first_party_lens_dir();
+    let log = dir.path().join("service.log");
+    fs::write(&log, "INFO start\nERROR expected recipe evidence\n").unwrap();
+    let recipe = prog(&[
+        "--dir",
+        dir_arg,
+        "--lens-dir",
+        lens_dir.to_str().unwrap(),
+        "recipe",
+        "logs-root-cause",
+        "--file",
+        log.to_str().unwrap(),
+    ]);
+    assert!(recipe.status.success(), "{}", stdout(&recipe));
+    let obligations = prog(&["--dir", dir_arg, "session", "obligation-list"]);
+    assert!(obligations.status.success(), "{}", stdout(&obligations));
+    let obligations: Value = serde_json::from_slice(&obligations.stdout).unwrap();
+    let recipe = obligations["evaluations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|evaluation| evaluation["obligation"]["declared_by"] == "recipe")
+        .unwrap();
+    assert_eq!(recipe["obligation"]["required"], false);
+    assert!(recipe["obligation"]["evidence_observation_id"].is_string());
+}
+
+#[test]
+fn verification_never_passes_truncated_or_unvalidated_source_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let truncated = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--max-stdout-bytes",
+        "1",
+        "--",
+        "python3",
+        "-c",
+        "print('complete success output')",
+    ]);
+    assert!(truncated.status.success(), "{}", stdout(&truncated));
+    let truncated: Value = serde_json::from_slice(&truncated.stdout).unwrap();
+    let truncated_id = truncated["observation"]["observation_id"].as_str().unwrap();
+    let add = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "truncated",
+        "--check",
+        "truncated evidence cannot pass",
+        "--scope",
+        "target",
+        "--evidence-observation",
+        truncated_id,
+    ]);
+    assert!(add.status.success(), "{}", stdout(&add));
+
+    let complete = prog(&["--dir", dir_arg, "run", "--", "true"]);
+    assert!(complete.status.success(), "{}", stdout(&complete));
+    let complete: Value = serde_json::from_slice(&complete.stdout).unwrap();
+    let complete_id = complete["observation"]["observation_id"].as_str().unwrap();
+    let add = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "source-state",
+        "--check",
+        "source validator must confirm unchanged",
+        "--scope",
+        "target",
+        "--evidence-observation",
+        complete_id,
+        "--required-state",
+        "source-unchanged",
+    ]);
+    assert!(add.status.success(), "{}", stdout(&add));
+
+    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    let status_for = |id: &str| {
+        readiness["evaluations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|evaluation| evaluation["obligation"]["id"] == id)
+            .unwrap()["status"]
+            .as_str()
+            .unwrap()
+    };
+    assert_eq!(status_for("truncated"), "unverifiable");
+    assert_eq!(status_for("source-state"), "stale");
+    assert!(!readiness["ready"].as_bool().unwrap());
+}
+
+#[test]
+fn verification_treats_targeted_incomplete_reruns_as_not_observed() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let state = dir.path().join("state.txt");
+    let script = dir.path().join("emit.py");
+    fs::write(
+        &script,
+        "from pathlib import Path\nprint(Path(__import__('sys').argv[1]).read_text())\n",
+    )
+    .unwrap();
+    fs::write(&state, "error old failure\n").unwrap();
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--selection-scope",
+        "full-suite",
+        "--selection-exhaustive",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let first_id = first["observation"]["observation_id"].as_str().unwrap();
+    fs::write(&state, "all clear\n").unwrap();
+    let second = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--selection-scope",
+        "targeted-case",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(second.status.success(), "{}", stdout(&second));
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    let second_id = second["observation"]["observation_id"].as_str().unwrap();
+    let delta = prog(&["--dir", dir_arg, "delta", first_id, second_id]);
+    assert!(delta.status.success(), "{}", stdout(&delta));
+    let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
+    let fingerprint = delta["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["status"] == "not_observed")
+        .and_then(|finding| finding["fingerprint"].as_str())
+        .unwrap_or_else(|| panic!("expected not_observed delta: {delta}"));
+    let add = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "targeted-rerun",
+        "--check",
+        "old failure is absent",
+        "--scope",
+        "full-suite",
+        "--origin-observation",
+        first_id,
+        "--evidence-observation",
+        second_id,
+        "--expected-absent-fingerprint",
+        fingerprint,
+    ]);
+    assert!(add.status.success(), "{}", stdout(&add));
+    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    assert_eq!(readiness["evaluations"][0]["status"], "not_observed");
+    assert!(!readiness["ready"].as_bool().unwrap());
+}
+
+#[test]
+fn verification_marks_passing_evidence_stale_after_workspace_edit() {
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    let state = root.join("tracked.txt");
+    fs::write(&state, "before\n").unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "prog@example.test"],
+        vec!["config", "user.name", "prog test"],
+        vec!["add", "tracked.txt"],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        let status = Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+    let store = root.join(".prog-state");
+    let store_arg = store.to_str().unwrap();
+    let run = prog_in_dir(root, &["--dir", store_arg, "run", "--", "true"]);
+    assert!(run.status.success(), "{}", stdout(&run));
+    let run: Value = serde_json::from_slice(&run.stdout).unwrap();
+    let observation_id = run["observation"]["observation_id"].as_str().unwrap();
+    let add = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            store_arg,
+            "session",
+            "obligation-add",
+            "workspace-check",
+            "--check",
+            "workspace remains unchanged",
+            "--scope",
+            "target",
+            "--evidence-observation",
+            observation_id,
+            "--required-state",
+            "workspace-unchanged",
+        ],
+    );
+    assert!(add.status.success(), "{}", stdout(&add));
+    fs::write(&state, "after\n").unwrap();
+    let readiness = prog_in_dir(
+        root,
+        &["--dir", store_arg, "session", "show", "--readiness"],
+    );
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    assert_eq!(readiness["evaluations"][0]["status"], "stale");
+    assert!(
+        readiness["evaluations"][0]["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason.as_str().unwrap().contains("workspace"))
+    );
 }
 
 #[test]

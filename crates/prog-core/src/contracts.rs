@@ -536,8 +536,6 @@ pub struct RedactionState {
     pub redacted_paths: u64,
     #[serde(default)]
     pub lossy: bool,
-    #[serde(default)]
-    pub redaction_version: Option<u32>,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
@@ -766,6 +764,11 @@ pub struct LensFindingRule {
     pub severity: Option<String>,
     #[serde(default)]
     pub contains_any: Vec<String>,
+    /// Data-only selectors for cross-observation identity. Keys are
+    /// `subject`, `diagnostic_type`, `message_template`, and `file`; values
+    /// are JSON pointers relative to the matched finding value.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub identity_selectors: BTreeMap<String, String>,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
@@ -889,7 +892,6 @@ pub struct CursorRecord {
     pub source_id: String,
     pub operation: String,
     pub root_path: String,
-    pub redaction_version: u32,
     pub created_at: String,
     pub expires_at: String,
     /// Immutable capture identity. Cursors are short-lived capabilities and
@@ -1385,6 +1387,39 @@ pub enum VerificationStatus {
     Unverifiable,
 }
 
+/// Who declared an obligation. Declarations are never execution authority:
+/// recipe, normalizer, and harness declarations remain advisory by contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ObligationDeclarer {
+    User,
+    Recipe,
+    Normalizer,
+    Harness,
+}
+
+/// The operation that evidence must represent when a check is operation-bound.
+/// `argv` is structured data, never a shell string.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationOperation {
+    Argv(Vec<String>),
+    SourceOperation(String),
+}
+
+/// State dimensions that must still be valid before evidence can pass.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationStateRelationship {
+    #[default]
+    Any,
+    WorkspaceUnchanged,
+    SourceUnchanged,
+    WorkspaceAndSourceUnchanged,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct VerificationObligation {
@@ -1394,6 +1429,20 @@ pub struct VerificationObligation {
     pub required: bool,
     pub intended_check: String,
     pub required_scope: String,
+    /// The component that declared this obligation. Only user declarations may
+    /// be required; all generated declarations are advisory.
+    #[serde(default = "default_obligation_declarer")]
+    pub declared_by: ObligationDeclarer,
+    /// Optional exact argv or source operation expected of attached evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_operation: Option<VerificationOperation>,
+    /// State relationship required before evidence is allowed to pass.
+    #[serde(default)]
+    pub required_state: VerificationStateRelationship,
+    /// Advisory next actions associated with this obligation. They are never
+    /// auto-executed and cannot independently satisfy the obligation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub advisory_actions: Vec<NextAction>,
     #[serde(default)]
     pub comparison_family: Option<String>,
     #[serde(default)]
@@ -1405,6 +1454,10 @@ pub struct VerificationObligation {
     pub created_at: String,
     #[serde(default, flatten)]
     pub extra: Extra,
+}
+
+fn default_obligation_declarer() -> ObligationDeclarer {
+    ObligationDeclarer::User
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1468,6 +1521,9 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<ComparabilityAssessment>(&mut schemas, "ComparabilityAssessment")?;
     insert_schema::<DeltaFinding>(&mut schemas, "DeltaFinding")?;
     insert_schema::<ObservationDelta>(&mut schemas, "ObservationDelta")?;
+    insert_schema::<ObligationDeclarer>(&mut schemas, "ObligationDeclarer")?;
+    insert_schema::<VerificationOperation>(&mut schemas, "VerificationOperation")?;
+    insert_schema::<VerificationStateRelationship>(&mut schemas, "VerificationStateRelationship")?;
     insert_schema::<VerificationObligation>(&mut schemas, "VerificationObligation")?;
     insert_schema::<ObligationEvaluation>(&mut schemas, "ObligationEvaluation")?;
     insert_schema::<ReadinessReport>(&mut schemas, "ReadinessReport")?;

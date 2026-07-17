@@ -26,15 +26,6 @@ pub enum CoreError {
     #[error("cursor '{0}' expired at {1}; re-run the original call to refresh the cache")]
     CursorExpired(String, String),
 
-    #[error(
-        "cursor '{cursor}' was created under redaction policy v{cursor_version} but the store now uses v{store_version}; failing closed — re-run the original call"
-    )]
-    RedactionVersionMismatch {
-        cursor: String,
-        cursor_version: u32,
-        store_version: u32,
-    },
-
     #[error("path '{path}' escapes the cursor's provenance boundary '{boundary}'")]
     PathOutsideBoundary { path: String, boundary: String },
 
@@ -158,7 +149,6 @@ impl CoreError {
             CoreError::UnknownOperation { .. } => "unknown_operation",
             CoreError::CursorNotFound(_) => "cursor_not_found",
             CoreError::CursorExpired(_, _) => "cursor_expired",
-            CoreError::RedactionVersionMismatch { .. } => "redaction_version_mismatch",
             CoreError::PathOutsideBoundary { .. } => "path_outside_boundary",
             CoreError::PathNotFound { .. } => "path_not_found",
             CoreError::ExpansionRedacted(_, _) => "expansion_redacted",
@@ -204,9 +194,6 @@ impl CoreError {
             }
             CoreError::CursorExpired(_, _) => {
                 "Re-run the original call to refresh the cache.".to_string()
-            }
-            CoreError::RedactionVersionMismatch { .. } => {
-                "Re-run the original call under the current redaction policy.".to_string()
             }
             CoreError::PathOutsideBoundary { .. } => {
                 "Choose a path inside the cursor's root path.".to_string()
