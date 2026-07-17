@@ -1,6 +1,8 @@
+use std::path::Path;
+
 use prog_core::{
     CommandHintConfig, FindingOptions, RedactionPolicy, SourceSpanExactness, extract_source_spans,
-    ranked_findings,
+    extract_source_spans_with_workspace_root, ranked_findings,
 };
 use serde_json::{Value, json};
 
@@ -339,6 +341,74 @@ fn source_span_keeps_one_locator_and_does_not_promote_generated_spans() {
     assert!(primary.is_none());
     assert_eq!(related.len(), 1);
     assert_eq!(related[0].role, "generated");
+}
+
+#[test]
+fn source_span_parsers_cover_typescript_go_jest_and_unified_diff() {
+    let (typescript, _) = extract_source_spans_with_workspace_root(
+        &json!({
+            "file": {"fileName": "/workspace/src/ts/issue.ts"},
+            "start": {"line": 4, "character": 2},
+            "message": {"text": "type mismatch"}
+        }),
+        Some(Path::new("/workspace")),
+    );
+    let typescript = typescript.expect("TypeScript span");
+    assert_eq!(typescript.path.as_deref(), Some("src/ts/issue.ts"));
+    assert_eq!(typescript.start_line, 5);
+    assert_eq!(typescript.start_column, Some(3));
+    assert_eq!(typescript.label.as_deref(), Some("type mismatch"));
+    assert_eq!(typescript.origin, "structured.typescript");
+
+    let (go, _) = extract_source_spans(&json!({
+        "lines": ["internal/parser/value_test.go:42:7: expected decimal"]
+    }));
+    let go = go.expect("Go test span");
+    assert_eq!(go.path.as_deref(), Some("internal/parser/value_test.go"));
+    assert_eq!(go.start_line, 42);
+    assert_eq!(go.start_column, Some(7));
+    assert_eq!(go.origin, "structured.go_test");
+
+    let (jest, _) = extract_source_spans(&json!({
+        "lines": ["at Object.<anonymous> (src/math.test.ts:8:11)"]
+    }));
+    let jest = jest.expect("Jest stack span");
+    assert_eq!(jest.path.as_deref(), Some("src/math.test.ts"));
+    assert_eq!(jest.origin, "structured.jest_vitest");
+
+    let (diff, related) = extract_source_spans(&json!({
+        "text": "--- a/src/old.rs\n+++ b/src/😀.rs\n@@ -3,2 +8,4 @@\n+new line"
+    }));
+    let diff = diff.expect("diff new-file span");
+    assert_eq!(diff.path.as_deref(), Some("src/😀.rs"));
+    assert_eq!(diff.start_line, 8);
+    assert_eq!(diff.label.as_deref(), Some("new"));
+    assert_eq!(related[0].path.as_deref(), Some("src/old.rs"));
+    assert_eq!(related[0].start_line, 3);
+    assert_eq!(related[0].label.as_deref(), Some("old"));
+}
+
+#[test]
+fn source_span_label_and_locator_redaction_fail_closed() {
+    let (span, _) = extract_source_spans(&json!({
+        "file_name": "src/lib.rs",
+        "line_start": 5,
+        "label": "[REDACTED:token]"
+    }));
+    let span = span.expect("source span");
+    assert_eq!(span.label, None);
+    assert!(
+        span.redaction_state
+            .as_ref()
+            .expect("redaction state")
+            .redacted
+    );
+
+    let (absolute_without_root, _) = extract_source_spans(&json!({
+        "file_name": "/workspace/src/lib.rs",
+        "line_start": 5
+    }));
+    assert!(absolute_without_root.is_none());
 }
 
 #[test]

@@ -1,4 +1,8 @@
-use std::{cmp::Ordering, collections::BTreeMap};
+use std::{
+    cmp::Ordering,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -20,6 +24,10 @@ pub struct FindingOptions {
     pub scope_path: Option<String>,
     pub limit: usize,
     pub hints: CommandHintConfig,
+    /// Proven workspace root used solely to convert an absolute producer path
+    /// into a workspace-relative source span. Without it, absolute paths fail
+    /// closed rather than leaking host-specific locations.
+    pub workspace_root: Option<PathBuf>,
 }
 
 impl Default for FindingOptions {
@@ -30,6 +38,7 @@ impl Default for FindingOptions {
             scope_path: None,
             limit: DEFAULT_LIMIT,
             hints: CommandHintConfig::NAV_EXPAND_ONLY,
+            workspace_root: None,
         }
     }
 }
@@ -162,9 +171,21 @@ pub fn ranked_findings(payload: &Value, options: &FindingOptions) -> Result<Vec<
 
     let intent = GoalIntent::from_text(options.goal.as_deref().unwrap_or(""));
     let mut candidates = Vec::new();
-    collect_run_signals(scoped, scope_path, &mut candidates);
+    collect_run_signals(
+        scoped,
+        scope_path,
+        options.workspace_root.as_deref(),
+        &mut candidates,
+    );
     let mut visited = 0usize;
-    collect_generic_signals(scoped, scope_path, &mut candidates, 0, &mut visited);
+    collect_generic_signals(
+        scoped,
+        scope_path,
+        options.workspace_root.as_deref(),
+        &mut candidates,
+        0,
+        &mut visited,
+    );
 
     let mut best_by_path_kind: BTreeMap<(String, String), Candidate> = BTreeMap::new();
     for mut candidate in candidates {
@@ -210,6 +231,7 @@ pub fn build_inspect_response(
         scope_path: request.scope_path.clone(),
         limit: request.limit,
         hints: request.hints,
+        ..FindingOptions::default()
     };
     let findings = ranked_findings(payload, &options)?;
     Ok(InspectResponse {
@@ -245,8 +267,14 @@ struct Candidate {
 }
 
 impl Candidate {
-    fn from_signal(path: String, value: &Value, signal: Signal) -> Self {
-        let (primary_span, related_spans) = extract_source_spans(value);
+    fn from_signal(
+        path: String,
+        value: &Value,
+        signal: Signal,
+        workspace_root: Option<&Path>,
+    ) -> Self {
+        let (primary_span, related_spans) =
+            extract_source_spans_with_workspace_root(value, workspace_root);
         Self {
             kind: signal.kind.to_string(),
             path,
@@ -265,11 +293,12 @@ impl Candidate {
         }
     }
 
-    fn inherit_source_spans(&mut self, context: &Value) {
+    fn inherit_source_spans(&mut self, context: &Value, workspace_root: Option<&Path>) {
         if self.primary_span.is_some() || !self.related_spans.is_empty() {
             return;
         }
-        let (primary_span, related_spans) = extract_source_spans(context);
+        let (primary_span, related_spans) =
+            extract_source_spans_with_workspace_root(context, workspace_root);
         self.primary_span = primary_span;
         self.related_spans = related_spans;
     }
@@ -310,13 +339,25 @@ impl Candidate {
 
 const MAX_SOURCE_SPANS: usize = 16;
 
+/// Extract source locations without a workspace root.
+///
+/// Relative paths remain usable; absolute producer paths fail closed. Call
+/// [`extract_source_spans_with_workspace_root`] when a trusted root is known.
+pub fn extract_source_spans(value: &Value) -> (Option<SourceSpan>, Vec<SourceSpan>) {
+    extract_source_spans_with_workspace_root(value, None)
+}
+
 /// Extract source locations only from explicit structured location fields.
 ///
-/// This function intentionally does not parse display prose (tracebacks,
-/// compiler renderings, or log messages) and never reads a referenced file.
-/// Its input is expected to have crossed the redaction-before-persistence
-/// boundary already.
-pub fn extract_source_spans(value: &Value) -> (Option<SourceSpan>, Vec<SourceSpan>) {
+/// It never reads a referenced file. Apart from explicit structured location
+/// objects, it accepts only strict, domain-specific records: Go/Jest location
+/// lines and unified-diff headers/hunks. Arbitrary tracebacks and log prose do
+/// not become source locations. Input is expected to have crossed the
+/// redaction-before-persistence boundary already.
+pub fn extract_source_spans_with_workspace_root(
+    value: &Value,
+    workspace_root: Option<&Path>,
+) -> (Option<SourceSpan>, Vec<SourceSpan>) {
     let Some(map) = value.as_object() else {
         return (None, Vec::new());
     };
@@ -344,7 +385,10 @@ pub fn extract_source_spans(value: &Value) -> (Option<SourceSpan>, Vec<SourceSpa
             } else {
                 "related"
             };
-            push_span(&mut spans, build_span(item, role, "structured.rustc"));
+            push_span(
+                &mut spans,
+                build_span(item, role, "structured.rustc", workspace_root),
+            );
         }
     }
 
@@ -355,16 +399,20 @@ pub fn extract_source_spans(value: &Value) -> (Option<SourceSpan>, Vec<SourceSpa
             let Some(item) = item.as_object() else {
                 continue;
             };
-            push_span(
-                &mut spans,
-                build_span(
-                    item.get("physicalLocation")
-                        .and_then(Value::as_object)
-                        .unwrap_or(item),
-                    if index == 0 { "primary" } else { "related" },
-                    "structured.sarif",
-                ),
+            let mut span = build_span(
+                item.get("physicalLocation")
+                    .and_then(Value::as_object)
+                    .unwrap_or(item),
+                if index == 0 { "primary" } else { "related" },
+                "structured.sarif",
+                workspace_root,
             );
+            if let Some(span) = span.as_mut()
+                && span.label.is_none()
+            {
+                span.label = span_label(map);
+            }
+            push_span(&mut spans, span);
         }
     }
     for key in ["related_locations", "relatedLocations"] {
@@ -381,6 +429,7 @@ pub fn extract_source_spans(value: &Value) -> (Option<SourceSpan>, Vec<SourceSpa
                             .unwrap_or(item),
                         "related",
                         "structured.related_location",
+                        workspace_root,
                     ),
                 );
             }
@@ -393,11 +442,18 @@ pub fn extract_source_spans(value: &Value) -> (Option<SourceSpan>, Vec<SourceSpa
         if let Some(location) = map.get(key).and_then(Value::as_object) {
             push_span(
                 &mut spans,
-                build_span(location, "primary", "structured.location"),
+                build_span(location, "primary", "structured.location", workspace_root),
             );
         }
     }
-    push_span(&mut spans, build_span(map, "primary", "structured.direct"));
+    extract_typescript_spans(map, workspace_root, &mut spans);
+    extract_go_test_spans(map, workspace_root, &mut spans);
+    extract_jest_vitest_spans(map, workspace_root, &mut spans);
+    extract_unified_diff_spans(map, workspace_root, &mut spans);
+    push_span(
+        &mut spans,
+        build_span(map, "primary", "structured.direct", workspace_root),
+    );
 
     let mut primary = None;
     let mut related = Vec::new();
@@ -432,7 +488,12 @@ fn push_span(target: &mut Vec<SourceSpan>, span: Option<SourceSpan>) {
     target.push(span);
 }
 
-fn build_span(map: &Map<String, Value>, role: &str, origin: &str) -> Option<SourceSpan> {
+fn build_span(
+    map: &Map<String, Value>,
+    role: &str,
+    origin: &str,
+    workspace_root: Option<&Path>,
+) -> Option<SourceSpan> {
     let region = map.get("region").and_then(Value::as_object).unwrap_or(map);
     let start_line = field_u64(region, &["start_line", "startLine", "line_start", "line"])?;
     if start_line == 0 {
@@ -462,7 +523,7 @@ fn build_span(map: &Map<String, Value>, role: &str, origin: &str) -> Option<Sour
     let path = ["file_name", "file", "path", "filename"]
         .into_iter()
         .find_map(|key| locator_map.get(key).and_then(Value::as_str))
-        .and_then(normalize_relative_path);
+        .and_then(|raw| normalize_workspace_path(raw, workspace_root));
     let uri = if path.is_none() {
         ["uri", "url"]
             .into_iter()
@@ -489,14 +550,302 @@ fn build_span(map: &Map<String, Value>, role: &str, origin: &str) -> Option<Sour
         end_line,
         end_column,
         role: role.to_string(),
-        // Payload-provided labels can contain arbitrary user text. Keep the
-        // provenance location but leave interpretation/display to evidence
-        // navigation, which already applies its own redaction boundary.
-        label: None,
+        label: span_label(map),
         origin: origin.to_string(),
         exactness,
+        redaction_state: redaction_state(&Value::Object(map.clone())),
         extra: Extra::new(),
     })
+}
+
+fn extract_typescript_spans(
+    map: &Map<String, Value>,
+    workspace_root: Option<&Path>,
+    spans: &mut Vec<SourceSpan>,
+) {
+    let Some(file) = map.get("file").and_then(Value::as_object) else {
+        return;
+    };
+    let Some(path) = file
+        .get("fileName")
+        .or_else(|| file.get("file_name"))
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    let start = map.get("start").and_then(Value::as_object).unwrap_or(map);
+    // TypeScript's `line` and `character` values are zero-based. Only its
+    // structured form is accepted; textual compiler renderings are ignored.
+    let Some(line) = start
+        .get("line")
+        .or_else(|| start.get("lineNumber"))
+        .and_then(Value::as_u64)
+        .and_then(|line| line.checked_add(1))
+    else {
+        return;
+    };
+    let column = start
+        .get("character")
+        .or_else(|| start.get("column"))
+        .and_then(Value::as_u64)
+        .and_then(|column| column.checked_add(1));
+    push_span(
+        spans,
+        text_span(
+            path,
+            line,
+            column,
+            "primary",
+            "structured.typescript",
+            span_label(map),
+            workspace_root,
+        ),
+    );
+}
+
+fn extract_go_test_spans(
+    map: &Map<String, Value>,
+    workspace_root: Option<&Path>,
+    spans: &mut Vec<SourceSpan>,
+) {
+    let Some(lines) = map.get("lines").and_then(Value::as_array) else {
+        return;
+    };
+    for line in lines
+        .iter()
+        .filter_map(Value::as_str)
+        .take(MAX_SOURCE_SPANS)
+    {
+        let Some((path, line_number, column)) = parse_colon_location(line) else {
+            continue;
+        };
+        if !path.ends_with(".go") {
+            continue;
+        }
+        push_span(
+            spans,
+            text_span(
+                path,
+                line_number,
+                Some(column),
+                "primary",
+                "structured.go_test",
+                None,
+                workspace_root,
+            ),
+        );
+    }
+}
+
+fn extract_jest_vitest_spans(
+    map: &Map<String, Value>,
+    workspace_root: Option<&Path>,
+    spans: &mut Vec<SourceSpan>,
+) {
+    let Some(lines) = map.get("lines").and_then(Value::as_array) else {
+        return;
+    };
+    for line in lines
+        .iter()
+        .filter_map(Value::as_str)
+        .take(MAX_SOURCE_SPANS)
+    {
+        let candidate = line
+            .rsplit_once('(')
+            .and_then(|(_, location)| location.strip_suffix(')'))
+            .unwrap_or(line);
+        let Some((path, line_number, column)) = parse_colon_location(candidate) else {
+            continue;
+        };
+        if !matches!(
+            path.rsplit('.').next(),
+            Some("js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs")
+        ) {
+            continue;
+        }
+        push_span(
+            spans,
+            text_span(
+                path,
+                line_number,
+                Some(column),
+                "primary",
+                "structured.jest_vitest",
+                None,
+                workspace_root,
+            ),
+        );
+    }
+}
+
+fn extract_unified_diff_spans(
+    map: &Map<String, Value>,
+    workspace_root: Option<&Path>,
+    spans: &mut Vec<SourceSpan>,
+) {
+    let Some(lines) = map
+        .get("lines")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .or_else(|| {
+            map.get("text")
+                .and_then(Value::as_str)
+                .map(|text| text.lines().collect())
+        })
+    else {
+        return;
+    };
+    let mut old_path = None;
+    let mut new_path = None;
+    for line in lines.into_iter().take(MAX_SOURCE_SPANS * 8) {
+        if let Some(path) = line.strip_prefix("--- ") {
+            old_path = diff_path(path);
+        } else if let Some(path) = line.strip_prefix("+++ ") {
+            new_path = diff_path(path);
+        } else if let Some((old_line, new_line)) = diff_hunk_lines(line) {
+            push_span(
+                spans,
+                new_path.as_deref().and_then(|path| {
+                    text_span(
+                        path,
+                        new_line,
+                        None,
+                        "primary",
+                        "structured.unified_diff",
+                        Some("new".to_string()),
+                        workspace_root,
+                    )
+                }),
+            );
+            push_span(
+                spans,
+                old_path.as_deref().and_then(|path| {
+                    text_span(
+                        path,
+                        old_line,
+                        None,
+                        "related",
+                        "structured.unified_diff",
+                        Some("old".to_string()),
+                        workspace_root,
+                    )
+                }),
+            );
+        }
+    }
+}
+
+fn text_span(
+    raw_path: &str,
+    start_line: u64,
+    start_column: Option<u64>,
+    role: &str,
+    origin: &str,
+    label: Option<String>,
+    workspace_root: Option<&Path>,
+) -> Option<SourceSpan> {
+    let path = normalize_workspace_path(raw_path, workspace_root)?;
+    Some(SourceSpan {
+        path: Some(path),
+        uri: None,
+        start_line,
+        start_column,
+        end_line: None,
+        end_column: None,
+        role: role.to_string(),
+        label,
+        origin: origin.to_string(),
+        exactness: if start_column.is_some() {
+            SourceSpanExactness::Range
+        } else {
+            SourceSpanExactness::Approximate
+        },
+        redaction_state: None,
+        extra: Extra::new(),
+    })
+}
+
+fn parse_colon_location(value: &str) -> Option<(&str, u64, u64)> {
+    let value = value.trim();
+    let (prefix, tail) = value.rsplit_once(':')?;
+    let (path, line, column) = match (
+        prefix.rsplit_once(':'),
+        tail.parse::<u64>().ok().filter(|column| *column > 0),
+    ) {
+        (Some((path, line)), Some(column)) => {
+            let line = line.parse::<u64>().ok().filter(|line| *line > 0)?;
+            (path, line, column)
+        }
+        _ => {
+            let (prefix, column) = prefix.rsplit_once(':')?;
+            let (path, line) = prefix.rsplit_once(':')?;
+            let line = line.parse::<u64>().ok().filter(|line| *line > 0)?;
+            let column = column.parse::<u64>().ok().filter(|column| *column > 0)?;
+            (path, line, column)
+        }
+    };
+    (!path.is_empty() && !path.contains(char::is_whitespace)).then_some((path, line, column))
+}
+
+fn diff_path(value: &str) -> Option<String> {
+    let path = value.split_whitespace().next()?;
+    (!matches!(path, "/dev/null" | "a/dev/null" | "b/dev/null"))
+        .then(|| {
+            path.strip_prefix("a/")
+                .or_else(|| path.strip_prefix("b/"))
+                .unwrap_or(path)
+        })
+        .map(str::to_string)
+}
+
+fn diff_hunk_lines(value: &str) -> Option<(u64, u64)> {
+    let hunk = value.strip_prefix("@@ ")?.split_once(" @@")?.0;
+    let mut ranges = hunk.split_whitespace();
+    let old = ranges.next()?.strip_prefix('-')?;
+    let new = ranges.next()?.strip_prefix('+')?;
+    Some((
+        range_start(old)
+            .parse::<u64>()
+            .ok()
+            .filter(|line| *line > 0)?,
+        range_start(new)
+            .parse::<u64>()
+            .ok()
+            .filter(|line| *line > 0)?,
+    ))
+}
+
+fn range_start(range: &str) -> &str {
+    range.split_once(',').map_or(range, |(start, _)| start)
+}
+
+fn span_label(map: &Map<String, Value>) -> Option<String> {
+    let label = ["label", "message", "text"]
+        .into_iter()
+        .find_map(|key| map.get(key))
+        .and_then(|value| match value {
+            Value::String(text) => Some(text.as_str()),
+            Value::Object(object) => object
+                .get("text")
+                .or_else(|| object.get("message"))
+                .and_then(Value::as_str),
+            _ => None,
+        })?;
+    (!contains_redaction_marker(label)).then(|| truncate_span_label(label))
+}
+
+fn contains_redaction_marker(value: &str) -> bool {
+    value.contains("[REDACTED:") || value.contains("\u{00ab}redacted\u{00bb}")
+}
+
+fn truncate_span_label(value: &str) -> String {
+    const LIMIT: usize = 500;
+    if value.chars().count() <= LIMIT {
+        return value.to_string();
+    }
+    let mut output = value.chars().take(LIMIT - 3).collect::<String>();
+    output.push_str("...");
+    output
 }
 
 fn field_u64(map: &Map<String, Value>, names: &[&str]) -> Option<u64> {
@@ -505,7 +854,7 @@ fn field_u64(map: &Map<String, Value>, names: &[&str]) -> Option<u64> {
         .find_map(|name| map.get(*name).and_then(Value::as_u64))
 }
 
-fn normalize_relative_path(raw: &str) -> Option<String> {
+fn normalize_workspace_path(raw: &str, workspace_root: Option<&Path>) -> Option<String> {
     if raw.is_empty()
         || raw.contains('\0')
         || raw.contains("[REDACTED:")
@@ -514,21 +863,38 @@ fn normalize_relative_path(raw: &str) -> Option<String> {
         return None;
     }
     let normalized = raw.replace('\\', "/");
-    if normalized.starts_with('/')
+    let absolute = normalized.starts_with('/')
         || normalized.starts_with("//")
-        || normalized.as_bytes().get(1) == Some(&b':')
-    {
-        return None;
-    }
+        || normalized.as_bytes().get(1) == Some(&b':');
+    let relative = if absolute {
+        let root = workspace_root?.to_string_lossy().replace('\\', "/");
+        let root = normalize_path_components(&root, true)?;
+        let absolute = normalize_path_components(&normalized, true)?;
+        absolute
+            .strip_prefix(&format!("{root}/"))
+            .or_else(|| (absolute == root).then_some(""))?
+            .to_string()
+    } else {
+        normalized
+    };
+    normalize_path_components(&relative, false)
+}
+
+fn normalize_path_components(raw: &str, absolute: bool) -> Option<String> {
     let mut output = Vec::new();
-    for component in normalized.split('/') {
+    for component in raw.split('/') {
         match component {
             "" | "." => {}
             ".." => return None,
             value => output.push(value),
         }
     }
-    (!output.is_empty()).then(|| output.join("/"))
+    let joined = output.join("/");
+    if absolute {
+        (!joined.is_empty()).then(|| format!("/{joined}"))
+    } else {
+        (!joined.is_empty()).then_some(joined)
+    }
 }
 
 fn safe_external_uri(raw: &str) -> Option<String> {
@@ -646,21 +1012,36 @@ impl GoalIntent {
     }
 }
 
-fn collect_run_signals(value: &Value, path: &str, out: &mut Vec<Candidate>) {
+fn collect_run_signals(
+    value: &Value,
+    path: &str,
+    workspace_root: Option<&Path>,
+    out: &mut Vec<Candidate>,
+) {
     let Value::Object(map) = value else {
         return;
     };
 
     if let Some(command) = map.get("command").and_then(Value::as_object) {
-        collect_command_signals(command, pointer::push(path, "command"), out);
+        collect_command_signals(command, pointer::push(path, "command"), workspace_root, out);
     }
 
     if let Some(sections) = map.get("failure_sections").and_then(Value::as_array) {
-        collect_failure_sections(sections, pointer::push(path, "failure_sections"), out);
+        collect_failure_sections(
+            sections,
+            pointer::push(path, "failure_sections"),
+            workspace_root,
+            out,
+        );
     }
 }
 
-fn collect_command_signals(command: &Map<String, Value>, path: String, out: &mut Vec<Candidate>) {
+fn collect_command_signals(
+    command: &Map<String, Value>,
+    path: String,
+    workspace_root: Option<&Path>,
+    out: &mut Vec<Candidate>,
+) {
     if command
         .get("timed_out")
         .and_then(Value::as_bool)
@@ -678,6 +1059,7 @@ fn collect_command_signals(command: &Map<String, Value>, path: String, out: &mut
             path.clone(),
             &Value::Object(command.clone()),
             signal,
+            workspace_root,
         ));
     }
 
@@ -698,6 +1080,7 @@ fn collect_command_signals(command: &Map<String, Value>, path: String, out: &mut
             pointer::push(&path, "spawn_error"),
             command.get("spawn_error").unwrap_or(&Value::Null),
             signal,
+            workspace_root,
         ));
     }
 
@@ -718,6 +1101,7 @@ fn collect_command_signals(command: &Map<String, Value>, path: String, out: &mut
             path,
             &Value::Object(command.clone()),
             signal,
+            workspace_root,
         ));
     }
 }
@@ -776,7 +1160,12 @@ fn allowlisted_identifier<'a>(value: &'a str, allowed: &[&'static str]) -> Optio
     allowed.contains(&value).then_some(value)
 }
 
-fn collect_failure_sections(sections: &[Value], path: String, out: &mut Vec<Candidate>) {
+fn collect_failure_sections(
+    sections: &[Value],
+    path: String,
+    workspace_root: Option<&Path>,
+    out: &mut Vec<Candidate>,
+) {
     for (index, section) in sections.iter().take(MAX_FINDING_NODES).enumerate() {
         let section_path = pointer::push(&path, &index.to_string());
         let Value::Object(map) = section else {
@@ -788,7 +1177,7 @@ fn collect_failure_sections(sections: &[Value], path: String, out: &mut Vec<Cand
         let priority = map.get("priority").and_then(Value::as_u64).unwrap_or(60);
         let confidence = (0.78 + priority.min(100) as f64 * 0.002).clamp(signal.confidence, 0.99);
 
-        let mut candidate = Candidate::from_signal(section_path, section, signal);
+        let mut candidate = Candidate::from_signal(section_path, section, signal, workspace_root);
         candidate.confidence = confidence;
         candidate.reason = failure_section_reason(map, signal.reason);
         candidate.line_range = line_range(map);
@@ -951,6 +1340,7 @@ fn line_range(map: &Map<String, Value>) -> Option<LineRange> {
 fn collect_generic_signals(
     value: &Value,
     path: &str,
+    workspace_root: Option<&Path>,
     out: &mut Vec<Candidate>,
     depth: usize,
     visited: &mut usize,
@@ -961,15 +1351,23 @@ fn collect_generic_signals(
     *visited += 1;
     match value {
         Value::Object(map) => {
-            collect_object_level_signal(map, path, value, out);
+            collect_object_level_signal(map, path, value, workspace_root, out);
             for (key, child) in map {
                 let child_path = pointer::push(path, key);
                 if let Some(signal) = key_signal(key, child) {
-                    let mut candidate = Candidate::from_signal(child_path.clone(), child, signal);
-                    candidate.inherit_source_spans(value);
+                    let mut candidate =
+                        Candidate::from_signal(child_path.clone(), child, signal, workspace_root);
+                    candidate.inherit_source_spans(value, workspace_root);
                     out.push(candidate);
                 }
-                collect_generic_signals(child, &child_path, out, depth + 1, visited);
+                collect_generic_signals(
+                    child,
+                    &child_path,
+                    workspace_root,
+                    out,
+                    depth + 1,
+                    visited,
+                );
                 if *visited >= MAX_FINDING_NODES {
                     break;
                 }
@@ -980,6 +1378,7 @@ fn collect_generic_signals(
                 collect_generic_signals(
                     child,
                     &pointer::push(path, &index.to_string()),
+                    workspace_root,
                     out,
                     depth + 1,
                     visited,
@@ -996,7 +1395,12 @@ fn collect_generic_signals(
             if !is_command_argv_path(path)
                 && let Some(signal) = string_signal(text)
             {
-                out.push(Candidate::from_signal(path.to_string(), value, signal));
+                out.push(Candidate::from_signal(
+                    path.to_string(),
+                    value,
+                    signal,
+                    workspace_root,
+                ));
             }
         }
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
@@ -1007,6 +1411,7 @@ fn collect_object_level_signal(
     map: &Map<String, Value>,
     path: &str,
     value: &Value,
+    workspace_root: Option<&Path>,
     out: &mut Vec<Candidate>,
 ) {
     let severity = map
@@ -1030,6 +1435,7 @@ fn collect_object_level_signal(
                 severity: Some("error"),
                 source: "generic.object.severity",
             },
+            workspace_root,
         ));
     }
 }

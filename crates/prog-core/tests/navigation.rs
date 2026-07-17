@@ -90,6 +90,42 @@ fn search_and_evidence_are_bounded_and_preserve_redaction() {
 }
 
 #[test]
+fn search_hits_preserve_structured_source_span_parity() {
+    let payload = json!({
+        "diagnostic": {
+            "message": "Error: mismatched types",
+            "file_name": "src/lib.rs",
+            "line_start": 9,
+            "column_start": 3,
+            "line_end": 9,
+            "column_end": 7,
+            "label": "expected integer"
+        }
+    });
+    let response = search_payload(
+        &payload,
+        "pc1_demo",
+        &SearchOptions {
+            query: Some("mismatched".to_string()),
+            ..SearchOptions::default()
+        },
+    )
+    .unwrap();
+    let hit = response
+        .hits
+        .iter()
+        .find(|hit| hit.path == "/diagnostic/message")
+        .expect("matching diagnostic message hit");
+    let span = hit
+        .primary_span
+        .as_ref()
+        .expect("inherited structured span");
+    assert_eq!(span.path.as_deref(), Some("src/lib.rs"));
+    assert_eq!(span.label.as_deref(), Some("expected integer"));
+    assert!(hit.related_spans.is_empty());
+}
+
+#[test]
 fn lens_findings_resolve_existing_wildcards_and_reject_path_escape() {
     let lens: LensManifest = serde_json::from_value(json!({
         "schema": "prog.lens_manifest",

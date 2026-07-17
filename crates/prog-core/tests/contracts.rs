@@ -209,6 +209,45 @@ fn next_action_exactness_variants_roundtrip_as_typed_values() {
 }
 
 #[test]
+fn source_location_schema_snapshot_preserves_search_hit_parity() {
+    let schemas = public_contract_schemas().expect("public schemas");
+    let source_span = schemas.get("SourceSpan").expect("SourceSpan schema");
+    let search_hit = schemas.get("SearchHit").expect("SearchHit schema");
+    let snapshot = json!({
+        "source_span_required": source_span["required"],
+        "source_span_properties": source_span["properties"]
+            .as_object()
+            .expect("SourceSpan properties")
+            .keys()
+            .collect::<Vec<_>>(),
+        "search_hit_location_properties": {
+            "primary_span": search_hit["properties"].get("primary_span").is_some(),
+            "related_spans": search_hit["properties"].get("related_spans").is_some(),
+            "line_range": search_hit["properties"].get("line_range").is_some(),
+            "byte_range": search_hit["properties"].get("byte_range").is_some(),
+            "redaction_state": search_hit["properties"].get("redaction_state").is_some()
+        }
+    });
+    assert_eq!(
+        snapshot,
+        json!({
+            "source_span_required": ["start_line", "role", "origin", "exactness"],
+            "source_span_properties": [
+                "path", "uri", "start_line", "start_column", "end_line", "end_column",
+                "role", "label", "origin", "exactness", "redaction_state"
+            ],
+            "search_hit_location_properties": {
+                "byte_range": true,
+                "line_range": true,
+                "primary_span": true,
+                "redaction_state": true,
+                "related_spans": true
+            }
+        })
+    );
+}
+
+#[test]
 fn source_profile_disclosure_budget_is_typed_and_forward_compatible() {
     let profile: SourceProfile = serde_json::from_value(json!({
         "schema": "prog.source_profile",
