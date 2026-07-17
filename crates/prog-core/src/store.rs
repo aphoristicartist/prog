@@ -83,6 +83,7 @@ pub struct NewObservation {
     pub lens: Option<String>,
     pub workspace_state: Option<crate::WorkspaceState>,
     pub source_state: Option<crate::SourceStateToken>,
+    pub source_validity: crate::SourceValidity,
     pub environment_state: Option<String>,
     pub lineage: ObservationLineage,
     pub provenance: Option<CallProvenance>,
@@ -327,6 +328,7 @@ impl Store {
                 .workspace_state
                 .or_else(|| std::env::current_dir().ok().map(crate::capture_workspace)),
             source_state: input.source_state,
+            source_validity: input.source_validity,
             environment_state: input.environment_state,
             lineage: input.lineage,
             provenance: input.provenance,

@@ -1208,6 +1208,8 @@ pub struct ObservationRecord {
     #[serde(default)]
     pub source_state: Option<SourceStateToken>,
     #[serde(default)]
+    pub source_validity: SourceValidity,
+    #[serde(default)]
     pub environment_state: Option<String>,
     #[serde(default)]
     pub lineage: ObservationLineage,
@@ -1234,6 +1236,8 @@ pub struct SourceStateToken {
     pub subject_scope: Option<String>,
     pub captured_at: String,
     #[serde(default)]
+    pub validity: SourceValidity,
+    #[serde(default)]
     pub expires_at: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
@@ -1252,7 +1256,9 @@ pub enum SourceStateKind {
 
 /// Source-state validity is deliberately independent from cache age. A TTL
 /// can make evidence stale, but it cannot prove the upstream changed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceValidity {
     ConfirmedUnchanged,
@@ -1261,6 +1267,7 @@ pub enum SourceValidity {
     ValidatorUnavailable,
     ValidatorExpired,
     RefreshFailed,
+    #[default]
     Unknown,
 }
 
@@ -1318,7 +1325,7 @@ pub struct ComparabilityAssessment {
     pub subject_complete: bool,
     pub normalization_compatible: bool,
     pub workspace_validity: String,
-    pub source_validity: String,
+    pub source_validity: SourceValidity,
     pub can_prove_absence: bool,
     #[serde(default)]
     pub reasons: Vec<String>,

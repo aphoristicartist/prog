@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     CoreError, Extra, Result, SOURCE_STATE_SCHEMA, SourceStateKind, SourceStateToken,
-    canonical_json,
+    SourceValidity, canonical_json,
 };
 
 const MAX_VALIDATOR_BYTES: usize = 512;
@@ -30,6 +30,7 @@ pub fn http_source_state(
             operation: operation.to_string(),
             subject_scope,
             captured_at: captured_at.to_string(),
+            validity: SourceValidity::Unknown,
             expires_at: None,
             provider: Some("http".to_string()),
             extra: Extra::new(),
@@ -45,6 +46,7 @@ pub fn http_source_state(
             operation: operation.to_string(),
             subject_scope,
             captured_at: captured_at.to_string(),
+            validity: SourceValidity::Unknown,
             expires_at: None,
             provider: Some("http".to_string()),
             extra: Extra::new(),
@@ -74,6 +76,7 @@ pub fn opaque_source_state(
         operation: operation.to_string(),
         subject_scope: Some(invocation_scope(invocation)?),
         captured_at: captured_at.to_string(),
+        validity: SourceValidity::Unknown,
         expires_at: None,
         provider: Some(provider.to_string()),
         extra: Extra::new(),

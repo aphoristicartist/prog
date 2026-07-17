@@ -136,7 +136,7 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
     if !normalization_compatible {
         reasons.push("provider, parser, or lens identity differs".to_string());
     }
-    if !matches!(source_validity.as_str(), "valid" | "not_required") {
+    if source_validity != crate::SourceValidity::ConfirmedUnchanged {
         reasons.push("source state cannot prove comparable coverage".to_string());
     }
     if !payloads_available {
@@ -153,7 +153,7 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
         && subject.capture.can_prove_absence
         && normalization_compatible
         && payloads_available
-        && matches!(source_validity.as_str(), "valid" | "not_required");
+        && source_validity == crate::SourceValidity::ConfirmedUnchanged;
     ComparabilityAssessment {
         subject_identity,
         scope_relationship,
@@ -276,9 +276,18 @@ fn capture_stop_reason_name(reason: crate::CaptureStopReason) -> &'static str {
     }
 }
 
-fn source_validity(baseline: &ObservationRecord, subject: &ObservationRecord) -> String {
+fn source_validity(
+    baseline: &ObservationRecord,
+    subject: &ObservationRecord,
+) -> crate::SourceValidity {
+    if baseline.source_validity != crate::SourceValidity::Unknown {
+        return baseline.source_validity;
+    }
+    if subject.source_validity != crate::SourceValidity::Unknown {
+        return subject.source_validity;
+    }
     match (&baseline.source_state, &subject.source_state) {
-        (None, None) => "not_required".to_string(),
+        (None, None) => crate::SourceValidity::ConfirmedUnchanged,
         (Some(left), Some(right))
             if left.source_id == right.source_id
                 && left.operation == right.operation
@@ -290,11 +299,19 @@ fn source_validity(baseline: &ObservationRecord, subject: &ObservationRecord) ->
                 && matches!(
                     right.kind,
                     SourceStateKind::HttpEtag | SourceStateKind::HttpLastModified
-                ) =>
+                )
+                && left.value == right.value =>
         {
-            "valid".to_string()
+            crate::SourceValidity::ConfirmedUnchanged
         }
-        _ => "unknown".to_string(),
+        (Some(left), Some(right))
+            if left.source_id == right.source_id
+                && left.operation == right.operation
+                && left.subject_scope == right.subject_scope =>
+        {
+            crate::SourceValidity::SourceChanged
+        }
+        _ => crate::SourceValidity::Unknown,
     }
 }
 
@@ -376,6 +393,7 @@ mod tests {
             provider: None,
             parser: None,
             lens: None,
+            source_validity: crate::SourceValidity::Unknown,
             workspace_state: None,
             source_state: None,
             environment_state: None,
