@@ -10,9 +10,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 633,
-      "findings_output_tokens": 722,
-      "inspect_output_tokens": 1517
+      "baseline_output_tokens": 620,
+      "findings_output_tokens": 693,
+      "inspect_output_tokens": 1449
     },
     {
       "name": "cargo_test_failure",
@@ -23,9 +23,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 643,
-      "findings_output_tokens": 719,
-      "inspect_output_tokens": 1559
+      "baseline_output_tokens": 630,
+      "findings_output_tokens": 691,
+      "inspect_output_tokens": 1467
     },
     {
       "name": "noisy_log_root_error",
@@ -36,9 +36,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 834,
-      "findings_output_tokens": 516,
-      "inspect_output_tokens": 757
+      "baseline_output_tokens": 821,
+      "findings_output_tokens": 488,
+      "inspect_output_tokens": 713
     },
     {
       "name": "pytest_assertion_failure",
@@ -49,9 +49,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 678,
-      "findings_output_tokens": 758,
-      "inspect_output_tokens": 1613
+      "baseline_output_tokens": 665,
+      "findings_output_tokens": 730,
+      "inspect_output_tokens": 1522
     },
     {
       "name": "sarif_security_error",
@@ -62,9 +62,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 645,
-      "findings_output_tokens": 621,
-      "inspect_output_tokens": 671
+      "baseline_output_tokens": 633,
+      "findings_output_tokens": 616,
+      "inspect_output_tokens": 666
     }
   ],
   "summary": {
@@ -73,8 +73,8 @@
     "baseline_tool_calls": 15,
     "findings_tool_calls": 10,
     "inspect_tool_calls": 15,
-    "baseline_output_tokens": 3433,
-    "findings_output_tokens": 3336,
-    "inspect_output_tokens": 6117
+    "baseline_output_tokens": 3369,
+    "findings_output_tokens": 3218,
+    "inspect_output_tokens": 5817
   }
 }
