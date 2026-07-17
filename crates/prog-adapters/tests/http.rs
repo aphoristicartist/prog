@@ -120,6 +120,7 @@ async fn conditional_request_returns_304_as_revalidation_and_rejects_scope_misma
         operation: "get".to_string(),
         subject_scope: Some(invocation_scope(&args).unwrap()),
         captured_at: "2026-07-13T12:00:00Z".to_string(),
+        validity: prog_core::SourceValidity::Unknown,
         expires_at: None,
         provider: Some("http".to_string()),
         extra: Extra::new(),
