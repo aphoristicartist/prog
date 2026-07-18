@@ -7,6 +7,7 @@ pub(crate) mod envelope;
 pub(crate) mod expand;
 pub(crate) mod hints;
 pub(crate) mod init;
+pub(crate) mod lenses;
 pub(crate) mod mcp_task;
 pub(crate) mod meta;
 pub(crate) mod navigation;
