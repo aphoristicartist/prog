@@ -54,8 +54,8 @@ mod commands;
 
 use commands::{
     cost::{
-        CostScenarioInput, cost_report, cost_scenario, read_model_cost_profile,
-        validate_nonnegative_price,
+        CostScenarioInput, approx_tokens_for_bytes, approx_tokens_for_json, cost_report,
+        cost_scenario, read_model_cost_profile, token_cost, validate_nonnegative_price,
     },
     init::init_integration,
 };
@@ -5188,40 +5188,6 @@ fn estimate_prog_cost_flow(
         expansion_tokens,
         warnings,
     })
-}
-
-fn approx_tokens_for_json(value: &Value) -> Result<u64> {
-    let bytes = serde_json::to_vec(value)?
-        .len()
-        .try_into()
-        .unwrap_or(u64::MAX);
-    Ok(approx_tokens_for_bytes(bytes))
-}
-
-fn approx_tokens_for_bytes(bytes: u64) -> u64 {
-    bytes.saturating_add(3) / 4
-}
-
-fn token_cost(input_tokens: u64, output_tokens: u64, input_price: f64, output_price: f64) -> f64 {
-    round_usd(
-        (input_tokens as f64 * input_price / 1_000_000.0)
-            + (output_tokens as f64 * output_price / 1_000_000.0),
-    )
-}
-
-fn ratio(baseline: f64, candidate: f64) -> f64 {
-    if candidate <= 0.0 {
-        return f64::INFINITY;
-    }
-    round_ratio(baseline / candidate)
-}
-
-fn round_usd(value: f64) -> f64 {
-    (value * 1_000_000.0).round() / 1_000_000.0
-}
-
-fn round_ratio(value: f64) -> f64 {
-    (value * 100.0).round() / 100.0
 }
 
 fn evidence_ref(input: EvidenceRefInput<'_>) -> EvidenceRef {

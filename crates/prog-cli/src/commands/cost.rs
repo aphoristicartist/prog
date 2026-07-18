@@ -77,3 +77,42 @@ pub(crate) fn validate_nonnegative_price(price: f64, field: &str) -> Result<()> 
         })
     }
 }
+
+pub(crate) fn approx_tokens_for_json(value: &Value) -> Result<u64> {
+    let bytes = serde_json::to_vec(value)?
+        .len()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    Ok(approx_tokens_for_bytes(bytes))
+}
+
+pub(crate) fn approx_tokens_for_bytes(bytes: u64) -> u64 {
+    bytes.saturating_add(3) / 4
+}
+
+pub(crate) fn token_cost(
+    input_tokens: u64,
+    output_tokens: u64,
+    input_price: f64,
+    output_price: f64,
+) -> f64 {
+    round_usd(
+        (input_tokens as f64 * input_price / 1_000_000.0)
+            + (output_tokens as f64 * output_price / 1_000_000.0),
+    )
+}
+
+pub(crate) fn ratio(baseline: f64, candidate: f64) -> f64 {
+    if candidate <= 0.0 {
+        return f64::INFINITY;
+    }
+    round_ratio(baseline / candidate)
+}
+
+fn round_usd(value: f64) -> f64 {
+    (value * 1_000_000.0).round() / 1_000_000.0
+}
+
+fn round_ratio(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
