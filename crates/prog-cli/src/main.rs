@@ -52,7 +52,7 @@ use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
 mod commands;
 
-use commands::init::init_integration;
+use commands::{cost::cost_report, init::init_integration};
 
 static RUN_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static DISCLOSURE_BUDGET: OnceLock<Mutex<EffectiveDisclosureBudget>> = OnceLock::new();
@@ -5109,7 +5109,7 @@ fn write_init_file(path: &Path, content: &str, executable: bool) -> Result<()> {
     Ok(())
 }
 
-fn cost_report(args: &CostArgs) -> Result<CostReport> {
+pub(crate) fn cost_report_impl(args: &CostArgs) -> Result<CostReport> {
     if args.repeated_inspections == 0 {
         return Err(CoreError::BadArgs {
             operation: "cost".to_string(),
