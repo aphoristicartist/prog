@@ -9,5 +9,7 @@ pub(crate) mod meta;
 pub(crate) mod navigation;
 pub(crate) mod observe;
 pub(crate) mod paths;
+pub(crate) mod recipe;
+pub(crate) mod run;
 pub(crate) mod session;
 pub(crate) mod source;

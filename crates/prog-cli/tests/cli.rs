@@ -1649,7 +1649,10 @@ time.sleep(5)
     ]);
 
     assert!(timeout.status.success(), "{}", stdout(&timeout));
-    assert!(started.elapsed() < Duration::from_secs(1));
+    // The detached child retains inherited pipes for two seconds. Keep a
+    // scheduling-tolerant margin below that lifetime while still proving the
+    // runner aborts readers instead of waiting for the detached holder.
+    assert!(started.elapsed() < Duration::from_millis(1500));
     let value: Value = serde_json::from_slice(&timeout.stdout).unwrap();
     assert_eq!(value["data_preview"]["command"]["timed_out"], true);
 }
