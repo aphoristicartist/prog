@@ -6,7 +6,9 @@
 //! shared support module.
 #![allow(dead_code)]
 
+use serde_json::Value;
 use std::{
+    fs,
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -123,4 +125,9 @@ pub fn repo_root() -> PathBuf {
 
 pub fn first_party_lens_dir() -> PathBuf {
     repo_root().join("lenses")
+}
+
+pub fn read_profile(dir: &Path, id: &str) -> Value {
+    serde_json::from_slice(&fs::read(dir.join("profiles").join(format!("{id}.json"))).unwrap())
+        .unwrap()
 }
