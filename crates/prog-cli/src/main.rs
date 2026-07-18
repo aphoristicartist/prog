@@ -52,7 +52,10 @@ use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
 mod commands;
 
-use commands::{cost::cost_report, init::init_integration};
+use commands::{
+    cost::{CostScenarioInput, cost_report, cost_scenario},
+    init::init_integration,
+};
 
 static RUN_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static DISCLOSURE_BUDGET: OnceLock<Mutex<EffectiveDisclosureBudget>> = OnceLock::new();
@@ -5090,40 +5093,6 @@ pub(crate) fn cost_report_impl(args: &CostArgs) -> Result<CostReport> {
             "low-cost local models may make latency more important than token spend".to_string(),
         ],
     })
-}
-
-struct CostScenarioInput {
-    name: &'static str,
-    input_tokens: u64,
-    output_tokens: u64,
-    baseline_input_tokens: u64,
-    baseline_cost: f64,
-    input_price: f64,
-    output_price: f64,
-    context_window_tokens: u64,
-    lossless: bool,
-    notes: Vec<String>,
-}
-
-fn cost_scenario(input: CostScenarioInput) -> CostScenario {
-    let total = token_cost(
-        input.input_tokens,
-        input.output_tokens,
-        input.input_price,
-        input.output_price,
-    );
-    CostScenario {
-        name: input.name,
-        input_tokens: input.input_tokens,
-        output_tokens: input.output_tokens,
-        total_estimated_cost_usd: total,
-        baseline_input_tokens: input.baseline_input_tokens,
-        baseline_estimated_cost_usd: input.baseline_cost,
-        savings_ratio: ratio(input.baseline_cost, total),
-        fits_context: input.input_tokens <= input.context_window_tokens,
-        lossless: input.lossless,
-        notes: input.notes,
-    }
 }
 
 fn read_model_cost_profile(path: &Path) -> Result<(ModelCostProfile, Vec<String>)> {
