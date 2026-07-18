@@ -3,6 +3,7 @@ pub(crate) mod call;
 pub(crate) mod cost;
 pub(crate) mod delta;
 pub(crate) mod discover;
+pub(crate) mod envelope;
 pub(crate) mod expand;
 pub(crate) mod hints;
 pub(crate) mod init;
