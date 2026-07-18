@@ -1,3 +1,4 @@
+pub(crate) mod adapters;
 pub(crate) mod cache;
 pub(crate) mod call;
 pub(crate) mod cost;
