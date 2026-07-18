@@ -39,3 +39,41 @@ pub(crate) fn cost_scenario(input: CostScenarioInput) -> CostScenario {
         notes: input.notes,
     }
 }
+
+pub(crate) fn read_model_cost_profile(path: &Path) -> Result<(ModelCostProfile, Vec<String>)> {
+    let raw = std::fs::read_to_string(path).map_err(|error| CoreError::BadArgs {
+        operation: "cost".to_string(),
+        reason: format!(
+            "model profile '{}' could not be read: {error}",
+            path.to_string_lossy()
+        ),
+    })?;
+    let profile: ModelCostProfile =
+        serde_json::from_str(&raw).map_err(|error| CoreError::BadArgs {
+            operation: "cost".to_string(),
+            reason: format!(
+                "model profile '{}' must be valid JSON: {error}",
+                path.to_string_lossy()
+            ),
+        })?;
+    let mut warnings = Vec::new();
+    if profile.schema.as_deref() != Some("prog.model_profile") {
+        warnings.push("model profile schema should be prog.model_profile".to_string());
+    }
+    if profile.pricing_source.is_none() || profile.priced_at.is_none() {
+        warnings
+            .push("model profile should include pricing_source and priced_at metadata".to_string());
+    }
+    Ok((profile, warnings))
+}
+
+pub(crate) fn validate_nonnegative_price(price: f64, field: &str) -> Result<()> {
+    if price.is_finite() && price >= 0.0 {
+        Ok(())
+    } else {
+        Err(CoreError::BadArgs {
+            operation: "cost".to_string(),
+            reason: format!("model profile {field} must be a non-negative finite number"),
+        })
+    }
+}
