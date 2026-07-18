@@ -1,8 +1,7 @@
 use std::{
     fs,
-    io::Write,
-    path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    path::Path,
+    process::Command,
     time::{Duration, Instant},
 };
 
@@ -12,6 +11,10 @@ use wiremock::{
     Mock, MockServer, Request, Respond, ResponseTemplate,
     matchers::{method, path, query_param},
 };
+
+mod support;
+
+use support::*;
 
 struct EtagResponder;
 
@@ -25,119 +28,6 @@ impl Respond for EtagResponder {
                 .set_body_json(json!({"id": 7, "body": "original"}))
         }
     }
-}
-
-/// Returns a directory created by the test, never the contributor checkout.
-///
-/// Commands that share a `--dir` store also share that store's fixture
-/// directory as their workspace. This lets an observation and a later
-/// readiness/delta query compare the same controlled workspace. Commands
-/// without a store receive a fresh temporary directory instead. Tests that
-/// assert workspace validity use `prog_in_dir` with a fixture repository.
-fn isolated_working_dir(args: &[&str]) -> (Option<tempfile::TempDir>, PathBuf) {
-    if let Some(window) = args.windows(2).find(|window| window[0] == "--dir") {
-        let path = PathBuf::from(window[1]);
-        if path.is_dir() {
-            return (None, path);
-        }
-    }
-    let directory = tempfile::tempdir().expect("isolated test working directory should exist");
-    let path = directory.path().to_path_buf();
-    (Some(directory), path)
-}
-
-fn test_git_repo() -> tempfile::TempDir {
-    let directory = tempfile::tempdir().expect("isolated Git repository should be creatable");
-    let output = Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(directory.path())
-        .output()
-        .expect("git should initialize the isolated test workspace");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    directory
-}
-
-fn prog(args: &[&str]) -> Output {
-    let (_temporary_cwd, cwd) = isolated_working_dir(args);
-    Command::new(env!("CARGO_BIN_EXE_prog"))
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .expect("prog binary should run")
-}
-
-fn prog_in_dir(dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_prog"))
-        .current_dir(dir)
-        .args(args)
-        .output()
-        .expect("prog binary should run")
-}
-
-fn prog_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let (_temporary_cwd, cwd) = isolated_working_dir(args);
-    let mut command = Command::new(env!("CARGO_BIN_EXE_prog"));
-    command.current_dir(cwd);
-    command.args(args);
-    for (key, value) in env {
-        command.env(key, value);
-    }
-    command.output().expect("prog binary should run")
-}
-
-fn prog_with_budget(dir: &str, budget: u32, command: &[&str]) -> Output {
-    let (_temporary_cwd, cwd) = isolated_working_dir(&["--dir", dir]);
-    Command::new(env!("CARGO_BIN_EXE_prog"))
-        .current_dir(cwd)
-        .arg("--dir")
-        .arg(dir)
-        .arg("--budget-bytes")
-        .arg(budget.to_string())
-        .args(command)
-        .output()
-        .expect("prog binary should run")
-}
-
-fn prog_with_stdin(args: &[&str], stdin: &[u8]) -> Output {
-    let (_temporary_cwd, cwd) = isolated_working_dir(args);
-    let mut child = Command::new(env!("CARGO_BIN_EXE_prog"))
-        .current_dir(cwd)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("prog binary should spawn");
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin)
-        .expect("stdin should write");
-    child.wait_with_output().expect("prog binary should run")
-}
-
-fn stdout(output: &Output) -> String {
-    String::from_utf8(output.stdout.clone()).expect("stdout should be utf8")
-}
-
-fn stderr(output: &Output) -> String {
-    String::from_utf8(output.stderr.clone()).expect("stderr should be utf8")
-}
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .expect("repo root should canonicalize")
-}
-
-fn first_party_lens_dir() -> PathBuf {
-    repo_root().join("lenses")
 }
 
 #[test]
@@ -2183,168 +2073,6 @@ fn non_codex_integrations_create_valid_agent_files_and_uninstall_cleanly() {
         assert!(!skill_path.exists());
         assert!(!project.path().join(hook_dir).exists());
     }
-}
-
-#[test]
-fn cost_planner_reports_profile_driven_savings_and_repeated_cache_hits() {
-    let dir = tempfile::tempdir().unwrap();
-    let profile = dir.path().join("model.json");
-    fs::write(
-        &profile,
-        serde_json::to_vec_pretty(&json!({
-            "schema": "prog.model_profile",
-            "model": "fable-class-test",
-            "input_price_per_million_tokens": 10.0,
-            "output_price_per_million_tokens": 50.0,
-            "context_window_tokens": 1000000,
-            "cache_read_price_per_million_tokens": 1.0,
-            "cache_write_price_per_million_tokens": 10.0,
-            "pricing_source": "test profile",
-            "priced_at": "2026-07-06"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    let raw = dir.path().join("payload.json");
-    let payload = json!({
-        "items": (0..80)
-            .map(|index| json!({
-                "id": index,
-                "title": format!("Item {index}"),
-                "body": "x".repeat(512)
-            }))
-            .collect::<Vec<_>>()
-    });
-    fs::write(&raw, serde_json::to_vec(&payload).unwrap()).unwrap();
-    let output = prog(&[
-        "cost",
-        "--model-profile",
-        profile.to_str().unwrap(),
-        "--raw-file",
-        raw.to_str().unwrap(),
-        "--expand-path",
-        "/items/3/body",
-        "--estimated-output-tokens",
-        "100",
-        "--repeated-inspections",
-        "4",
-    ]);
-    assert!(output.status.success(), "{}", stdout(&output));
-    assert_eq!(stderr(&output), "");
-    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema"], "prog.cost_report");
-    assert_eq!(report["model"]["model"], "fable-class-test");
-    assert_eq!(report["input"]["expand_paths"][0], "/items/3/body");
-    assert!(
-        report["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning.as_str().unwrap().contains("profile-driven"))
-    );
-    let scenarios = report["scenarios"].as_array().unwrap();
-    let raw_scenario = scenarios
-        .iter()
-        .find(|scenario| scenario["name"] == "raw_payload")
-        .unwrap();
-    let raw_tokens = report["input"]["raw_tokens"].as_u64().unwrap();
-    assert_eq!(raw_scenario["input_tokens"], raw_tokens);
-    let expected_raw_cost =
-        (((raw_tokens as f64 * 10.0 / 1_000_000.0) + (100.0 * 50.0 / 1_000_000.0)) * 1_000_000.0)
-            .round()
-            / 1_000_000.0;
-    assert_eq!(
-        raw_scenario["total_estimated_cost_usd"].as_f64().unwrap(),
-        expected_raw_cost
-    );
-    let targeted = scenarios
-        .iter()
-        .find(|scenario| scenario["name"] == "prog_observe_paths_expand")
-        .unwrap();
-    assert!(targeted["input_tokens"].as_u64().unwrap() < raw_tokens);
-    assert!(targeted["savings_ratio"].as_f64().unwrap() > 1.0);
-    assert_eq!(targeted["lossless"], true);
-    let repeated = scenarios
-        .iter()
-        .find(|scenario| scenario["name"] == "repeated_cache_hits")
-        .unwrap();
-    assert_eq!(repeated["baseline_input_tokens"], raw_tokens * 4);
-    assert!(repeated["input_tokens"].as_u64().unwrap() < raw_tokens * 4);
-}
-
-#[test]
-fn cost_planner_validates_prices_and_reports_tiny_payload_counterexample() {
-    let dir = tempfile::tempdir().unwrap();
-    let raw = dir.path().join("tiny.json");
-    fs::write(&raw, "{}").unwrap();
-
-    let missing_price = dir.path().join("missing-price.json");
-    fs::write(
-        &missing_price,
-        serde_json::to_vec_pretty(&json!({
-            "schema": "prog.model_profile",
-            "model": "bad",
-            "output_price_per_million_tokens": 1.0,
-            "context_window_tokens": 1000
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    let error = prog(&[
-        "cost",
-        "--model-profile",
-        missing_price.to_str().unwrap(),
-        "--raw-file",
-        raw.to_str().unwrap(),
-    ]);
-    assert!(!error.status.success());
-    let value: Value = serde_json::from_slice(&error.stdout).unwrap();
-    assert_eq!(value["error"]["kind"], "bad_args");
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("input_price_per_million_tokens")
-    );
-
-    let profile = dir.path().join("model.json");
-    fs::write(
-        &profile,
-        serde_json::to_vec_pretty(&json!({
-            "schema": "prog.model_profile",
-            "model": "tiny-test",
-            "input_price_per_million_tokens": 0.25,
-            "output_price_per_million_tokens": 1.0,
-            "context_window_tokens": 1000,
-            "pricing_source": "test profile",
-            "priced_at": "2026-07-06"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    let output = prog(&[
-        "cost",
-        "--model-profile",
-        profile.to_str().unwrap(),
-        "--raw-file",
-        raw.to_str().unwrap(),
-    ]);
-    assert!(output.status.success(), "{}", stdout(&output));
-    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(
-        report["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning.as_str().unwrap().contains("tiny payload"))
-    );
-    let observe_only = report["scenarios"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|scenario| scenario["name"] == "prog_observe_only")
-        .unwrap();
-    assert!(observe_only["savings_ratio"].as_f64().unwrap() <= 1.0);
 }
 
 #[test]
