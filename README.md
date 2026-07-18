@@ -382,7 +382,7 @@ regeneration command.
 The five checked-in Cargo compile, Cargo test, pytest, noisy-log, and SARIF
 scenarios rank the expected causal path first in **5/5** cases. The findings
 workflow uses 10 tool calls versus 15 for `envelope -> paths -> evidence`, and
-the estimated output is 3,166 versus 3,446 tokens. See
+the estimated output is 3,218 versus 3,369 tokens. See
 [`docs/evidence-acquisition.md`](docs/evidence-acquisition.md) and the checked
 baseline in
 [`fixtures/evals/evidence-acquisition-metrics.json`](fixtures/evals/evidence-acquisition-metrics.json).

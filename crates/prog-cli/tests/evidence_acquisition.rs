@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use prog_core::{
     CommandHintConfig, FindingOptions, InspectRequest, PreviewPolicy, build_inspect_response,
@@ -7,7 +7,9 @@ use prog_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Deserialize)]
+const BLESS_COMMAND: &str = "PROG_BLESS=1 cargo test -p prog-cli --test evidence_acquisition";
+
+#[derive(Debug, Clone, Deserialize)]
 struct Scenario {
     name: String,
     goal: String,
@@ -41,6 +43,33 @@ struct ScenarioMetrics {
 struct Summary {
     scenario_count: u64,
     correct_top_findings: u64,
+    baseline_tool_calls: u64,
+    findings_tool_calls: u64,
+    inspect_tool_calls: u64,
+    baseline_output_tokens: u64,
+    findings_output_tokens: u64,
+    inspect_output_tokens: u64,
+}
+
+/// The checked-in report preserves exact measurements for human inspection.
+/// CI instead enforces these declared ceilings, so a benign implementation
+/// change within the reviewable headroom does not require fixture churn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct BaselineReport {
+    schema: String,
+    scenarios: Vec<BaselineScenario>,
+    summary: Summary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct BaselineScenario {
+    #[serde(flatten)]
+    metrics: ScenarioMetrics,
+    ceilings: MetricCeilings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct MetricCeilings {
     baseline_tool_calls: u64,
     findings_tool_calls: u64,
     inspect_tool_calls: u64,
@@ -102,23 +131,164 @@ fn evidence_acquisition_eval_smoke() {
         },
         scenarios,
     };
-    assert_eq!(
-        report.summary.correct_top_findings,
-        report.summary.scenario_count
-    );
-    assert!(report.summary.findings_tool_calls < report.summary.baseline_tool_calls);
-    assert!(report.summary.findings_output_tokens < report.summary.baseline_output_tokens);
+    assert_report_invariants(&report);
 
     let baseline = root.join("fixtures/evals/evidence-acquisition-metrics.json");
-    if std::env::var_os("PROG_EVIDENCE_EVAL_UPDATE").is_some() {
-        fs::write(&baseline, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    let expected: BaselineReport = serde_json::from_slice(&fs::read(&baseline).unwrap()).unwrap();
+    if std::env::var_os("PROG_BLESS").is_some() {
+        let refreshed = blessed_baseline(&report, &expected);
+        // Blessing refreshes the human-readable measurements but does not
+        // silently raise a reviewed ceiling. A cost increase therefore needs
+        // an explicit fixture edit before this command can succeed.
+        assert_baseline_invariants(&report, &refreshed);
+        fs::write(&baseline, serde_json::to_vec_pretty(&refreshed).unwrap()).unwrap();
     } else {
-        let expected: Report = serde_json::from_slice(&fs::read(&baseline).unwrap()).unwrap();
+        assert_baseline_invariants(&report, &expected);
+    }
+}
+
+fn assert_report_invariants(report: &Report) {
+    assert_eq!(
+        report.summary.correct_top_findings, report.summary.scenario_count,
+        "every evidence-acquisition scenario must find its expected path; bless only after fixing the regression with `{BLESS_COMMAND}`"
+    );
+    assert!(
+        report.summary.findings_tool_calls < report.summary.baseline_tool_calls,
+        "findings must use fewer calls than the baseline; bless only after fixing the regression with `{BLESS_COMMAND}`"
+    );
+    assert!(
+        report.summary.findings_output_tokens < report.summary.baseline_output_tokens,
+        "findings must use fewer output tokens than the baseline; bless only after fixing the regression with `{BLESS_COMMAND}`"
+    );
+    for scenario in &report.scenarios {
+        assert!(
+            scenario.correct,
+            "{} did not find expected evidence {}; bless only after fixing the regression with `{BLESS_COMMAND}`",
+            scenario.name, scenario.expected_path
+        );
         assert_eq!(
-            report, expected,
-            "set PROG_EVIDENCE_EVAL_UPDATE=1 to accept intentional metric changes"
+            scenario.top_finding_rank, 1,
+            "{} ranked required evidence below first place; bless only after fixing the regression with `{BLESS_COMMAND}`",
+            scenario.name
         );
     }
+}
+
+fn assert_baseline_invariants(report: &Report, baseline: &BaselineReport) {
+    assert_eq!(
+        baseline.schema, report.schema,
+        "eval schema changed; regenerate the reviewed baseline with `{BLESS_COMMAND}`"
+    );
+    let expected = baseline
+        .scenarios
+        .iter()
+        .map(|scenario| (scenario.metrics.name.as_str(), scenario))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        expected.len(),
+        baseline.scenarios.len(),
+        "baseline has duplicate scenario names; regenerate it with `{BLESS_COMMAND}`"
+    );
+    assert_eq!(
+        report.scenarios.len(),
+        expected.len(),
+        "scenario inventory changed; regenerate the reviewed baseline with `{BLESS_COMMAND}`"
+    );
+
+    for actual in &report.scenarios {
+        let Some(expected) = expected.get(actual.name.as_str()) else {
+            panic!(
+                "{} is missing from the eval baseline; regenerate it with `{BLESS_COMMAND}`",
+                actual.name
+            );
+        };
+        assert_eq!(
+            actual.expected_path, expected.metrics.expected_path,
+            "{} changed its required evidence path; regenerate it with `{BLESS_COMMAND}`",
+            actual.name
+        );
+        assert_within_ceiling(
+            &actual.name,
+            "baseline_tool_calls",
+            actual.baseline_tool_calls,
+            expected.ceilings.baseline_tool_calls,
+        );
+        assert_within_ceiling(
+            &actual.name,
+            "findings_tool_calls",
+            actual.findings_tool_calls,
+            expected.ceilings.findings_tool_calls,
+        );
+        assert_within_ceiling(
+            &actual.name,
+            "inspect_tool_calls",
+            actual.inspect_tool_calls,
+            expected.ceilings.inspect_tool_calls,
+        );
+        assert_within_ceiling(
+            &actual.name,
+            "baseline_output_tokens",
+            actual.baseline_output_tokens,
+            expected.ceilings.baseline_output_tokens,
+        );
+        assert_within_ceiling(
+            &actual.name,
+            "findings_output_tokens",
+            actual.findings_output_tokens,
+            expected.ceilings.findings_output_tokens,
+        );
+        assert_within_ceiling(
+            &actual.name,
+            "inspect_output_tokens",
+            actual.inspect_output_tokens,
+            expected.ceilings.inspect_output_tokens,
+        );
+    }
+}
+
+fn assert_within_ceiling(scenario: &str, metric: &str, actual: u64, ceiling: u64) {
+    assert!(
+        actual <= ceiling,
+        "{scenario} exceeded {metric}: {actual} > {ceiling}; either reduce the cost or explicitly review a higher ceiling and run `{BLESS_COMMAND}`"
+    );
+}
+
+fn blessed_baseline(report: &Report, existing: &BaselineReport) -> BaselineReport {
+    BaselineReport {
+        schema: report.schema.clone(),
+        scenarios: report
+            .scenarios
+            .iter()
+            .cloned()
+            .map(|metrics| {
+                let ceilings = existing
+                    .scenarios
+                    .iter()
+                    .find(|scenario| scenario.metrics.name == metrics.name)
+                    .map(|scenario| scenario.ceilings.clone())
+                    .unwrap_or_else(|| MetricCeilings::with_headroom(&metrics));
+                BaselineScenario { metrics, ceilings }
+            })
+            .collect(),
+        summary: report.summary.clone(),
+    }
+}
+
+impl MetricCeilings {
+    fn with_headroom(metrics: &ScenarioMetrics) -> Self {
+        Self {
+            baseline_tool_calls: with_headroom(metrics.baseline_tool_calls),
+            findings_tool_calls: with_headroom(metrics.findings_tool_calls),
+            inspect_tool_calls: with_headroom(metrics.inspect_tool_calls),
+            baseline_output_tokens: with_headroom(metrics.baseline_output_tokens),
+            findings_output_tokens: with_headroom(metrics.findings_output_tokens),
+            inspect_output_tokens: with_headroom(metrics.inspect_output_tokens),
+        }
+    }
+}
+
+fn with_headroom(value: u64) -> u64 {
+    value.saturating_add((value / 4).max(1))
 }
 
 fn measure(scenario: Scenario) -> ScenarioMetrics {
@@ -194,4 +364,107 @@ fn collect_paths(value: &Value, path: &str, paths: &mut Vec<String>) {
 
 fn tokens(bytes: u64) -> u64 {
     bytes.saturating_add(3) / 4
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scenario() -> ScenarioMetrics {
+        ScenarioMetrics {
+            name: "counterexample".to_string(),
+            expected_path: "/required".to_string(),
+            top_finding_path: "/required".to_string(),
+            top_finding_rank: 1,
+            correct: true,
+            baseline_tool_calls: 3,
+            findings_tool_calls: 2,
+            inspect_tool_calls: 3,
+            baseline_output_tokens: 100,
+            findings_output_tokens: 80,
+            inspect_output_tokens: 90,
+        }
+    }
+
+    fn report(scenario: ScenarioMetrics) -> Report {
+        Report {
+            schema: "prog.evidence_acquisition_eval".to_string(),
+            summary: Summary {
+                scenario_count: 1,
+                correct_top_findings: u64::from(scenario.correct),
+                baseline_tool_calls: scenario.baseline_tool_calls,
+                findings_tool_calls: scenario.findings_tool_calls,
+                inspect_tool_calls: scenario.inspect_tool_calls,
+                baseline_output_tokens: scenario.baseline_output_tokens,
+                findings_output_tokens: scenario.findings_output_tokens,
+                inspect_output_tokens: scenario.inspect_output_tokens,
+            },
+            scenarios: vec![scenario],
+        }
+    }
+
+    #[test]
+    fn bless_preserves_reviewed_ceilings_and_is_idempotent() {
+        let metrics = scenario();
+        let existing = BaselineReport {
+            schema: "prog.evidence_acquisition_eval".to_string(),
+            scenarios: vec![BaselineScenario {
+                ceilings: MetricCeilings::with_headroom(&metrics),
+                metrics: metrics.clone(),
+            }],
+            summary: report(metrics.clone()).summary,
+        };
+        let refreshed = blessed_baseline(&report(metrics.clone()), &existing);
+        assert_eq!(
+            refreshed.scenarios[0].ceilings,
+            existing.scenarios[0].ceilings
+        );
+        let first = serde_json::to_vec_pretty(&refreshed).unwrap();
+        let parsed: BaselineReport = serde_json::from_slice(&first).unwrap();
+        assert_eq!(first, serde_json::to_vec_pretty(&parsed).unwrap());
+
+        let mut more_expensive = metrics;
+        more_expensive.findings_output_tokens += 50;
+        let refreshed = blessed_baseline(&report(more_expensive), &existing);
+        assert_eq!(
+            refreshed.scenarios[0].ceilings,
+            existing.scenarios[0].ceilings
+        );
+        assert!(
+            std::panic::catch_unwind(|| {
+                assert_baseline_invariants(
+                    &report(refreshed.scenarios[0].metrics.clone()),
+                    &refreshed,
+                )
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn invariants_reject_wrong_rank_and_cost_over_ceiling() {
+        let mut incorrect = scenario();
+        incorrect.top_finding_rank = 2;
+        incorrect.correct = false;
+        assert!(std::panic::catch_unwind(|| assert_report_invariants(&report(incorrect))).is_err());
+
+        let metrics = scenario();
+        let baseline = BaselineReport {
+            schema: "prog.evidence_acquisition_eval".to_string(),
+            scenarios: vec![BaselineScenario {
+                ceilings: MetricCeilings::with_headroom(&metrics),
+                metrics: metrics.clone(),
+            }],
+            summary: report(metrics.clone()).summary,
+        };
+        let mut too_expensive = metrics;
+        too_expensive.findings_output_tokens =
+            baseline.scenarios[0].ceilings.findings_output_tokens + 1;
+        assert!(
+            std::panic::catch_unwind(|| {
+                assert_baseline_invariants(&report(too_expensive), &baseline)
+            })
+            .is_err()
+        );
+    }
 }

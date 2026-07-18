@@ -27,8 +27,44 @@ impl Respond for EtagResponder {
     }
 }
 
+/// Returns a directory created by the test, never the contributor checkout.
+///
+/// Commands that share a `--dir` store also share that store's fixture
+/// directory as their workspace. This lets an observation and a later
+/// readiness/delta query compare the same controlled workspace. Commands
+/// without a store receive a fresh temporary directory instead. Tests that
+/// assert workspace validity use `prog_in_dir` with a fixture repository.
+fn isolated_working_dir(args: &[&str]) -> (Option<tempfile::TempDir>, PathBuf) {
+    if let Some(window) = args.windows(2).find(|window| window[0] == "--dir") {
+        let path = PathBuf::from(window[1]);
+        if path.is_dir() {
+            return (None, path);
+        }
+    }
+    let directory = tempfile::tempdir().expect("isolated test working directory should exist");
+    let path = directory.path().to_path_buf();
+    (Some(directory), path)
+}
+
+fn test_git_repo() -> tempfile::TempDir {
+    let directory = tempfile::tempdir().expect("isolated Git repository should be creatable");
+    let output = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(directory.path())
+        .output()
+        .expect("git should initialize the isolated test workspace");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    directory
+}
+
 fn prog(args: &[&str]) -> Output {
+    let (_temporary_cwd, cwd) = isolated_working_dir(args);
     Command::new(env!("CARGO_BIN_EXE_prog"))
+        .current_dir(cwd)
         .args(args)
         .output()
         .expect("prog binary should run")
@@ -43,7 +79,9 @@ fn prog_in_dir(dir: &Path, args: &[&str]) -> Output {
 }
 
 fn prog_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
+    let (_temporary_cwd, cwd) = isolated_working_dir(args);
     let mut command = Command::new(env!("CARGO_BIN_EXE_prog"));
+    command.current_dir(cwd);
     command.args(args);
     for (key, value) in env {
         command.env(key, value);
@@ -52,7 +90,9 @@ fn prog_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
 }
 
 fn prog_with_budget(dir: &str, budget: u32, command: &[&str]) -> Output {
+    let (_temporary_cwd, cwd) = isolated_working_dir(&["--dir", dir]);
     Command::new(env!("CARGO_BIN_EXE_prog"))
+        .current_dir(cwd)
         .arg("--dir")
         .arg(dir)
         .arg("--budget-bytes")
@@ -63,7 +103,9 @@ fn prog_with_budget(dir: &str, budget: u32, command: &[&str]) -> Output {
 }
 
 fn prog_with_stdin(args: &[&str], stdin: &[u8]) -> Output {
+    let (_temporary_cwd, cwd) = isolated_working_dir(args);
     let mut child = Command::new(env!("CARGO_BIN_EXE_prog"))
+        .current_dir(cwd)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -4090,6 +4132,8 @@ fn automatic_delta_requires_the_same_comparison_family() {
 
 #[test]
 fn verification_readiness_requires_every_declared_scope() {
+    let workspace = test_git_repo();
+    let root = workspace.path();
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
     let state = dir.path().join("state.txt");
@@ -4100,18 +4144,21 @@ fn verification_readiness_requires_every_declared_scope() {
     )
     .unwrap();
     fs::write(&state, "error old failure\n").unwrap();
-    let first = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--selection-scope",
-        "full-suite",
-        "--selection-exhaustive",
-        "--",
-        "python3",
-        script.to_str().unwrap(),
-        state.to_str().unwrap(),
-    ]);
+    let first = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--selection-scope",
+            "full-suite",
+            "--selection-exhaustive",
+            "--",
+            "python3",
+            script.to_str().unwrap(),
+            state.to_str().unwrap(),
+        ],
+    );
     assert!(first.status.success(), "{}", stdout(&first));
     let first: Value = serde_json::from_slice(&first.stdout).unwrap();
     let first_id = first["observation"]["observation_id"]
@@ -4120,25 +4167,28 @@ fn verification_readiness_requires_every_declared_scope() {
         .to_string();
 
     fs::write(&state, "error new failure\n").unwrap();
-    let second = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--selection-scope",
-        "full-suite",
-        "--selection-exhaustive",
-        "--",
-        "python3",
-        script.to_str().unwrap(),
-        state.to_str().unwrap(),
-    ]);
+    let second = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--selection-scope",
+            "full-suite",
+            "--selection-exhaustive",
+            "--",
+            "python3",
+            script.to_str().unwrap(),
+            state.to_str().unwrap(),
+        ],
+    );
     assert!(second.status.success(), "{}", stdout(&second));
     let second: Value = serde_json::from_slice(&second.stdout).unwrap();
     let second_id = second["observation"]["observation_id"]
         .as_str()
         .unwrap()
         .to_string();
-    let delta = prog(&["--dir", dir_arg, "delta", &first_id, &second_id]);
+    let delta = prog_in_dir(root, &["--dir", dir_arg, "delta", &first_id, &second_id]);
     assert!(delta.status.success(), "{}", stdout(&delta));
     let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
     let resolved_fingerprint = delta["findings"]
@@ -4150,38 +4200,44 @@ fn verification_readiness_requires_every_declared_scope() {
         .unwrap()
         .to_string();
 
-    let target = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "target-failure",
-        "--check",
-        "target failure is absent",
-        "--scope",
-        "target",
-        "--origin-observation",
-        &first_id,
-        "--evidence-observation",
-        &second_id,
-        "--expected-absent-fingerprint",
-        &resolved_fingerprint,
-    ]);
+    let target = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "target-failure",
+            "--check",
+            "target failure is absent",
+            "--scope",
+            "target",
+            "--origin-observation",
+            &first_id,
+            "--evidence-observation",
+            &second_id,
+            "--expected-absent-fingerprint",
+            &resolved_fingerprint,
+        ],
+    );
     assert!(target.status.success(), "{}", stdout(&target));
-    let affected = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "affected-suite",
-        "--check",
-        "affected test suite passes",
-        "--scope",
-        "affected-suite",
-    ]);
+    let affected = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "affected-suite",
+            "--check",
+            "affected test suite passes",
+            "--scope",
+            "affected-suite",
+        ],
+    );
     assert!(affected.status.success(), "{}", stdout(&affected));
 
-    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    let readiness = prog_in_dir(root, &["--dir", dir_arg, "session", "show", "--readiness"]);
     assert!(readiness.status.success(), "{}", stdout(&readiness));
     let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
     assert_eq!(readiness["schema"], "prog.verification");
@@ -4245,35 +4301,43 @@ fn verification_without_obligations_is_explicitly_not_ready() {
 
 #[test]
 fn verification_accepts_a_complete_successful_command_as_evidence() {
+    let workspace = test_git_repo();
+    let root = workspace.path();
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
-    let run = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--",
-        "python3",
-        "-c",
-        "print('all clear')",
-    ]);
+    let run = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--",
+            "python3",
+            "-c",
+            "print('all clear')",
+        ],
+    );
     assert!(run.status.success(), "{}", stdout(&run));
     let run: Value = serde_json::from_slice(&run.stdout).unwrap();
     let observation_id = run["observation"]["observation_id"].as_str().unwrap();
-    let add = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "target-command",
-        "--check",
-        "target command passes",
-        "--scope",
-        "target",
-        "--evidence-observation",
-        observation_id,
-    ]);
+    let add = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "target-command",
+            "--check",
+            "target command passes",
+            "--scope",
+            "target",
+            "--evidence-observation",
+            observation_id,
+        ],
+    );
     assert!(add.status.success(), "{}", stdout(&add));
-    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    let readiness = prog_in_dir(root, &["--dir", dir_arg, "session", "show", "--readiness"]);
     assert!(readiness.status.success(), "{}", stdout(&readiness));
     let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
     assert_eq!(readiness["ready"], true);
@@ -4282,30 +4346,35 @@ fn verification_accepts_a_complete_successful_command_as_evidence() {
 
 #[test]
 fn verification_obligation_enforces_declared_operation_and_surfaces_advisory_hints() {
+    let workspace = test_git_repo();
+    let root = workspace.path();
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
-    let run = prog(&["--dir", dir_arg, "run", "--", "true"]);
+    let run = prog_in_dir(root, &["--dir", dir_arg, "run", "--", "true"]);
     assert!(run.status.success(), "{}", stdout(&run));
     let run: Value = serde_json::from_slice(&run.stdout).unwrap();
     let observation_id = run["observation"]["observation_id"].as_str().unwrap();
 
-    let declared = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "normalizer-advice",
-        "--check",
-        "normalizer suggestion",
-        "--scope",
-        "target",
-        "--declared-by",
-        "normalizer",
-        "--evidence-observation",
-        observation_id,
-        "--advisory-argv",
-        "true",
-    ]);
+    let declared = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "normalizer-advice",
+            "--check",
+            "normalizer suggestion",
+            "--scope",
+            "target",
+            "--declared-by",
+            "normalizer",
+            "--evidence-observation",
+            observation_id,
+            "--advisory-argv",
+            "true",
+        ],
+    );
     assert!(declared.status.success(), "{}", stdout(&declared));
     let declared: Value = serde_json::from_slice(&declared.stdout).unwrap();
     assert_eq!(declared["required"], false);
@@ -4316,23 +4385,26 @@ fn verification_obligation_enforces_declared_operation_and_surfaces_advisory_hin
         json!(["normalizer-advice"])
     );
 
-    let mismatched = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "wrong-operation",
-        "--check",
-        "the expected command passes",
-        "--scope",
-        "target",
-        "--evidence-observation",
-        observation_id,
-        "--expected-argv",
-        "false",
-    ]);
+    let mismatched = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "wrong-operation",
+            "--check",
+            "the expected command passes",
+            "--scope",
+            "target",
+            "--evidence-observation",
+            observation_id,
+            "--expected-argv",
+            "false",
+        ],
+    );
     assert!(mismatched.status.success(), "{}", stdout(&mismatched));
-    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    let readiness = prog_in_dir(root, &["--dir", dir_arg, "session", "show", "--readiness"]);
     assert!(readiness.status.success(), "{}", stdout(&readiness));
     let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
     let mismatch = readiness["evaluations"]
@@ -4455,6 +4527,8 @@ fn verification_never_passes_truncated_or_unvalidated_source_evidence() {
 
 #[test]
 fn verification_treats_targeted_incomplete_reruns_as_not_observed() {
+    let workspace = test_git_repo();
+    let root = workspace.path();
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
     let state = dir.path().join("state.txt");
@@ -4465,37 +4539,43 @@ fn verification_treats_targeted_incomplete_reruns_as_not_observed() {
     )
     .unwrap();
     fs::write(&state, "error old failure\n").unwrap();
-    let first = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--selection-scope",
-        "full-suite",
-        "--selection-exhaustive",
-        "--",
-        "python3",
-        script.to_str().unwrap(),
-        state.to_str().unwrap(),
-    ]);
+    let first = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--selection-scope",
+            "full-suite",
+            "--selection-exhaustive",
+            "--",
+            "python3",
+            script.to_str().unwrap(),
+            state.to_str().unwrap(),
+        ],
+    );
     assert!(first.status.success(), "{}", stdout(&first));
     let first: Value = serde_json::from_slice(&first.stdout).unwrap();
     let first_id = first["observation"]["observation_id"].as_str().unwrap();
     fs::write(&state, "all clear\n").unwrap();
-    let second = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--selection-scope",
-        "targeted-case",
-        "--",
-        "python3",
-        script.to_str().unwrap(),
-        state.to_str().unwrap(),
-    ]);
+    let second = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--selection-scope",
+            "targeted-case",
+            "--",
+            "python3",
+            script.to_str().unwrap(),
+            state.to_str().unwrap(),
+        ],
+    );
     assert!(second.status.success(), "{}", stdout(&second));
     let second: Value = serde_json::from_slice(&second.stdout).unwrap();
     let second_id = second["observation"]["observation_id"].as_str().unwrap();
-    let delta = prog(&["--dir", dir_arg, "delta", first_id, second_id]);
+    let delta = prog_in_dir(root, &["--dir", dir_arg, "delta", first_id, second_id]);
     assert!(delta.status.success(), "{}", stdout(&delta));
     let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
     let fingerprint = delta["findings"]
@@ -4505,25 +4585,28 @@ fn verification_treats_targeted_incomplete_reruns_as_not_observed() {
         .find(|finding| finding["status"] == "not_observed")
         .and_then(|finding| finding["fingerprint"].as_str())
         .unwrap_or_else(|| panic!("expected not_observed delta: {delta}"));
-    let add = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "targeted-rerun",
-        "--check",
-        "old failure is absent",
-        "--scope",
-        "full-suite",
-        "--origin-observation",
-        first_id,
-        "--evidence-observation",
-        second_id,
-        "--expected-absent-fingerprint",
-        fingerprint,
-    ]);
+    let add = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "targeted-rerun",
+            "--check",
+            "old failure is absent",
+            "--scope",
+            "full-suite",
+            "--origin-observation",
+            first_id,
+            "--evidence-observation",
+            second_id,
+            "--expected-absent-fingerprint",
+            fingerprint,
+        ],
+    );
     assert!(add.status.success(), "{}", stdout(&add));
-    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    let readiness = prog_in_dir(root, &["--dir", dir_arg, "session", "show", "--readiness"]);
     assert!(readiness.status.success(), "{}", stdout(&readiness));
     let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
     assert_eq!(readiness["evaluations"][0]["status"], "not_observed");
@@ -4590,6 +4673,86 @@ fn verification_marks_passing_evidence_stale_after_workspace_edit() {
             .iter()
             .any(|reason| reason.as_str().unwrap().contains("workspace"))
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn verification_treats_unreadable_untracked_workspace_evidence_as_stale() {
+    use std::os::unix::fs::symlink;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    fs::write(root.join("tracked.txt"), "initial\n").unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "prog@example.test"],
+        vec!["config", "user.name", "prog test"],
+        vec!["add", "tracked.txt"],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        let status = Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    // This models a dirty worktree entry whose bytes cannot be safely
+    // attributed to one snapshot. The product must make readiness stale,
+    // rather than claiming workspace evidence is unchanged.
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("changing.txt"), "outside workspace\n").unwrap();
+    symlink(
+        outside.path().join("changing.txt"),
+        root.join("unreadable-untracked-entry"),
+    )
+    .unwrap();
+
+    let store = root.join(".prog-state");
+    let store_arg = store.to_str().unwrap();
+    let run = prog_in_dir(root, &["--dir", store_arg, "run", "--", "true"]);
+    assert!(run.status.success(), "{}", stdout(&run));
+    let run: Value = serde_json::from_slice(&run.stdout).unwrap();
+    let observation_id = run["observation"]["observation_id"].as_str().unwrap();
+    let add = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            store_arg,
+            "session",
+            "obligation-add",
+            "workspace-unreadable",
+            "--check",
+            "workspace remains unchanged",
+            "--scope",
+            "target",
+            "--evidence-observation",
+            observation_id,
+            "--required-state",
+            "workspace-unchanged",
+        ],
+    );
+    assert!(add.status.success(), "{}", stdout(&add));
+
+    let readiness = prog_in_dir(
+        root,
+        &["--dir", store_arg, "session", "show", "--readiness"],
+    );
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    assert_eq!(readiness["evaluations"][0]["status"], "stale");
+    assert!(
+        readiness["evaluations"][0]["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason
+                .as_str()
+                .unwrap()
+                .contains("unreadable or unstable dirty-file content"))
+    );
+    assert!(!readiness["ready"].as_bool().unwrap());
 }
 
 #[test]
