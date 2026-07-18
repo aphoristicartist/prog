@@ -29,6 +29,11 @@ pub struct WorkspaceState {
     pub unborn_head: bool,
     pub sparse_checkout: bool,
     pub dirty: Vec<WorkspacePathState>,
+    /// True when Git reported a dirty entry that could not be represented
+    /// safely. This is distinct from `dirty_truncated`: either condition
+    /// means the workspace snapshot cannot prove unchanged state.
+    #[serde(default)]
+    pub dirty_incomplete: bool,
     pub dirty_truncated: bool,
     pub submodules: Vec<SubmoduleState>,
     #[serde(default)]
@@ -102,6 +107,10 @@ pub fn capture_workspace_with_cap(path: &Path, dirty_file_cap: usize) -> Workspa
     let unborn_head = head.is_none() && git(&root, ["symbolic-ref", "--quiet", "HEAD"]).is_ok();
     let sparse_checkout =
         git(&root, ["config", "--bool", "core.sparseCheckout"]).is_ok_and(|value| value == "true");
+    let mut submodules: Vec<SubmoduleState> = git(&root, ["submodule", "status", "--recursive"])
+        .ok()
+        .map(|output| output.lines().filter_map(parse_submodule).collect())
+        .unwrap_or_default();
     let status = match git_bytes(
         &root,
         ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -110,12 +119,14 @@ pub fn capture_workspace_with_cap(path: &Path, dirty_file_cap: usize) -> Workspa
         Err(reason) => return unavailable(reason),
     };
     let mut dirty = Vec::new();
+    let mut dirty_incomplete = false;
     let mut dirty_truncated = false;
-    for record in status
+    let mut records = status
         .split(|byte| *byte == 0)
-        .filter(|record| !record.is_empty())
-    {
+        .filter(|record| !record.is_empty());
+    while let Some(record) = records.next() {
         if record.len() < 4 {
+            dirty_incomplete = true;
             continue;
         }
         if dirty.len() >= dirty_file_cap {
@@ -124,11 +135,49 @@ pub fn capture_workspace_with_cap(path: &Path, dirty_file_cap: usize) -> Workspa
         }
         let status = String::from_utf8_lossy(&record[..2]).into_owned();
         let relative = String::from_utf8_lossy(&record[3..]).into_owned();
+        let rename_from = if status.contains('R') || status.contains('C') {
+            match records.next() {
+                Some(previous) => Some(String::from_utf8_lossy(previous).into_owned()),
+                None => {
+                    dirty_incomplete = true;
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if !workspace_relative_path_is_safe(&relative)
+            || rename_from
+                .as_deref()
+                .is_some_and(|path| !workspace_relative_path_is_safe(path))
+        {
+            dirty_incomplete = true;
+            continue;
+        }
         let file = root.join(&relative);
-        let (sha256, unreadable, reason) = hash_workspace_file(&file);
+        let (sha256, unreadable, reason) = if status.contains('D') {
+            // Git's index/worktree status is the evidence for a deletion; no
+            // file content exists to hash, and treating that known state as
+            // unreadable would incorrectly make two deleted snapshots
+            // incomparable.
+            (None, false, Some("deleted"))
+        } else if submodules
+            .iter()
+            .any(|submodule| submodule.path == relative)
+        {
+            // `git submodule status` is the authoritative, bounded state for
+            // a submodule directory. It carries pointer and dirty facts, so
+            // never follow the directory or classify it as an unreadable file.
+            (None, false, Some("submodule_state"))
+        } else {
+            hash_workspace_file(&file)
+        };
         let mut extra = Extra::new();
         if let Some(reason) = reason {
             extra.insert("hash_omitted_reason".to_string(), reason.into());
+        }
+        if let Some(rename_from) = rename_from {
+            extra.insert("rename_from".to_string(), rename_from.into());
         }
         dirty.push(WorkspacePathState {
             path: relative,
@@ -138,10 +187,6 @@ pub fn capture_workspace_with_cap(path: &Path, dirty_file_cap: usize) -> Workspa
             extra,
         });
     }
-    let mut submodules: Vec<SubmoduleState> = git(&root, ["submodule", "status", "--recursive"])
-        .ok()
-        .map(|output| output.lines().filter_map(parse_submodule).collect())
-        .unwrap_or_default();
     for submodule in &mut submodules {
         submodule.dirty |= dirty.iter().any(|entry| {
             entry.path == submodule.path || entry.path.starts_with(&format!("{}/", submodule.path))
@@ -157,6 +202,7 @@ pub fn capture_workspace_with_cap(path: &Path, dirty_file_cap: usize) -> Workspa
         unborn_head,
         sparse_checkout,
         dirty,
+        dirty_incomplete,
         dirty_truncated,
         submodules,
         unavailable_reason: None,
@@ -184,6 +230,16 @@ pub fn compare_workspace(
     }
     if captured.dirty_truncated || current.dirty_truncated {
         reasons.push("dirty-file capture reached its cap".to_string());
+    }
+    if captured.dirty_incomplete || current.dirty_incomplete {
+        reasons.push("workspace capture omitted an unsafe Git status entry".to_string());
+    }
+    if captured.dirty.iter().any(|entry| entry.unreadable)
+        || current.dirty.iter().any(|entry| entry.unreadable)
+    {
+        reasons.push(
+            "workspace capture omitted unreadable or unstable dirty-file content".to_string(),
+        );
     }
     if reasons.is_empty() && workspace_equivalent(captured, current) {
         return WorkspaceComparison {
@@ -233,6 +289,7 @@ fn workspace_equivalent(captured: &WorkspaceState, current: &WorkspaceState) -> 
         && captured.unborn_head == current.unborn_head
         && captured.sparse_checkout == current.sparse_checkout
         && captured.dirty == current.dirty
+        && captured.dirty_incomplete == current.dirty_incomplete
         && captured.dirty_truncated == current.dirty_truncated
         && captured.submodules == current.submodules
         && captured.unavailable_reason == current.unavailable_reason
@@ -249,6 +306,7 @@ fn unavailable(reason: String) -> WorkspaceState {
         unborn_head: false,
         sparse_checkout: false,
         dirty: Vec::new(),
+        dirty_incomplete: false,
         dirty_truncated: false,
         submodules: Vec::new(),
         unavailable_reason: Some(reason),
@@ -257,6 +315,13 @@ fn unavailable(reason: String) -> WorkspaceState {
 }
 
 fn hash_workspace_file(path: &Path) -> (Option<String>, bool, Option<&'static str>) {
+    hash_workspace_file_with_after_read(path, || {})
+}
+
+fn hash_workspace_file_with_after_read(
+    path: &Path,
+    after_read: impl FnOnce(),
+) -> (Option<String>, bool, Option<&'static str>) {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(_) => return (None, true, Some("unreadable")),
@@ -286,11 +351,39 @@ fn hash_workspace_file(path: &Path) -> (Option<String>, bool, Option<&'static st
     if bytes.len() as u64 > MAX_HASH_BYTES {
         return (None, true, Some("file_changed_during_hash"));
     }
+    after_read();
+    let after = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(_) => return (None, true, Some("file_changed_during_hash")),
+    };
+    // Metadata is only an instability detector; equality is never used as a
+    // substitute for the content digest. A changed size, type, or observable
+    // modification time means the digest cannot be assigned to one stable
+    // workspace state.
+    if after.file_type() != metadata.file_type()
+        || after.len() != metadata.len()
+        || (metadata.modified().ok().zip(after.modified().ok()))
+            .is_some_and(|(before, after)| before != after)
+    {
+        return (None, true, Some("file_changed_during_hash"));
+    }
     (
         Some(format!("sha256:{:x}", Sha256::digest(bytes))),
         false,
         None,
     )
+}
+
+fn workspace_relative_path_is_safe(value: &str) -> bool {
+    let path = Path::new(value);
+    !value.is_empty()
+        && !path.is_absolute()
+        && path.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
 }
 
 fn git<const N: usize>(path: &Path, args: [&str; N]) -> std::result::Result<String, String> {
@@ -330,4 +423,32 @@ fn parse_submodule(line: &str) -> Option<SubmoduleState> {
         dirty: !marker.is_ascii_hexdigit() && marker != ' ',
         extra: Extra::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn post_read_mutation_is_explicitly_unstable() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("racy.txt");
+        fs::write(&path, "before").unwrap();
+
+        let result = hash_workspace_file_with_after_read(&path, || {
+            fs::write(&path, "after with a different length").unwrap();
+        });
+
+        assert_eq!(result, (None, true, Some("file_changed_during_hash")));
+    }
+
+    #[test]
+    fn unsafe_relative_paths_are_rejected_before_filesystem_access() {
+        for path in ["../outside", "/absolute", "", "nested/../../outside"] {
+            assert!(!workspace_relative_path_is_safe(path), "{path}");
+        }
+        for path in ["src/lib.rs", "nested/./file", "unicodé/ファイル.rs"] {
+            assert!(workspace_relative_path_is_safe(path), "{path}");
+        }
+    }
 }
