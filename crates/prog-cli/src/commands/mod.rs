@@ -6,5 +6,6 @@ pub(crate) mod hints;
 pub(crate) mod init;
 pub(crate) mod mcp_task;
 pub(crate) mod meta;
+pub(crate) mod navigation;
 pub(crate) mod paths;
 pub(crate) mod session;
