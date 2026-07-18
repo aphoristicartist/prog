@@ -85,7 +85,7 @@ use commands::{
     profiles::*,
     recipe::run_recipe,
     run::{RunProcessStatus, child_exit_code, redact_run_argv, run_command},
-    session::{readiness_report, session_show},
+    session::{declare_recipe_obligation, readiness_report, session_show},
     source::{shell_quote, source_command},
 };
 
@@ -1313,51 +1313,6 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
-}
-
-fn declare_recipe_obligation(
-    store: &Store,
-    args: &RecipeArgs,
-    envelope: &DisclosureEnvelope,
-) -> Result<()> {
-    let Some(observation_id) = envelope
-        .observation
-        .as_ref()
-        .and_then(|observation| observation.observation_id.as_deref())
-    else {
-        return Ok(());
-    };
-    let session = match store.get_session(None)? {
-        Some(session) => session,
-        None => store.start_session(Some(format!(
-            "recipe {} verification",
-            args.recipe.as_str()
-        )))?,
-    };
-    let id = format!(
-        "recipe.{}.{}",
-        args.recipe.as_str(),
-        &observation_id[..12.min(observation_id.len())]
-    );
-    let obligation = VerificationObligation {
-        schema: VERIFICATION_SCHEMA.to_string(),
-        id,
-        session_id: session.session_id,
-        required: false,
-        intended_check: format!("review {} recipe evidence", args.recipe.as_str()),
-        required_scope: "recipe-observation".to_string(),
-        declared_by: ObligationDeclarer::Recipe,
-        expected_operation: None,
-        required_state: VerificationStateRelationship::Any,
-        advisory_actions: Vec::new(),
-        comparison_family: args.comparison_family.clone(),
-        origin_observation_id: None,
-        expected_absent_fingerprint: None,
-        evidence_observation_id: Some(observation_id.to_string()),
-        created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-        extra: Extra::new(),
-    };
-    store.put_obligation(&obligation)
 }
 
 #[derive(Clone, Serialize)]
