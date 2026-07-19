@@ -435,6 +435,7 @@ pub(crate) fn envelope_for_payload(
     store: &Store,
     input: EnvelopeInput,
     cursor: Option<String>,
+    max_envelope_bytes: usize,
 ) -> Result<DisclosureEnvelope> {
     let observation_record = input
         .observation_id
@@ -443,7 +444,7 @@ pub(crate) fn envelope_for_payload(
         .transpose()?
         .flatten();
     let mut policy = PreviewPolicy {
-        max_envelope_bytes: response_budget_bytes(),
+        max_envelope_bytes,
         ..PreviewPolicy::default()
     };
     let mut last = None;
@@ -518,7 +519,7 @@ pub(crate) fn envelope_for_payload(
         envelope.warnings.truncate(1);
         finalize_envelope_bytes(&mut envelope)?;
     }
-    compact_envelope_to_budget(&mut envelope)?;
+    compact_envelope_to_budget(&mut envelope, max_envelope_bytes)?;
     Ok(envelope)
 }
 
@@ -817,8 +818,11 @@ pub(crate) fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Resu
     ))
 }
 
-pub(crate) fn compact_envelope_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
-    let budget = response_budget_bytes();
+pub(crate) fn compact_envelope_to_budget(
+    envelope: &mut DisclosureEnvelope,
+    max_envelope_bytes: usize,
+) -> Result<()> {
+    let budget = max_envelope_bytes;
     while serde_json::to_vec(envelope)?.len() > budget && !envelope.findings.is_empty() {
         envelope.findings.pop();
     }
@@ -858,8 +862,11 @@ pub(crate) fn compact_envelope_to_budget(envelope: &mut DisclosureEnvelope) -> R
 /// Progressively drop `pages[]` then `merged_shape` (keeping the tiny scalar
 /// counters) until the serialized envelope fits, recording a warning each time
 /// (invariant I11: pagination never escapes the envelope budget).
-pub(crate) fn compact_pagination_extra_to_budget(envelope: &mut DisclosureEnvelope) -> Result<()> {
-    let budget = response_budget_bytes();
+pub(crate) fn compact_pagination_extra_to_budget(
+    envelope: &mut DisclosureEnvelope,
+    max_envelope_bytes: usize,
+) -> Result<()> {
+    let budget = max_envelope_bytes;
     if serde_json::to_vec(envelope)?.len() <= budget {
         return Ok(());
     }

@@ -14,10 +14,11 @@ pub(crate) struct McpTaskCommandOutput {
 pub(crate) async fn mcp_task_command(
     store: &Store,
     command: &McpTaskCommand,
+    ctx: &mut InvocationContext,
 ) -> Result<McpTaskCommandOutput> {
     match command {
         McpTaskCommand::Start(args) => {
-            let profile = mcp_task_profile(store, &args.source_id)?;
+            let profile = mcp_task_profile(store, &args.source_id, ctx)?;
             let operation = profile_operation(&profile, &args.operation)?.clone();
             let invocation = invocation_config(&operation, "mcp")?;
             if required_profile_string(invocation, "kind")? != "tool" {
@@ -45,7 +46,7 @@ pub(crate) async fn mcp_task_command(
             )
         }
         McpTaskCommand::Get(args) => {
-            let profile = mcp_task_profile(store, &args.source_id)?;
+            let profile = mcp_task_profile(store, &args.source_id, ctx)?;
             match mcp_source_from_profile(&profile)?
                 .get_task(&args.task_id)
                 .await
@@ -74,7 +75,7 @@ pub(crate) async fn mcp_task_command(
             }
         }
         McpTaskCommand::Result(args) => {
-            let profile = mcp_task_profile(store, &args.source_id)?;
+            let profile = mcp_task_profile(store, &args.source_id, ctx)?;
             match mcp_source_from_profile(&profile)?
                 .get_task_result(&args.task_id)
                 .await
@@ -103,7 +104,7 @@ pub(crate) async fn mcp_task_command(
             }
         }
         McpTaskCommand::Cancel(args) => {
-            let profile = mcp_task_profile(store, &args.source_id)?;
+            let profile = mcp_task_profile(store, &args.source_id, ctx)?;
             match mcp_source_from_profile(&profile)?
                 .cancel_task(&args.task_id)
                 .await
@@ -146,7 +147,11 @@ pub(crate) fn mcp_task_result_unavailable(error: &CoreError) -> bool {
     )
 }
 
-fn mcp_task_profile(store: &Store, source_id: &str) -> Result<SourceProfile> {
+fn mcp_task_profile(
+    store: &Store,
+    source_id: &str,
+    ctx: &mut InvocationContext,
+) -> Result<SourceProfile> {
     let profile = store
         .read_profile(source_id)?
         .ok_or_else(|| CoreError::UnknownSource(source_id.to_string()))?;
@@ -156,7 +161,7 @@ fn mcp_task_profile(store: &Store, source_id: &str) -> Result<SourceProfile> {
             reason: format!("source '{source_id}' is not an MCP source"),
         });
     }
-    apply_profile_disclosure_budget(&profile)?;
+    ctx.apply_profile_disclosure(&profile)?;
     Ok(profile)
 }
 

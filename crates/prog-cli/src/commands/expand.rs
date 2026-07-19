@@ -2,7 +2,11 @@
 
 use crate::*;
 
-pub(crate) fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<DisclosureEnvelope> {
+pub(crate) fn expand_cursor(
+    store: &Store,
+    args: &ExpandArgs,
+    ctx: &InvocationContext,
+) -> Result<DisclosureEnvelope> {
     let record = store.get_cursor(&args.cursor)?;
     let entry = store
         .get_entry(&record.cache_key)?
@@ -101,6 +105,7 @@ pub(crate) fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<Disclosu
                 lens: None,
             },
             None,
+            ctx.max_envelope_bytes(),
         )?;
         if let Some(observation) = envelope.observation.as_mut() {
             observation.completeness.root_path = target_path;
@@ -135,5 +140,6 @@ pub(crate) fn expand_cursor(store: &Store, args: &ExpandArgs) -> Result<Disclosu
             lens: None,
         },
         Some(args.cursor.clone()),
+        ctx.max_envelope_bytes(),
     )
 }

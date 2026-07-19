@@ -66,6 +66,7 @@ pub(crate) fn inspect_cursor(
     store: &Store,
     lens_dir: &Path,
     args: &InspectArgs,
+    ctx: &InvocationContext,
 ) -> Result<InspectResponse> {
     if args.goal.trim().is_empty() {
         return Err(CoreError::BadArgs {
@@ -157,7 +158,7 @@ pub(crate) fn inspect_cursor(
             context.age_seconds
         ));
     }
-    bound_inspect_response(&mut response)?;
+    bound_inspect_response(&mut response, ctx.max_envelope_bytes())?;
     Ok(response)
 }
 
@@ -165,6 +166,7 @@ pub(crate) fn evidence_cursor(
     store: &Store,
     lens_dir: &Path,
     args: &EvidenceArgs,
+    ctx: &InvocationContext,
 ) -> Result<EvidenceBlock> {
     let context = cursor_context(store, &args.cursor, &args.path)?;
     let value = prog_core::pointer::get(context.payload.as_value(), &context.target_path)?
@@ -218,7 +220,7 @@ pub(crate) fn evidence_cursor(
             context.age_seconds
         ));
     }
-    bound_evidence_block(&mut block)?;
+    bound_evidence_block(&mut block, ctx.max_envelope_bytes())?;
     Ok(block)
 }
 
@@ -233,6 +235,7 @@ pub(crate) fn search_cursor(
     limit: usize,
     case_sensitive: bool,
     regex: bool,
+    ctx: &InvocationContext,
 ) -> Result<SearchResponse> {
     if limit > 200 {
         return Err(CoreError::BadArgs {
@@ -267,7 +270,7 @@ pub(crate) fn search_cursor(
             context.age_seconds
         ));
     }
-    bound_search_response(&mut response)?;
+    bound_search_response(&mut response, ctx.max_envelope_bytes())?;
     Ok(response)
 }
 
@@ -321,8 +324,8 @@ fn source_command_from_provenance(provenance: Option<&CallProvenance>) -> Option
     )
 }
 
-fn bound_inspect_response(response: &mut InspectResponse) -> Result<()> {
-    let budget = response_budget_bytes();
+fn bound_inspect_response(response: &mut InspectResponse, max_envelope_bytes: usize) -> Result<()> {
+    let budget = max_envelope_bytes;
     let original_len = response.findings.len();
     while serde_json::to_vec(response)?.len() > budget && !response.findings.is_empty() {
         response.findings.pop();
@@ -354,8 +357,8 @@ fn bound_inspect_response(response: &mut InspectResponse) -> Result<()> {
     Ok(())
 }
 
-fn bound_search_response(response: &mut SearchResponse) -> Result<()> {
-    let budget = response_budget_bytes();
+fn bound_search_response(response: &mut SearchResponse, max_envelope_bytes: usize) -> Result<()> {
+    let budget = max_envelope_bytes;
     let original_len = response.hits.len();
     while serde_json::to_vec(response)?.len() > budget && !response.hits.is_empty() {
         response.hits.pop();
@@ -381,8 +384,8 @@ fn bound_search_response(response: &mut SearchResponse) -> Result<()> {
     Ok(())
 }
 
-fn bound_evidence_block(block: &mut EvidenceBlock) -> Result<()> {
-    let budget = response_budget_bytes();
+fn bound_evidence_block(block: &mut EvidenceBlock, max_envelope_bytes: usize) -> Result<()> {
+    let budget = max_envelope_bytes;
     if serde_json::to_vec(block)?.len() > budget {
         block.citations.truncate(1);
         if let Some(citation) = block.citations.first_mut() {

@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
     process::{ExitCode, Stdio},
     sync::atomic::{AtomicU64, Ordering},
-    sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -96,9 +95,6 @@ use commands::run::{
 };
 
 static RUN_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-static DISCLOSURE_BUDGET: OnceLock<Mutex<EffectiveDisclosureBudget>> = OnceLock::new();
-static RESPONSE_STORAGE_BUDGET: OnceLock<Mutex<StorageBudget>> = OnceLock::new();
-static RESPONSE_CAPTURE_BUDGET: OnceLock<Mutex<CaptureBudget>> = OnceLock::new();
 const PROG_AGENT_SKILL: &str = include_str!("../../../skills/prog/SKILL.md");
 const DEFAULT_DISCLOSURE_BUDGET_BYTES: usize = 16 * 1024;
 const MAX_DISCLOSURE_BUDGET_BYTES: usize = 64 * 1024;
@@ -112,6 +108,73 @@ struct EffectiveDisclosureBudget {
     requested_tokens: Option<u64>,
     source: &'static str,
     effective_bytes: usize,
+}
+
+/// Per-invocation budgets threaded explicitly through one CLI run.
+///
+/// Replaces the three former process-global locked singletons so that the
+/// disclosure precedence (flag → environment → profile → default) is enforced
+/// by construction in [`Self::apply_profile_disclosure`] instead of depending
+/// on call ordering between `resolve_disclosure_budget` and
+/// `apply_profile_disclosure_budget`, and so that two distinct invocations can
+/// coexist in one process (required for unit tests and for the #120 host
+/// facade).
+pub(crate) struct InvocationContext {
+    disclosure: EffectiveDisclosureBudget,
+    capture: CaptureBudget,
+    storage: StorageBudget,
+}
+
+impl InvocationContext {
+    fn new(disclosure: EffectiveDisclosureBudget) -> Self {
+        Self {
+            disclosure,
+            capture: CaptureBudget::unavailable(),
+            storage: StorageBudget::default(),
+        }
+    }
+
+    /// Context for error rendering before the disclosure budget resolves
+    /// (argument-parse or budget-resolution failures). Matches the previous
+    /// `get_or_init` default so early error envelopes stay byte-identical.
+    fn for_unresolved_budget() -> Self {
+        Self::new(EffectiveDisclosureBudget {
+            requested_bytes: None,
+            requested_tokens: None,
+            source: "default",
+            effective_bytes: DEFAULT_DISCLOSURE_BUDGET_BYTES,
+        })
+    }
+
+    /// Largest envelope body that fits under the disclosure budget once the
+    /// reserved metadata overhead is subtracted.
+    pub(crate) fn max_envelope_bytes(&self) -> usize {
+        self.disclosure
+            .effective_bytes
+            .saturating_sub(BUDGET_METADATA_RESERVE_BYTES)
+    }
+
+    /// Apply a profile-owned disclosure ceiling only when no higher-precedence
+    /// source (flag or environment) already set the budget. This is the
+    /// previously-implicit `source != "default"` guard made explicit.
+    pub(crate) fn apply_profile_disclosure(&mut self, profile: &SourceProfile) -> Result<()> {
+        let Some(DisclosureBudget { max_bytes, .. }) = &profile.disclosure_budget else {
+            return Ok(());
+        };
+        if self.disclosure.source != "default" {
+            return Ok(());
+        }
+        self.disclosure = effective_disclosure_budget(Some(*max_bytes), None, "profile")?;
+        Ok(())
+    }
+
+    pub(crate) fn set_capture(&mut self, budget: CaptureBudget) {
+        self.capture = budget;
+    }
+
+    pub(crate) fn set_storage(&mut self, budget: StorageBudget) {
+        self.storage = budget;
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -864,19 +927,24 @@ async fn main() -> ExitCode {
         }
         Err(err) => {
             let error = CoreError::CliUsage(err.to_string());
-            return write_error(&error, false);
+            return write_error(&error, false, &InvocationContext::for_unresolved_budget());
         }
     };
 
-    let budget = match resolve_disclosure_budget(&cli) {
-        Ok(budget) => budget,
-        Err(error) => return write_error(&error, cli.pretty),
+    let mut ctx = match resolve_disclosure_budget(&cli) {
+        Ok(budget) => InvocationContext::new(budget),
+        Err(error) => {
+            return write_error(
+                &error,
+                cli.pretty,
+                &InvocationContext::for_unresolved_budget(),
+            );
+        }
     };
-    set_disclosure_budget(budget);
 
-    match run(&cli).await {
+    match run(&cli, &mut ctx).await {
         Ok(exit_code) => exit_code,
-        Err(error) => write_error(&error, cli.pretty),
+        Err(error) => write_error(&error, cli.pretty, &ctx),
     }
 }
 
@@ -945,90 +1013,9 @@ fn budget_env(name: &str) -> Result<Option<u64>> {
     Ok(Some(parsed))
 }
 
-fn disclosure_budget() -> EffectiveDisclosureBudget {
-    DISCLOSURE_BUDGET
-        .get_or_init(|| {
-            Mutex::new(EffectiveDisclosureBudget {
-                requested_bytes: None,
-                requested_tokens: None,
-                source: "default",
-                effective_bytes: DEFAULT_DISCLOSURE_BUDGET_BYTES,
-            })
-        })
-        .lock()
-        .expect("disclosure budget mutex is not poisoned")
-        .clone()
-}
-
-fn set_disclosure_budget(budget: EffectiveDisclosureBudget) {
-    *DISCLOSURE_BUDGET
-        .get_or_init(|| {
-            Mutex::new(EffectiveDisclosureBudget {
-                requested_bytes: None,
-                requested_tokens: None,
-                source: "default",
-                effective_bytes: DEFAULT_DISCLOSURE_BUDGET_BYTES,
-            })
-        })
-        .lock()
-        .expect("disclosure budget mutex is not poisoned") = budget;
-}
-
-fn apply_profile_disclosure_budget(profile: &SourceProfile) -> Result<()> {
-    let Some(DisclosureBudget { max_bytes, .. }) = &profile.disclosure_budget else {
-        return Ok(());
-    };
-    let current = disclosure_budget();
-    if current.source != "default" {
-        return Ok(());
-    }
-    set_disclosure_budget(effective_disclosure_budget(
-        Some(*max_bytes),
-        None,
-        "profile",
-    )?);
-    Ok(())
-}
-
-fn response_budget_bytes() -> usize {
-    disclosure_budget()
-        .effective_bytes
-        .saturating_sub(BUDGET_METADATA_RESERVE_BYTES)
-}
-
-fn response_storage_budget() -> StorageBudget {
-    RESPONSE_STORAGE_BUDGET
-        .get_or_init(|| Mutex::new(StorageBudget::default()))
-        .lock()
-        .expect("response storage budget mutex is not poisoned")
-        .clone()
-}
-
-fn set_response_storage_budget(budget: StorageBudget) {
-    *RESPONSE_STORAGE_BUDGET
-        .get_or_init(|| Mutex::new(StorageBudget::default()))
-        .lock()
-        .expect("response storage budget mutex is not poisoned") = budget;
-}
-
-fn response_capture_budget() -> CaptureBudget {
-    RESPONSE_CAPTURE_BUDGET
-        .get_or_init(|| Mutex::new(CaptureBudget::unavailable()))
-        .lock()
-        .expect("response capture budget mutex is not poisoned")
-        .clone()
-}
-
-fn set_response_capture_budget(budget: CaptureBudget) {
-    *RESPONSE_CAPTURE_BUDGET
-        .get_or_init(|| Mutex::new(CaptureBudget::unavailable()))
-        .lock()
-        .expect("response capture budget mutex is not poisoned") = budget;
-}
-
-fn open_store(dir: &Path) -> Result<Store> {
+fn open_store(dir: &Path, ctx: &mut InvocationContext) -> Result<Store> {
     let store = Store::open(dir)?;
-    set_response_storage_budget(store.storage_budget()?);
+    ctx.set_storage(store.storage_budget()?);
     Ok(store)
 }
 
@@ -1040,31 +1027,31 @@ fn init_tracing() {
         .try_init();
 }
 
-async fn run(cli: &Cli) -> Result<ExitCode> {
+async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
     match &cli.command {
         Command::Discover(args) => {
-            let store = open_store(&cli.dir)?;
+            let store = open_store(&cli.dir, ctx)?;
             let report = discover_source(&store, args).await?;
-            write_success(&report, cli.pretty)?;
+            write_success(&report, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Source { command } => {
-            let store = open_store(&cli.dir)?;
+            let store = open_store(&cli.dir, ctx)?;
             let report = source_command(&store, &cli.dir, command).await?;
-            write_success(&report, cli.pretty)?;
+            write_success(&report, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Hints(args) => {
-            let store = open_store(&cli.dir)?;
-            let response = hints_source(&store, args)?;
-            write_success(&response, cli.pretty)?;
+            let store = open_store(&cli.dir, ctx)?;
+            let response = hints_source(&store, args, ctx)?;
+            write_success(&response, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Call(args) => {
-            let store = open_store(&cli.dir)?;
-            let mut result = call_source(&store, &cli.lens_dir, args).await?;
-            record_envelope_event(&store, &mut result.envelope, "call");
-            write_success(&result.envelope, cli.pretty)?;
+            let store = open_store(&cli.dir, ctx)?;
+            let mut result = call_source(&store, &cli.lens_dir, args, ctx).await?;
+            record_envelope_event(&store, &mut result.envelope, "call", ctx);
+            write_success(&result.envelope, cli.pretty, ctx)?;
             Ok(if result.received_error {
                 ExitCode::FAILURE
             } else {
@@ -1072,17 +1059,17 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             })
         }
         Command::Observe(args) => {
-            let store = open_store(&cli.dir)?;
-            let mut envelope = observe_artifact(&store, &cli.lens_dir, args)?;
-            record_envelope_event(&store, &mut envelope, "observe");
-            write_success(&envelope, cli.pretty)?;
+            let store = open_store(&cli.dir, ctx)?;
+            let mut envelope = observe_artifact(&store, &cli.lens_dir, args, ctx)?;
+            record_envelope_event(&store, &mut envelope, "observe", ctx);
+            write_success(&envelope, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Run(args) => {
-            let store = open_store(&cli.dir)?;
-            let mut result = run_command(&store, &cli.lens_dir, args).await?;
-            record_envelope_event(&store, &mut result.envelope, "run");
-            write_success(&result.envelope, cli.pretty)?;
+            let store = open_store(&cli.dir, ctx)?;
+            let mut result = run_command(&store, &cli.lens_dir, args, ctx).await?;
+            record_envelope_event(&store, &mut result.envelope, "run", ctx);
+            write_success(&result.envelope, cli.pretty, ctx)?;
             Ok(if args.preserve_exit_code {
                 child_exit_code(result.exit_code)
             } else {
@@ -1090,25 +1077,25 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             })
         }
         Command::Recipe(args) => {
-            let store = open_store(&cli.dir)?;
-            let mut envelope = run_recipe(&store, &cli.lens_dir, args).await?;
+            let store = open_store(&cli.dir, ctx)?;
+            let mut envelope = run_recipe(&store, &cli.lens_dir, args, ctx).await?;
             declare_recipe_obligation(&store, args, &envelope)?;
-            record_envelope_event(&store, &mut envelope, "recipe");
-            write_success(&envelope, cli.pretty)?;
+            record_envelope_event(&store, &mut envelope, "recipe", ctx);
+            write_success(&envelope, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Init(args) => {
             let report = init_integration(args)?;
-            write_success(&report, cli.pretty)?;
+            write_success(&report, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Cost(args) => {
             let report = cost_report(args)?;
-            write_success(&report, cli.pretty)?;
+            write_success(&report, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Paths(args) => {
-            let store = open_store(&cli.dir)?;
+            let store = open_store(&cli.dir, ctx)?;
             let response = paths_cursor(&store, args)?;
             record_navigation_event(
                 &store,
@@ -1118,12 +1105,12 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 None,
                 Some(format!("listed {} cached path(s)", response.paths.len())),
             );
-            write_success(&response, cli.pretty)?;
+            write_success(&response, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Inspect(args) => {
-            let store = open_store(&cli.dir)?;
-            let response = inspect_cursor(&store, &cli.lens_dir, args)?;
+            let store = open_store(&cli.dir, ctx)?;
+            let response = inspect_cursor(&store, &cli.lens_dir, args, ctx)?;
             record_navigation_event(
                 &store,
                 "inspect",
@@ -1136,12 +1123,12 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                     response.goal
                 )),
             );
-            write_success(&response, cli.pretty)?;
+            write_success(&response, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Evidence(args) => {
-            let store = open_store(&cli.dir)?;
-            let response = evidence_cursor(&store, &cli.lens_dir, args)?;
+            let store = open_store(&cli.dir, ctx)?;
+            let response = evidence_cursor(&store, &cli.lens_dir, args, ctx)?;
             record_navigation_event(
                 &store,
                 "evidence",
@@ -1153,11 +1140,11 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                     .and_then(|reference| reference.uri.as_deref()),
                 Some(response.summary.clone()),
             );
-            write_success(&response, cli.pretty)?;
+            write_success(&response, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Search(args) => {
-            let store = open_store(&cli.dir)?;
+            let store = open_store(&cli.dir, ctx)?;
             let response = search_cursor(
                 &store,
                 &cli.lens_dir,
@@ -1168,6 +1155,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 args.limit,
                 args.case_sensitive,
                 args.regex,
+                ctx,
             )?;
             record_navigation_event(
                 &store,
@@ -1177,11 +1165,11 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 None,
                 Some(format!("found {} cached match(es)", response.hits.len())),
             );
-            write_success(&response, cli.pretty)?;
+            write_success(&response, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Find(args) => {
-            let store = open_store(&cli.dir)?;
+            let store = open_store(&cli.dir, ctx)?;
             let response = search_cursor(
                 &store,
                 &cli.lens_dir,
@@ -1192,6 +1180,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 args.limit,
                 false,
                 false,
+                ctx,
             )?;
             record_navigation_event(
                 &store,
@@ -1205,36 +1194,36 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                     args.kind
                 )),
             );
-            write_success(&response, cli.pretty)?;
+            write_success(&response, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Delta(args) => {
-            let store = open_store(&cli.dir)?;
+            let store = open_store(&cli.dir, ctx)?;
             let delta = delta_observations(&store, args)?;
-            write_success(&delta, cli.pretty)?;
+            write_success(&delta, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::McpTask { command } => {
-            let store = open_store(&cli.dir)?;
-            let output = mcp_task_command(&store, command).await?;
-            write_success(&output, cli.pretty)?;
+            let store = open_store(&cli.dir, ctx)?;
+            let output = mcp_task_command(&store, command, ctx).await?;
+            write_success(&output, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Session { command } => {
-            let store = open_store(&cli.dir)?;
+            let store = open_store(&cli.dir, ctx)?;
             match command {
                 SessionCommand::Start(args) => {
                     let trail = store.start_session(args.goal.clone())?;
-                    write_success(&trail, cli.pretty)?;
+                    write_success(&trail, cli.pretty, ctx)?;
                 }
                 SessionCommand::Show(args) => {
                     if args.readiness {
                         let session_id = args.session_id.as_deref();
                         let report = readiness_report(&store, session_id)?;
-                        write_success(&report, cli.pretty)?;
+                        write_success(&report, cli.pretty, ctx)?;
                     } else {
                         let trail = session_show(&store, args)?;
-                        write_success(&trail, cli.pretty)?;
+                        write_success(&trail, cli.pretty, ctx)?;
                     }
                 }
                 SessionCommand::Note(args) => {
@@ -1243,7 +1232,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                         summary: Some(args.note.clone()),
                         ..NewSessionEvent::default()
                     })?;
-                    write_success(&event, cli.pretty)?;
+                    write_success(&event, cli.pretty, ctx)?;
                 }
                 SessionCommand::ObligationAdd(args) => {
                     let session = match store.get_session(None)? {
@@ -1286,30 +1275,30 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                         extra: Extra::new(),
                     };
                     store.put_obligation(&obligation)?;
-                    write_success(&obligation, cli.pretty)?;
+                    write_success(&obligation, cli.pretty, ctx)?;
                 }
                 SessionCommand::ObligationList(args) => {
                     let report = readiness_report(&store, args.session_id.as_deref())?;
-                    write_success(&report, cli.pretty)?;
+                    write_success(&report, cli.pretty, ctx)?;
                 }
             }
             Ok(ExitCode::SUCCESS)
         }
         Command::Expand(args) => {
-            let store = open_store(&cli.dir)?;
-            let mut envelope = expand_cursor(&store, args)?;
-            record_envelope_event(&store, &mut envelope, "expand");
-            write_success(&envelope, cli.pretty)?;
+            let store = open_store(&cli.dir, ctx)?;
+            let mut envelope = expand_cursor(&store, args, ctx)?;
+            record_envelope_event(&store, &mut envelope, "expand", ctx);
+            write_success(&envelope, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Cache { command } => {
-            let store = open_store(&cli.dir)?;
-            cache_command(&store, command, cli.pretty)
+            let store = open_store(&cli.dir, ctx)?;
+            cache_command(&store, command, cli.pretty, ctx)
         }
         Command::Meta(args) => {
-            let store = open_store(&cli.dir)?;
-            let envelope = meta_contracts(&store, args)?;
-            write_success(&envelope, cli.pretty)?;
+            let store = open_store(&cli.dir, ctx)?;
+            let envelope = meta_contracts(&store, args, ctx)?;
+            write_success(&envelope, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
     }
@@ -1736,7 +1725,12 @@ fn resolve_redaction(profile: Option<&SourceProfile>) -> RedactionPolicy {
     policy
 }
 
-fn record_envelope_event(store: &Store, envelope: &mut DisclosureEnvelope, kind: &str) {
+fn record_envelope_event(
+    store: &Store,
+    envelope: &mut DisclosureEnvelope,
+    kind: &str,
+    ctx: &InvocationContext,
+) {
     if let Some(observation_id) = envelope
         .observation
         .as_ref()
@@ -1755,7 +1749,7 @@ fn record_envelope_event(store: &Store, envelope: &mut DisclosureEnvelope, kind:
             "changes_since".to_string(),
             serde_json::to_value(delta).unwrap_or(Value::Null),
         );
-        if let Err(error) = compact_envelope_to_budget(envelope) {
+        if let Err(error) = compact_envelope_to_budget(envelope, ctx.max_envelope_bytes()) {
             envelope.extra.remove("changes_since");
             envelope.warnings.push(format!(
                 "automatic changes_since was omitted because it could not fit the envelope budget: {error}"
@@ -2256,17 +2250,17 @@ fn halve_to_zero(value: usize) -> usize {
     if value <= 1 { 0 } else { value / 2 }
 }
 
-fn write_error(error: &CoreError, pretty: bool) -> ExitCode {
+fn write_error(error: &CoreError, pretty: bool, ctx: &InvocationContext) -> ExitCode {
     let rendered = serde_json::to_value(error.envelope())
         .map_err(CoreError::from)
-        .and_then(|value| render_budgeted_json(value, pretty));
+        .and_then(|value| render_budgeted_json(value, pretty, ctx));
     match rendered {
         Ok(json) => {
             println!("{json}");
             ExitCode::FAILURE
         }
         Err(_) => {
-            let budget = disclosure_budget();
+            let budget = ctx.disclosure.clone();
             let fallback = json!({
                 "error": {
                     "kind": "budget_too_small",
@@ -2285,13 +2279,13 @@ fn write_error(error: &CoreError, pretty: bool) -> ExitCode {
     }
 }
 
-fn render_budgeted_json(mut value: Value, pretty: bool) -> Result<String> {
+fn render_budgeted_json(mut value: Value, pretty: bool, ctx: &InvocationContext) -> Result<String> {
     if !value.is_object() {
         value = json!({"result": value});
     }
-    let budget = disclosure_budget();
-    let capture_budget = response_capture_budget();
-    let storage_budget = response_storage_budget();
+    let budget = ctx.disclosure.clone();
+    let capture_budget = ctx.capture.clone();
+    let storage_budget = ctx.storage.clone();
     let mut metadata = json!({
         "source": budget.source,
         "requested_bytes": budget.requested_bytes,
@@ -2355,6 +2349,59 @@ fn render_budgeted_json(mut value: Value, pretty: bool) -> Result<String> {
     Err(CoreError::Storage(
         "disclosure budget accounting did not converge".to_string(),
     ))
+}
+
+#[cfg(test)]
+mod invocation_context_tests {
+    use super::*;
+
+    #[test]
+    fn two_contexts_hold_independent_disclosure_budgets() {
+        // Two InvocationContexts with different disclosure budgets coexist in
+        // one process and each renders through its own budget. This is
+        // impossible with the former process-global singletons, which shared
+        // one budget across every invocation (#184 acceptance).
+        let small =
+            InvocationContext::new(effective_disclosure_budget(Some(1024), None, "flag").unwrap());
+        let large = InvocationContext::new(
+            effective_disclosure_budget(Some(40_000), None, "flag").unwrap(),
+        );
+
+        assert_eq!(small.disclosure.source, "flag");
+        assert_eq!(large.disclosure.source, "flag");
+        assert_ne!(
+            small.disclosure.effective_bytes,
+            large.disclosure.effective_bytes
+        );
+        assert_eq!(
+            small.max_envelope_bytes(),
+            small.disclosure.effective_bytes - BUDGET_METADATA_RESERVE_BYTES,
+        );
+        assert!(small.max_envelope_bytes() < large.max_envelope_bytes());
+
+        // Rendering through each context uses that context's own budget, not a
+        // shared ambient one.
+        let small_value: Value = serde_json::from_str(
+            &render_budgeted_json(json!({"result": "ok"}), false, &small).unwrap(),
+        )
+        .unwrap();
+        let large_value: Value = serde_json::from_str(
+            &render_budgeted_json(json!({"result": "ok"}), false, &large).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            small_value["disclosure_budget"]["effective_bytes"],
+            small.disclosure.effective_bytes
+        );
+        assert_eq!(
+            large_value["disclosure_budget"]["effective_bytes"],
+            large.disclosure.effective_bytes
+        );
+        assert_ne!(
+            small_value["disclosure_budget"]["effective_bytes"],
+            large_value["disclosure_budget"]["effective_bytes"]
+        );
+    }
 }
 
 #[cfg(test)]

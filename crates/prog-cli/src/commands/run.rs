@@ -23,6 +23,7 @@ pub(crate) async fn run_command(
     store: &Store,
     lens_dir: &Path,
     args: &RunArgs,
+    ctx: &mut InvocationContext,
 ) -> Result<RunEnvelopeResult> {
     let cwd = std::env::current_dir()?;
     let started_at = Utc::now();
@@ -189,7 +190,7 @@ pub(crate) async fn run_command(
         &run.status,
     );
     capture.budget = capture_budget_for_run(args);
-    set_response_capture_budget(capture.budget.clone());
+    ctx.set_capture(capture.budget.clone());
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
@@ -288,6 +289,7 @@ pub(crate) async fn run_command(
             lens,
         },
         cursor,
+        ctx.max_envelope_bytes(),
     )?;
 
     Ok(RunEnvelopeResult {

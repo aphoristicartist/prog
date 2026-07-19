@@ -6,11 +6,12 @@ pub(crate) async fn call_source(
     store: &Store,
     lens_dir: &Path,
     args: &CallArgs,
+    ctx: &mut InvocationContext,
 ) -> Result<CallSourceResult> {
     let profile = store
         .read_profile(&args.source_id)?
         .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
-    apply_profile_disclosure_budget(&profile)?;
+    ctx.apply_profile_disclosure(&profile)?;
     let operation = profile_operation(&profile, &args.operation)?.clone();
     let call_args = parse_json_argument(&args.args, "call --args")?;
     validate_call_args(&operation, &call_args)?;
@@ -55,7 +56,7 @@ pub(crate) async fn call_source(
             if let Some(observation_id) = &entry.observation_id
                 && let Some(observation) = store.get_observation(observation_id)?
             {
-                set_response_capture_budget(observation.capture.budget);
+                ctx.set_capture(observation.capture.budget);
             }
             let payload = store
                 .get_payload(&entry.payload_hash)?
@@ -110,6 +111,7 @@ pub(crate) async fn call_source(
                     lens,
                 },
                 cursor,
+                ctx.max_envelope_bytes(),
             )?;
             if let Some(pagination) = cached_pagination {
                 envelope.extra.insert("pagination".to_string(), pagination);
@@ -117,7 +119,7 @@ pub(crate) async fn call_source(
                     let actions: Vec<NextAction> = serde_json::from_value(actions.clone())?;
                     envelope.next_actions.extend(actions);
                 }
-                compact_pagination_extra_to_budget(&mut envelope)?;
+                compact_pagination_extra_to_budget(&mut envelope, ctx.max_envelope_bytes())?;
             }
             let received_error = entry.provenance.as_ref().is_some_and(|provenance| {
                 provenance.extra.get("received_error") == Some(&Value::Bool(true))
@@ -167,7 +169,7 @@ pub(crate) async fn call_source(
                     reason: "received HTTP 304 but cached observation metadata is unavailable"
                         .to_string(),
                 })?;
-        set_response_capture_budget(prior_observation.capture.budget.clone());
+        ctx.set_capture(prior_observation.capture.budget.clone());
         let payload = store
             .get_payload(&prior.payload_hash)?
             .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
@@ -274,11 +276,12 @@ pub(crate) async fn call_source(
                 lens,
             },
             cursor,
+            ctx.max_envelope_bytes(),
         )?;
         envelope
             .extra
             .insert("source_validity".to_string(), json!("confirmed_unchanged"));
-        compact_envelope_to_budget(&mut envelope)?;
+        compact_envelope_to_budget(&mut envelope, ctx.max_envelope_bytes())?;
         return Ok(CallSourceResult {
             envelope,
             received_error: false,
@@ -352,7 +355,7 @@ pub(crate) async fn call_source(
         !redacted_paths.is_empty(),
     );
     capture.budget = capture_budget_for_call(&profile, &operation);
-    set_response_capture_budget(capture.budget.clone());
+    ctx.set_capture(capture.budget.clone());
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
@@ -465,6 +468,7 @@ pub(crate) async fn call_source(
             lens: lens.clone(),
         },
         cursor,
+        ctx.max_envelope_bytes(),
     )?;
     if args.refresh {
         let validity = if received_error {
@@ -623,7 +627,7 @@ pub(crate) async fn call_source(
                     false,
                 );
                 capture.budget = capture_budget_for_call(&profile, &operation);
-                set_response_capture_budget(capture.budget.clone());
+                ctx.set_capture(capture.budget.clone());
                 let page_observation_id = record_capture(
                     store,
                     page_hash.clone(),
@@ -797,7 +801,7 @@ pub(crate) async fn call_source(
             // is appended AFTER `envelope_for_payload`'s budget loop, so re-enforce
             // `max_envelope_bytes` here: compact the pagination metadata if the
             // final envelope would otherwise exceed the budget (invariant I11).
-            compact_pagination_extra_to_budget(&mut envelope)?;
+            compact_pagination_extra_to_budget(&mut envelope, ctx.max_envelope_bytes())?;
             if may_cache
                 && let Some(pagination) = envelope.extra.get("pagination").cloned()
                 && let Some(mut entry) = store.get_entry(&cache_key)?
