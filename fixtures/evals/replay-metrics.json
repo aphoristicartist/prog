@@ -1,0 +1,75 @@
+{
+  "schema": "prog.replay_eval",
+  "scenarios": [
+    {
+      "scenario_id": "multi_iteration_resolution",
+      "strategies": [
+        {
+          "strategy": "raw",
+          "delivered_bytes": 148,
+          "calls": 4
+        },
+        {
+          "strategy": "simple_truncation",
+          "delivered_bytes": 148,
+          "calls": 4
+        },
+        {
+          "strategy": "prog_envelope",
+          "delivered_bytes": 39071,
+          "calls": 4
+        },
+        {
+          "strategy": "prog_delta",
+          "delivered_bytes": 22178,
+          "calls": 6
+        },
+        {
+          "strategy": "evidence_packet",
+          "delivered_bytes": 1,
+          "calls": 1
+        },
+        {
+          "strategy": "ranked_retrieval",
+          "delivered_bytes": 1,
+          "calls": 1
+        }
+      ]
+    },
+    {
+      "scenario_id": "narrowed_rerun_no_false_resolved",
+      "strategies": [
+        {
+          "strategy": "prog_delta",
+          "delivered_bytes": 6147,
+          "calls": 4
+        }
+      ]
+    },
+    {
+      "scenario_id": "no_benefit_tiny_payload_control",
+      "strategies": [
+        {
+          "strategy": "raw",
+          "delivered_bytes": 4,
+          "calls": 2
+        },
+        {
+          "strategy": "prog_envelope",
+          "delivered_bytes": 5563,
+          "calls": 2
+        }
+      ]
+    },
+    {
+      "scenario_id": "stale_evidence_readiness_after_workspace_touch",
+      "strategies": [
+        {
+          "strategy": "prog_verification_ledger",
+          "delivered_bytes": 1183,
+          "calls": 4
+        }
+      ]
+    }
+  ]
+}
