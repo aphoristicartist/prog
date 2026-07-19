@@ -1,8 +1,7 @@
 use std::{
     fs,
-    io::Write,
-    path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    path::Path,
+    process::Command,
     time::{Duration, Instant},
 };
 
@@ -12,6 +11,10 @@ use wiremock::{
     Mock, MockServer, Request, Respond, ResponseTemplate,
     matchers::{method, path, query_param},
 };
+
+mod support;
+
+use support::*;
 
 struct EtagResponder;
 
@@ -25,77 +28,6 @@ impl Respond for EtagResponder {
                 .set_body_json(json!({"id": 7, "body": "original"}))
         }
     }
-}
-
-fn prog(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_prog"))
-        .args(args)
-        .output()
-        .expect("prog binary should run")
-}
-
-fn prog_in_dir(dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_prog"))
-        .current_dir(dir)
-        .args(args)
-        .output()
-        .expect("prog binary should run")
-}
-
-fn prog_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_prog"));
-    command.args(args);
-    for (key, value) in env {
-        command.env(key, value);
-    }
-    command.output().expect("prog binary should run")
-}
-
-fn prog_with_budget(dir: &str, budget: u32, command: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_prog"))
-        .arg("--dir")
-        .arg(dir)
-        .arg("--budget-bytes")
-        .arg(budget.to_string())
-        .args(command)
-        .output()
-        .expect("prog binary should run")
-}
-
-fn prog_with_stdin(args: &[&str], stdin: &[u8]) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_prog"))
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("prog binary should spawn");
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin)
-        .expect("stdin should write");
-    child.wait_with_output().expect("prog binary should run")
-}
-
-fn stdout(output: &Output) -> String {
-    String::from_utf8(output.stdout.clone()).expect("stdout should be utf8")
-}
-
-fn stderr(output: &Output) -> String {
-    String::from_utf8(output.stderr.clone()).expect("stderr should be utf8")
-}
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .expect("repo root should canonicalize")
-}
-
-fn first_party_lens_dir() -> PathBuf {
-    repo_root().join("lenses")
 }
 
 #[test]
@@ -795,141 +727,6 @@ fn observe_ndjson_exposes_records_for_expansion() {
 }
 
 #[test]
-fn observe_parser_metadata_covers_structured_and_fallback_artifacts() {
-    let dir = tempfile::tempdir().unwrap();
-    let dir_arg = dir.path().to_str().unwrap();
-
-    let diff = prog_with_stdin(
-        &[
-            "--dir",
-            dir_arg,
-            "observe",
-            "--stdin",
-            "--mime",
-            "text/x-diff",
-            "--name",
-            "diff",
-        ],
-        b"diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new-target\n",
-    );
-    assert!(diff.status.success(), "{}", stdout(&diff));
-    let diff_value: Value = serde_json::from_slice(&diff.stdout).unwrap();
-    assert_eq!(diff_value["data_preview"]["format"], "unified_diff");
-    assert_eq!(diff_value["observation"]["parser"]["id"], "unified_diff");
-    assert_eq!(diff_value["observation"]["parser"]["lossy"], false);
-    assert!(
-        diff_value["observation"]["parser"]["confidence"]
-            .as_f64()
-            .unwrap()
-            > 0.8
-    );
-    let diff_cursor = diff_value["cursor"].as_str().unwrap();
-    let diff_expand = prog(&[
-        "--dir",
-        dir_arg,
-        "expand",
-        diff_cursor,
-        "--path",
-        "/lines/5/text",
-    ]);
-    assert!(diff_expand.status.success(), "{}", stdout(&diff_expand));
-    let diff_expanded: Value = serde_json::from_slice(&diff_expand.stdout).unwrap();
-    assert_eq!(diff_expanded["data_preview"], "+new-target");
-
-    let sarif = prog_with_stdin(
-        &[
-            "--dir",
-            dir_arg,
-            "observe",
-            "--stdin",
-            "--mime",
-            "application/sarif+json",
-            "--name",
-            "sarif",
-        ],
-        br#"{"version":"2.1.0","runs":[{"results":[{"message":{"text":"sarif-target"}}]}]}"#,
-    );
-    assert!(sarif.status.success(), "{}", stdout(&sarif));
-    let sarif_value: Value = serde_json::from_slice(&sarif.stdout).unwrap();
-    assert_eq!(sarif_value["observation"]["parser"]["id"], "sarif");
-    let sarif_cursor = sarif_value["cursor"].as_str().unwrap();
-    let sarif_expand = prog(&[
-        "--dir",
-        dir_arg,
-        "expand",
-        sarif_cursor,
-        "--path",
-        "/runs/0/results/0/message/text",
-    ]);
-    assert!(sarif_expand.status.success(), "{}", stdout(&sarif_expand));
-    let sarif_expanded: Value = serde_json::from_slice(&sarif_expand.stdout).unwrap();
-    assert_eq!(sarif_expanded["data_preview"], "sarif-target");
-
-    let junit = prog_with_stdin(
-        &[
-            "--dir",
-            dir_arg,
-            "observe",
-            "--stdin",
-            "--mime",
-            "application/junit+xml",
-            "--name",
-            "junit",
-        ],
-        br#"<testsuite><testcase classname="suite" name="case_a" time="0.1"><failure>junit-target</failure></testcase></testsuite>"#,
-    );
-    assert!(junit.status.success(), "{}", stdout(&junit));
-    let junit_value: Value = serde_json::from_slice(&junit.stdout).unwrap();
-    assert_eq!(junit_value["observation"]["parser"]["id"], "junit_xml");
-    assert_eq!(junit_value["observation"]["parser"]["lossy"], true);
-    assert_eq!(
-        junit_value["data_preview"]["testcases"][0]["name"],
-        "case_a"
-    );
-
-    let html = prog_with_stdin(
-        &[
-            "--dir",
-            dir_arg,
-            "observe",
-            "--stdin",
-            "--mime",
-            "text/html",
-            "--name",
-            "html",
-        ],
-        br#"<!doctype html><html><head><title>Doc Target</title></head><body><h1>Heading Target</h1><a href="/next">Next</a></body></html>"#,
-    );
-    assert!(html.status.success(), "{}", stdout(&html));
-    let html_value: Value = serde_json::from_slice(&html.stdout).unwrap();
-    assert_eq!(html_value["observation"]["parser"]["id"], "html_basic");
-    assert_eq!(html_value["data_preview"]["title"], "Doc Target");
-    assert_eq!(html_value["data_preview"]["headings"][0], "Heading Target");
-    assert_eq!(html_value["data_preview"]["links"][0]["href"], "/next");
-
-    let fallback = prog_with_stdin(
-        &[
-            "--dir",
-            dir_arg,
-            "observe",
-            "--stdin",
-            "--mime",
-            "application/x-unknown",
-            "--name",
-            "fallback",
-        ],
-        b"plain fallback target",
-    );
-    assert!(fallback.status.success(), "{}", stdout(&fallback));
-    let fallback_value: Value = serde_json::from_slice(&fallback.stdout).unwrap();
-    assert_eq!(
-        fallback_value["observation"]["parser"]["id"],
-        "text_fallback"
-    );
-    assert_eq!(fallback_value["observation"]["parser"]["fallback"], true);
-}
-
-#[test]
 fn observe_handles_empty_and_invalid_utf8_text_but_rejects_binary() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
@@ -993,61 +790,6 @@ fn observe_handles_empty_and_invalid_utf8_text_but_rejects_binary() {
             .as_str()
             .unwrap()
             .contains("binary")
-    );
-}
-
-#[test]
-fn observe_parser_edge_cases_cover_malformed_json_and_stack_traces() {
-    let dir = tempfile::tempdir().unwrap();
-    let dir_arg = dir.path().to_str().unwrap();
-
-    let malformed = prog_with_stdin(
-        &[
-            "--dir",
-            dir_arg,
-            "observe",
-            "--stdin",
-            "--mime",
-            "application/json",
-            "--name",
-            "malformed-json",
-        ],
-        b"{not valid json but still useful text}",
-    );
-    assert!(malformed.status.success(), "{}", stdout(&malformed));
-    let malformed_value: Value = serde_json::from_slice(&malformed.stdout).unwrap();
-    assert_eq!(
-        malformed_value["observation"]["parser"]["id"],
-        "text_fallback"
-    );
-    assert!(
-        malformed_value["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning.as_str().unwrap().contains("json:"))
-    );
-
-    let repeated_stack = "Error: boom\n    at service (app.js:10)\n    at main (app.js:20)\nError: boom\n    at service (app.js:10)\n    at main (app.js:20)\n";
-    let stack = prog_with_stdin(
-        &[
-            "--dir",
-            dir_arg,
-            "observe",
-            "--stdin",
-            "--mime",
-            "text/plain",
-            "--name",
-            "stack",
-        ],
-        repeated_stack.as_bytes(),
-    );
-    assert!(stack.status.success(), "{}", stdout(&stack));
-    let stack_value: Value = serde_json::from_slice(&stack.stdout).unwrap();
-    assert_eq!(stack_value["data_preview"]["repeated_stack_traces"], 2);
-    assert_eq!(
-        stack_value["observation"]["parser"]["range_semantics"],
-        "line ranges from text"
     );
 }
 
@@ -1907,402 +1649,12 @@ time.sleep(5)
     ]);
 
     assert!(timeout.status.success(), "{}", stdout(&timeout));
-    assert!(started.elapsed() < Duration::from_secs(1));
+    // The detached child retains inherited pipes for two seconds. Keep a
+    // scheduling-tolerant margin below that lifetime while still proving the
+    // runner aborts readers instead of waiting for the detached holder.
+    assert!(started.elapsed() < Duration::from_millis(1500));
     let value: Value = serde_json::from_slice(&timeout.stdout).unwrap();
     assert_eq!(value["data_preview"]["command"]["timed_out"], true);
-}
-
-#[test]
-fn init_codex_project_dry_run_reports_reviewable_files_without_writing() {
-    let project = tempfile::tempdir().unwrap();
-    let root = project.path().to_str().unwrap();
-    let output = prog(&[
-        "init",
-        "--agent",
-        "codex",
-        "--project",
-        "--dry-run",
-        "--root",
-        root,
-    ]);
-    assert!(output.status.success(), "{}", stdout(&output));
-    assert_eq!(stderr(&output), "");
-    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema"], "prog.init");
-    assert_eq!(report["agent"], "codex");
-    assert_eq!(report["scope"], "project");
-    assert_eq!(report["dry_run"], true);
-    let files = report["files"].as_array().unwrap();
-    assert_eq!(files.len(), 5);
-    assert!(files.iter().all(|file| file["action"] == "would_create"));
-    assert!(files.iter().any(|file| {
-        file["path"] == ".codex/skills/prog/SKILL.md" && file["executable"] == false
-    }));
-    assert!(
-        files
-            .iter()
-            .any(|file| file["path"] == ".codex/prog-hooks/prog-run.sh"
-                && file["executable"] == true)
-    );
-    assert!(!project.path().join(".codex").exists());
-    assert!(
-        report["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning.as_str().unwrap().contains("dry-run"))
-    );
-    assert!(
-        report["next_steps"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|step| step.as_str().unwrap().contains("prog inspect"))
-    );
-}
-
-#[test]
-fn init_codex_project_creates_hook_skill_manifest_and_preserves_existing_files() {
-    let project = tempfile::tempdir().unwrap();
-    let root = project.path().to_str().unwrap();
-    let output = prog(&["init", "--agent", "codex", "--project", "--root", root]);
-    assert!(output.status.success(), "{}", stdout(&output));
-    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(
-        report["files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|file| file["action"] == "created")
-    );
-
-    let skill = project.path().join(".codex/skills/prog/SKILL.md");
-    let hook = project.path().join(".codex/prog-hooks/prog-run.sh");
-    let manifest = project.path().join(".codex/prog-hooks/manifest.json");
-    let uninstall = project.path().join(".codex/prog-hooks/uninstall.sh");
-    assert!(skill.exists());
-    assert!(hook.exists());
-    assert!(manifest.exists());
-    assert!(uninstall.exists());
-
-    let skill_text = fs::read_to_string(&skill).unwrap();
-    for expected in [
-        "prog run",
-        "prog observe",
-        "prog inspect",
-        "prog evidence",
-        "EvidenceRef",
-        "MCP is optional",
-    ] {
-        assert!(
-            skill_text.contains(expected),
-            "skill should contain {expected}"
-        );
-    }
-    let manifest_value: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
-    assert_eq!(manifest_value["schema"], "prog.integration");
-    assert_eq!(manifest_value["agent"], "codex");
-    assert_eq!(manifest_value["mcp"]["status"], "optional");
-    assert!(
-        manifest_value["files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|file| file.as_str() == Some(".codex/prog-hooks/uninstall.sh"))
-    );
-
-    let prog_bin = Path::new(env!("CARGO_BIN_EXE_prog"));
-    let prog_dir = prog_bin.parent().unwrap();
-    let path = format!(
-        "{}:{}",
-        prog_dir.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let hook_output = Command::new("sh")
-        .arg(&hook)
-        .args(["python3", "-c", "print('hooked')"])
-        .current_dir(project.path())
-        .env("PATH", path)
-        .output()
-        .expect("hook should run");
-    assert!(hook_output.status.success(), "{}", stdout(&hook_output));
-    let envelope: Value = serde_json::from_slice(&hook_output.stdout).unwrap();
-    assert_eq!(envelope["source_id"], "run");
-    assert_eq!(envelope["data_preview"]["stdout"]["text"], "hooked");
-    assert!(envelope["cursor"].as_str().unwrap().starts_with("pc1_"));
-
-    fs::write(&skill, "custom skill").unwrap();
-    let rerun = prog(&["init", "--agent", "codex", "--project", "--root", root]);
-    assert!(rerun.status.success(), "{}", stdout(&rerun));
-    let rerun_report: Value = serde_json::from_slice(&rerun.stdout).unwrap();
-    assert!(
-        rerun_report["files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|file| file["action"] == "exists")
-    );
-    assert_eq!(fs::read_to_string(&skill).unwrap(), "custom skill");
-    assert!(
-        rerun_report["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning.as_str().unwrap().contains("left unchanged"))
-    );
-}
-
-#[test]
-fn init_requires_project_scope_and_supports_each_documented_agent() {
-    let project = tempfile::tempdir().unwrap();
-    let root = project.path().to_str().unwrap();
-    let missing_scope = prog(&["init", "--agent", "codex", "--root", root]);
-    assert!(!missing_scope.status.success());
-    assert_eq!(stderr(&missing_scope), "");
-    let error: Value = serde_json::from_slice(&missing_scope.stdout).unwrap();
-    assert_eq!(error["error"]["kind"], "bad_args");
-    assert!(
-        error["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("--project")
-    );
-
-    for (agent, expected_skill) in [
-        ("claude-code", ".claude/skills/prog/SKILL.md"),
-        ("cursor", ".cursor/rules/prog.mdc"),
-        ("gemini-cli", ".gemini/skills/prog/SKILL.md"),
-    ] {
-        let output = prog(&[
-            "init",
-            "--agent",
-            agent,
-            "--project",
-            "--dry-run",
-            "--root",
-            root,
-        ]);
-        assert!(output.status.success(), "{}", stdout(&output));
-        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(report["agent"], agent);
-        assert!(
-            report["files"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|file| file["path"] == expected_skill)
-        );
-    }
-    assert!(!project.path().join(".claude").exists());
-    assert!(!project.path().join(".cursor").exists());
-    assert!(!project.path().join(".gemini").exists());
-}
-
-#[test]
-fn non_codex_integrations_create_valid_agent_files_and_uninstall_cleanly() {
-    for (agent, skill, hook_dir) in [
-        (
-            "claude-code",
-            ".claude/skills/prog/SKILL.md",
-            ".claude/prog-hooks",
-        ),
-        ("cursor", ".cursor/rules/prog.mdc", ".cursor/prog-hooks"),
-        (
-            "gemini-cli",
-            ".gemini/skills/prog/SKILL.md",
-            ".gemini/prog-hooks",
-        ),
-    ] {
-        let project = tempfile::tempdir().unwrap();
-        let root = project.path().to_str().unwrap();
-        let output = prog(&["init", "--agent", agent, "--project", "--root", root]);
-        assert!(output.status.success(), "{}", stdout(&output));
-        let skill_path = project.path().join(skill);
-        assert!(skill_path.exists());
-        let skill_text = fs::read_to_string(&skill_path).unwrap();
-        assert!(skill_text.starts_with("---\n"));
-        assert!(skill_text.contains("prog inspect"));
-
-        let manifest_path = project.path().join(hook_dir).join("manifest.json");
-        let manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
-        assert_eq!(manifest["agent"], agent);
-        assert_eq!(
-            manifest["commands"]["inspect"],
-            "prog inspect <cursor> --goal <goal>"
-        );
-
-        let uninstall = project.path().join(hook_dir).join("uninstall.sh");
-        let result = Command::new("sh")
-            .arg(&uninstall)
-            .current_dir(project.path())
-            .output()
-            .unwrap();
-        assert!(result.status.success());
-        assert!(!skill_path.exists());
-        assert!(!project.path().join(hook_dir).exists());
-    }
-}
-
-#[test]
-fn cost_planner_reports_profile_driven_savings_and_repeated_cache_hits() {
-    let dir = tempfile::tempdir().unwrap();
-    let profile = dir.path().join("model.json");
-    fs::write(
-        &profile,
-        serde_json::to_vec_pretty(&json!({
-            "schema": "prog.model_profile",
-            "model": "fable-class-test",
-            "input_price_per_million_tokens": 10.0,
-            "output_price_per_million_tokens": 50.0,
-            "context_window_tokens": 1000000,
-            "cache_read_price_per_million_tokens": 1.0,
-            "cache_write_price_per_million_tokens": 10.0,
-            "pricing_source": "test profile",
-            "priced_at": "2026-07-06"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    let raw = dir.path().join("payload.json");
-    let payload = json!({
-        "items": (0..80)
-            .map(|index| json!({
-                "id": index,
-                "title": format!("Item {index}"),
-                "body": "x".repeat(512)
-            }))
-            .collect::<Vec<_>>()
-    });
-    fs::write(&raw, serde_json::to_vec(&payload).unwrap()).unwrap();
-    let output = prog(&[
-        "cost",
-        "--model-profile",
-        profile.to_str().unwrap(),
-        "--raw-file",
-        raw.to_str().unwrap(),
-        "--expand-path",
-        "/items/3/body",
-        "--estimated-output-tokens",
-        "100",
-        "--repeated-inspections",
-        "4",
-    ]);
-    assert!(output.status.success(), "{}", stdout(&output));
-    assert_eq!(stderr(&output), "");
-    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema"], "prog.cost_report");
-    assert_eq!(report["model"]["model"], "fable-class-test");
-    assert_eq!(report["input"]["expand_paths"][0], "/items/3/body");
-    assert!(
-        report["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning.as_str().unwrap().contains("profile-driven"))
-    );
-    let scenarios = report["scenarios"].as_array().unwrap();
-    let raw_scenario = scenarios
-        .iter()
-        .find(|scenario| scenario["name"] == "raw_payload")
-        .unwrap();
-    let raw_tokens = report["input"]["raw_tokens"].as_u64().unwrap();
-    assert_eq!(raw_scenario["input_tokens"], raw_tokens);
-    let expected_raw_cost =
-        (((raw_tokens as f64 * 10.0 / 1_000_000.0) + (100.0 * 50.0 / 1_000_000.0)) * 1_000_000.0)
-            .round()
-            / 1_000_000.0;
-    assert_eq!(
-        raw_scenario["total_estimated_cost_usd"].as_f64().unwrap(),
-        expected_raw_cost
-    );
-    let targeted = scenarios
-        .iter()
-        .find(|scenario| scenario["name"] == "prog_observe_paths_expand")
-        .unwrap();
-    assert!(targeted["input_tokens"].as_u64().unwrap() < raw_tokens);
-    assert!(targeted["savings_ratio"].as_f64().unwrap() > 1.0);
-    assert_eq!(targeted["lossless"], true);
-    let repeated = scenarios
-        .iter()
-        .find(|scenario| scenario["name"] == "repeated_cache_hits")
-        .unwrap();
-    assert_eq!(repeated["baseline_input_tokens"], raw_tokens * 4);
-    assert!(repeated["input_tokens"].as_u64().unwrap() < raw_tokens * 4);
-}
-
-#[test]
-fn cost_planner_validates_prices_and_reports_tiny_payload_counterexample() {
-    let dir = tempfile::tempdir().unwrap();
-    let raw = dir.path().join("tiny.json");
-    fs::write(&raw, "{}").unwrap();
-
-    let missing_price = dir.path().join("missing-price.json");
-    fs::write(
-        &missing_price,
-        serde_json::to_vec_pretty(&json!({
-            "schema": "prog.model_profile",
-            "model": "bad",
-            "output_price_per_million_tokens": 1.0,
-            "context_window_tokens": 1000
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    let error = prog(&[
-        "cost",
-        "--model-profile",
-        missing_price.to_str().unwrap(),
-        "--raw-file",
-        raw.to_str().unwrap(),
-    ]);
-    assert!(!error.status.success());
-    let value: Value = serde_json::from_slice(&error.stdout).unwrap();
-    assert_eq!(value["error"]["kind"], "bad_args");
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("input_price_per_million_tokens")
-    );
-
-    let profile = dir.path().join("model.json");
-    fs::write(
-        &profile,
-        serde_json::to_vec_pretty(&json!({
-            "schema": "prog.model_profile",
-            "model": "tiny-test",
-            "input_price_per_million_tokens": 0.25,
-            "output_price_per_million_tokens": 1.0,
-            "context_window_tokens": 1000,
-            "pricing_source": "test profile",
-            "priced_at": "2026-07-06"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    let output = prog(&[
-        "cost",
-        "--model-profile",
-        profile.to_str().unwrap(),
-        "--raw-file",
-        raw.to_str().unwrap(),
-    ]);
-    assert!(output.status.success(), "{}", stdout(&output));
-    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(
-        report["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning.as_str().unwrap().contains("tiny payload"))
-    );
-    let observe_only = report["scenarios"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|scenario| scenario["name"] == "prog_observe_only")
-        .unwrap();
-    assert!(observe_only["savings_ratio"].as_f64().unwrap() <= 1.0);
 }
 
 #[test]
@@ -2577,165 +1929,6 @@ fn envelopes_expose_observation_metadata_for_agent_safety() {
     assert_eq!(
         sensitive_value["observation"]["safety"]["effects"]["sensitive"],
         true
-    );
-}
-
-#[test]
-fn paths_filters_and_planner_actions_cover_omission_reasons() {
-    let dir = tempfile::tempdir().unwrap();
-    let wide = (0..30)
-        .map(|index| (format!("field_{index:02}"), json!(index)))
-        .collect::<serde_json::Map<_, _>>();
-    let payload = json!({
-        "deep": {"a": {"b": {"c": {"d": {"leaf": "value"}}}}},
-        "items": (0..12)
-            .map(|index| json!({
-                "id": index,
-                "body": "body ".to_string() + &"x".repeat(500),
-                "token": format!("secret-token-{index}")
-            }))
-            .collect::<Vec<_>>(),
-        "large": "z".repeat(600),
-        "wide": Value::Object(wide)
-    });
-    let file = dir.path().join("planner.json");
-    fs::write(&file, serde_json::to_vec(&payload).unwrap()).unwrap();
-    let dir_arg = dir.path().to_str().unwrap();
-
-    let observed = prog(&[
-        "--dir",
-        dir_arg,
-        "observe",
-        "--file",
-        file.to_str().unwrap(),
-        "--mime",
-        "application/json",
-        "--name",
-        "planner",
-    ]);
-    assert!(observed.status.success(), "{}", stdout(&observed));
-    let envelope: Value = serde_json::from_slice(&observed.stdout).unwrap();
-    let cursor = envelope["cursor"].as_str().unwrap();
-    let first_action = &envelope["next_actions"][0];
-    assert_eq!(first_action["kind"], "evidence");
-    assert_eq!(first_action["priority"], 90);
-    assert_eq!(first_action["omitted_reason"], "large_string");
-    assert_eq!(first_action["argv"][0], "prog");
-    assert_eq!(first_action["argv"][1], "evidence");
-    assert_eq!(first_action["argv"][2], cursor);
-    assert_eq!(
-        first_action["offline"],
-        "uses cached redacted payload; does not contact upstream"
-    );
-
-    let expanded_string = prog(&[
-        "--dir", dir_arg, "expand", cursor, "--path", "/large", "--limit", "1000",
-    ]);
-    assert!(
-        expanded_string.status.success(),
-        "{}",
-        stdout(&expanded_string)
-    );
-    let expanded_string: Value = serde_json::from_slice(&expanded_string.stdout).unwrap();
-    assert_eq!(expanded_string["data_preview"].as_str().unwrap().len(), 600);
-    assert!(expanded_string["omitted"].as_array().unwrap().is_empty());
-    assert_eq!(
-        expanded_string["observation"]["completeness"]["status"],
-        "complete"
-    );
-    assert_eq!(
-        expanded_string["observation"]["completeness"]["preview_complete"],
-        true
-    );
-    assert_eq!(
-        expanded_string["observation"]["completeness"]["path_scoped"],
-        true
-    );
-    assert_eq!(
-        expanded_string["observation"]["completeness"]["root_path"],
-        "/large"
-    );
-
-    for (reason, expected_path) in [
-        ("large_string", "/large"),
-        ("long_array", "/items"),
-        ("many_fields", "/wide"),
-        ("deep_object", "/deep/a/b/c"),
-        ("redacted", "/items/0/token"),
-    ] {
-        let mut args = vec![
-            "--dir",
-            dir_arg,
-            "paths",
-            cursor,
-            "--reason",
-            reason,
-            "--omitted-only",
-        ];
-        if reason == "large_string" {
-            args.extend(["--field", "large"]);
-        }
-        let paths = prog(&args);
-        assert!(paths.status.success(), "{}", stdout(&paths));
-        let listing: Value = serde_json::from_slice(&paths.stdout).unwrap();
-        assert!(
-            listing["paths"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|entry| entry["path"] == expected_path && entry["omitted_reason"] == reason),
-            "paths for {reason} should include {expected_path}: {}",
-            stdout(&paths)
-        );
-        assert!(
-            listing["next_actions"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|action| action["path"] == expected_path
-                    && action["omitted_reason"] == reason
-                    && action["argv"][3] == "--path"),
-            "next actions for {reason} should include {expected_path}: {}",
-            stdout(&paths)
-        );
-    }
-
-    let token_paths = prog(&[
-        "--dir",
-        dir_arg,
-        "paths",
-        cursor,
-        "--field",
-        "token",
-        "--expandable-only",
-    ]);
-    assert!(token_paths.status.success(), "{}", stdout(&token_paths));
-    let filtered: Value = serde_json::from_slice(&token_paths.stdout).unwrap();
-    assert!(
-        filtered["paths"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|entry| entry["path"].as_str().unwrap().contains("token"))
-    );
-    assert!(!stdout(&token_paths).contains("secret-token"));
-
-    let bad_reason = prog(&[
-        "--dir",
-        dir_arg,
-        "paths",
-        cursor,
-        "--reason",
-        "semantic_table",
-    ]);
-    assert!(!bad_reason.status.success());
-    let error: Value = serde_json::from_slice(&bad_reason.stdout).unwrap();
-    assert_eq!(error["error"]["kind"], "bad_args");
-    assert!(
-        error["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("unknown omission reason")
     );
 }
 
@@ -3121,177 +2314,6 @@ fn discover_imports_cli_help_conservatively() {
     assert_eq!(list["invocation"]["cli"]["args"][2], "list");
 }
 
-#[tokio::test]
-async fn source_add_http_creates_working_profile_from_url() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/items"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "items": [{"id": 1, "state": "open", "body": "x".repeat(500)}]
-        })))
-        .mount(&server)
-        .await;
-    let dir = tempfile::tempdir().unwrap();
-    let dir_arg = dir.path().to_str().unwrap();
-    let url = format!("{}/items", server.uri());
-
-    let output = prog(&[
-        "--dir",
-        dir_arg,
-        "source",
-        "add-http",
-        "api",
-        "--operation",
-        "list",
-        "--url",
-        &url,
-        "--probe",
-    ]);
-    assert!(output.status.success(), "{}", stdout(&output));
-    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["source_id"], "api");
-    assert_eq!(report["kind"], "http");
-    assert_eq!(report["generated_seed"]["kind"], "http");
-    assert_eq!(report["generated_seed"]["base_url"], server.uri());
-    assert_eq!(report["generated_seed"]["operations"][0]["path"], "/items");
-    assert_eq!(
-        report["generated_seed"]["operations"][0]["effect"]["read_only"],
-        true
-    );
-    assert_eq!(
-        report["generated_seed"]["operations"][0]["effect"]["network"],
-        true
-    );
-    assert_eq!(report["discovery"]["operations_found"], 1);
-    assert_eq!(report["discovery"]["operations_probed"], 1);
-    assert_eq!(report["discovery"]["shapes_learned"], 1);
-    assert!(
-        report["next_steps"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|step| step.as_str().unwrap()
-                == format!("prog --dir {dir_arg} call api list --args '{{}}'"))
-    );
-
-    let profile = read_profile(dir.path(), "api");
-    let effects = &profile["operations"][0]["effects"];
-    assert_eq!(effects["read_only"], true);
-    assert_eq!(effects["mutating"], false);
-    assert_eq!(effects["network"], true);
-    assert_eq!(effects["cacheable"], true);
-    assert!(profile["operations"][0]["output_shape"].is_object());
-
-    let call = prog(&["--dir", dir_arg, "call", "api", "list", "--args", "{}"]);
-    assert!(call.status.success(), "{}", stdout(&call));
-    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
-    assert_eq!(envelope["source_id"], "api");
-    assert_eq!(envelope["operation"], "list");
-    assert_eq!(
-        envelope["observation"]["capture"]["budget"]["source"],
-        "profile"
-    );
-    assert_eq!(
-        envelope["observation"]["capture"]["budget"]["limits"][0]["scope"],
-        "body"
-    );
-    assert_eq!(
-        envelope["observation"]["capture"]["budget"]["limits"][0]["max_bytes"],
-        2 * 1024 * 1024
-    );
-    assert_eq!(
-        envelope["capture_budget"],
-        envelope["observation"]["capture"]["budget"]
-    );
-    assert_eq!(envelope["storage_budget"]["source"], "default");
-}
-
-#[test]
-fn source_add_cli_creates_working_profile_from_command_line() {
-    let dir = tempfile::tempdir().unwrap();
-    let script = dir.path().join("emit.py");
-    fs::write(
-        &script,
-        "import json\nprint(json.dumps({'items':[{'id': 1, 'state': 'open', 'body': 'x' * 500}]}))\n",
-    )
-    .unwrap();
-    let dir_arg = dir.path().to_str().unwrap();
-
-    let output = prog(&[
-        "--dir",
-        dir_arg,
-        "source",
-        "add-cli",
-        "local",
-        "--operation",
-        "list",
-        "--read-only",
-        "--",
-        "python3",
-        script.to_str().unwrap(),
-    ]);
-    assert!(output.status.success(), "{}", stdout(&output));
-    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["source_id"], "local");
-    assert_eq!(report["kind"], "cli");
-    assert_eq!(
-        report["generated_seed"]["operations"][0]["command"],
-        "python3"
-    );
-    assert_eq!(
-        report["generated_seed"]["operations"][0]["args"][0],
-        script.to_str().unwrap()
-    );
-    assert_eq!(
-        report["generated_seed"]["operations"][0]["effect"]["read_only"],
-        true
-    );
-    assert_eq!(
-        report["generated_seed"]["operations"][0]["effect"]["network"],
-        false
-    );
-    assert!(
-        report["next_steps"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|step| step.as_str().unwrap()
-                == format!("prog --dir {dir_arg} call local list --args '{{}}'"))
-    );
-    assert_eq!(
-        report["discovery"]["effects_assumed"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
-
-    let profile = read_profile(dir.path(), "local");
-    let effects = &profile["operations"][0]["effects"];
-    assert_eq!(effects["read_only"], true);
-    assert_eq!(effects["mutating"], false);
-    assert_eq!(effects["network"], false);
-    assert_eq!(effects["shell"], false);
-    assert_eq!(effects["cacheable"], true);
-
-    let call = prog(&["--dir", dir_arg, "call", "local", "list", "--args", "{}"]);
-    assert!(call.status.success(), "{}", stdout(&call));
-    let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
-    assert_eq!(envelope["data_preview"]["items"][0]["state"], "open");
-    assert_eq!(
-        envelope["observation"]["capture"]["budget"]["source"],
-        "profile"
-    );
-    assert_eq!(
-        envelope["observation"]["capture"]["budget"]["limits"][0]["scope"],
-        "stdout"
-    );
-    assert_eq!(
-        envelope["observation"]["capture"]["budget"]["limits"][1]["scope"],
-        "stderr"
-    );
-}
-
 #[test]
 fn call_persists_cli_error_evidence_but_returns_non_zero() {
     let dir = tempfile::tempdir().unwrap();
@@ -3324,76 +2346,6 @@ fn call_persists_cli_error_evidence_but_returns_non_zero() {
     assert_eq!(envelope["received_error"], true);
     let cursor = envelope["cursor"].as_str().unwrap();
     assert!(stdout(&prog(&["--dir", dir_arg, "evidence", cursor])).contains("useful stderr"));
-}
-
-#[test]
-fn source_add_preserves_fail_closed_defaults_and_reports_invalid_inputs() {
-    let dir = tempfile::tempdir().unwrap();
-    let dir_arg = dir.path().to_str().unwrap();
-
-    let invalid = prog(&[
-        "--dir",
-        dir_arg,
-        "source",
-        "add-http",
-        "api",
-        "--operation",
-        "list",
-        "--url",
-        "ftp://example.test/items",
-    ]);
-    assert!(!invalid.status.success());
-    let error: Value = serde_json::from_slice(&invalid.stdout).unwrap();
-    assert_eq!(error["error"]["kind"], "bad_args");
-    assert!(
-        error["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("scheme must be http or https")
-    );
-
-    let output = prog(&[
-        "--dir",
-        dir_arg,
-        "source",
-        "add-cli",
-        "danger",
-        "--operation",
-        "show",
-        "--",
-        "python3",
-        "-c",
-        "import json; print(json.dumps({'ok': True}))",
-    ]);
-    assert!(output.status.success(), "{}", stdout(&output));
-    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(
-        report["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning.as_str().unwrap().contains("confirmation-gated"))
-    );
-    assert!(
-        report["next_steps"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|step| step.as_str().unwrap()
-                == format!("prog --dir {dir_arg} call danger show --args '{{}}' --yes"))
-    );
-    let profile = read_profile(dir.path(), "danger");
-    let effects = &profile["operations"][0]["effects"];
-    assert_eq!(effects["read_only"], false);
-    assert_eq!(effects["mutating"], true);
-    assert_eq!(effects["requires_confirmation"], true);
-    assert_eq!(effects["sensitive"], true);
-    assert_eq!(effects["cacheable"], false);
-
-    let call = prog(&["--dir", dir_arg, "call", "danger", "show", "--args", "{}"]);
-    assert!(!call.status.success());
-    let error: Value = serde_json::from_slice(&call.stdout).unwrap();
-    assert_eq!(error["error"]["kind"], "requires_confirmation");
 }
 
 #[test]
@@ -3712,182 +2664,6 @@ fn discover_bad_seed_names_bad_field() {
 }
 
 #[test]
-fn cache_list_and_purge_are_real_json_commands() {
-    let dir = tempfile::tempdir().unwrap();
-    let dir_arg = dir.path().to_str().unwrap();
-
-    let list = prog(&["--dir", dir_arg, "cache", "list"]);
-    assert!(list.status.success());
-    assert_eq!(stderr(&list), "");
-    let value: Value = serde_json::from_slice(&list.stdout).expect("stdout must be JSON");
-    assert_eq!(value["entries"], json_array());
-
-    let purge = prog(&["--dir", dir_arg, "cache", "purge", "--all"]);
-    assert!(purge.status.success());
-    assert_eq!(stderr(&purge), "");
-    let value: Value = serde_json::from_slice(&purge.stdout).expect("stdout must be JSON");
-    assert_eq!(value["purged_entries"], 0);
-    assert_eq!(value["purged_payloads"], 0);
-    assert_eq!(value["purged_cursors"], 0);
-}
-
-#[test]
-fn cache_payload_budget_evicts_payloads_but_retains_observation_lineage() {
-    let dir = tempfile::tempdir().unwrap();
-    let dir_arg = dir.path().to_str().unwrap();
-    let file = dir.path().join("large.json");
-    fs::write(
-        &file,
-        serde_json::to_vec(&json!({"items": vec!["x".repeat(64); 32]})).unwrap(),
-    )
-    .unwrap();
-
-    let observed = prog(&[
-        "--dir",
-        dir_arg,
-        "observe",
-        "--file",
-        file.to_str().unwrap(),
-        "--name",
-        "large",
-    ]);
-    assert!(observed.status.success(), "{}", stdout(&observed));
-    let observed: Value = serde_json::from_slice(&observed.stdout).unwrap();
-    let cursor = observed["cursor"].as_str().unwrap().to_string();
-    let observation_id = observed["observation"]["observation_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    // No quota is implicit: the freshly stored payload remains recoverable
-    // until the explicit quota command is invoked.
-    let before_quota = prog(&["--dir", dir_arg, "expand", &cursor]);
-    assert!(before_quota.status.success(), "{}", stdout(&before_quota));
-
-    let quota = prog(&[
-        "--dir",
-        dir_arg,
-        "cache",
-        "purge",
-        "--payload-budget-bytes",
-        "0",
-    ]);
-    assert!(quota.status.success(), "{}", stdout(&quota));
-    let quota: Value = serde_json::from_slice(&quota.stdout).unwrap();
-    assert_eq!(quota["max_payload_bytes"], 0);
-    assert_eq!(quota["evicted_entries"], 1);
-    assert_eq!(quota["evicted_payloads"], 1);
-    assert_eq!(quota["evicted_cursors"], 1);
-    assert_eq!(quota["metadata_only_observations"], 1);
-
-    let expanded = prog(&["--dir", dir_arg, "expand", &cursor]);
-    assert!(!expanded.status.success());
-    let expanded: Value = serde_json::from_slice(&expanded.stdout).unwrap();
-    assert_eq!(expanded["error"]["kind"], "cursor_not_found");
-
-    let observations = prog(&["--dir", dir_arg, "cache", "observations"]);
-    assert!(observations.status.success(), "{}", stdout(&observations));
-    let observations: Value = serde_json::from_slice(&observations.stdout).unwrap();
-    assert_eq!(
-        observations["observations"][0]["observation_id"],
-        observation_id
-    );
-    assert_eq!(
-        observations["observations"][0]["availability"],
-        "metadata_only"
-    );
-}
-
-#[test]
-fn persistent_retention_budget_evicts_on_write_without_minting_broken_cursors() {
-    let dir = tempfile::tempdir().unwrap();
-    let dir_arg = dir.path().to_str().unwrap();
-    let configured = prog(&[
-        "--dir",
-        dir_arg,
-        "cache",
-        "retention",
-        "--max-payload-bytes",
-        "0",
-        "--max-age-seconds",
-        "60",
-    ]);
-    assert!(configured.status.success(), "{}", stdout(&configured));
-    let configured: Value = serde_json::from_slice(&configured.stdout).unwrap();
-    assert_eq!(configured["budget"]["source"], "store_policy");
-    assert_eq!(configured["budget"]["max_payload_bytes"], 0);
-    assert_eq!(configured["budget"]["max_age_seconds"], 60);
-    assert_eq!(configured["storage_budget"], configured["budget"]);
-
-    let file = dir.path().join("retained.json");
-    fs::write(&file, br#"{"items":["retention test"]}"#).unwrap();
-    let observed = prog(&[
-        "--dir",
-        dir_arg,
-        "observe",
-        "--file",
-        file.to_str().unwrap(),
-        "--name",
-        "retained",
-    ]);
-    assert!(observed.status.success(), "{}", stdout(&observed));
-    let observed: Value = serde_json::from_slice(&observed.stdout).unwrap();
-    assert!(observed["cursor"].is_null());
-    assert_eq!(observed["cache"]["status"], "skipped");
-    assert_eq!(observed["observation"]["availability"], "metadata_only");
-    assert_eq!(observed["storage_budget"]["max_payload_bytes"], 0);
-    assert_eq!(
-        observed["capture_budget"],
-        observed["observation"]["capture"]["budget"]
-    );
-    assert!(
-        observed["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| {
-                warning
-                    .as_str()
-                    .unwrap()
-                    .contains("retention policy evicted")
-            })
-    );
-
-    let reopened = prog(&["--dir", dir_arg, "cache", "retention"]);
-    assert!(reopened.status.success(), "{}", stdout(&reopened));
-    let reopened: Value = serde_json::from_slice(&reopened.stdout).unwrap();
-    assert_eq!(reopened["max_payload_bytes"], 0);
-    assert_eq!(reopened["max_age_seconds"], 60);
-
-    let cleared = prog(&[
-        "--dir",
-        dir_arg,
-        "cache",
-        "retention",
-        "--clear-max-payload-bytes",
-        "--clear-max-age-seconds",
-    ]);
-    assert!(cleared.status.success(), "{}", stdout(&cleared));
-    let cleared: Value = serde_json::from_slice(&cleared.stdout).unwrap();
-    assert!(cleared["budget"]["max_payload_bytes"].is_null());
-    assert!(cleared["budget"]["max_age_seconds"].is_null());
-
-    let recovered = prog(&[
-        "--dir",
-        dir_arg,
-        "observe",
-        "--file",
-        file.to_str().unwrap(),
-        "--name",
-        "retained-after-clear",
-    ]);
-    assert!(recovered.status.success(), "{}", stdout(&recovered));
-    let recovered: Value = serde_json::from_slice(&recovered.stdout).unwrap();
-    assert_eq!(recovered["cache"]["status"], "stored");
-    assert!(recovered["cursor"].as_str().is_some());
-}
-
-#[test]
 fn captures_surface_immutable_observation_identity_across_cursor_and_listing() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
@@ -3923,72 +2699,6 @@ fn captures_surface_immutable_observation_identity_across_cursor_and_listing() {
     assert_eq!(listed["observations"].as_array().unwrap().len(), 1);
     assert_eq!(listed["observations"][0]["observation_id"], observation_id);
     assert_eq!(listed["observations"][0]["availability"], "recoverable");
-}
-
-#[test]
-fn explicit_delta_reports_new_and_resolved_findings_for_repeated_command() {
-    let dir = tempfile::tempdir().unwrap();
-    let dir_arg = dir.path().to_str().unwrap();
-    let state = dir.path().join("state.txt");
-    let script = dir.path().join("emit.py");
-    fs::write(
-        &script,
-        "from pathlib import Path\nprint(Path(__import__('sys').argv[1]).read_text())\n",
-    )
-    .unwrap();
-    fs::write(&state, "error old failure\n").unwrap();
-    let first = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--selection-scope",
-        "full-suite",
-        "--selection-exhaustive",
-        "--",
-        "python3",
-        script.to_str().unwrap(),
-        state.to_str().unwrap(),
-    ]);
-    assert!(first.status.success(), "{}", stdout(&first));
-    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
-    let first_id = first["observation"]["observation_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    fs::write(&state, "error new failure\n").unwrap();
-    let second = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--selection-scope",
-        "full-suite",
-        "--selection-exhaustive",
-        "--",
-        "python3",
-        script.to_str().unwrap(),
-        state.to_str().unwrap(),
-    ]);
-    assert!(second.status.success(), "{}", stdout(&second));
-    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
-    let second_id = second["observation"]["observation_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert_eq!(second["changes_since"]["baseline_observation_id"], first_id);
-    assert_eq!(second["changes_since"]["counts"]["new"], 1);
-    assert_eq!(second["changes_since"]["counts"]["resolved"], 1);
-    let delta = prog(&["--dir", dir_arg, "delta", &first_id, &second_id]);
-    assert!(delta.status.success(), "{}", stdout(&delta));
-    let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
-    assert_eq!(delta["schema"], "prog.observation_delta");
-    assert_eq!(delta["assessment"]["can_prove_absence"], true);
-    assert_eq!(delta["counts"]["new"], 1);
-    assert_eq!(delta["counts"]["resolved"], 1);
-    assert!(delta["findings"].as_array().unwrap().iter().all(|finding| {
-        matches!(finding["status"].as_str(), Some("new") | Some("resolved"))
-            && finding["evidence_ref"]["path"].is_string()
-            && finding["availability"] == "recoverable"
-    }));
 }
 
 #[test]
@@ -4090,6 +2800,8 @@ fn automatic_delta_requires_the_same_comparison_family() {
 
 #[test]
 fn verification_readiness_requires_every_declared_scope() {
+    let workspace = test_git_repo();
+    let root = workspace.path();
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
     let state = dir.path().join("state.txt");
@@ -4100,18 +2812,21 @@ fn verification_readiness_requires_every_declared_scope() {
     )
     .unwrap();
     fs::write(&state, "error old failure\n").unwrap();
-    let first = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--selection-scope",
-        "full-suite",
-        "--selection-exhaustive",
-        "--",
-        "python3",
-        script.to_str().unwrap(),
-        state.to_str().unwrap(),
-    ]);
+    let first = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--selection-scope",
+            "full-suite",
+            "--selection-exhaustive",
+            "--",
+            "python3",
+            script.to_str().unwrap(),
+            state.to_str().unwrap(),
+        ],
+    );
     assert!(first.status.success(), "{}", stdout(&first));
     let first: Value = serde_json::from_slice(&first.stdout).unwrap();
     let first_id = first["observation"]["observation_id"]
@@ -4120,25 +2835,28 @@ fn verification_readiness_requires_every_declared_scope() {
         .to_string();
 
     fs::write(&state, "error new failure\n").unwrap();
-    let second = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--selection-scope",
-        "full-suite",
-        "--selection-exhaustive",
-        "--",
-        "python3",
-        script.to_str().unwrap(),
-        state.to_str().unwrap(),
-    ]);
+    let second = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--selection-scope",
+            "full-suite",
+            "--selection-exhaustive",
+            "--",
+            "python3",
+            script.to_str().unwrap(),
+            state.to_str().unwrap(),
+        ],
+    );
     assert!(second.status.success(), "{}", stdout(&second));
     let second: Value = serde_json::from_slice(&second.stdout).unwrap();
     let second_id = second["observation"]["observation_id"]
         .as_str()
         .unwrap()
         .to_string();
-    let delta = prog(&["--dir", dir_arg, "delta", &first_id, &second_id]);
+    let delta = prog_in_dir(root, &["--dir", dir_arg, "delta", &first_id, &second_id]);
     assert!(delta.status.success(), "{}", stdout(&delta));
     let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
     let resolved_fingerprint = delta["findings"]
@@ -4150,38 +2868,44 @@ fn verification_readiness_requires_every_declared_scope() {
         .unwrap()
         .to_string();
 
-    let target = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "target-failure",
-        "--check",
-        "target failure is absent",
-        "--scope",
-        "target",
-        "--origin-observation",
-        &first_id,
-        "--evidence-observation",
-        &second_id,
-        "--expected-absent-fingerprint",
-        &resolved_fingerprint,
-    ]);
+    let target = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "target-failure",
+            "--check",
+            "target failure is absent",
+            "--scope",
+            "target",
+            "--origin-observation",
+            &first_id,
+            "--evidence-observation",
+            &second_id,
+            "--expected-absent-fingerprint",
+            &resolved_fingerprint,
+        ],
+    );
     assert!(target.status.success(), "{}", stdout(&target));
-    let affected = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "affected-suite",
-        "--check",
-        "affected test suite passes",
-        "--scope",
-        "affected-suite",
-    ]);
+    let affected = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "affected-suite",
+            "--check",
+            "affected test suite passes",
+            "--scope",
+            "affected-suite",
+        ],
+    );
     assert!(affected.status.success(), "{}", stdout(&affected));
 
-    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    let readiness = prog_in_dir(root, &["--dir", dir_arg, "session", "show", "--readiness"]);
     assert!(readiness.status.success(), "{}", stdout(&readiness));
     let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
     assert_eq!(readiness["schema"], "prog.verification");
@@ -4245,35 +2969,43 @@ fn verification_without_obligations_is_explicitly_not_ready() {
 
 #[test]
 fn verification_accepts_a_complete_successful_command_as_evidence() {
+    let workspace = test_git_repo();
+    let root = workspace.path();
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
-    let run = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--",
-        "python3",
-        "-c",
-        "print('all clear')",
-    ]);
+    let run = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--",
+            "python3",
+            "-c",
+            "print('all clear')",
+        ],
+    );
     assert!(run.status.success(), "{}", stdout(&run));
     let run: Value = serde_json::from_slice(&run.stdout).unwrap();
     let observation_id = run["observation"]["observation_id"].as_str().unwrap();
-    let add = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "target-command",
-        "--check",
-        "target command passes",
-        "--scope",
-        "target",
-        "--evidence-observation",
-        observation_id,
-    ]);
+    let add = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "target-command",
+            "--check",
+            "target command passes",
+            "--scope",
+            "target",
+            "--evidence-observation",
+            observation_id,
+        ],
+    );
     assert!(add.status.success(), "{}", stdout(&add));
-    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    let readiness = prog_in_dir(root, &["--dir", dir_arg, "session", "show", "--readiness"]);
     assert!(readiness.status.success(), "{}", stdout(&readiness));
     let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
     assert_eq!(readiness["ready"], true);
@@ -4282,30 +3014,35 @@ fn verification_accepts_a_complete_successful_command_as_evidence() {
 
 #[test]
 fn verification_obligation_enforces_declared_operation_and_surfaces_advisory_hints() {
+    let workspace = test_git_repo();
+    let root = workspace.path();
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
-    let run = prog(&["--dir", dir_arg, "run", "--", "true"]);
+    let run = prog_in_dir(root, &["--dir", dir_arg, "run", "--", "true"]);
     assert!(run.status.success(), "{}", stdout(&run));
     let run: Value = serde_json::from_slice(&run.stdout).unwrap();
     let observation_id = run["observation"]["observation_id"].as_str().unwrap();
 
-    let declared = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "normalizer-advice",
-        "--check",
-        "normalizer suggestion",
-        "--scope",
-        "target",
-        "--declared-by",
-        "normalizer",
-        "--evidence-observation",
-        observation_id,
-        "--advisory-argv",
-        "true",
-    ]);
+    let declared = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "normalizer-advice",
+            "--check",
+            "normalizer suggestion",
+            "--scope",
+            "target",
+            "--declared-by",
+            "normalizer",
+            "--evidence-observation",
+            observation_id,
+            "--advisory-argv",
+            "true",
+        ],
+    );
     assert!(declared.status.success(), "{}", stdout(&declared));
     let declared: Value = serde_json::from_slice(&declared.stdout).unwrap();
     assert_eq!(declared["required"], false);
@@ -4316,23 +3053,26 @@ fn verification_obligation_enforces_declared_operation_and_surfaces_advisory_hin
         json!(["normalizer-advice"])
     );
 
-    let mismatched = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "wrong-operation",
-        "--check",
-        "the expected command passes",
-        "--scope",
-        "target",
-        "--evidence-observation",
-        observation_id,
-        "--expected-argv",
-        "false",
-    ]);
+    let mismatched = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "wrong-operation",
+            "--check",
+            "the expected command passes",
+            "--scope",
+            "target",
+            "--evidence-observation",
+            observation_id,
+            "--expected-argv",
+            "false",
+        ],
+    );
     assert!(mismatched.status.success(), "{}", stdout(&mismatched));
-    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    let readiness = prog_in_dir(root, &["--dir", dir_arg, "session", "show", "--readiness"]);
     assert!(readiness.status.success(), "{}", stdout(&readiness));
     let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
     let mismatch = readiness["evaluations"]
@@ -4455,6 +3195,8 @@ fn verification_never_passes_truncated_or_unvalidated_source_evidence() {
 
 #[test]
 fn verification_treats_targeted_incomplete_reruns_as_not_observed() {
+    let workspace = test_git_repo();
+    let root = workspace.path();
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
     let state = dir.path().join("state.txt");
@@ -4465,37 +3207,43 @@ fn verification_treats_targeted_incomplete_reruns_as_not_observed() {
     )
     .unwrap();
     fs::write(&state, "error old failure\n").unwrap();
-    let first = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--selection-scope",
-        "full-suite",
-        "--selection-exhaustive",
-        "--",
-        "python3",
-        script.to_str().unwrap(),
-        state.to_str().unwrap(),
-    ]);
+    let first = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--selection-scope",
+            "full-suite",
+            "--selection-exhaustive",
+            "--",
+            "python3",
+            script.to_str().unwrap(),
+            state.to_str().unwrap(),
+        ],
+    );
     assert!(first.status.success(), "{}", stdout(&first));
     let first: Value = serde_json::from_slice(&first.stdout).unwrap();
     let first_id = first["observation"]["observation_id"].as_str().unwrap();
     fs::write(&state, "all clear\n").unwrap();
-    let second = prog(&[
-        "--dir",
-        dir_arg,
-        "run",
-        "--selection-scope",
-        "targeted-case",
-        "--",
-        "python3",
-        script.to_str().unwrap(),
-        state.to_str().unwrap(),
-    ]);
+    let second = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--selection-scope",
+            "targeted-case",
+            "--",
+            "python3",
+            script.to_str().unwrap(),
+            state.to_str().unwrap(),
+        ],
+    );
     assert!(second.status.success(), "{}", stdout(&second));
     let second: Value = serde_json::from_slice(&second.stdout).unwrap();
     let second_id = second["observation"]["observation_id"].as_str().unwrap();
-    let delta = prog(&["--dir", dir_arg, "delta", first_id, second_id]);
+    let delta = prog_in_dir(root, &["--dir", dir_arg, "delta", first_id, second_id]);
     assert!(delta.status.success(), "{}", stdout(&delta));
     let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
     let fingerprint = delta["findings"]
@@ -4505,25 +3253,28 @@ fn verification_treats_targeted_incomplete_reruns_as_not_observed() {
         .find(|finding| finding["status"] == "not_observed")
         .and_then(|finding| finding["fingerprint"].as_str())
         .unwrap_or_else(|| panic!("expected not_observed delta: {delta}"));
-    let add = prog(&[
-        "--dir",
-        dir_arg,
-        "session",
-        "obligation-add",
-        "targeted-rerun",
-        "--check",
-        "old failure is absent",
-        "--scope",
-        "full-suite",
-        "--origin-observation",
-        first_id,
-        "--evidence-observation",
-        second_id,
-        "--expected-absent-fingerprint",
-        fingerprint,
-    ]);
+    let add = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "targeted-rerun",
+            "--check",
+            "old failure is absent",
+            "--scope",
+            "full-suite",
+            "--origin-observation",
+            first_id,
+            "--evidence-observation",
+            second_id,
+            "--expected-absent-fingerprint",
+            fingerprint,
+        ],
+    );
     assert!(add.status.success(), "{}", stdout(&add));
-    let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
+    let readiness = prog_in_dir(root, &["--dir", dir_arg, "session", "show", "--readiness"]);
     assert!(readiness.status.success(), "{}", stdout(&readiness));
     let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
     assert_eq!(readiness["evaluations"][0]["status"], "not_observed");
@@ -4590,6 +3341,86 @@ fn verification_marks_passing_evidence_stale_after_workspace_edit() {
             .iter()
             .any(|reason| reason.as_str().unwrap().contains("workspace"))
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn verification_treats_unreadable_untracked_workspace_evidence_as_stale() {
+    use std::os::unix::fs::symlink;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let root = workspace.path();
+    fs::write(root.join("tracked.txt"), "initial\n").unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "prog@example.test"],
+        vec!["config", "user.name", "prog test"],
+        vec!["add", "tracked.txt"],
+        vec!["commit", "-qm", "initial"],
+    ] {
+        let status = Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    // This models a dirty worktree entry whose bytes cannot be safely
+    // attributed to one snapshot. The product must make readiness stale,
+    // rather than claiming workspace evidence is unchanged.
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("changing.txt"), "outside workspace\n").unwrap();
+    symlink(
+        outside.path().join("changing.txt"),
+        root.join("unreadable-untracked-entry"),
+    )
+    .unwrap();
+
+    let store = root.join(".prog-state");
+    let store_arg = store.to_str().unwrap();
+    let run = prog_in_dir(root, &["--dir", store_arg, "run", "--", "true"]);
+    assert!(run.status.success(), "{}", stdout(&run));
+    let run: Value = serde_json::from_slice(&run.stdout).unwrap();
+    let observation_id = run["observation"]["observation_id"].as_str().unwrap();
+    let add = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            store_arg,
+            "session",
+            "obligation-add",
+            "workspace-unreadable",
+            "--check",
+            "workspace remains unchanged",
+            "--scope",
+            "target",
+            "--evidence-observation",
+            observation_id,
+            "--required-state",
+            "workspace-unchanged",
+        ],
+    );
+    assert!(add.status.success(), "{}", stdout(&add));
+
+    let readiness = prog_in_dir(
+        root,
+        &["--dir", store_arg, "session", "show", "--readiness"],
+    );
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    assert_eq!(readiness["evaluations"][0]["status"], "stale");
+    assert!(
+        readiness["evaluations"][0]["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason
+                .as_str()
+                .unwrap()
+                .contains("unreadable or unstable dirty-file content"))
+    );
+    assert!(!readiness["ready"].as_bool().unwrap());
 }
 
 #[test]
@@ -5943,10 +4774,6 @@ fn call_rejects_lens_manifest_that_escapes_its_root() {
     );
 }
 
-fn json_array() -> Value {
-    Value::Array(Vec::new())
-}
-
 fn write_seed(dir: &Path, name: &str, contents: &str) -> std::path::PathBuf {
     let path = dir.join(name);
     fs::write(&path, contents).unwrap();
@@ -6369,11 +5196,6 @@ async fn pagination_follows_readonly_and_stops_at_caps() {
     );
 }
 
-fn read_profile(dir: &Path, id: &str) -> Value {
-    serde_json::from_slice(&fs::read(dir.join("profiles").join(format!("{id}.json"))).unwrap())
-        .unwrap()
-}
-
 fn cli_probe_seed(with_effect: bool) -> String {
     let effect = if with_effect {
         r#","effect":{"read_only":true,"mutating":false,"network":false,"shell":false,"sensitive":false,"cacheable":true,"requires_confirmation":false}"#
@@ -6436,161 +5258,6 @@ fn parser_errors_use_the_same_json_error_contract() {
             .unwrap()
             .contains("prog --help")
     );
-}
-
-#[test]
-fn evidence_navigation_workflow_is_offline_scoped_bounded_and_session_backed() {
-    let dir = tempfile::tempdir().unwrap();
-    let run = prog(&[
-        "--dir",
-        dir.path().to_str().unwrap(),
-        "run",
-        "--",
-        "sh",
-        "-c",
-        "echo 'error[E0308]: mismatched types' >&2; exit 1",
-    ]);
-    assert!(run.status.success(), "{}", stdout(&run));
-    let envelope: Value = serde_json::from_slice(&run.stdout).unwrap();
-    assert_eq!(envelope["findings"][0]["path"], "/failure_sections/0");
-    assert!(run.stdout.len() <= 16 * 1024);
-    let cursor = envelope["cursor"].as_str().unwrap();
-
-    let inspect = prog(&[
-        "--dir",
-        dir.path().to_str().unwrap(),
-        "inspect",
-        cursor,
-        "--goal",
-        "find the root cause",
-        "--kind",
-        "error",
-    ]);
-    assert!(inspect.status.success(), "{}", stdout(&inspect));
-    let inspect_value: Value = serde_json::from_slice(&inspect.stdout).unwrap();
-    assert_eq!(inspect_value["normalized_goal"], "root_cause");
-    assert_eq!(inspect_value["findings"][0]["path"], "/failure_sections/0");
-    assert!(inspect.stdout.len() <= 16 * 1024);
-
-    let evidence = prog(&[
-        "--dir",
-        dir.path().to_str().unwrap(),
-        "evidence",
-        cursor,
-        "--path",
-        "/failure_sections/0",
-    ]);
-    assert!(evidence.status.success(), "{}", stdout(&evidence));
-    let evidence_value: Value = serde_json::from_slice(&evidence.stdout).unwrap();
-    assert_eq!(evidence_value["schema"], "prog.evidence");
-    assert_eq!(evidence_value["line_range"]["start"], 1);
-    assert!(
-        evidence_value["source_command"]
-            .as_str()
-            .unwrap()
-            .contains("sh")
-    );
-
-    let search = prog(&[
-        "--dir",
-        dir.path().to_str().unwrap(),
-        "search",
-        cursor,
-        "mismatched",
-        "--path",
-        "/failure_sections",
-    ]);
-    assert!(search.status.success(), "{}", stdout(&search));
-    let search_value: Value = serde_json::from_slice(&search.stdout).unwrap();
-    assert!(search_value["hits"].as_array().unwrap().iter().all(|hit| {
-        hit["path"]
-            .as_str()
-            .unwrap()
-            .starts_with("/failure_sections")
-    }));
-
-    let escape = prog(&[
-        "--dir",
-        dir.path().to_str().unwrap(),
-        "find",
-        cursor,
-        "--kind",
-        "error",
-        "--path",
-        "/outside",
-    ]);
-    assert!(!escape.status.success());
-    let escape_value: Value = serde_json::from_slice(&escape.stdout).unwrap();
-    assert!(matches!(
-        escape_value["error"]["kind"].as_str(),
-        Some("path_not_found" | "path_outside_boundary")
-    ));
-
-    let session = prog(&["--dir", dir.path().to_str().unwrap(), "session", "show"]);
-    assert!(session.status.success(), "{}", stdout(&session));
-    let session_value: Value = serde_json::from_slice(&session.stdout).unwrap();
-    let kinds = session_value["events"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|event| event["kind"].as_str().unwrap())
-        .collect::<Vec<_>>();
-    assert!(kinds.contains(&"run"));
-    assert!(kinds.contains(&"inspect"));
-    assert!(kinds.contains(&"evidence"));
-    assert!(kinds.contains(&"search"));
-}
-
-#[test]
-fn source_add_cli_detects_and_optionally_applies_structured_output() {
-    let dir = tempfile::tempdir().unwrap();
-    let suggested = prog(&[
-        "--dir",
-        dir.path().to_str().unwrap(),
-        "source",
-        "add-cli",
-        "pods",
-        "--operation",
-        "list",
-        "--read-only",
-        "--",
-        "kubectl",
-        "get",
-        "pods",
-    ]);
-    assert!(suggested.status.success(), "{}", stdout(&suggested));
-    let suggested_value: Value = serde_json::from_slice(&suggested.stdout).unwrap();
-    assert_eq!(
-        suggested_value["structured_output"][0]["status"],
-        "suggested"
-    );
-    assert_eq!(
-        suggested_value["structured_output"][0]["flag"],
-        json!(["-o", "json"])
-    );
-
-    let applied = prog(&[
-        "--dir",
-        dir.path().to_str().unwrap(),
-        "source",
-        "add-cli",
-        "pods_json",
-        "--operation",
-        "list",
-        "--read-only",
-        "--prefer-json",
-        "--",
-        "kubectl",
-        "get",
-        "pods",
-    ]);
-    assert!(applied.status.success(), "{}", stdout(&applied));
-    let applied_value: Value = serde_json::from_slice(&applied.stdout).unwrap();
-    assert_eq!(
-        applied_value["generated_seed"]["operations"][0]["args"],
-        json!(["get", "pods", "-o", "json"])
-    );
-    assert_eq!(applied_value["structured_output"][0]["status"], "detected");
 }
 
 #[test]

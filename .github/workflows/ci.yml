@@ -24,6 +24,29 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-targets --all-features
 
+  dirty-checkout-isolation:
+    # CLI tests must never observe the checkout that runs them. Keep an
+    # untracked file changing at the repository root while the suite runs so
+    # inherited-CWD regressions fail deterministically in CI.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test from a dirty, changing checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          dirty_file="$GITHUB_WORKSPACE/.prog-ci-dirty-worktree"
+          (
+            while true; do
+              printf '%s\n' "$(date +%s%N)" > "$dirty_file"
+              sleep 0.01
+            done
+          ) &
+          writer_pid=$!
+          trap 'kill "$writer_pid" 2>/dev/null || true; wait "$writer_pid" 2>/dev/null || true' EXIT
+          cargo test --workspace --all-targets --all-features
+
   msrv:
     # Verifies the rust-version pin declared in Cargo.toml actually builds and
     # tests cleanly on the declared floor, rather than being dead metadata.
