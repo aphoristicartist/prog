@@ -24,19 +24,18 @@ use prog_core::{
     DisclosureEnvelope, EffectSet, EvidenceAvailability, EvidenceBlock, EvidenceGrade, EvidenceRef,
     ExpansionScope, Extra, FindingIdentityContext, FindingOptions, InspectRequest, InspectResponse,
     LensManifest, NewObservation, NewSessionEvent, NextAction, ObligationDeclarer,
-    ObligationEvaluation, ObservationCompleteness, ObservationFreshness, ObservationMetadata,
-    ObservationPayloadStatus, ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion,
-    OperationProfile, PersistedPayload, PreviewPolicy, RawPayload, ReadinessReport,
-    RedactionPolicy, Result, SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions, SearchResponse,
-    SelectionCoverage, SliceRequest, SourceProfile, SourceStateToken, StorageBudget, Store,
-    Summary, TrustSettings, VERIFICATION_SCHEMA, ValidatedCursor, VerificationObligation,
-    VerificationOperation, VerificationStateRelationship, VerificationStatus,
-    build_inspect_response, cache_allowed, call_effect_warnings, canonical_json, check_call,
-    check_discovery, cli_adapter_effects, cli_hardening_effects, effective_effects, evidence_block,
-    expand, http_adapter_effects, http_hardening_effects, http_source_state, infer, join,
-    lens_slice_request, new_cache_entry, project, project_with_lens, public_contract_schemas,
-    ranked_findings_with_lens, render_hints, search_payload_with_lens, slice_value,
-    tighten_effects, validate_lens_manifest,
+    ObservationCompleteness, ObservationFreshness, ObservationMetadata, ObservationPayloadStatus,
+    ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion, OperationProfile,
+    PersistedPayload, PreviewPolicy, RawPayload, ReadinessReport, RedactionPolicy, Result,
+    SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions, SearchResponse, SelectionCoverage,
+    SliceRequest, SourceProfile, SourceStateToken, StorageBudget, Store, Summary, TrustSettings,
+    VERIFICATION_SCHEMA, ValidatedCursor, VerificationObligation, VerificationOperation,
+    VerificationStateRelationship, VerificationStatus, build_inspect_response, cache_allowed,
+    call_effect_warnings, canonical_json, check_call, check_discovery, cli_adapter_effects,
+    cli_hardening_effects, effective_effects, evidence_block, expand, http_adapter_effects,
+    http_hardening_effects, http_source_state, infer, join, lens_slice_request, new_cache_entry,
+    project, project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
+    search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
 };
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -51,6 +50,7 @@ use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 
 mod cli_args;
 mod commands;
+mod obligation;
 mod reports;
 
 use cli_args::*;
@@ -90,6 +90,7 @@ use commands::{
     session::{declare_recipe_obligation, readiness_report, session_show},
     source::{shell_quote, source_command},
 };
+pub(crate) use obligation::evaluate_obligation;
 use reports::*;
 
 #[cfg(test)]
@@ -686,263 +687,6 @@ fn record_navigation_event(
         summary,
         extra: Extra::new(),
     });
-}
-
-fn evaluate_obligation(
-    store: &Store,
-    obligation: VerificationObligation,
-) -> Result<ObligationEvaluation> {
-    let Some(evidence_id) = obligation.evidence_observation_id.clone() else {
-        return Ok(obligation_evaluation(
-            obligation,
-            VerificationStatus::Pending,
-            vec!["no evidence observation has been attached".to_string()],
-            None,
-        ));
-    };
-    let Some(evidence) = store.get_observation(&evidence_id)? else {
-        return Ok(obligation_evaluation(
-            obligation,
-            VerificationStatus::Unverifiable,
-            vec![format!(
-                "evidence observation '{evidence_id}' is unavailable"
-            )],
-            None,
-        ));
-    };
-    if evidence.availability != prog_core::EvidenceAvailability::Recoverable {
-        return Ok(obligation_evaluation(
-            obligation,
-            VerificationStatus::Unverifiable,
-            vec!["the evidence payload is no longer available".to_string()],
-            None,
-        ));
-    }
-    if !evidence.capture.can_prove_absence {
-        return Ok(obligation_evaluation(
-            obligation,
-            VerificationStatus::Unverifiable,
-            vec!["the evidence observation is incomplete or truncated".to_string()],
-            None,
-        ));
-    }
-    let requires_workspace = matches!(
-        obligation.required_state,
-        VerificationStateRelationship::WorkspaceUnchanged
-            | VerificationStateRelationship::WorkspaceAndSourceUnchanged
-    );
-    if requires_workspace && evidence.workspace_state.is_none() {
-        return Ok(obligation_evaluation(
-            obligation,
-            VerificationStatus::Unverifiable,
-            vec![
-                "the obligation requires workspace-state evidence, but none was captured"
-                    .to_string(),
-            ],
-            None,
-        ));
-    }
-    if let Some(captured_workspace) = &evidence.workspace_state {
-        let current_workspace = captured_workspace
-            .root
-            .as_deref()
-            .map(prog_core::capture_workspace)
-            .unwrap_or_else(|| prog_core::capture_workspace("."));
-        let comparison = prog_core::compare_workspace(captured_workspace, &current_workspace);
-        if comparison.validity != prog_core::WorkspaceValidity::Unchanged
-            && (requires_workspace
-                || obligation.required_state == VerificationStateRelationship::Any)
-        {
-            return Ok(obligation_evaluation(
-                obligation,
-                VerificationStatus::Stale,
-                comparison.reasons,
-                None,
-            ));
-        }
-    }
-    let requires_source = matches!(
-        obligation.required_state,
-        VerificationStateRelationship::SourceUnchanged
-            | VerificationStateRelationship::WorkspaceAndSourceUnchanged
-    );
-    if requires_source && evidence.source_validity != prog_core::SourceValidity::ConfirmedUnchanged
-    {
-        return Ok(obligation_evaluation(
-            obligation,
-            VerificationStatus::Stale,
-            vec!["the obligation requires source state confirmed unchanged".to_string()],
-            None,
-        ));
-    }
-    if let Some(expected_operation) = &obligation.expected_operation {
-        let matches = match expected_operation {
-            VerificationOperation::Argv(expected) => {
-                evidence_argv(store, &evidence)?.is_some_and(|actual| actual == *expected)
-            }
-            VerificationOperation::SourceOperation(expected) => evidence.operation == *expected,
-        };
-        if !matches {
-            return Ok(obligation_evaluation(
-                obligation,
-                VerificationStatus::Stale,
-                vec!["evidence does not match the obligation's declared operation".to_string()],
-                None,
-            ));
-        }
-    }
-    if let Some(family) = obligation.comparison_family.as_deref()
-        && evidence.invocation_fingerprint != family
-    {
-        return Ok(obligation_evaluation(
-            obligation,
-            VerificationStatus::Stale,
-            vec!["evidence does not match the declared comparison family".to_string()],
-            None,
-        ));
-    }
-
-    match (
-        obligation.origin_observation_id.clone(),
-        obligation.expected_absent_fingerprint.clone(),
-    ) {
-        (Some(origin_id), Some(expected_fingerprint)) => {
-            let delta = compare_observation_ids(store, &origin_id, &evidence_id)?;
-            let expected_status = delta
-                .findings
-                .iter()
-                .find(|finding| finding.fingerprint == expected_fingerprint)
-                .map(|finding| match finding.status {
-                    prog_core::DeltaFindingStatus::Resolved => VerificationStatus::Passed,
-                    prog_core::DeltaFindingStatus::Persisting => VerificationStatus::Persisting,
-                    prog_core::DeltaFindingStatus::New => VerificationStatus::New,
-                    prog_core::DeltaFindingStatus::NotObserved => VerificationStatus::NotObserved,
-                    prog_core::DeltaFindingStatus::Unknown => VerificationStatus::Unknown,
-                })
-                .unwrap_or(VerificationStatus::Unknown);
-            let new_regressions = delta
-                .findings
-                .iter()
-                .filter(|finding| finding.status == prog_core::DeltaFindingStatus::New)
-                .cloned()
-                .collect::<Vec<_>>();
-            let status =
-                if expected_status == VerificationStatus::Passed && !new_regressions.is_empty() {
-                    VerificationStatus::New
-                } else {
-                    expected_status
-                };
-            let reasons = match status {
-                VerificationStatus::Passed => vec![
-                    "the expected finding is absent under a comparable, complete observation"
-                        .to_string(),
-                ],
-                VerificationStatus::Unknown => vec![
-                    "the expected finding could not be evaluated from the comparable evidence"
-                        .to_string(),
-                ],
-                VerificationStatus::New if !new_regressions.is_empty() => vec![
-                    "the expected finding is absent, but comparable evidence contains new regression findings"
-                        .to_string(),
-                ],
-                _ => delta
-                    .findings
-                    .iter()
-                    .find(|finding| finding.fingerprint == expected_fingerprint)
-                    .map(|finding| finding.reasons.clone())
-                    .filter(|reasons| !reasons.is_empty())
-                    .unwrap_or_else(|| delta.assessment.reasons.clone()),
-            };
-            let mut evaluation =
-                obligation_evaluation(obligation, status, reasons, Some(delta.assessment));
-            if !new_regressions.is_empty() {
-                evaluation.extra.insert(
-                    "new_regressions".to_string(),
-                    serde_json::to_value(new_regressions)?,
-                );
-            }
-            Ok(evaluation)
-        }
-        (None, None) => match command_success(store, &evidence)? {
-            Some(true) => Ok(obligation_evaluation(
-                obligation,
-                VerificationStatus::Passed,
-                vec!["a complete command observation exited successfully".to_string()],
-                None,
-            )),
-            Some(false) => Ok(obligation_evaluation(
-                obligation,
-                VerificationStatus::Failed,
-                vec!["the evidence command did not exit successfully".to_string()],
-                None,
-            )),
-            None => Ok(obligation_evaluation(
-                obligation,
-                VerificationStatus::Unknown,
-                vec![
-                    "evidence has no explicit finding comparison or successful command result"
-                        .to_string(),
-                ],
-                None,
-            )),
-        },
-        _ => Ok(obligation_evaluation(
-            obligation,
-            VerificationStatus::Unknown,
-            vec![
-                "origin observation and expected finding fingerprint must be supplied together"
-                    .to_string(),
-            ],
-            None,
-        )),
-    }
-}
-
-fn command_success(
-    store: &Store,
-    observation: &prog_core::ObservationRecord,
-) -> Result<Option<bool>> {
-    let Some(payload) = store.get_payload(&observation.payload_hash)? else {
-        return Ok(None);
-    };
-    Ok(payload
-        .as_value()
-        .pointer("/command/success")
-        .and_then(Value::as_bool))
-}
-
-fn evidence_argv(
-    store: &Store,
-    observation: &prog_core::ObservationRecord,
-) -> Result<Option<Vec<String>>> {
-    let Some(payload) = store.get_payload(&observation.payload_hash)? else {
-        return Ok(None);
-    };
-    Ok(payload
-        .as_value()
-        .pointer("/command/argv")
-        .and_then(Value::as_array)
-        .and_then(|argv| {
-            argv.iter()
-                .map(Value::as_str)
-                .collect::<Option<Vec<_>>>()
-                .map(|argv| argv.into_iter().map(ToOwned::to_owned).collect())
-        }))
-}
-
-fn obligation_evaluation(
-    obligation: VerificationObligation,
-    status: VerificationStatus,
-    reasons: Vec<String>,
-    assessment: Option<prog_core::ComparabilityAssessment>,
-) -> ObligationEvaluation {
-    ObligationEvaluation {
-        obligation,
-        status,
-        reasons,
-        assessment,
-        extra: Extra::new(),
-    }
 }
 
 fn capture_budget_for_run(args: &RunArgs) -> CaptureBudget {
