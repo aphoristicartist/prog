@@ -324,10 +324,7 @@ fn source_command_from_provenance(provenance: Option<&CallProvenance>) -> Option
     )
 }
 
-fn bound_inspect_response(
-    response: &mut InspectResponse,
-    max_envelope_bytes: usize,
-) -> Result<()> {
+fn bound_inspect_response(response: &mut InspectResponse, max_envelope_bytes: usize) -> Result<()> {
     let budget = max_envelope_bytes;
     let original_len = response.findings.len();
     while serde_json::to_vec(response)?.len() > budget && !response.findings.is_empty() {

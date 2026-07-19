@@ -938,7 +938,7 @@ async fn main() -> ExitCode {
                 &error,
                 cli.pretty,
                 &InvocationContext::for_unresolved_budget(),
-            )
+            );
         }
     };
 
@@ -2279,11 +2279,7 @@ fn write_error(error: &CoreError, pretty: bool, ctx: &InvocationContext) -> Exit
     }
 }
 
-fn render_budgeted_json(
-    mut value: Value,
-    pretty: bool,
-    ctx: &InvocationContext,
-) -> Result<String> {
+fn render_budgeted_json(mut value: Value, pretty: bool, ctx: &InvocationContext) -> Result<String> {
     if !value.is_object() {
         value = json!({"result": value});
     }

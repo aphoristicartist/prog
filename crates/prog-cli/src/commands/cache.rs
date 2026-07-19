@@ -60,7 +60,11 @@ pub(crate) fn cache_command(
             } else if let Some(source) = &args.source {
                 store.purge_source(source)?
             } else if let Some(max_payload_bytes) = args.payload_budget_bytes {
-                write_success(&store.enforce_payload_quota(max_payload_bytes)?, pretty, ctx)?;
+                write_success(
+                    &store.enforce_payload_quota(max_payload_bytes)?,
+                    pretty,
+                    ctx,
+                )?;
                 return Ok(ExitCode::SUCCESS);
             } else {
                 unreachable!("validated one cache purge selector")
