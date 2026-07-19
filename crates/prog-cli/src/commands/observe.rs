@@ -6,6 +6,7 @@ pub(crate) fn observe_artifact(
     store: &Store,
     lens_dir: &Path,
     args: &ObserveArgs,
+    ctx: &mut InvocationContext,
 ) -> Result<DisclosureEnvelope> {
     let input = read_observation_input(args)?;
     let normalized = normalize_observation(&input.bytes, &input.mime)?;
@@ -56,7 +57,7 @@ pub(crate) fn observe_artifact(
         redacted_paths.len(),
     ));
     let (availability, capture) = complete_capture(payload_bytes, true, !redacted_paths.is_empty());
-    set_response_capture_budget(capture.budget.clone());
+    ctx.set_capture(capture.budget.clone());
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
@@ -149,6 +150,7 @@ pub(crate) fn observe_artifact(
             lens,
         },
         cursor,
+        ctx.max_envelope_bytes(),
     )
 }
 

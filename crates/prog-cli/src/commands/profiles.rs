@@ -448,8 +448,12 @@ pub(crate) fn core_kind(kind: SourceKind) -> prog_core::SourceKind {
     }
 }
 
-pub(crate) fn write_success<T: Serialize>(value: &T, pretty: bool) -> Result<()> {
-    let rendered = render_budgeted_json(serde_json::to_value(value)?, pretty)?;
+pub(crate) fn write_success<T: Serialize>(
+    value: &T,
+    pretty: bool,
+    ctx: &InvocationContext,
+) -> Result<()> {
+    let rendered = render_budgeted_json(serde_json::to_value(value)?, pretty, ctx)?;
     println!("{rendered}");
     Ok(())
 }

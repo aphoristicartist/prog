@@ -6,6 +6,7 @@ pub(crate) async fn run_recipe(
     store: &Store,
     lens_dir: &Path,
     args: &RecipeArgs,
+    ctx: &mut InvocationContext,
 ) -> Result<DisclosureEnvelope> {
     let goal = args
         .goal
@@ -47,7 +48,7 @@ pub(crate) async fn run_recipe(
                 ttl_seconds: args.ttl_seconds,
             };
             (
-                observe_artifact(store, lens_dir, &observe)?,
+                observe_artifact(store, lens_dir, &observe, ctx)?,
                 vec![json!([
                     "prog",
                     "observe",
@@ -94,7 +95,7 @@ pub(crate) async fn run_recipe(
                 command: command.clone(),
             };
             (
-                run_command(store, lens_dir, &run).await?.envelope,
+                run_command(store, lens_dir, &run, ctx).await?.envelope,
                 vec![json!(redact_run_argv(&command))],
             )
         }
@@ -111,6 +112,7 @@ pub(crate) async fn run_recipe(
                 kind: None,
                 path: String::new(),
             },
+            ctx,
         )?;
         envelope.findings = inspect.findings;
     }
@@ -131,7 +133,7 @@ pub(crate) async fn run_recipe(
             "deterministic": true
         }),
     );
-    compact_envelope_to_budget(&mut envelope)?;
+    compact_envelope_to_budget(&mut envelope, ctx.max_envelope_bytes())?;
     Ok(envelope)
 }
 

@@ -12,14 +12,15 @@ pub(crate) fn cache_command(
     store: &Store,
     command: &CacheCommand,
     pretty: bool,
+    ctx: &mut InvocationContext,
 ) -> Result<ExitCode> {
     match command {
         CacheCommand::List => {
-            write_success(&store.list_entries(100)?, pretty)?;
+            write_success(&store.list_entries(100)?, pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         CacheCommand::Observations(args) => {
-            write_success(&store.list_observations(args.limit)?, pretty)?;
+            write_success(&store.list_observations(args.limit)?, pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         CacheCommand::Get(args) => {
@@ -38,7 +39,7 @@ pub(crate) fn cache_command(
                 extra: serde_json::Map::new(),
             })?;
             let projection = expand(&payload, &scoped, &PreviewPolicy::default())?;
-            write_success(&CacheGetOutput { entry, projection }, pretty)?;
+            write_success(&CacheGetOutput { entry, projection }, pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         CacheCommand::Purge(args) => {
@@ -59,12 +60,12 @@ pub(crate) fn cache_command(
             } else if let Some(source) = &args.source {
                 store.purge_source(source)?
             } else if let Some(max_payload_bytes) = args.payload_budget_bytes {
-                write_success(&store.enforce_payload_quota(max_payload_bytes)?, pretty)?;
+                write_success(&store.enforce_payload_quota(max_payload_bytes)?, pretty, ctx)?;
                 return Ok(ExitCode::SUCCESS);
             } else {
                 unreachable!("validated one cache purge selector")
             };
-            write_success(&summary, pretty)?;
+            write_success(&summary, pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         CacheCommand::Retention(args) => {
@@ -73,7 +74,7 @@ pub(crate) fn cache_command(
                 + usize::from(args.clear_max_payload_bytes)
                 + usize::from(args.clear_max_age_seconds);
             if changes == 0 {
-                write_success(&store.storage_budget()?, pretty)?;
+                write_success(&store.storage_budget()?, pretty, ctx)?;
                 return Ok(ExitCode::SUCCESS);
             }
             let mut budget = store.storage_budget()?;
@@ -89,8 +90,8 @@ pub(crate) fn cache_command(
                 budget.max_age_seconds = None;
             }
             let summary = store.set_storage_budget(&budget)?;
-            set_response_storage_budget(summary.budget.clone());
-            write_success(&summary, pretty)?;
+            ctx.set_storage(summary.budget.clone());
+            write_success(&summary, pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
     }

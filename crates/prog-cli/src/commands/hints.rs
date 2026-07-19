@@ -2,11 +2,15 @@
 
 use crate::*;
 
-pub(crate) fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsResponse> {
+pub(crate) fn hints_source(
+    store: &Store,
+    args: &HintsArgs,
+    ctx: &mut InvocationContext,
+) -> Result<HintsResponse> {
     let profile = store
         .read_profile(&args.source_id)?
         .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
-    apply_profile_disclosure_budget(&profile)?;
+    ctx.apply_profile_disclosure(&profile)?;
     let hints = build_hints_document(&profile, args.operation.as_deref())?;
     let redacted = RawPayload::new(hints).redact(&resolve_redaction(Some(&profile)));
     let payload = redacted.payload;
@@ -29,7 +33,7 @@ pub(crate) fn hints_source(store: &Store, args: &HintsArgs) -> Result<HintsRespo
         86_400,
     );
     let (availability, capture) = complete_capture(entry.payload_bytes, true, false);
-    set_response_capture_budget(capture.budget.clone());
+    ctx.set_capture(capture.budget.clone());
     let observation_id = record_capture(
         store,
         payload_hash,

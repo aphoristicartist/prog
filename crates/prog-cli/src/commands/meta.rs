@@ -2,7 +2,11 @@
 
 use crate::*;
 
-pub(crate) fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<DisclosureEnvelope> {
+pub(crate) fn meta_contracts(
+    store: &Store,
+    args: &MetaArgs,
+    ctx: &mut InvocationContext,
+) -> Result<DisclosureEnvelope> {
     let schemas = public_contract_schemas()?;
     let payload = match &args.contract {
         Some(contract) => schemas
@@ -34,7 +38,7 @@ pub(crate) fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<Disclosur
         86_400,
     );
     let (availability, capture) = complete_capture(payload_bytes, true, false);
-    set_response_capture_budget(capture.budget.clone());
+    ctx.set_capture(capture.budget.clone());
     let observation_id = record_capture(
         store,
         payload_hash,
@@ -104,5 +108,6 @@ pub(crate) fn meta_contracts(store: &Store, args: &MetaArgs) -> Result<Disclosur
             lens: None,
         },
         cursor,
+        ctx.max_envelope_bytes(),
     )
 }
