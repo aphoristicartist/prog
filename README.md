@@ -1,18 +1,113 @@
 # prog
 
 [![CI](https://github.com/aphoristicartist/prog/actions/workflows/ci.yml/badge.svg)](https://github.com/aphoristicartist/prog/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Rust 1.89+](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](https://www.rust-lang.org)
+[![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS-lightgrey.svg)](#supported-platforms)
 
 **Bounded, inspectable tool output for AI agents and loop engineering.**
 
-`prog` captures output from local commands, files, HTTP APIs, and MCP servers,
-redacts it before persistence, and returns a compact JSON envelope. Large or
-uncertain regions stay available behind cursor-scoped JSON Pointers, so an
-agent can inspect the shape first and retrieve only the evidence needed for the
-next decision without rerunning the source.
+Your agent runs `cargo test`. The output is 130,000 tokens. It needs one error
+line — but it can't know which line until it has read them all.
+
+So you truncate, and lose the answer. Or you don't, and pay for the whole log
+on every turn.
+
+```text
+                       tokens into the model
+  raw payload   ████████████████████████████████████████  137,883
+  prog          ▏                                             847
+```
+
+<sub>One row from [`docs/token-economics.md`](docs/token-economics.md): the "discover shape"
+task over the checked-in HTTP fixture. Ratios across all fixtures range 34.5x-162.8x.
+Measured on deterministic fixtures with a bytes/4 heuristic — not a promise about your workload.</sub>
+
+The difference isn't compression. `prog` captures the payload **once**, redacts
+it, stores it, and hands back a small envelope describing its *shape* — plus a
+cursor. Everything omitted stays addressable by JSON Pointer, so the next step
+retrieves exactly the evidence it needs **without rerunning the source**.
 
 ```text
 capture once -> redact -> bounded envelope -> inspect -> exact evidence -> verify again
 ```
+
+```sh
+prog run -- cargo test          # 1 bounded envelope, ranked findings
+prog inspect "$CURSOR" --goal "find the compile error"
+prog evidence "$CURSOR" --path /failure_sections/0    # exact, cited, offline
+```
+
+Nothing was truncated away. The full redacted payload is still on disk.
+
+## Contents
+
+- [Install](#install) · [Quickstart](#quickstart)
+- [Why prog](#why-prog) · [Built for loop engineering](#built-for-loop-engineering)
+- [Verifying what changed](#verifying-what-changed) — the part most tools skip
+- [The disclosure envelope](#the-disclosure-envelope) · [Inputs and adapters](#inputs-and-adapters)
+- [Agent integration](#agent-integration) · [Command map](#command-map)
+- [Safety and storage](#safety-and-storage) · [Measured results](#measured-results)
+- [When not to use prog](#when-not-to-use-prog) · [Documentation](#documentation)
+
+## Install
+
+The repository is a Rust workspace at version `0.1.0`. Install the `prog`
+binary from a checkout:
+
+```sh
+git clone https://github.com/aphoristicartist/prog.git
+cd prog
+cargo install --path crates/prog-cli
+prog --help
+```
+
+Prebuilt binaries for Ubuntu and macOS are published on the
+[GitHub Releases page](https://github.com/aphoristicartist/prog/releases).
+Each release ships a tarball per platform, a combined `SHA256SUMS`, a CycloneDX
+SBOM, and a build-provenance attestation. Verify a download before use:
+
+```sh
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify prog-*.tar.gz --owner aphoristicartist
+```
+
+For development, replace `prog` with `cargo run --` in the examples below.
+
+### Supported platforms
+
+- **Ubuntu** (linux-x86_64) and **macOS** are supported and CI-verified on every
+  push and pull request (formatting, Clippy, full test suite, and an MSRV gate).
+- **Windows is not supported.** The process-group, permissions, and signal
+  semantics `prog` relies on are not implemented for Windows; see
+  [#140](https://github.com/aphoristicartist/prog/issues/140).
+- **MSRV** is pinned at Rust **1.89** (`rust-version = "1.89"` in the workspace
+  `Cargo.toml`) and verified by a dedicated CI job on `rust-toolchain@1.89.0`.
+
+See [`docs/release-notes.md`](docs/release-notes.md) for the full per-release
+reference.
+
+## Quickstart
+
+This repository includes a deterministic CLI fixture. Every command below is
+re-executed by the documentation integration tests, so it stays copy-pasteable.
+
+```sh
+rm -rf /tmp/prog-demo
+prog --dir /tmp/prog-demo --pretty source add-cli demo_cli --operation list --read-only -- python3 fixtures/cli/list_items.py
+prog --dir /tmp/prog-demo --pretty call demo_cli list --args '{}'
+CURSOR=$(prog --dir /tmp/prog-demo call demo_cli list --args '{}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["cursor"])')
+prog --dir /tmp/prog-demo --pretty expand "$CURSOR" --path /items --limit 3 --depth 3
+prog --dir /tmp/prog-demo --pretty inspect "$CURSOR" --goal "find important evidence"
+prog --dir /tmp/prog-demo --pretty search "$CURSOR" "Item 2"
+prog --dir /tmp/prog-demo --pretty hints demo_cli list
+prog --dir /tmp/prog-demo --pretty meta SourceProfile
+```
+
+The source command runs once for the first cache entry. The returned cursor can
+then drive bounded expansion, ranked inspection, and search from the local
+store. `meta` exposes `prog`'s own public contracts through the same envelope
+mechanism.
 
 The default model-visible response budget is 16 KiB. Cached navigation commands
 (`inspect`, `search`, `find`, `evidence`, `paths`, and `expand`) operate on the
@@ -57,65 +152,6 @@ source is expensive or undesirable to rerun, or several loop iterations need
 to inspect the same observation. If the exact field is already known, a native
 API projection or `jq` is usually simpler.
 
-## Install
-
-The repository is a Rust workspace at version `0.1.0`. Install the `prog`
-binary from a checkout:
-
-```sh
-git clone https://github.com/aphoristicartist/prog.git
-cd prog
-cargo install --path crates/prog-cli
-prog --help
-```
-
-Prebuilt binaries for Ubuntu and macOS are published on the
-[GitHub Releases page](https://github.com/aphoristicartist/prog/releases).
-Each release ships a tarball per platform, a combined `SHA256SUMS`, a CycloneDX
-SBOM, and a build-provenance attestation. Verify a download before use:
-
-```sh
-sha256sum -c SHA256SUMS --ignore-missing
-gh attestation verify prog-*.tar.gz --owner aphoristicartist
-```
-
-For development, replace `prog` with `cargo run --` in the examples below.
-
-## Supported platforms
-
-- **Ubuntu** (linux-x86_64) and **macOS** are supported and CI-verified on every
-  push and pull request (formatting, Clippy, full test suite, and an MSRV gate).
-- **Windows is not supported.** The process-group, permissions, and signal
-  semantics `prog` relies on are not implemented for Windows; see
-  [#140](https://github.com/aphoristicartist/prog/issues/140).
-- **MSRV** is pinned at Rust **1.89** (`rust-version = "1.89"` in the workspace
-  `Cargo.toml`) and verified by a dedicated CI job on `rust-toolchain@1.89.0`.
-
-See [`docs/release-notes.md`](docs/release-notes.md) for the full per-release
-reference.
-
-## Quickstart
-
-This repository includes a deterministic CLI fixture. The command sequence is
-covered by the documentation integration tests.
-
-```sh
-rm -rf /tmp/prog-demo
-prog --dir /tmp/prog-demo --pretty source add-cli demo_cli --operation list --read-only -- python3 fixtures/cli/list_items.py
-prog --dir /tmp/prog-demo --pretty call demo_cli list --args '{}'
-CURSOR=$(prog --dir /tmp/prog-demo call demo_cli list --args '{}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["cursor"])')
-prog --dir /tmp/prog-demo --pretty expand "$CURSOR" --path /items --limit 3 --depth 3
-prog --dir /tmp/prog-demo --pretty inspect "$CURSOR" --goal "find important evidence"
-prog --dir /tmp/prog-demo --pretty search "$CURSOR" "Item 2"
-prog --dir /tmp/prog-demo --pretty hints demo_cli list
-prog --dir /tmp/prog-demo --pretty meta SourceProfile
-```
-
-The source command runs once for the first cache entry. The returned cursor can
-then drive bounded expansion, ranked inspection, and search from the local
-store. `meta` exposes `prog`'s own public contracts through the same envelope
-mechanism.
-
 ## Built for loop engineering
 
 In this README, **loop engineering** means designing a repeatable agent cycle
@@ -131,7 +167,7 @@ evidence layer inside that loop:
 | Orient | envelope `findings`, `inspect`, `search`, `find` | Identifies likely failures and locates relevant cached structure |
 | Focus | `evidence`, `paths`, `expand` | Retrieves a cited path or bounded slice without rerunning the source |
 | Act | external agent or human | Edits code or changes the system; `prog` does not make that decision |
-| Verify | rerun `recipe`, `run`, or `call` | Produces a fresh observation for the next iteration |
+| Verify | `delta`, `session show --readiness`, rerun `recipe`/`run`/`call` | Produces a fresh observation and compares it conservatively against the baseline |
 | Remember | `session start`, `note`, `show` | Stores redacted goals, notes, and evidence-navigation metadata locally |
 | Stop or approve | external loop or human gate | `prog` reports evidence; it does not merge, deploy, or approve changes |
 
@@ -226,6 +262,50 @@ confirmation-gated and non-cacheable. For read-only paginated operations,
 `prog call --pages N` follows supported continuation hints under page, byte,
 wall-time, and envelope caps.
 
+## Verifying what changed
+
+Most observation tooling stops at "here is the new output." The hard part of a
+loop is the next question: **did the thing I was trying to fix actually go
+away — or did I just not look where it was?**
+
+Raw output cannot distinguish those. `prog delta` refuses to.
+
+```sh
+prog delta "$BASELINE_OBSERVATION" "$SUBJECT_OBSERVATION"
+```
+
+Each finding is classified `new`, `persisting`, `resolved`, `not_observed`, or
+`unknown`. A finding is only `resolved` when absence is **provable** — same
+canonical invocation, same comparison family, complete captures on both sides,
+compatible normalization, and exhaustive selection scope. Otherwise a
+disappeared finding is `not_observed` or `unknown`, and the assessment lists the
+reasons why.
+
+That means a narrower rerun cannot clear a broad baseline, and a truncated log
+cannot be mistaken for a clean one.
+
+Verification obligations turn that into an explicit gate. You commit to the
+success criterion *before* you have the result:
+
+```sh
+prog session obligation-add checkout-fixed \
+  --check "checkout error no longer present" --scope checkout \
+  --origin-observation "$BASELINE" --expected-absent-fingerprint "$FINGERPRINT" \
+  --evidence-observation "$VERIFICATION_RUN"
+
+prog session show --readiness
+```
+
+`ready` is true only when every required obligation passed. Obligations are
+immutable once declared, and only user declarations can be *required* — a
+recipe or harness cannot authorize its own success. Of the nine possible
+statuses, exactly one is `passed`; the rest are distinct ways of saying "not
+proven", including `unverifiable` for truncated evidence and `stale` for a
+changed workspace.
+
+See [`docs/delta.md`](docs/delta.md) and
+[`docs/verification.md`](docs/verification.md).
+
 ## The disclosure envelope
 
 `call`, `run`, `observe`, `recipe`, `expand`, and `meta` return the same
@@ -276,7 +356,8 @@ for the generated contract schema.
 - HTTP source profiles with explicit methods, URLs, parameters, auth references,
   pagination hints, and effect policy.
 - Local CLI source profiles stored as argv rather than shell command strings.
-- MCP tools and resources consumed as upstream sources through the MCP adapter.
+- MCP tools and resources consumed as upstream sources through the MCP adapter,
+  including long-running tasks via [`prog mcp-task`](docs/mcp-tasks.md).
 - OpenAPI, JSON Schema, and CLI-help imports with bounded schema depth and
   graded effect evidence.
 
@@ -325,17 +406,20 @@ explicit project hooks.
 | Call a reusable source | `call` |
 | Navigate cached evidence | `inspect`, `search`, `find`, `evidence`, `paths`, `expand` |
 | Run a domain workflow | `recipe` |
+| Compare two observations | `delta` |
+| Drive long-running MCP tasks | `mcp-task start`, `get`, `result`, `cancel` |
 | Retain investigation metadata | `session start`, `session note`, `session show` |
+| Gate on verification criteria | `session obligation-add`, `session obligation-list`, `session show --readiness` |
 | Inspect storage and economics | `cache`, `cost` |
 | Inspect public contracts | `meta` |
 | Install agent integration | `init` |
 
-Run `prog <command> --help` for the complete argument surface. Global options
-are `--dir <DIR>` (`PROG_DIR`, default `./.prog`), `--lens-dir <DIR>`
-(`PROG_LENS_DIR`, default `./lenses`), `--budget-bytes <N>`
-(`PROG_BUDGET_BYTES`), `--budget-tokens <N>` (`PROG_BUDGET_TOKENS`), and
-`--pretty`. The byte budget is authoritative; when pretty formatting would
-exceed it, `prog` emits compact JSON instead.
+Run `prog <command> --help` for the complete argument surface; every command and
+subcommand self-describes. Global options are `--dir <DIR>` (`PROG_DIR`, default
+`./.prog`), `--lens-dir <DIR>` (`PROG_LENS_DIR`, default `./lenses`),
+`--budget-bytes <N>` (`PROG_BUDGET_BYTES`), `--budget-tokens <N>`
+(`PROG_BUDGET_TOKENS`), and `--pretty`. The byte budget is authoritative; when
+pretty formatting would exceed it, `prog` emits compact JSON instead.
 
 ## Safety and storage
 
@@ -343,6 +427,8 @@ The safety model is enforced in code and mapped to executable tests in
 [`INVARIANTS.md`](INVARIANTS.md).
 
 - Raw payloads must cross the redaction boundary before the store accepts them.
+  This is a typestate boundary, not a convention: `Store::put_payload` does not
+  accept an unredacted value.
 - Secret-like object keys and supported embedded Bearer, PEM, JWT, name/value,
   and URL-parameter patterns are redacted before persistence.
 - Sensitive or non-cacheable operation results are not persisted.
@@ -394,6 +480,15 @@ triage, and MCP incident demos report raw-to-envelope-plus-expansion ratios from
 **9.61x to 15.40x**. These are generated local payloads, not credentialed live
 service measurements. See [`docs/real-world-demos.md`](docs/real-world-demos.md).
 
+### Correctness, not just savings
+
+[`docs/replay-eval.md`](docs/replay-eval.md) replays whole multi-iteration
+trajectories behind an oracle that must never observe a false `resolved`,
+false-fresh, or false-`passed` classification. That report deliberately makes
+**no savings claim** — its payloads are tiny enough that envelope overhead costs
+more than raw output, which is exactly the small-payload caveat documented
+below.
+
 ## When not to use prog
 
 Use the simplest precise tool available. `prog` is usually the wrong layer when:
@@ -421,6 +516,12 @@ queries beat `prog`: [`docs/positioning.md`](docs/positioning.md) and
 - [Adding HTTP and CLI sources](docs/source-setup.md)
 - [Agent integrations](docs/integrations.md)
 
+### Verification
+
+- [Conservative observation delta](docs/delta.md)
+- [Verification obligations and readiness](docs/verification.md)
+- [Long-running MCP tasks](docs/mcp-tasks.md)
+
 ### Contracts and safety
 
 - [Disclosure contracts](docs/contracts.md)
@@ -434,10 +535,12 @@ queries beat `prog`: [`docs/positioning.md`](docs/positioning.md) and
 - [Token economics](docs/token-economics.md)
 - [Evidence acquisition](docs/evidence-acquisition.md)
 - [Task-success evaluation](docs/task-success-eval.md)
+- [Replay and correctness](docs/replay-eval.md)
 - [Competitive baselines](docs/competitive-baselines.md)
 - [Real-world-shaped local demos](docs/real-world-demos.md)
 
-The complete reference set is under [`docs/`](docs/).
+The complete reference set is under [`docs/`](docs/). Contributors and coding
+agents should start with [`AGENTS.md`](AGENTS.md).
 
 ## Development
 
@@ -452,6 +555,10 @@ The CI workflow runs formatting, Clippy with warnings denied, the full default
 test suite, and a CLI help smoke test. Property tests, golden findings,
 documentation examples, the 360-scenario transport matrix, and checked-in evals
 run through ordinary Cargo integration tests.
+
+Note that the documentation itself is executable: `docs_examples.rs` re-runs the
+quickstart above and asserts that specific claims remain present in this file.
+Editing the README can fail the test suite. See [`AGENTS.md`](AGENTS.md).
 
 ## Project boundaries
 

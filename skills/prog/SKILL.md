@@ -28,6 +28,39 @@ observe/call/run -> ranked findings -> inspect/search -> evidence exact path -> 
   --kind error|warning|test_failure` for structural evidence.
 - Use `prog evidence <cursor> --path <json-pointer>` for a compact citation
   block. Use `prog expand` only when the evidence excerpt is insufficient.
+- Use `prog recipe <name> -- <command...>` for known domains (`cargo-test`,
+  `pytest`, `npm-test`, `go-test`, `gh-issues`, `diff-review`,
+  `logs-root-cause`); it applies a lens and default goal in one step.
+- Use `prog cost` and `prog cache` to inspect stored bytes and retention when a
+  session has accumulated many observations.
+
+## Verifying a Fix
+
+Do not conclude that a problem is fixed because the rerun output looks clean.
+A narrower rerun and a real fix produce the same absence.
+
+- Capture the baseline and the verification run with the **same** invocation and
+  the same `--comparison-family`, `--selection-scope`, and
+  `--selection-exhaustive` flags. These cannot be added retroactively.
+- Run `prog delta <baseline-observation> <subject-observation>` to compare.
+- Trust only `resolved`. Treat `not_observed` and `unknown` as "did not verify",
+  and read `assessment.reasons` to learn what was missing.
+- For an explicit gate, declare the criterion before you have the result with
+  `prog session obligation-add <id> --check ... --scope ... --origin-observation
+  ... --expected-absent-fingerprint ... --evidence-observation ...`, then read
+  `prog session show --readiness`.
+- `ready` is true only when every required obligation passed. `configured:
+  false` means nothing was declared — that is not a pass. Obligations are
+  immutable, so declare them with the evidence observation attached.
+- Report `persisting`, `new`, `stale`, and `unverifiable` to the user honestly
+  rather than restating them as success.
+
+## Long-Running MCP Tasks
+
+When an MCP tool returns a task reference instead of a result, use
+`prog mcp-task start|get|result|cancel <source> ...`. Each step records its own
+observation, and an unreachable task is preserved as unavailable evidence rather
+than reported as an empty result.
 
 ## Source Profiles
 

@@ -39,45 +39,69 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
+    /// Infer a source profile from an OpenAPI spec, JSON Schema, or CLI help text.
     Discover(DiscoverArgs),
+    /// Register and manage reusable HTTP, CLI, and MCP source profiles.
     Source {
         #[command(subcommand)]
         command: SourceCommand,
     },
+    /// Show a source operation's arguments, effects, and safety gates before calling it.
     Hints(HintsArgs),
+    /// Invoke a registered source operation and return a bounded envelope.
     Call(CallArgs),
+    /// Capture a file or stdin artifact (JSON, SARIF, JUnit, diff, CSV, logs) as an observation.
     Observe(ObserveArgs),
+    /// Run a local command and capture its output as a bounded envelope.
     Run(RunArgs),
+    /// Run a first-party workflow that composes capture, a domain lens, and inspection.
     Recipe(RecipeArgs),
+    /// Install a project-local agent skill and explicit hook wrappers.
     Init(InitArgs),
+    /// Report stored payload bytes, cache entries, and disclosure economics.
     Cost(CostArgs),
+    /// List addressable JSON Pointer paths within a cursor's cached payload.
     Paths(PathsArgs),
+    /// Rank cached evidence against a goal, without contacting the source.
     Inspect(InspectArgs),
+    /// Emit a compact, citable evidence block for one JSON Pointer path.
     Evidence(EvidenceArgs),
+    /// Search a cursor's cached payload by text or bounded regex.
     Search(SearchArgs),
+    /// Find structural evidence in a cursor by kind, such as error or test_failure.
     Find(FindArgs),
+    /// Conservatively compare two observations; only proven absence counts as resolved.
     Delta(DeltaArgs),
+    /// Manage long-running MCP tasks that outlive a single call.
     McpTask {
         #[command(subcommand)]
         command: McpTaskCommand,
     },
+    /// Record goals, notes, and verification obligations for an investigation.
     Session {
         #[command(subcommand)]
         command: SessionCommand,
     },
+    /// Reveal a bounded slice of a cursor's cached payload at a JSON Pointer.
     Expand(ExpandArgs),
+    /// Inspect, configure retention for, and purge the local observation store.
     Cache {
         #[command(subcommand)]
         command: CacheCommand,
     },
+    /// Print prog's own public contract schemas through the same envelope.
     Meta(MetaArgs),
 }
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum McpTaskCommand {
+    /// Start a long-running MCP task and return its task reference.
     Start(McpTaskStartArgs),
+    /// Report a started task's current status.
     Get(McpTaskReferenceArgs),
+    /// Retrieve a completed task's result as a bounded envelope.
     Result(McpTaskReferenceArgs),
+    /// Request cancellation of a started task.
     Cancel(McpTaskReferenceArgs),
 }
 
@@ -173,7 +197,9 @@ pub(crate) struct DiscoverArgs {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum SourceCommand {
+    /// Register an HTTP operation with explicit method, URL, auth, and effect policy.
     AddHttp(SourceAddHttpArgs),
+    /// Register a local command as argv; never stored or run as a shell string.
     AddCli(SourceAddCliArgs),
 }
 
@@ -528,16 +554,23 @@ pub(crate) struct FindArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct DeltaArgs {
+    /// Earlier observation id used as the reference point.
     pub(crate) baseline: String,
+    /// Later observation id compared against the baseline.
     pub(crate) subject: String,
 }
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum SessionCommand {
+    /// Begin a session and record its goal.
     Start(SessionStartArgs),
+    /// Show the session trail, or evaluate obligations with --readiness.
     Show(SessionShowArgs),
+    /// Append a redacted note to the session trail.
     Note(SessionNoteArgs),
+    /// Declare a verification obligation that evidence must later satisfy.
     ObligationAdd(Box<ObligationAddArgs>),
+    /// List declared obligations and their current verification status.
     ObligationList(ObligationListArgs),
 }
 
@@ -683,10 +716,15 @@ pub(crate) struct ExpandArgs {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum CacheCommand {
+    /// List cache entries with their keys, sizes, and expiry.
     List,
+    /// List stored observations, most recent first.
     Observations(CacheObservationsArgs),
+    /// Show one cache entry's metadata by key.
     Get(CacheGetArgs),
+    /// Remove cache entries and session trails, preserving retention policy.
     Purge(CachePurgeArgs),
+    /// Show or persist payload-byte and age retention limits.
     Retention(CacheRetentionArgs),
 }
 
