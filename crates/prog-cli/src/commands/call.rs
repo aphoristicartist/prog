@@ -369,6 +369,7 @@ pub(crate) async fn call_source(
         Some(provenance.clone()),
         may_cache.then(|| cache_key.clone()),
         !redacted_paths.is_empty(),
+        Some(source_kind_provider(profile.kind)),
         None,
         lens.as_ref(),
         source_state_from_provenance(
@@ -641,6 +642,7 @@ pub(crate) async fn call_source(
                     Some(page_provenance.clone()),
                     may_cache.then(|| page_cache_key.clone()),
                     false,
+                    Some(source_kind_provider(profile.kind)),
                     None,
                     lens.as_ref(),
                     source_state_from_provenance(

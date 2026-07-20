@@ -47,6 +47,7 @@ pub(crate) fn hints_source(
         entry.provenance.clone(),
         Some(cache_key.clone()),
         false,
+        Some(source_kind_provider(profile.kind)),
         None,
         None,
         None,

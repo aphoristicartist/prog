@@ -71,6 +71,7 @@ pub(crate) fn observe_artifact(
         entry.provenance.clone(),
         Some(cache_key.clone()),
         !redacted_paths.is_empty(),
+        None,
         Some(normalized.parser.id.to_string()),
         lens.as_ref(),
         None,

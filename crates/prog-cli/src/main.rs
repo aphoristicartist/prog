@@ -65,7 +65,7 @@ use commands::{
         adapter_capture, compact_envelope_to_budget, compact_pagination_extra_to_budget,
         complete_capture, cursor_for_projection, cursor_lens_extra, envelope_for_payload,
         evidence_ref, record_capture, run_capture_completeness, selection_coverage, shrink_policy,
-        source_state_from_provenance,
+        source_kind_provider, source_state_from_provenance,
     },
     expand::expand_cursor,
     hints::hints_source,

@@ -453,6 +453,22 @@ mod tests {
     }
 
     #[test]
+    fn comparison_is_deterministic_across_repeated_runs() {
+        let baseline = observation("a", "same", true);
+        let subject = observation("b", "same", true);
+        let baseline_findings = [finding("old"), finding("persist")];
+        let subject_findings = [finding("persist"), finding("new")];
+        let first =
+            compare_observations(&baseline, &subject, &baseline_findings, &subject_findings);
+        let second =
+            compare_observations(&baseline, &subject, &baseline_findings, &subject_findings);
+        assert_eq!(
+            serde_json::to_string(&first).unwrap(),
+            serde_json::to_string(&second).unwrap()
+        );
+    }
+
+    #[test]
     fn incomplete_or_different_invocations_never_resolve() {
         let delta = compare_observations(
             &observation("a", "one", true),
@@ -566,6 +582,12 @@ mod tests {
             delta.counts,
             BTreeMap::from([(String::from("persisting"), 1)])
         );
+        // "No changes" alone is not a valid self-comparison proof: it must
+        // also carry an assessment that actually could have proven absence,
+        // not one that happens to find nothing because it couldn't compare.
+        assert_eq!(delta.assessment.subject_identity, SubjectIdentity::Same);
+        assert!(delta.assessment.can_prove_absence);
+        assert!(delta.assessment.reasons.is_empty());
     }
 
     #[test]
