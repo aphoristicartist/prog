@@ -55,6 +55,7 @@ pub(crate) fn meta_contracts(
         None,
         None,
         None,
+        None,
     )?;
     entry.observation_id = Some(observation_id);
     let cache_retained = store.put_entry(&cache_key, &entry)?;

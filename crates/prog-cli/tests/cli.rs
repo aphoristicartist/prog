@@ -2702,6 +2702,110 @@ fn captures_surface_immutable_observation_identity_across_cursor_and_listing() {
 }
 
 #[test]
+fn observation_records_persist_transport_provider_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+
+    // `run` always executes a subprocess argv directly: provider is the
+    // fixed "cli" transport literal, with no parser/lens (there is no
+    // format to interpret, only a captured process result).
+    let run = prog(&["--dir", dir_arg, "run", "--", "true"]);
+    assert!(run.status.success(), "{}", stdout(&run));
+    let run_value: Value = serde_json::from_slice(&run.stdout).unwrap();
+    let run_id = run_value["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // `call` against a registered CLI-kind source: provider must come from
+    // the profile's declared `SourceKind`, exercising `source_kind_provider`
+    // rather than any hardcoded literal.
+    let seed = write_seed(
+        dir.path(),
+        "cli.json",
+        &json!({
+            "kind": "cli",
+            "operations": [{
+                "name": "status",
+                "command": "python3",
+                "args": ["-c", "print('{}')"],
+                "effect": {
+                    "read_only": true,
+                    "mutating": false,
+                    "network": false,
+                    "shell": false,
+                    "sensitive": false,
+                    "cacheable": true,
+                    "requires_confirmation": false
+                }
+            }]
+        })
+        .to_string(),
+    );
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "local",
+        "--kind",
+        "cli",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+    let call = prog(&["--dir", dir_arg, "call", "local", "status", "--args", "{}"]);
+    assert!(call.status.success(), "{}", stdout(&call));
+    let call_value: Value = serde_json::from_slice(&call.stdout).unwrap();
+    let call_id = call_value["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // `observe` ingests a local artifact directly: there is no transport,
+    // so provider must be absent, while parser IS populated (it interprets
+    // format, not transport).
+    let file = dir.path().join("payload.json");
+    fs::write(&file, br#"{"a":1}"#).unwrap();
+    let observed = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--name",
+        "fixture",
+    ]);
+    assert!(observed.status.success(), "{}", stdout(&observed));
+    let observed_value: Value = serde_json::from_slice(&observed.stdout).unwrap();
+    let observe_id = observed_value["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let listed = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "3"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let records = listed["observations"].as_array().unwrap();
+    let record = |id: &str| {
+        records
+            .iter()
+            .find(|record| record["observation_id"] == id)
+            .unwrap_or_else(|| panic!("observation {id} missing from cache observations listing"))
+    };
+
+    let run_record = record(&run_id);
+    assert_eq!(run_record["provider"], "cli");
+    assert!(run_record["parser"].is_null());
+
+    let call_record = record(&call_id);
+    assert_eq!(call_record["provider"], "cli");
+
+    let observe_record = record(&observe_id);
+    assert!(observe_record["provider"].is_null());
+    assert!(observe_record["parser"].is_string());
+}
+
+#[test]
 fn automatic_delta_never_matches_similar_but_different_command_invocations() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();

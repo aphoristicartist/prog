@@ -204,6 +204,7 @@ pub(crate) async fn run_command(
         Some(provenance.clone()),
         Some(cache_key.clone()),
         !policy_redactions.is_empty(),
+        Some("cli".to_string()),
         None,
         lens.as_ref(),
         None,

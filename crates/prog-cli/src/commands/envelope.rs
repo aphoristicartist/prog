@@ -83,6 +83,7 @@ pub(crate) fn record_capture(
     provenance: Option<CallProvenance>,
     cache_key: Option<String>,
     redacted: bool,
+    provider: Option<String>,
     parser: Option<String>,
     lens: Option<&LensManifest>,
     source_state: Option<SourceStateToken>,
@@ -104,6 +105,7 @@ pub(crate) fn record_capture(
             status,
             capture,
             redacted,
+            provider,
             parser,
             lens: lens.map(|item| item.id.clone()),
             source_state,
@@ -112,6 +114,20 @@ pub(crate) fn record_capture(
             ..NewObservation::default()
         })?
         .observation_id)
+}
+
+/// Transport/adapter identity for the [`SourceKind`] that produced a capture.
+/// Distinct from `parser` (which format interpreted the bytes) and `lens`
+/// (which view was applied): this is which adapter fetched them, and it is
+/// the coarsest normalization-compatibility signal available before a
+/// registered-provider system (#135) exists.
+pub(crate) fn source_kind_provider(kind: prog_core::SourceKind) -> String {
+    match kind {
+        prog_core::SourceKind::Http => "http",
+        prog_core::SourceKind::Cli => "cli",
+        prog_core::SourceKind::Mcp => "mcp",
+    }
+    .to_string()
 }
 
 pub(crate) fn selection_coverage(scopes: &[String], exhaustive: bool) -> SelectionCoverage {
