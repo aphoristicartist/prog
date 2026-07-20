@@ -1,0 +1,127 @@
+{
+  "name": "cargo_rustc_json_diagnostics_provider",
+  "goal": "find the root cause",
+  "expected_path": "/0",
+  "payload": [
+    {
+      "message": "mismatched types",
+      "code": {"code": "E0308", "explanation": "https://doc.rust-lang.org/error_codes/E0308.html"},
+      "level": "error",
+      "spans": [
+        {
+          "file_name": "src/lib.rs",
+          "byte_start": 512,
+          "byte_end": 520,
+          "line_start": 10,
+          "line_end": 10,
+          "column_start": 5,
+          "column_end": 8,
+          "is_primary": true,
+          "text": [{"text": "    total", "highlight_start": 5, "highlight_end": 10}],
+          "label": "expected `i32`, found `&str`",
+          "suggested_replacement": null,
+          "expansion": null
+        },
+        {
+          "file_name": "src/lib.rs",
+          "byte_start": 480,
+          "byte_end": 495,
+          "line_start": 20,
+          "line_end": 20,
+          "column_start": 1,
+          "column_end": 2,
+          "is_primary": false,
+          "text": [{"text": "fn total() -> i32 {", "highlight_start": 1, "highlight_end": 2}],
+          "label": "expected due to this",
+          "suggested_replacement": null,
+          "expansion": null
+        }
+      ],
+      "children": [
+        {
+          "message": "expected type `i32`\n   found reference `&str`",
+          "code": null,
+          "level": "note",
+          "spans": [],
+          "children": []
+        },
+        {
+          "message": "try converting the string with `.parse()`",
+          "code": null,
+          "level": "help",
+          "spans": [
+            {
+              "file_name": "src/lib.rs",
+              "byte_start": 512,
+              "byte_end": 520,
+              "line_start": 10,
+              "line_end": 10,
+              "column_start": 5,
+              "column_end": 8,
+              "is_primary": true,
+              "text": [],
+              "label": null,
+              "suggested_replacement": "total.parse::<i32>()?",
+              "expansion": null
+            }
+          ],
+          "children": []
+        }
+      ],
+      "rendered": "error[E0308]: mismatched types\n  --> src/lib.rs:10:5\n   |\n10 |     total\n   |     ^^^^^ expected `i32`, found `&str`\n   |\n"
+    },
+    {
+      "message": "unused variable: `x`",
+      "code": {"code": "unused_variables", "explanation": null},
+      "level": "warning",
+      "spans": [
+        {
+          "file_name": "src/main.rs",
+          "byte_start": 55,
+          "byte_end": 56,
+          "line_start": 4,
+          "line_end": 4,
+          "column_start": 9,
+          "column_end": 10,
+          "is_primary": true,
+          "text": [{"text": "    let x = 1;", "highlight_start": 9, "highlight_end": 10}],
+          "label": "unused variable",
+          "suggested_replacement": null,
+          "expansion": null
+        }
+      ],
+      "children": [
+        {
+          "message": "`#[warn(unused_variables)]` on by default",
+          "code": null,
+          "level": "note",
+          "spans": [],
+          "children": []
+        },
+        {
+          "message": "if this is intentional, prefix it with an underscore",
+          "code": null,
+          "level": "help",
+          "spans": [
+            {
+              "file_name": "src/main.rs",
+              "byte_start": 55,
+              "byte_end": 56,
+              "line_start": 4,
+              "line_end": 4,
+              "column_start": 9,
+              "column_end": 10,
+              "is_primary": true,
+              "text": [],
+              "label": null,
+              "suggested_replacement": "_x",
+              "expansion": null
+            }
+          ],
+          "children": []
+        }
+      ],
+      "rendered": "warning: unused variable: `x`\n --> src/main.rs:4:9\n  |\n4 |     let x = 1;\n  |         ^ help: if this is intentional, prefix it with an underscore: `_x`\n  |\n"
+    }
+  ]
+}

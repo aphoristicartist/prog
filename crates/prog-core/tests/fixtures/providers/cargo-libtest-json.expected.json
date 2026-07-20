@@ -1,0 +1,99 @@
+[
+  {
+    "occurrence_id": "fo_00000001",
+    "fingerprint": "sha256:8528e30ad8fe520dae0df646f33f6e07308c13019e7f20394467fe936739b1a3",
+    "rank": 1,
+    "kind": "test_failure",
+    "path": "/3",
+    "confidence": 0.93,
+    "reason": "libtest JSON event: tests::bar failed",
+    "title": "test failed: tests::bar",
+    "severity": "error",
+    "source": "provider.cargo.libtest_json.v1",
+    "primary_span": {
+      "path": "src/lib.rs",
+      "start_line": 10,
+      "start_column": 5,
+      "role": "primary",
+      "origin": "structured.libtest_panic",
+      "exactness": "range"
+    },
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate test_failure' --path /3",
+      "expand": "prog expand pc1_providers --path /3",
+      "evidence": "prog evidence pc1_providers --path /3",
+      "search": "prog find pc1_providers --kind test_failure --path /3"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000002",
+    "fingerprint": "sha256:47aa8e6b2bd3bbdd575a388e90a16eb2578cc002e2e8a73159d3e657588042b2",
+    "rank": 2,
+    "kind": "rust_panic",
+    "path": "/3/stdout",
+    "confidence": 0.84,
+    "reason": "string contains a Rust panic marker",
+    "title": "Rust panic",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate rust_panic' --path /3/stdout",
+      "expand": "prog expand pc1_providers --path /3/stdout",
+      "evidence": "prog evidence pc1_providers --path /3/stdout",
+      "search": "prog find pc1_providers --kind rust_panic --path /3/stdout"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000003",
+    "rank": 3,
+    "kind": "test_failure",
+    "path": "/4/failed",
+    "confidence": 0.7,
+    "reason": "field name indicates failure evidence",
+    "title": "failure field",
+    "severity": "error",
+    "source": "generic.field_name",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate test_failure' --path /4/failed",
+      "expand": "prog expand pc1_providers --path /4/failed",
+      "evidence": "prog evidence pc1_providers --path /4/failed",
+      "search": "prog find pc1_providers --kind test_failure --path /4/failed"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000004",
+    "fingerprint": "sha256:e518a0208bd00ab7a67756adf144c7383f443ee3da083d8b8c0b85d91854a483",
+    "rank": 4,
+    "kind": "stderr_error",
+    "path": "/3/event",
+    "confidence": 0.58,
+    "reason": "string contains generic error text",
+    "title": "error text",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate stderr_error' --path /3/event",
+      "expand": "prog expand pc1_providers --path /3/event",
+      "evidence": "prog evidence pc1_providers --path /3/event",
+      "search": "prog find pc1_providers --kind stderr_error --path /3/event"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000005",
+    "fingerprint": "sha256:e518a0208bd00ab7a67756adf144c7383f443ee3da083d8b8c0b85d91854a483",
+    "rank": 5,
+    "kind": "stderr_error",
+    "path": "/4/event",
+    "confidence": 0.58,
+    "reason": "string contains generic error text",
+    "title": "error text",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate stderr_error' --path /4/event",
+      "expand": "prog expand pc1_providers --path /4/event",
+      "evidence": "prog evidence pc1_providers --path /4/event",
+      "search": "prog find pc1_providers --kind stderr_error --path /4/event"
+    }
+  }
+]

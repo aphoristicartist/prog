@@ -32,10 +32,11 @@ use prog_core::{
     VERIFICATION_SCHEMA, ValidatedCursor, VerificationObligation, VerificationOperation,
     VerificationStateRelationship, VerificationStatus, build_inspect_response, cache_allowed,
     call_effect_warnings, canonical_json, check_call, check_discovery, cli_adapter_effects,
-    cli_hardening_effects, effective_effects, evidence_block, expand, http_adapter_effects,
-    http_hardening_effects, http_source_state, infer, join, lens_slice_request, new_cache_entry,
-    project, project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
-    search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
+    cli_hardening_effects, detect_coding_provider, effective_effects, evidence_block, expand,
+    http_adapter_effects, http_hardening_effects, http_source_state, infer, join,
+    lens_slice_request, new_cache_entry, project, project_with_lens, public_contract_schemas,
+    ranked_findings_with_lens, render_hints, search_payload_with_lens, slice_value,
+    tighten_effects, validate_lens_manifest,
 };
 use serde::Serialize;
 use serde_json::{Map, Value, json};

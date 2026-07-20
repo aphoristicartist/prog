@@ -1,0 +1,118 @@
+{
+  "name": "pytest_json_report_provider",
+  "goal": "which test failed",
+  "expected_path": "/tests/1",
+  "payload": {
+    "created": 1721000000.0,
+    "duration": 4.87,
+    "exitcode": 1,
+    "root": "/repo",
+    "environment": {
+      "Python": "3.12.4",
+      "Platform": "Linux-6.8.0-x86_64-with-glibc2.39",
+      "Packages": {"pytest": "8.2.2", "pluggy": "1.5.0"},
+      "Plugins": {"json-report": "1.5.0", "cov": "5.0.0", "xdist": "3.6.1"}
+    },
+    "collectors": [
+      {"nodeid": "", "outcome": "passed", "result": [{"nodeid": "tests/test_checkout.py", "type": "Module"}]}
+    ],
+    "summary": {"collected": 10, "passed": 8, "failed": 1, "error": 1, "total": 10},
+    "tests": [
+      {
+        "nodeid": "tests/test_checkout.py::test_total",
+        "outcome": "passed",
+        "keywords": ["test_total", "test_checkout.py"],
+        "setup": {"duration": 0.0012, "outcome": "passed"},
+        "call": {"duration": 0.0031, "outcome": "passed"},
+        "teardown": {"duration": 0.0008, "outcome": "passed"}
+      },
+      {
+        "nodeid": "tests/test_checkout.py::test_discount",
+        "outcome": "failed",
+        "keywords": ["test_discount", "test_checkout.py"],
+        "setup": {"duration": 0.0011, "outcome": "passed"},
+        "call": {
+          "duration": 0.0045,
+          "outcome": "failed",
+          "longrepr": "AssertionError: expected 19 got 21\nassert 21 == 19",
+          "crash": {
+            "path": "tests/test_checkout.py",
+            "lineno": 41,
+            "message": "AssertionError: expected 19 got 21"
+          },
+          "traceback": [
+            {"path": "tests/test_checkout.py", "lineno": 41, "message": ""},
+            {"path": "src/checkout.py", "lineno": 88, "message": "AssertionError"}
+          ]
+        },
+        "teardown": {"duration": 0.0006, "outcome": "passed"}
+      },
+      {
+        "nodeid": "tests/test_checkout.py::test_tax",
+        "outcome": "error",
+        "keywords": ["test_tax", "test_checkout.py"],
+        "setup": {
+          "duration": 0.0009,
+          "outcome": "failed",
+          "longrepr": "fixture 'db' not found\navailable fixtures: cache, capsys, tmp_path"
+        }
+      },
+      {
+        "nodeid": "tests/test_checkout.py::test_subtotal",
+        "outcome": "passed",
+        "keywords": ["test_subtotal", "test_checkout.py"],
+        "setup": {"duration": 0.0010, "outcome": "passed"},
+        "call": {"duration": 0.0022, "outcome": "passed"},
+        "teardown": {"duration": 0.0007, "outcome": "passed"}
+      },
+      {
+        "nodeid": "tests/test_checkout.py::test_currency_rounding",
+        "outcome": "passed",
+        "keywords": ["test_currency_rounding", "test_checkout.py"],
+        "setup": {"duration": 0.0009, "outcome": "passed"},
+        "call": {"duration": 0.0018, "outcome": "passed"},
+        "teardown": {"duration": 0.0006, "outcome": "passed"}
+      },
+      {
+        "nodeid": "tests/test_checkout.py::test_empty_cart",
+        "outcome": "passed",
+        "keywords": ["test_empty_cart", "test_checkout.py"],
+        "setup": {"duration": 0.0008, "outcome": "passed"},
+        "call": {"duration": 0.0012, "outcome": "passed"},
+        "teardown": {"duration": 0.0005, "outcome": "passed"}
+      },
+      {
+        "nodeid": "tests/test_checkout.py::test_gift_card_applied",
+        "outcome": "passed",
+        "keywords": ["test_gift_card_applied", "test_checkout.py"],
+        "setup": {"duration": 0.0011, "outcome": "passed"},
+        "call": {"duration": 0.0025, "outcome": "passed"},
+        "teardown": {"duration": 0.0006, "outcome": "passed"}
+      },
+      {
+        "nodeid": "tests/test_checkout.py::test_shipping_cost",
+        "outcome": "passed",
+        "keywords": ["test_shipping_cost", "test_checkout.py"],
+        "setup": {"duration": 0.0010, "outcome": "passed"},
+        "call": {"duration": 0.0020, "outcome": "passed"},
+        "teardown": {"duration": 0.0006, "outcome": "passed"}
+      },
+      {
+        "nodeid": "tests/test_checkout.py::test_multiple_coupons_rejected",
+        "outcome": "passed",
+        "keywords": ["test_multiple_coupons_rejected", "test_checkout.py"],
+        "setup": {"duration": 0.0009, "outcome": "passed"},
+        "call": {"duration": 0.0017, "outcome": "passed"},
+        "teardown": {"duration": 0.0005, "outcome": "passed"}
+      },
+      {
+        "nodeid": "tests/test_checkout.py::test_receipt_totals",
+        "outcome": "passed",
+        "keywords": ["test_receipt_totals", "test_checkout.py"],
+        "setup": {"duration": 0.0011, "outcome": "passed"},
+        "call": {"duration": 0.0023, "outcome": "passed"},
+        "teardown": {"duration": 0.0007, "outcome": "passed"}
+      }
+    ]
+  }
+}
