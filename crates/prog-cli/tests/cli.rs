@@ -2806,6 +2806,34 @@ fn observation_records_persist_transport_provider_identity() {
 }
 
 #[test]
+fn observation_records_persist_source_validity_for_local_run() {
+    // #196: `run` executes a subprocess directly, with no external upstream
+    // source separate from the command itself that could have drifted
+    // between capture and now, so its persisted observation must record
+    // `source_validity: confirmed_unchanged` rather than the prior
+    // permanently-`unknown` default.
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let run = prog(&["--dir", dir_arg, "run", "--", "true"]);
+    assert!(run.status.success(), "{}", stdout(&run));
+    let run_value: Value = serde_json::from_slice(&run.stdout).unwrap();
+    let run_id = run_value["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let listed = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "3"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let record = listed["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["observation_id"] == run_id)
+        .unwrap_or_else(|| panic!("observation {run_id} missing from cache observations listing"));
+    assert_eq!(record["source_validity"], "confirmed_unchanged");
+}
+#[test]
 fn automatic_delta_never_matches_similar_but_different_command_invocations() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
@@ -3226,7 +3254,7 @@ fn recipe_declares_an_advisory_obligation_without_auto_execution() {
 }
 
 #[test]
-fn verification_never_passes_truncated_or_unvalidated_source_evidence() {
+fn verification_never_passes_truncated_evidence_and_confirms_provable_source_state() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
     let truncated = prog(&[
@@ -3258,6 +3286,10 @@ fn verification_never_passes_truncated_or_unvalidated_source_evidence() {
     ]);
     assert!(add.status.success(), "{}", stdout(&add));
 
+    // #196: a local `run` has no external upstream source separate from the
+    // command itself, so its persisted observation is genuinely
+    // `confirmed_unchanged` and a source-unchanged obligation against it can
+    // pass (this was permanently `stale` before the fix).
     let complete = prog(&["--dir", dir_arg, "run", "--", "true"]);
     assert!(complete.status.success(), "{}", stdout(&complete));
     let complete: Value = serde_json::from_slice(&complete.stdout).unwrap();
@@ -3279,6 +3311,66 @@ fn verification_never_passes_truncated_or_unvalidated_source_evidence() {
     ]);
     assert!(add.status.success(), "{}", stdout(&add));
 
+    // Control case: a plain `call` (no `--refresh`) establishes no
+    // revalidation signal at all, so its source_validity stays `unknown` and
+    // a source-unchanged obligation against it must stay conservatively
+    // stale, never passing on an unproven source state.
+    let seed = write_seed(
+        dir.path(),
+        "cli.json",
+        &json!({
+            "kind": "cli",
+            "operations": [{
+                "name": "status",
+                "command": "python3",
+                "args": ["-c", "print('{}')"],
+                "effect": {
+                    "read_only": true,
+                    "mutating": false,
+                    "network": false,
+                    "shell": false,
+                    "sensitive": false,
+                    "cacheable": true,
+                    "requires_confirmation": false
+                }
+            }]
+        })
+        .to_string(),
+    );
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "local",
+        "--kind",
+        "cli",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+    let unvalidated = prog(&["--dir", dir_arg, "call", "local", "status", "--args", "{}"]);
+    assert!(unvalidated.status.success(), "{}", stdout(&unvalidated));
+    let unvalidated: Value = serde_json::from_slice(&unvalidated.stdout).unwrap();
+    let unvalidated_id = unvalidated["observation"]["observation_id"]
+        .as_str()
+        .unwrap();
+    let add = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "source-state-unvalidated",
+        "--check",
+        "source validity was never established for this evidence",
+        "--scope",
+        "target",
+        "--evidence-observation",
+        unvalidated_id,
+        "--required-state",
+        "source-unchanged",
+    ]);
+    assert!(add.status.success(), "{}", stdout(&add));
+
     let readiness = prog(&["--dir", dir_arg, "session", "show", "--readiness"]);
     assert!(readiness.status.success(), "{}", stdout(&readiness));
     let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
@@ -3293,10 +3385,10 @@ fn verification_never_passes_truncated_or_unvalidated_source_evidence() {
             .unwrap()
     };
     assert_eq!(status_for("truncated"), "unverifiable");
-    assert_eq!(status_for("source-state"), "stale");
+    assert_eq!(status_for("source-state"), "passed");
+    assert_eq!(status_for("source-state-unvalidated"), "stale");
     assert!(!readiness["ready"].as_bool().unwrap());
 }
-
 #[test]
 fn verification_treats_targeted_incomplete_reruns_as_not_observed() {
     let workspace = test_git_repo();
