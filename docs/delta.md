@@ -33,6 +33,16 @@ or from `prog cache observations`.
 Findings are matched by fingerprint, not by path, so a finding that moves within
 the payload is still recognized as the same finding.
 
+### Truncation
+
+`ObservationDelta.findings` is capped at 100 entries, most-severe-first:
+`new` and `persisting` findings sort ahead of `resolved`, which sorts ahead of
+`not_observed` and `unknown`. When a comparison produces more than 100
+findings, the excess is dropped from `findings`, `ObservationDelta.truncated`
+is set to `true`, and `counts` still reflects every finding in the full
+comparison — not just the retained 100 — so the summary counts remain
+trustworthy even when the finding list itself is cut short.
+
 ## What makes absence provable
 
 `ComparabilityAssessment.can_prove_absence` is true only when **all** of the

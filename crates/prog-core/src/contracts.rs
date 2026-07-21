@@ -1369,6 +1369,10 @@ pub struct ObservationDelta {
     pub findings: Vec<DeltaFinding>,
     #[serde(default)]
     pub counts: BTreeMap<String, u64>,
+    /// True when `findings` was truncated to the retained cap; `counts`
+    /// still reflects the full, untruncated comparison.
+    #[serde(default)]
+    pub truncated: bool,
     #[serde(default, flatten)]
     pub extra: Extra,
 }
