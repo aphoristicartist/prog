@@ -56,6 +56,15 @@ following hold:
 The assessment always reports `reasons`, so a non-provable comparison explains
 itself rather than failing silently.
 
+`prog run`'s per-line finding derivation only examines the first and last 10
+lines of stdout/stderr, even though the full output is captured and stored. A
+finding whose evidence lies outside that head/tail window — for example, an
+error line that moved from line 5 to line 15 across two runs — forces
+`can_prove_absence: false` rather than a false `resolved`, even though the
+full output is captured and retrievable via `prog evidence`. This does not
+yet reclassify such a finding as `persisting`; that requires deriving
+findings from the full text and is tracked as future work.
+
 ## Worked example
 
 The same log goes from an error to a clean run. First, captured without any

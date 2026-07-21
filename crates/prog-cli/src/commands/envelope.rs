@@ -311,12 +311,19 @@ pub(crate) fn cli_stream_captured_bytes(
         })
 }
 
+/// `stdout_windowed`/`stderr_windowed` signal that the caller's head/tail-of-N
+/// finding-derivation window didn't cover the full line count for that
+/// stream, so absence can't be proven for anything outside that window, even
+/// though every byte was captured and stored.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_capture_completeness(
     stdout: &RunCapture,
     stderr: &RunCapture,
     stored_bytes: u64,
     redacted: bool,
     status: &RunProcessStatus,
+    stdout_windowed: bool,
+    stderr_windowed: bool,
 ) -> (EvidenceAvailability, CaptureCompleteness) {
     let truncated = stdout.truncated || stderr.truncated;
     let captured_bytes = stdout.bytes.len().saturating_add(stderr.bytes.len()) as u64;
@@ -350,7 +357,9 @@ pub(crate) fn run_capture_completeness(
                     scope: "stdout".to_string(),
                     total_bytes: Some(stdout.total_bytes as u64),
                     captured_bytes: stdout.bytes.len() as u64,
-                    stop_reason: if stdout.truncated {
+                    stop_reason: if stdout_windowed {
+                        CaptureStopReason::DerivationWindowed
+                    } else if stdout.truncated {
                         CaptureStopReason::ByteLimit
                     } else {
                         CaptureStopReason::Complete
@@ -361,7 +370,9 @@ pub(crate) fn run_capture_completeness(
                     scope: "stderr".to_string(),
                     total_bytes: Some(stderr.total_bytes as u64),
                     captured_bytes: stderr.bytes.len() as u64,
-                    stop_reason: if stderr.truncated {
+                    stop_reason: if stderr_windowed {
+                        CaptureStopReason::DerivationWindowed
+                    } else if stderr.truncated {
                         CaptureStopReason::ByteLimit
                     } else {
                         CaptureStopReason::Complete
@@ -371,7 +382,9 @@ pub(crate) fn run_capture_completeness(
             ],
             can_prove_absence: !matches!(status, RunProcessStatus::TimedOut)
                 && !truncated
-                && !redacted,
+                && !redacted
+                && !stdout_windowed
+                && !stderr_windowed,
             extra: Extra::new(),
         },
     )

@@ -2902,6 +2902,114 @@ fn automatic_delta_requires_the_same_comparison_family() {
     );
 }
 
+/// Builds a 30-line document where line index `error_index` (0-based) is an
+/// error line and every other line is innocuous filler. `head` covers
+/// indices `[0, 10)` and `tail` covers `[20, 30)`; index 15 falls in neither.
+fn thirty_lines_with_error_at(error_index: usize) -> String {
+    (0..30)
+        .map(|index| {
+            if index == error_index {
+                "error alpha failure".to_string()
+            } else {
+                format!("line {index:02} ok")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+#[test]
+fn delta_never_reports_resolved_for_a_finding_that_moved_into_the_derivation_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let state = dir.path().join("state.txt");
+    let script = dir.path().join("emit.py");
+    fs::write(
+        &script,
+        "from pathlib import Path\nprint(Path(__import__('sys').argv[1]).read_text())\n",
+    )
+    .unwrap();
+
+    // Baseline: the error line sits at index 5, inside `head` (indices 0..10).
+    fs::write(&state, thirty_lines_with_error_at(5)).unwrap();
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--selection-scope",
+        "suite",
+        "--selection-exhaustive",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let first_id = first["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Subject: identical except the error line moved to index 15, which is
+    // outside both `head` (0..10) and `tail` (20..30).
+    fs::write(&state, thirty_lines_with_error_at(15)).unwrap();
+    let second = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--selection-scope",
+        "suite",
+        "--selection-exhaustive",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+        state.to_str().unwrap(),
+    ]);
+    assert!(second.status.success(), "{}", stdout(&second));
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    let second_id = second["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let delta = prog(&["--dir", dir_arg, "delta", &first_id, &second_id]);
+    assert!(delta.status.success(), "{}", stdout(&delta));
+    let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
+
+    // Before the fix, capture completeness only tracked byte capture, so
+    // `can_prove_absence` came back `true` even though only the head/tail
+    // window was ever examined for findings.
+    assert_eq!(
+        delta["assessment"]["can_prove_absence"],
+        json!(false),
+        "{delta:#}"
+    );
+    assert!(
+        delta["assessment"]["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason.as_str().unwrap().contains("derivation_windowed")),
+        "expected a reason mentioning derivation_windowed: {delta:#}"
+    );
+
+    // Before the fix, the baseline's `/stdout/head/5` finding (moved out of
+    // the subject's derivation window, not actually absent from the
+    // subject's captured output) was falsely reported `resolved`.
+    let findings = delta["findings"].as_array().unwrap();
+    assert!(
+        !findings
+            .iter()
+            .any(|finding| finding["status"] == "resolved"),
+        "no finding should be resolved when absence cannot be proven: {delta:#}"
+    );
+    let moved_finding = findings
+        .iter()
+        .find(|finding| finding["baseline_path"] == "/stdout/head/5")
+        .expect("baseline finding at /stdout/head/5 should still appear in the delta");
+    assert_eq!(moved_finding["status"], json!("unknown"), "{delta:#}");
+}
 #[test]
 fn verification_readiness_requires_every_declared_scope() {
     let workspace = test_git_repo();

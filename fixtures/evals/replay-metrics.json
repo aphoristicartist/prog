@@ -92,6 +92,45 @@
         "fresh_evidence_reads_passed_before_edit",
         "stale_reason_names_workspace"
       ]
+    },
+    {
+      "scenario_id": "derivation_window_moved_finding",
+      "strategies": [
+        {
+          "strategy": "raw",
+          "delivered_bytes": 847,
+          "calls": 3
+        },
+        {
+          "strategy": "simple_truncation",
+          "delivered_bytes": 847,
+          "calls": 3
+        },
+        {
+          "strategy": "prog_envelope",
+          "delivered_bytes": 29007,
+          "calls": 3
+        },
+        {
+          "strategy": "prog_delta",
+          "delivered_bytes": 18166,
+          "calls": 4
+        },
+        {
+          "strategy": "evidence_packet",
+          "delivered_bytes": 1,
+          "calls": 1
+        },
+        {
+          "strategy": "ranked_retrieval",
+          "delivered_bytes": 1,
+          "calls": 1
+        }
+      ],
+      "checks": [
+        "assessment_is_non_provable_due_to_derivation_window",
+        "moved_finding_is_not_falsely_resolved"
+      ]
     }
   ]
 }

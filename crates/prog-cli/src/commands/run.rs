@@ -182,12 +182,16 @@ pub(crate) async fn run_command(
         ttl,
     );
     entry.provenance = Some(provenance.clone());
+    let stdout_windowed = stdout_text.line_count > stdout_text.head.len() + stdout_text.tail.len();
+    let stderr_windowed = stderr_text.line_count > stderr_text.head.len() + stderr_text.tail.len();
     let (availability, mut capture) = run_capture_completeness(
         &run.stdout,
         &run.stderr,
         payload_bytes,
         !policy_redactions.is_empty(),
         &run.status,
+        stdout_windowed,
+        stderr_windowed,
     );
     capture.budget = capture_budget_for_run(args);
     ctx.set_capture(capture.budget.clone());
