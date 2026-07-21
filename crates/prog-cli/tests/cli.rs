@@ -2903,6 +2903,124 @@ fn automatic_delta_requires_the_same_comparison_family() {
 }
 
 #[test]
+fn obligation_comparison_family_matches_evidence_and_becomes_passed() {
+    let workspace = test_git_repo();
+    let root = workspace.path();
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+
+    let matching_evidence = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--comparison-family",
+            "checkout-log",
+            "--selection-scope",
+            "/failure_sections",
+            "--selection-exhaustive",
+            "--",
+            "true",
+        ],
+    );
+    assert!(
+        matching_evidence.status.success(),
+        "{}",
+        stdout(&matching_evidence)
+    );
+    let matching_evidence: Value = serde_json::from_slice(&matching_evidence.stdout).unwrap();
+    let matching_evidence_id = matching_evidence["observation"]["observation_id"]
+        .as_str()
+        .unwrap();
+
+    let add_matching = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "matching-family",
+            "--check",
+            "checkout log family matches evidence",
+            "--scope",
+            "target",
+            "--comparison-family",
+            "checkout-log",
+            "--evidence-observation",
+            matching_evidence_id,
+        ],
+    );
+    assert!(add_matching.status.success(), "{}", stdout(&add_matching));
+
+    let mismatched_evidence = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--comparison-family",
+            "checkout-log",
+            "--selection-scope",
+            "/failure_sections",
+            "--selection-exhaustive",
+            "--",
+            "true",
+        ],
+    );
+    assert!(
+        mismatched_evidence.status.success(),
+        "{}",
+        stdout(&mismatched_evidence)
+    );
+    let mismatched_evidence: Value = serde_json::from_slice(&mismatched_evidence.stdout).unwrap();
+    let mismatched_evidence_id = mismatched_evidence["observation"]["observation_id"]
+        .as_str()
+        .unwrap();
+
+    let add_mismatched = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "mismatched-family",
+            "--check",
+            "declared family differs from evidence family",
+            "--scope",
+            "target",
+            "--comparison-family",
+            "full-suite",
+            "--evidence-observation",
+            mismatched_evidence_id,
+        ],
+    );
+    assert!(
+        add_mismatched.status.success(),
+        "{}",
+        stdout(&add_mismatched)
+    );
+
+    let readiness = prog_in_dir(root, &["--dir", dir_arg, "session", "show", "--readiness"]);
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    let status_for = |id: &str| {
+        readiness["evaluations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|evaluation| evaluation["obligation"]["id"] == id)
+            .unwrap()["status"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(status_for("matching-family"), "passed");
+    assert_eq!(status_for("mismatched-family"), "stale");
+}
+#[test]
 fn verification_readiness_requires_every_declared_scope() {
     let workspace = test_git_repo();
     let root = workspace.path();
