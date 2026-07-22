@@ -382,10 +382,10 @@ pub(crate) fn run_capture_completeness(
                     scope: "stdout".to_string(),
                     total_bytes: Some(stdout.total_bytes as u64),
                     captured_bytes: stdout.bytes.len() as u64,
-                    stop_reason: if stdout_windowed {
-                        CaptureStopReason::DerivationWindowed
-                    } else if stdout.truncated {
+                    stop_reason: if stdout.truncated {
                         CaptureStopReason::ByteLimit
+                    } else if stdout_windowed {
+                        CaptureStopReason::DerivationWindowed
                     } else {
                         CaptureStopReason::Complete
                     },
@@ -395,10 +395,10 @@ pub(crate) fn run_capture_completeness(
                     scope: "stderr".to_string(),
                     total_bytes: Some(stderr.total_bytes as u64),
                     captured_bytes: stderr.bytes.len() as u64,
-                    stop_reason: if stderr_windowed {
-                        CaptureStopReason::DerivationWindowed
-                    } else if stderr.truncated {
+                    stop_reason: if stderr.truncated {
                         CaptureStopReason::ByteLimit
+                    } else if stderr_windowed {
+                        CaptureStopReason::DerivationWindowed
                     } else {
                         CaptureStopReason::Complete
                     },

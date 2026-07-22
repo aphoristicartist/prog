@@ -299,24 +299,17 @@ fn source_validity(
             if left.source_id == right.source_id
                 && left.operation == right.operation
                 && left.subject_scope == right.subject_scope
+                && left.kind == right.kind
                 && matches!(
                     left.kind,
                     SourceStateKind::HttpEtag | SourceStateKind::HttpLastModified
-                )
-                && matches!(
-                    right.kind,
-                    SourceStateKind::HttpEtag | SourceStateKind::HttpLastModified
-                )
-                && left.value == right.value =>
+                ) =>
         {
-            crate::SourceValidity::ConfirmedUnchanged
-        }
-        (Some(left), Some(right))
-            if left.source_id == right.source_id
-                && left.operation == right.operation
-                && left.subject_scope == right.subject_scope =>
-        {
-            crate::SourceValidity::SourceChanged
+            if left.value == right.value {
+                crate::SourceValidity::ConfirmedUnchanged
+            } else {
+                crate::SourceValidity::SourceChanged
+            }
         }
         // With no native validators, only the subject observation's own
         // capture-time assessment can describe its current validity. Never
@@ -549,6 +542,38 @@ mod tests {
             crate::SourceValidity::ConfirmedUnchanged
         );
         assert!(delta.assessment.can_prove_absence);
+    }
+
+    #[test]
+    fn different_validator_kinds_are_not_comparable_even_when_values_match() {
+        let mut baseline = observation("a", "same", true);
+        baseline.source_id = "api".to_string();
+        baseline.operation = "get".to_string();
+        baseline.source_state = Some(etag("same-value"));
+
+        let mut subject = observation("b", "same", true);
+        subject.source_id = "api".to_string();
+        subject.operation = "get".to_string();
+        let mut last_modified = etag("same-value");
+        last_modified.kind = SourceStateKind::HttpLastModified;
+        subject.source_state = Some(last_modified);
+        subject.source_validity = crate::SourceValidity::Unknown;
+
+        let delta = compare_observations(&baseline, &subject, &[finding("old")], &[]);
+        assert_eq!(
+            delta.assessment.source_validity,
+            crate::SourceValidity::Unknown
+        );
+        assert!(!delta.assessment.can_prove_absence);
+        assert_eq!(delta.findings[0].status, DeltaFindingStatus::Unknown);
+
+        subject.source_state.as_mut().unwrap().value = "different-value".to_string();
+        let delta = compare_observations(&baseline, &subject, &[finding("old")], &[]);
+        assert_eq!(
+            delta.assessment.source_validity,
+            crate::SourceValidity::Unknown
+        );
+        assert!(!delta.assessment.can_prove_absence);
     }
 
     #[test]

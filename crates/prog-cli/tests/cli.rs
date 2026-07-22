@@ -3060,6 +3060,25 @@ fn thirty_lines_with_error_at(error_index: usize) -> String {
         .join("\n")
         + "\n"
 }
+
+fn assert_derivation_windowed_capture(envelope: &Value) {
+    let capture = &envelope["observation"]["capture"];
+    assert_eq!(capture["can_prove_absence"], false, "{envelope:#}");
+    assert_eq!(
+        capture["stop_reason"], "derivation_windowed",
+        "{envelope:#}"
+    );
+    assert!(
+        capture["affected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|scope| scope["scope"] == "payload"
+                && scope["stop_reason"] == "derivation_windowed"),
+        "{envelope:#}"
+    );
+}
+
 #[test]
 fn delta_never_reports_resolved_for_a_finding_that_moved_into_the_derivation_window() {
     let dir = tempfile::tempdir().unwrap();
@@ -3151,6 +3170,208 @@ fn delta_never_reports_resolved_for_a_finding_that_moved_into_the_derivation_win
         .find(|finding| finding["baseline_path"] == "/stdout/head/5")
         .expect("baseline finding at /stdout/head/5 should still appear in the delta");
     assert_eq!(moved_finding["status"], json!("unknown"), "{delta:#}");
+}
+
+#[test]
+fn cli_call_marks_head_tail_only_text_derivation_incomplete() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let state = dir.path().join("cli-state.log");
+    let script = dir.path().join("emit-cli-state.py");
+    fs::write(&state, thirty_lines_with_error_at(5)).unwrap();
+    fs::write(
+        &script,
+        "from pathlib import Path\nprint(Path(__import__('sys').argv[1]).read_text())\n",
+    )
+    .unwrap();
+    let seed = write_seed(
+        dir.path(),
+        "windowed-cli.json",
+        &json!({
+            "kind": "cli",
+            "operations": [{
+                "name": "read_log",
+                "command": "python3",
+                "args": [script, state],
+                "effect": {
+                    "read_only": true,
+                    "mutating": false,
+                    "network": false,
+                    "shell": false,
+                    "sensitive": false,
+                    "cacheable": true,
+                    "requires_confirmation": false
+                }
+            }]
+        })
+        .to_string(),
+    );
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "windowed_cli",
+        "--kind",
+        "cli",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+
+    let called = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "windowed_cli",
+        "read_log",
+        "--args",
+        "{}",
+    ]);
+    assert!(called.status.success(), "{}", stdout(&called));
+    let envelope: Value = serde_json::from_slice(&called.stdout).unwrap();
+    assert_derivation_windowed_capture(&envelope);
+}
+
+#[test]
+fn mcp_call_marks_head_tail_only_text_derivation_incomplete() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let script = dir.path().join("windowed-mcp.py");
+    fs::write(
+        &script,
+        r#"import json
+import sys
+
+def reply(message_id, result):
+    print(json.dumps({"jsonrpc": "2.0", "id": message_id, "result": result}), flush=True)
+
+lines = ["error alpha failure" if index == 5 else f"line {index:02} ok" for index in range(30)]
+for line in sys.stdin:
+    request = json.loads(line)
+    message_id = request.get("id")
+    if message_id is None:
+        continue
+    method = request.get("method")
+    if method == "initialize":
+        reply(message_id, {"protocolVersion": "2025-11-25", "capabilities": {"tools": {}, "resources": {}, "prompts": {}}, "serverInfo": {"name": "windowed-mcp", "version": "1.0"}})
+    elif method == "tools/list":
+        reply(message_id, {"tools": [{"name": "read_log", "inputSchema": {"type": "object", "properties": {}}, "annotations": {"readOnlyHint": True}}]})
+    elif method == "resources/list":
+        reply(message_id, {"resources": []})
+    elif method == "prompts/list":
+        reply(message_id, {"prompts": []})
+    elif method == "tools/call":
+        reply(message_id, {"content": [{"type": "text", "text": "\n".join(lines)}], "isError": False})
+    else:
+        print(json.dumps({"jsonrpc": "2.0", "id": message_id, "error": {"code": -32601, "message": "unknown method"}}), flush=True)
+"#,
+    )
+    .unwrap();
+    let seed = write_seed(
+        dir.path(),
+        "windowed-mcp.json",
+        &json!({
+            "command": "python3",
+            "args": [script],
+            "timeout_ms": 2_000,
+        })
+        .to_string(),
+    );
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "windowed_mcp",
+        "--kind",
+        "mcp",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+
+    let called = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "windowed_mcp",
+        "read_log",
+        "--args",
+        "{}",
+    ]);
+    assert!(called.status.success(), "{}", stdout(&called));
+    let envelope: Value = serde_json::from_slice(&called.stdout).unwrap();
+    assert_derivation_windowed_capture(&envelope);
+}
+
+#[test]
+fn observe_repeated_file_uses_stable_invocation_identity_and_tracks_moved_findings() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let state = dir.path().join("observed.log");
+
+    fs::write(&state, thirty_lines_with_error_at(5)).unwrap();
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        state.to_str().unwrap(),
+        "--mime",
+        "text/plain",
+        "--name",
+        "tracked-log",
+        "--comparison-family",
+        "tracked-log",
+        "--selection-scope",
+        "/lines",
+        "--selection-exhaustive",
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(first["observation"]["capture"]["can_prove_absence"], true);
+    let first_id = first["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    fs::write(&state, thirty_lines_with_error_at(15)).unwrap();
+    let second = prog(&[
+        "--dir",
+        dir_arg,
+        "observe",
+        "--file",
+        state.to_str().unwrap(),
+        "--mime",
+        "text/plain",
+        "--name",
+        "tracked-log",
+        "--comparison-family",
+        "tracked-log",
+        "--selection-scope",
+        "/lines",
+        "--selection-exhaustive",
+    ]);
+    assert!(second.status.success(), "{}", stdout(&second));
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(second["observation"]["capture"]["can_prove_absence"], true);
+    let second_id = second["observation"]["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let delta = prog(&["--dir", dir_arg, "delta", &first_id, &second_id]);
+    assert!(delta.status.success(), "{}", stdout(&delta));
+    let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
+    assert_eq!(delta["assessment"]["invocation_match"], true, "{delta:#}");
+
+    let moved_finding = delta["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["baseline_path"] == "/lines/5/text")
+        .unwrap_or_else(|| panic!("expected moved observe finding: {delta:#}"));
+    assert_eq!(moved_finding["subject_path"], "/lines/15/text");
+    assert_eq!(moved_finding["status"], "persisting");
 }
 #[test]
 fn obligation_comparison_family_matches_evidence_and_becomes_passed() {
