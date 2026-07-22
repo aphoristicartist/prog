@@ -295,6 +295,7 @@ fn record_mcp_task_observation_with_availability(
                 duration_ms,
                 json!({"kind": "mcp_task", "task_ref": task_ref}),
             )),
+            provider: Some(source_kind_provider(profile.kind)),
             ..NewObservation::default()
         })?
         .observation_id;
