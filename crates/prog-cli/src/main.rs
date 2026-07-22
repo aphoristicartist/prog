@@ -1164,6 +1164,7 @@ mod capture_lifecycle_tests {
             None,
             None,
             None,
+            prog_core::SourceValidity::ConfirmedUnchanged,
         )
         .unwrap();
         let observation = store.get_observation(&observation_id).unwrap().unwrap();
