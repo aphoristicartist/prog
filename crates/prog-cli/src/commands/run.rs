@@ -208,6 +208,11 @@ pub(crate) async fn run_command(
         None,
         lens.as_ref(),
         None,
+        // A local `run` executes a subprocess directly; there is no external
+        // upstream source separate from the command itself that could have
+        // drifted between capture and now, so this observation's source
+        // state is confirmed unchanged by construction, not merely unknown.
+        prog_core::SourceValidity::ConfirmedUnchanged,
     )?;
     entry.observation_id = Some(observation_id.clone());
     let cache_retained = store.put_entry(&cache_key, &entry)?;

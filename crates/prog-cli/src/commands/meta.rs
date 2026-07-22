@@ -56,6 +56,9 @@ pub(crate) fn meta_contracts(
         None,
         None,
         None,
+        // Public-contract metadata path: no source-revalidation signal is
+        // computed here, so this stays the conservative default.
+        prog_core::SourceValidity::Unknown,
     )?;
     entry.observation_id = Some(observation_id);
     let cache_retained = store.put_entry(&cache_key, &entry)?;

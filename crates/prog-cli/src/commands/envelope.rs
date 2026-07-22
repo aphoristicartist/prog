@@ -87,6 +87,7 @@ pub(crate) fn record_capture(
     parser: Option<String>,
     lens: Option<&LensManifest>,
     source_state: Option<SourceStateToken>,
+    source_validity: prog_core::SourceValidity,
 ) -> Result<String> {
     let duration_ms = provenance.as_ref().and_then(|item| item.duration_ms);
     let status = provenance.as_ref().and_then(|item| item.status.clone());
@@ -109,6 +110,7 @@ pub(crate) fn record_capture(
             parser,
             lens: lens.map(|item| item.id.clone()),
             source_state,
+            source_validity,
             provenance,
             cache_key,
             ..NewObservation::default()

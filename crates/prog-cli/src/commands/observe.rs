@@ -75,6 +75,10 @@ pub(crate) fn observe_artifact(
         Some(normalized.parser.id.to_string()),
         lens.as_ref(),
         None,
+        // prog has no revalidation mechanism for observed artifacts (no
+        // ETag/mtime check): the file could have changed since observation
+        // and there is no proof either way, so this stays Unknown.
+        prog_core::SourceValidity::Unknown,
     )?;
     entry.observation_id = Some(observation_id.clone());
     let cache_retained = store.put_entry(&cache_key, &entry)?;
