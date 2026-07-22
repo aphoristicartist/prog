@@ -204,9 +204,12 @@ pub fn finding_derivation_is_complete(payload: &Value) -> bool {
                                     .and_then(Value::as_array)
                                     .map_or(0, Vec::len),
                             );
-                        count > retained as u64
-                            && !map.contains_key("text")
-                            && !map.contains_key("lines")
+                        let has_full_text = map.get("text").and_then(Value::as_str).is_some();
+                        let has_all_lines = map
+                            .get("lines")
+                            .and_then(Value::as_array)
+                            .is_some_and(|lines| lines.len() as u64 >= count);
+                        count > retained as u64 && !has_full_text && !has_all_lines
                     })
         }) {
             return false;

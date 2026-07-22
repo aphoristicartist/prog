@@ -444,6 +444,13 @@ fn finding_derivation_completeness_covers_windows_node_caps_and_depth_caps() {
     });
     assert!(finding_derivation_is_complete(&fully_addressable));
 
+    let partially_addressable = json!({
+        "format": "text",
+        "lines": (1..=20).map(|line| json!(line)).collect::<Vec<_>>(),
+        "line_count": 21,
+    });
+    assert!(!finding_derivation_is_complete(&partially_addressable));
+
     // The root itself consumes one node from the same 10,000-node budget as
     // generic finding traversal.
     assert!(finding_derivation_is_complete(&Value::Array(vec![
