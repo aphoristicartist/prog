@@ -37,7 +37,7 @@ const STORAGE_BUDGET_KEY: &str = "storage_budget";
 // Pre-release storage is intentionally reset, rather than migrated, whenever
 // an immutable-record invariant changes. This is a contract identity, not a
 // compatibility version.
-const STORE_SCHEMA: &str = "prog.store.pre_release_contract_reset";
+const STORE_SCHEMA: &str = "prog.store.derivation_complete_observations";
 
 #[derive(Debug)]
 pub struct Store {

@@ -12,7 +12,7 @@ This is a baseline slice of #121's full scenario matrix. The HTTP/API snapshot, 
 
 ## Summary
 
-4 scenarios, 14/14 correctness checks passing.
+5 scenarios, 16/16 correctness checks passing.
 
 ## multi_iteration_resolution (`multi_iteration_resolution`)
 
@@ -69,4 +69,20 @@ Checks:
 - `evidence_marked_stale_after_workspace_edit`: pass
 - `fresh_evidence_reads_passed_before_edit`: pass
 - `stale_reason_names_workspace`: pass
+
+## derivation_window_moved_finding (`derivation_window_moved_finding`)
+
+| Strategy | Available | Delivered bytes | Est. tokens | Calls |
+|---|---:|---:|---:|---:|
+| raw | true | 678 | 170 | 2 |
+| simple_truncation | true | 678 | 170 | 2 |
+| prog_envelope | true | 23206 | 5802 | 2 |
+| prog_delta | true | 14533 | 3634 | 3 |
+| evidence_packet | false | 0 | 0 | 0 |
+| ranked_retrieval | false | 0 | 0 | 0 |
+
+Checks:
+
+- `assessment_is_non_provable_due_to_derivation_window`: pass
+- `moved_finding_is_not_falsely_resolved`: pass
 

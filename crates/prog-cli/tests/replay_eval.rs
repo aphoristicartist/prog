@@ -108,6 +108,7 @@ fn replay_eval_smoke() {
         narrowed_rerun_scenario(),
         no_benefit_control_scenario(),
         stale_readiness_scenario(),
+        derivation_window_moved_finding_scenario(),
     ]);
     assert_report_invariants(&report);
 
@@ -542,6 +543,131 @@ fn stale_readiness_scenario() -> ScenarioReport {
             after.stdout.len() as u64,
             3,
         )],
+        checks,
+    }
+}
+
+/// Reproduces prog#194: a finding whose evidence moves from `run`'s
+/// head/tail derivation window into the elided middle between two
+/// observations. The oracle must never report `resolved` for it, and the
+/// comparability assessment must be non-provable and say why -- even though
+/// every byte of both runs' output was fully captured and stored.
+fn derivation_window_moved_finding_scenario() -> ScenarioReport {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = root.join(".prog-state");
+    let store_arg = store.to_str().unwrap();
+    let script = root.join("emit.py");
+    fs::write(
+        &script,
+        "from pathlib import Path\nimport sys\nprint(Path(sys.argv[1]).read_text(), end='')\n",
+    )
+    .unwrap();
+    let state = root.join("state.txt");
+
+    // 30-line documents where the sole error line moves from index 5
+    // (inside `head`, indices 0..10) to index 15 (outside both `head` and
+    // `tail`, indices 20..30).
+    let thirty_lines_with_error_at = |error_index: usize| -> String {
+        (0..30)
+            .map(|index| {
+                if index == error_index {
+                    "error alpha failure".to_string()
+                } else {
+                    format!("line {index:02} ok")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
+    };
+    let iterations = [
+        thirty_lines_with_error_at(5),
+        thirty_lines_with_error_at(15),
+    ];
+
+    let mut observation_ids = Vec::new();
+    let mut run_bytes = Vec::new();
+    for content in &iterations {
+        fs::write(&state, content).unwrap();
+        let run = prog_in_dir(
+            root,
+            &[
+                "--dir",
+                store_arg,
+                "run",
+                "--selection-scope",
+                "suite",
+                "--selection-exhaustive",
+                "--",
+                "python3",
+                script.to_str().unwrap(),
+                state.to_str().unwrap(),
+            ],
+        );
+        assert!(run.status.success(), "{}", stdout(&run));
+        run_bytes.push(run.stdout.len() as u64);
+        let value: Value = serde_json::from_slice(&run.stdout).unwrap();
+        observation_ids.push(
+            value["observation"]["observation_id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+
+    let delta = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            store_arg,
+            "delta",
+            &observation_ids[0],
+            &observation_ids[1],
+        ],
+    );
+    assert!(delta.status.success(), "{}", stdout(&delta));
+    let delta_value: Value = serde_json::from_slice(&delta.stdout).unwrap();
+
+    let mut checks = BTreeMap::new();
+    checks.insert(
+        "assessment_is_non_provable_due_to_derivation_window".to_string(),
+        delta_value["assessment"]["can_prove_absence"] == false
+            && delta_value["assessment"]["reasons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|reason| reason.as_str().unwrap().contains("derivation_windowed")),
+    );
+    checks.insert(
+        "moved_finding_is_not_falsely_resolved".to_string(),
+        !delta_value["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["status"] == "resolved"),
+    );
+
+    let raw_bytes: u64 = iterations.iter().map(|content| content.len() as u64).sum();
+    let envelope_budget = run_bytes[0] as usize;
+    let truncation_bytes: u64 = iterations
+        .iter()
+        .map(|content| content.len().min(envelope_budget) as u64)
+        .sum();
+    let prog_envelope_bytes: u64 = run_bytes.iter().sum();
+    let prog_delta_bytes = run_bytes[0] + delta.stdout.len() as u64;
+
+    ScenarioReport {
+        scenario_id: "derivation_window_moved_finding".to_string(),
+        category: "derivation_window_moved_finding".to_string(),
+        strategies: vec![
+            strategy_metric("raw", raw_bytes, 2),
+            strategy_metric("simple_truncation", truncation_bytes, 2),
+            strategy_metric("prog_envelope", prog_envelope_bytes, 2),
+            strategy_metric("prog_delta", prog_delta_bytes, 3),
+            unavailable_strategy("evidence_packet"),
+            unavailable_strategy("ranked_retrieval"),
+        ],
         checks,
     }
 }

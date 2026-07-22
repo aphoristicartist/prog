@@ -277,6 +277,7 @@ fn capture_stop_reason_name(reason: crate::CaptureStopReason) -> &'static str {
         crate::CaptureStopReason::StorageLimit => "storage_limit",
         crate::CaptureStopReason::Expired => "expired",
         crate::CaptureStopReason::Unavailable => "unavailable",
+        crate::CaptureStopReason::DerivationWindowed => "derivation_windowed",
     }
 }
 
@@ -743,6 +744,36 @@ mod tests {
             assert!(!delta.assessment.can_prove_absence);
             assert_ne!(delta.findings[0].status, DeltaFindingStatus::Resolved);
         }
+    }
+
+    #[test]
+    fn assess_is_not_provable_when_capture_was_derivation_windowed() {
+        let baseline = observation("a", "same", true);
+        let mut subject = observation("b", "same", true);
+        // Mirrors what `prog run`'s capture completeness reports when a
+        // stream's head/tail-of-N finding-derivation window doesn't cover
+        // the full captured output: bytes are complete, but absence cannot
+        // be proven beyond the window.
+        subject.capture.can_prove_absence = false;
+        subject.capture.affected = vec![crate::CaptureScope {
+            scope: "stdout".to_string(),
+            total_bytes: Some(1),
+            captured_bytes: 1,
+            stop_reason: crate::CaptureStopReason::DerivationWindowed,
+            extra: Extra::new(),
+        }];
+        let delta = compare_observations(&baseline, &subject, &[finding("old")], &[]);
+        assert!(!delta.assessment.can_prove_absence);
+        assert_eq!(delta.findings[0].status, DeltaFindingStatus::Unknown);
+        assert!(
+            delta
+                .assessment
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("derivation_windowed")),
+            "expected a reason mentioning derivation_windowed, got {:?}",
+            delta.assessment.reasons
+        );
     }
 
     #[test]

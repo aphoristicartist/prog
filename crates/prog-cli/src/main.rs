@@ -32,9 +32,10 @@ use prog_core::{
     VERIFICATION_SCHEMA, ValidatedCursor, VerificationObligation, VerificationOperation,
     VerificationStateRelationship, VerificationStatus, build_inspect_response, cache_allowed,
     call_effect_warnings, canonical_json, check_call, check_discovery, cli_adapter_effects,
-    cli_hardening_effects, effective_effects, evidence_block, expand, http_adapter_effects,
-    http_hardening_effects, http_source_state, infer, join, lens_slice_request, new_cache_entry,
-    project, project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
+    cli_hardening_effects, effective_effects, evidence_block, expand,
+    finding_derivation_is_complete, http_adapter_effects, http_hardening_effects,
+    http_source_state, infer, join, lens_slice_request, new_cache_entry, project,
+    project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
     search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
 };
 use serde::Serialize;
@@ -1125,6 +1126,56 @@ mod capture_lifecycle_tests {
         assert_eq!(capture.stop_reason, CaptureStopReason::StorageLimit);
         assert_eq!(capture.affected[0].total_bytes, Some(4096));
         assert!(!capture.can_prove_absence);
+    }
+
+    #[test]
+    fn record_capture_marks_windowed_persisted_payloads_non_exhaustive() {
+        let store_dir = tempfile::tempdir().unwrap();
+        let store = Store::open(store_dir.path()).unwrap();
+        let payload = RawPayload::new(json!({
+            "format": "text",
+            "head": ["error first"],
+            "tail": ["last"],
+            "line_count": 21,
+            "byte_count": 128,
+            "truncated": false,
+        }))
+        .redact(&RedactionPolicy::default())
+        .payload;
+        let payload_hash = store.put_payload(&payload).unwrap();
+        let observation_id = record_capture(
+            &store,
+            payload_hash,
+            EvidenceAvailability::Recoverable,
+            CaptureCompleteness::complete(128),
+            "same-invocation".to_string(),
+            "fixture".to_string(),
+            "read".to_string(),
+            Some("fixture".to_string()),
+            SelectionCoverage {
+                scopes: vec!["/".to_string()],
+                exhaustive: true,
+                extra: Extra::new(),
+            },
+            None,
+            None,
+            false,
+            Some("cli".to_string()),
+            None,
+            None,
+            None,
+            prog_core::SourceValidity::ConfirmedUnchanged,
+        )
+        .unwrap();
+        let observation = store.get_observation(&observation_id).unwrap().unwrap();
+        assert!(!observation.capture.can_prove_absence);
+        assert_eq!(
+            observation.capture.stop_reason,
+            CaptureStopReason::DerivationWindowed
+        );
+        assert!(observation.capture.affected.iter().any(|scope| {
+            scope.scope == "payload" && scope.stop_reason == CaptureStopReason::DerivationWindowed
+        }));
     }
 
     #[test]

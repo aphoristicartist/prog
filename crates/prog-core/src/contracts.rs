@@ -990,6 +990,10 @@ pub enum CaptureStopReason {
     StorageLimit,
     Expired,
     Unavailable,
+    /// Capture completed and all bytes were stored, but finding derivation
+    /// only examined a bounded window (e.g. head/tail) of the output, not
+    /// its full content — absence cannot be proven beyond that window.
+    DerivationWindowed,
 }
 
 /// Where an applied execution or retention limit came from. Limits are kept

@@ -171,6 +171,61 @@ pub fn normalized_goal(goal: Option<&str>) -> Option<String> {
     Some(GoalIntent::from_text(goal).as_str().to_string())
 }
 
+/// Whether the current deterministic finding derivation can examine every
+/// persisted value that could produce a finding.
+///
+/// This is intentionally separate from disclosure completeness: a payload
+/// may be stored in full while a bounded normalizer or traversal sees only a
+/// subset. Callers that use missing findings as evidence of absence must
+/// require this function to return `true`.
+pub fn finding_derivation_is_complete(payload: &Value) -> bool {
+    fn visit(value: &Value, depth: usize, visited: &mut usize) -> bool {
+        if depth > MAX_FINDING_DEPTH || *visited >= MAX_FINDING_NODES {
+            return false;
+        }
+        *visited += 1;
+
+        // CLI/MCP text normalizers retain only disjoint head/tail windows.
+        // A full `text` scalar (prog run) or addressable `lines` array
+        // (prog observe) makes the wrapper complete despite also carrying
+        // preview windows.
+        if value.as_object().is_some_and(|map| {
+            map.get("format").and_then(Value::as_str) == Some("text")
+                && map
+                    .get("line_count")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|count| {
+                        let retained = map
+                            .get("head")
+                            .and_then(Value::as_array)
+                            .map_or(0, Vec::len)
+                            .saturating_add(
+                                map.get("tail")
+                                    .and_then(Value::as_array)
+                                    .map_or(0, Vec::len),
+                            );
+                        let has_full_text = map.get("text").and_then(Value::as_str).is_some();
+                        let has_all_lines = map
+                            .get("lines")
+                            .and_then(Value::as_array)
+                            .is_some_and(|lines| lines.len() as u64 >= count);
+                        count > retained as u64 && !has_full_text && !has_all_lines
+                    })
+        }) {
+            return false;
+        }
+
+        match value {
+            Value::Array(items) => items.iter().all(|item| visit(item, depth + 1, visited)),
+            Value::Object(map) => map.values().all(|item| visit(item, depth + 1, visited)),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
+        }
+    }
+
+    let mut visited = 0;
+    visit(payload, 0, &mut visited)
+}
+
 pub fn ranked_findings(payload: &Value, options: &FindingOptions) -> Result<Vec<Finding>> {
     let scope_path = options.scope_path.as_deref().unwrap_or("");
     let Some(scoped) = pointer::get(payload, scope_path)? else {
