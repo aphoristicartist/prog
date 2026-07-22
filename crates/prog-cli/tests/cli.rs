@@ -2834,6 +2834,120 @@ fn observation_records_persist_source_validity_for_local_run() {
     assert_eq!(record["source_validity"], "confirmed_unchanged");
 }
 #[test]
+fn mcp_task_observation_records_persist_transport_provider_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let script = dir.path().join("task_fixture.py");
+    fs::write(
+        &script,
+        r#"import json
+import sys
+
+def reply(message_id, result):
+    print(json.dumps({"jsonrpc": "2.0", "id": message_id, "result": result}), flush=True)
+
+def err(message_id, code, message):
+    print(json.dumps({"jsonrpc": "2.0", "id": message_id, "error": {"code": code, "message": message}}), flush=True)
+
+for line in sys.stdin:
+    request = json.loads(line)
+    message_id = request.get("id")
+    if message_id is None:
+        continue
+    method = request.get("method")
+    if method == "initialize":
+        reply(message_id, {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {
+                "tools": {},
+                "resources": {},
+                "prompts": {},
+                "tasks": {
+                    "requests": {"tools": {"call": {}}},
+                    "list": {},
+                    "cancel": {}
+                }
+            },
+            "serverInfo": {"name": "task-fixture", "version": "1.0"}
+        })
+    elif method == "tools/list":
+        reply(message_id, {"tools": [{
+            "name": "search_docs",
+            "description": "Search fixture docs",
+            "inputSchema": {"type": "object", "properties": {}},
+            "annotations": {"readOnlyHint": True}
+        }]})
+    elif method == "resources/list":
+        reply(message_id, {"resources": []})
+    elif method == "prompts/list":
+        reply(message_id, {"prompts": []})
+    elif method == "tools/call":
+        params = request.get("params", {})
+        if params.get("task") is not None:
+            reply(message_id, {"task": {
+                "taskId": "task-1",
+                "status": "working",
+                "createdAt": "2026-07-21T00:00:00Z",
+                "lastUpdatedAt": "2026-07-21T00:00:00Z",
+                "ttl": 1000,
+                "pollInterval": 25,
+                "statusMessage": "accepted"
+            }})
+        else:
+            reply(message_id, {"content": [{"type": "text", "text": "ok"}], "isError": False})
+    else:
+        err(message_id, -32601, f"unknown method: {method}")
+"#,
+    )
+    .unwrap();
+    let seed_json = json!({
+        "command": "python3",
+        "args": [script],
+    });
+    let seed = write_seed(dir.path(), "mcp-task-seed.json", &seed_json.to_string());
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "task_fixture",
+        "--kind",
+        "mcp",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+
+    let started = prog(&[
+        "--dir",
+        dir_arg,
+        "mcp-task",
+        "start",
+        "task_fixture",
+        "search_docs",
+        "--args",
+        "{}",
+    ]);
+    assert!(started.status.success(), "{}", stdout(&started));
+    let started_value: Value = serde_json::from_slice(&started.stdout).unwrap();
+    let observation_id = started_value["observation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let listed = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "5"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let record = listed["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["observation_id"] == observation_id)
+        .unwrap_or_else(|| {
+            panic!("observation {observation_id} missing from cache observations listing")
+        });
+    assert_eq!(record["provider"], "mcp");
+}
+#[test]
 fn automatic_delta_never_matches_similar_but_different_command_invocations() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
@@ -2930,6 +3044,124 @@ fn automatic_delta_requires_the_same_comparison_family() {
     );
 }
 
+#[test]
+fn obligation_comparison_family_matches_evidence_and_becomes_passed() {
+    let workspace = test_git_repo();
+    let root = workspace.path();
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+
+    let matching_evidence = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--comparison-family",
+            "checkout-log",
+            "--selection-scope",
+            "/failure_sections",
+            "--selection-exhaustive",
+            "--",
+            "true",
+        ],
+    );
+    assert!(
+        matching_evidence.status.success(),
+        "{}",
+        stdout(&matching_evidence)
+    );
+    let matching_evidence: Value = serde_json::from_slice(&matching_evidence.stdout).unwrap();
+    let matching_evidence_id = matching_evidence["observation"]["observation_id"]
+        .as_str()
+        .unwrap();
+
+    let add_matching = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "matching-family",
+            "--check",
+            "checkout log family matches evidence",
+            "--scope",
+            "target",
+            "--comparison-family",
+            "checkout-log",
+            "--evidence-observation",
+            matching_evidence_id,
+        ],
+    );
+    assert!(add_matching.status.success(), "{}", stdout(&add_matching));
+
+    let mismatched_evidence = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "run",
+            "--comparison-family",
+            "checkout-log",
+            "--selection-scope",
+            "/failure_sections",
+            "--selection-exhaustive",
+            "--",
+            "true",
+        ],
+    );
+    assert!(
+        mismatched_evidence.status.success(),
+        "{}",
+        stdout(&mismatched_evidence)
+    );
+    let mismatched_evidence: Value = serde_json::from_slice(&mismatched_evidence.stdout).unwrap();
+    let mismatched_evidence_id = mismatched_evidence["observation"]["observation_id"]
+        .as_str()
+        .unwrap();
+
+    let add_mismatched = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "mismatched-family",
+            "--check",
+            "declared family differs from evidence family",
+            "--scope",
+            "target",
+            "--comparison-family",
+            "full-suite",
+            "--evidence-observation",
+            mismatched_evidence_id,
+        ],
+    );
+    assert!(
+        add_mismatched.status.success(),
+        "{}",
+        stdout(&add_mismatched)
+    );
+
+    let readiness = prog_in_dir(root, &["--dir", dir_arg, "session", "show", "--readiness"]);
+    assert!(readiness.status.success(), "{}", stdout(&readiness));
+    let readiness: Value = serde_json::from_slice(&readiness.stdout).unwrap();
+    let status_for = |id: &str| {
+        readiness["evaluations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|evaluation| evaluation["obligation"]["id"] == id)
+            .unwrap()["status"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(status_for("matching-family"), "passed");
+    assert_eq!(status_for("mismatched-family"), "stale");
+}
 #[test]
 fn verification_readiness_requires_every_declared_scope() {
     let workspace = test_git_repo();

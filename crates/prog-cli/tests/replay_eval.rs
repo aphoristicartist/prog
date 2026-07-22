@@ -22,7 +22,11 @@
 //! matrix (HTTP/API snapshots, pagination, noisy-log-with-one-event) is
 //! intentionally deferred to a follow-up slice; see the PR description.
 
-use std::{collections::BTreeMap, fs, process::Command};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    process::Command,
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -83,6 +87,11 @@ struct BaselineReport {
 struct BaselineScenario {
     scenario_id: String,
     strategies: Vec<StrategyCeiling>,
+    /// Sorted correctness-check names this scenario is expected to report.
+    /// Pinned so a scenario can never silently lose (or rename) a check:
+    /// `checks_passed == checks_total` alone would not catch a shrinking
+    /// `checks_total`.
+    checks: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -685,6 +694,15 @@ fn assert_baseline_invariants(report: &ReplayReport, baseline: &BaselineReport) 
                 expected_strategy.calls,
             );
         }
+
+        let actual_checks = actual.checks.keys().collect::<BTreeSet<_>>();
+        let expected_checks = expected_scenario.checks.iter().collect::<BTreeSet<_>>();
+        assert_eq!(
+            actual_checks, expected_checks,
+            "{}: correctness-check set changed (a check was added, removed, or renamed); \
+             regenerate the reviewed baseline with `{BLESS_COMMAND}`",
+            actual.scenario_id
+        );
     }
 }
 
@@ -723,6 +741,7 @@ fn blessed_baseline(report: &ReplayReport, existing: &BaselineReport) -> Baselin
                 BaselineScenario {
                     scenario_id: scenario.scenario_id.clone(),
                     strategies,
+                    checks: scenario.checks.keys().cloned().collect(),
                 }
             })
             .collect(),
@@ -858,6 +877,7 @@ mod tests {
                     .iter()
                     .map(StrategyCeiling::with_headroom)
                     .collect(),
+                checks: scenario.checks.keys().cloned().collect(),
             }],
         };
         let mut too_expensive = scenario;
@@ -866,6 +886,34 @@ mod tests {
         let report = build_report(vec![too_expensive]);
         assert!(
             std::panic::catch_unwind(|| assert_baseline_invariants(&report, &baseline)).is_err()
+        );
+    }
+
+    #[test]
+    fn baseline_rejects_a_check_name_change_without_blessing() {
+        let scenario = passing_scenario();
+        let baseline = BaselineReport {
+            schema: "prog.replay_eval".to_string(),
+            scenarios: vec![BaselineScenario {
+                scenario_id: scenario.scenario_id.clone(),
+                strategies: scenario
+                    .strategies
+                    .iter()
+                    .map(StrategyCeiling::with_headroom)
+                    .collect(),
+                checks: scenario.checks.keys().cloned().collect(),
+            }],
+        };
+        let mut renamed_check = scenario;
+        renamed_check.checks.remove("example_check");
+        renamed_check
+            .checks
+            .insert("renamed_check".to_string(), true);
+        let report = build_report(vec![renamed_check]);
+        assert!(
+            std::panic::catch_unwind(|| assert_baseline_invariants(&report, &baseline)).is_err(),
+            "a scenario that silently renamed (or dropped/added) a correctness check must be \
+             rejected without blessing"
         );
     }
 
@@ -881,6 +929,7 @@ mod tests {
                     .iter()
                     .map(StrategyCeiling::with_headroom)
                     .collect(),
+                checks: scenario.checks.keys().cloned().collect(),
             }],
         };
         let report = build_report(vec![scenario]);
