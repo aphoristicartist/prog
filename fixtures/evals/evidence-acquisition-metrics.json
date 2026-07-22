@@ -23,6 +23,27 @@
       }
     },
     {
+      "name": "cargo_rustc_json_diagnostics_provider",
+      "expected_path": "/0",
+      "top_finding_path": "/0",
+      "top_finding_rank": 1,
+      "correct": true,
+      "baseline_tool_calls": 3,
+      "findings_tool_calls": 2,
+      "inspect_tool_calls": 3,
+      "baseline_output_tokens": 2251,
+      "findings_output_tokens": 1818,
+      "inspect_output_tokens": 2755,
+      "ceilings": {
+        "baseline_tool_calls": 4,
+        "findings_tool_calls": 3,
+        "inspect_tool_calls": 4,
+        "baseline_output_tokens": 2813,
+        "findings_output_tokens": 2272,
+        "inspect_output_tokens": 3443
+      }
+    },
+    {
       "name": "cargo_test_failure",
       "expected_path": "/failure_sections/0",
       "top_finding_path": "/failure_sections/0",
@@ -62,6 +83,27 @@
         "baseline_output_tokens": 1026,
         "findings_output_tokens": 610,
         "inspect_output_tokens": 891
+      }
+    },
+    {
+      "name": "pytest_json_report_provider",
+      "expected_path": "/tests/1",
+      "top_finding_path": "/tests/1",
+      "top_finding_rank": 1,
+      "correct": true,
+      "baseline_tool_calls": 3,
+      "findings_tool_calls": 2,
+      "inspect_tool_calls": 3,
+      "baseline_output_tokens": 2063,
+      "findings_output_tokens": 1257,
+      "inspect_output_tokens": 2089,
+      "ceilings": {
+        "baseline_tool_calls": 4,
+        "findings_tool_calls": 3,
+        "inspect_tool_calls": 4,
+        "baseline_output_tokens": 2578,
+        "findings_output_tokens": 1571,
+        "inspect_output_tokens": 2611
       }
     },
     {
@@ -108,13 +150,13 @@
     }
   ],
   "summary": {
-    "scenario_count": 5,
-    "correct_top_findings": 5,
-    "baseline_tool_calls": 15,
-    "findings_tool_calls": 10,
-    "inspect_tool_calls": 15,
-    "baseline_output_tokens": 3369,
-    "findings_output_tokens": 3218,
-    "inspect_output_tokens": 5817
+    "scenario_count": 7,
+    "correct_top_findings": 7,
+    "baseline_tool_calls": 21,
+    "findings_tool_calls": 14,
+    "inspect_tool_calls": 21,
+    "baseline_output_tokens": 7683,
+    "findings_output_tokens": 6293,
+    "inspect_output_tokens": 10661
   }
 }

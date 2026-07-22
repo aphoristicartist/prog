@@ -1,0 +1,115 @@
+[
+  {
+    "occurrence_id": "fo_00000001",
+    "fingerprint": "sha256:339634e1af99d467032d5ffe166d530203df7f9a6a664aba041eee988ba29c6e",
+    "rank": 1,
+    "kind": "rust_compile_error",
+    "path": "/0",
+    "confidence": 0.95,
+    "reason": "cargo/rustc JSON diagnostic: error [E0308]",
+    "title": "error[E0308]",
+    "severity": "error",
+    "source": "provider.cargo.rustc_json_diagnostics.v1",
+    "primary_span": {
+      "path": "src/lib.rs",
+      "start_line": 10,
+      "start_column": 5,
+      "end_line": 10,
+      "end_column": 8,
+      "role": "primary",
+      "label": "expected `i32`, found `&str`",
+      "origin": "structured.rustc",
+      "exactness": "exact"
+    },
+    "related_spans": [
+      {
+        "path": "src/lib.rs",
+        "start_line": 20,
+        "start_column": 1,
+        "end_line": 20,
+        "end_column": 2,
+        "role": "related",
+        "label": "expected due to this",
+        "origin": "structured.rustc",
+        "exactness": "exact"
+      }
+    ],
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate rust_compile_error' --path /0",
+      "expand": "prog expand pc1_providers --path /0",
+      "evidence": "prog evidence pc1_providers --path /0",
+      "search": "prog find pc1_providers --kind rust_compile_error --path /0"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000002",
+    "fingerprint": "sha256:d66c7194f276e96ea91017ba8d3e2408fa3f8ee01d939486f9442ef2c3144de6",
+    "rank": 2,
+    "kind": "warning",
+    "path": "/1",
+    "confidence": 0.95,
+    "reason": "cargo/rustc JSON diagnostic: warning [unused_variables]",
+    "title": "warning[unused_variables]",
+    "severity": "warning",
+    "source": "provider.cargo.rustc_json_diagnostics.v1",
+    "primary_span": {
+      "path": "src/main.rs",
+      "start_line": 4,
+      "start_column": 9,
+      "end_line": 4,
+      "end_column": 10,
+      "role": "primary",
+      "label": "unused variable",
+      "origin": "structured.rustc",
+      "exactness": "exact"
+    },
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate warning' --path /1",
+      "expand": "prog expand pc1_providers --path /1",
+      "evidence": "prog evidence pc1_providers --path /1",
+      "search": "prog find pc1_providers --kind warning --path /1"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000003",
+    "fingerprint": "sha256:78cd512b493e5eafd18b16930971b93854727bb89ea79356920b54e4cd6ea33c",
+    "rank": 3,
+    "kind": "diagnostic",
+    "path": "/0",
+    "confidence": 0.68,
+    "reason": "object severity indicates an error or failure",
+    "title": "error diagnostic",
+    "severity": "error",
+    "source": "generic.object.severity",
+    "primary_span": {
+      "path": "src/lib.rs",
+      "start_line": 10,
+      "start_column": 5,
+      "end_line": 10,
+      "end_column": 8,
+      "role": "primary",
+      "label": "expected `i32`, found `&str`",
+      "origin": "structured.rustc",
+      "exactness": "exact"
+    },
+    "related_spans": [
+      {
+        "path": "src/lib.rs",
+        "start_line": 20,
+        "start_column": 1,
+        "end_line": 20,
+        "end_column": 2,
+        "role": "related",
+        "label": "expected due to this",
+        "origin": "structured.rustc",
+        "exactness": "exact"
+      }
+    ],
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate diagnostic' --path /0",
+      "expand": "prog expand pc1_providers --path /0",
+      "evidence": "prog evidence pc1_providers --path /0",
+      "search": "prog find pc1_providers --kind diagnostic --path /0"
+    }
+  }
+]

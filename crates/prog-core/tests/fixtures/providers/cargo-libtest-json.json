@@ -1,0 +1,12 @@
+[
+  {"type": "suite", "event": "started", "test_count": 2},
+  {"type": "test", "event": "started", "name": "tests::foo"},
+  {"type": "test", "name": "tests::foo", "event": "ok"},
+  {
+    "type": "test",
+    "name": "tests::bar",
+    "event": "failed",
+    "stdout": "thread 'tests::bar' panicked at src/lib.rs:10:5:\nassertion failed: left == right\n"
+  },
+  {"type": "suite", "event": "failed", "passed": 1, "failed": 1}
+]

@@ -1,0 +1,35 @@
+{
+  "created": 1721000000.0,
+  "duration": 1.23,
+  "exitcode": 1,
+  "root": "/repo",
+  "summary": {"collected": 3, "passed": 1, "failed": 1, "error": 1, "total": 3},
+  "tests": [
+    {
+      "nodeid": "tests/test_checkout.py::test_total",
+      "outcome": "passed",
+      "call": {"outcome": "passed"}
+    },
+    {
+      "nodeid": "tests/test_checkout.py::test_discount",
+      "outcome": "failed",
+      "call": {
+        "outcome": "failed",
+        "longrepr": "AssertionError: expected 19 got 21",
+        "crash": {
+          "path": "tests/test_checkout.py",
+          "lineno": 41,
+          "message": "AssertionError: expected 19 got 21"
+        }
+      }
+    },
+    {
+      "nodeid": "tests/test_checkout.py::test_tax",
+      "outcome": "error",
+      "setup": {
+        "outcome": "failed",
+        "longrepr": "fixture 'db' not found"
+      }
+    }
+  ]
+}

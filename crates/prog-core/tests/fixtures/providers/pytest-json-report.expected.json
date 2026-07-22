@@ -1,0 +1,223 @@
+[
+  {
+    "occurrence_id": "fo_00000001",
+    "fingerprint": "sha256:23b1dff49e10e1ceeac4b9f4fa40882938eafbb1ad13cbb4f7bbf7c0d37c4e85",
+    "rank": 1,
+    "kind": "test_failure",
+    "path": "/tests/1",
+    "confidence": 0.95,
+    "reason": "pytest-json-report: tests/test_checkout.py::test_discount failed",
+    "title": "pytest failed: tests/test_checkout.py::test_discount",
+    "severity": "error",
+    "source": "provider.pytest.json_report.v1",
+    "primary_span": {
+      "path": "tests/test_checkout.py",
+      "start_line": 42,
+      "role": "primary",
+      "origin": "structured.pytest_json_report",
+      "exactness": "approximate"
+    },
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate test_failure' --path /tests/1",
+      "expand": "prog expand pc1_providers --path /tests/1",
+      "evidence": "prog evidence pc1_providers --path /tests/1",
+      "search": "prog find pc1_providers --kind test_failure --path /tests/1"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000002",
+    "fingerprint": "sha256:ec1d06ac90efea243da55f97723fa794291d0fc88f417ee787ebf91f5fb02292",
+    "rank": 2,
+    "kind": "test_error",
+    "path": "/tests/2",
+    "confidence": 0.95,
+    "reason": "pytest-json-report: tests/test_checkout.py::test_tax error",
+    "title": "pytest error: tests/test_checkout.py::test_tax",
+    "severity": "error",
+    "source": "provider.pytest.json_report.v1",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate test_error' --path /tests/2",
+      "expand": "prog expand pc1_providers --path /tests/2",
+      "evidence": "prog evidence pc1_providers --path /tests/2",
+      "search": "prog find pc1_providers --kind test_error --path /tests/2"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000003",
+    "fingerprint": "sha256:3633d4d3deab9662e06f520542e2a1a57443eecdeaef3aa58982c749b24a2897",
+    "rank": 3,
+    "kind": "test_failure",
+    "path": "/tests/1/call/crash/message",
+    "confidence": 0.8,
+    "reason": "string contains an assertion failure marker",
+    "title": "assertion failure",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate test_failure' --path /tests/1/call/crash/message",
+      "expand": "prog expand pc1_providers --path /tests/1/call/crash/message",
+      "evidence": "prog evidence pc1_providers --path /tests/1/call/crash/message",
+      "search": "prog find pc1_providers --kind test_failure --path /tests/1/call/crash/message"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000004",
+    "fingerprint": "sha256:3633d4d3deab9662e06f520542e2a1a57443eecdeaef3aa58982c749b24a2897",
+    "rank": 4,
+    "kind": "test_failure",
+    "path": "/tests/1/call/longrepr",
+    "confidence": 0.8,
+    "reason": "string contains an assertion failure marker",
+    "title": "assertion failure",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate test_failure' --path /tests/1/call/longrepr",
+      "expand": "prog expand pc1_providers --path /tests/1/call/longrepr",
+      "evidence": "prog evidence pc1_providers --path /tests/1/call/longrepr",
+      "search": "prog find pc1_providers --kind test_failure --path /tests/1/call/longrepr"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000005",
+    "fingerprint": "sha256:f142a7b4d5b4283c867dc44ab4b6ed1ee915ed9da22e3bc13635012416bc376e",
+    "rank": 5,
+    "kind": "test_name",
+    "path": "/tests/0/nodeid",
+    "confidence": 0.74,
+    "reason": "string references a failing test",
+    "title": "failing test",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate test_name' --path /tests/0/nodeid",
+      "expand": "prog expand pc1_providers --path /tests/0/nodeid",
+      "evidence": "prog evidence pc1_providers --path /tests/0/nodeid",
+      "search": "prog find pc1_providers --kind test_name --path /tests/0/nodeid"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000006",
+    "fingerprint": "sha256:1e2bc6dda20636b4594d36da4dde761fc12182b2adee9f7ccfa4d5ad8d5cf576",
+    "rank": 6,
+    "kind": "test_name",
+    "path": "/tests/1/nodeid",
+    "confidence": 0.74,
+    "reason": "string references a failing test",
+    "title": "failing test",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate test_name' --path /tests/1/nodeid",
+      "expand": "prog expand pc1_providers --path /tests/1/nodeid",
+      "evidence": "prog evidence pc1_providers --path /tests/1/nodeid",
+      "search": "prog find pc1_providers --kind test_name --path /tests/1/nodeid"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000007",
+    "fingerprint": "sha256:ae8f38c48ae8f059b940a512cb568ae09268041f2493ac554ed27036fd46c2b5",
+    "rank": 7,
+    "kind": "test_name",
+    "path": "/tests/2/nodeid",
+    "confidence": 0.74,
+    "reason": "string references a failing test",
+    "title": "failing test",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate test_name' --path /tests/2/nodeid",
+      "expand": "prog expand pc1_providers --path /tests/2/nodeid",
+      "evidence": "prog evidence pc1_providers --path /tests/2/nodeid",
+      "search": "prog find pc1_providers --kind test_name --path /tests/2/nodeid"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000008",
+    "rank": 8,
+    "kind": "generic_error_field",
+    "path": "/summary/error",
+    "confidence": 0.72,
+    "reason": "field name indicates error evidence",
+    "title": "error field",
+    "severity": "error",
+    "source": "generic.field_name",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate generic_error_field' --path /summary/error",
+      "expand": "prog expand pc1_providers --path /summary/error",
+      "evidence": "prog evidence pc1_providers --path /summary/error",
+      "search": "prog find pc1_providers --kind generic_error_field --path /summary/error"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000009",
+    "rank": 9,
+    "kind": "test_failure",
+    "path": "/summary/failed",
+    "confidence": 0.7,
+    "reason": "field name indicates failure evidence",
+    "title": "failure field",
+    "severity": "error",
+    "source": "generic.field_name",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate test_failure' --path /summary/failed",
+      "expand": "prog expand pc1_providers --path /summary/failed",
+      "evidence": "prog evidence pc1_providers --path /summary/failed",
+      "search": "prog find pc1_providers --kind test_failure --path /summary/failed"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000010",
+    "fingerprint": "sha256:e518a0208bd00ab7a67756adf144c7383f443ee3da083d8b8c0b85d91854a483",
+    "rank": 10,
+    "kind": "stderr_error",
+    "path": "/tests/1/call/outcome",
+    "confidence": 0.58,
+    "reason": "string contains generic error text",
+    "title": "error text",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate stderr_error' --path /tests/1/call/outcome",
+      "expand": "prog expand pc1_providers --path /tests/1/call/outcome",
+      "evidence": "prog evidence pc1_providers --path /tests/1/call/outcome",
+      "search": "prog find pc1_providers --kind stderr_error --path /tests/1/call/outcome"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000011",
+    "fingerprint": "sha256:e518a0208bd00ab7a67756adf144c7383f443ee3da083d8b8c0b85d91854a483",
+    "rank": 11,
+    "kind": "stderr_error",
+    "path": "/tests/1/outcome",
+    "confidence": 0.58,
+    "reason": "string contains generic error text",
+    "title": "error text",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate stderr_error' --path /tests/1/outcome",
+      "expand": "prog expand pc1_providers --path /tests/1/outcome",
+      "evidence": "prog evidence pc1_providers --path /tests/1/outcome",
+      "search": "prog find pc1_providers --kind stderr_error --path /tests/1/outcome"
+    }
+  },
+  {
+    "occurrence_id": "fo_00000012",
+    "fingerprint": "sha256:e518a0208bd00ab7a67756adf144c7383f443ee3da083d8b8c0b85d91854a483",
+    "rank": 12,
+    "kind": "stderr_error",
+    "path": "/tests/2/setup/outcome",
+    "confidence": 0.58,
+    "reason": "string contains generic error text",
+    "title": "error text",
+    "severity": "error",
+    "source": "generic.string_pattern",
+    "commands": {
+      "inspect": "prog inspect pc1_providers --goal 'investigate stderr_error' --path /tests/2/setup/outcome",
+      "expand": "prog expand pc1_providers --path /tests/2/setup/outcome",
+      "evidence": "prog evidence pc1_providers --path /tests/2/setup/outcome",
+      "search": "prog find pc1_providers --kind stderr_error --path /tests/2/setup/outcome"
+    }
+  }
+]

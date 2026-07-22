@@ -197,6 +197,12 @@ pub fn ranked_findings(payload: &Value, options: &FindingOptions) -> Result<Vec<
         0,
         &mut visited,
     );
+    crate::providers::collect_provider_signals(
+        scoped,
+        scope_path,
+        options.workspace_root.as_deref(),
+        &mut candidates,
+    );
     for candidate in &mut candidates {
         candidate.fingerprint = fingerprint_finding(
             &candidate.kind,
@@ -272,8 +278,30 @@ pub fn build_inspect_response(
     })
 }
 
+/// Input to [`Candidate::from_provider`]: the normalized shape a bounded
+/// coding provider (`crate::providers`) hands back after successfully
+/// matching and parsing a payload.
+pub(crate) struct ProviderFindingSpec {
+    pub(crate) path: String,
+    pub(crate) kind: &'static str,
+    pub(crate) confidence: f64,
+    pub(crate) reason: String,
+    pub(crate) title: Option<String>,
+    pub(crate) severity: Option<&'static str>,
+    pub(crate) source: &'static str,
+    pub(crate) line_range: Option<LineRange>,
+    pub(crate) primary_span: Option<SourceSpan>,
+    pub(crate) related_spans: Vec<SourceSpan>,
+    /// A clean, provider-controlled JSON object carrying well-known identity
+    /// fields (`nodeid`/`code`/`message`/`diagnostic_type`) for
+    /// [`fingerprint_finding`] — not the raw tool JSON, which may be noisy or
+    /// shaped unpredictably across tool versions.
+    pub(crate) identity_value: Value,
+    pub(crate) extra: Extra,
+}
+
 #[derive(Debug, Clone)]
-struct Candidate {
+pub(crate) struct Candidate {
     kind: String,
     path: String,
     confidence: f64,
@@ -324,6 +352,35 @@ impl Candidate {
             fingerprint,
             identity_value: value.clone(),
             extra: Extra::new(),
+        }
+    }
+
+    /// Build a candidate from a bounded provider's own normalized identity
+    /// value (see `crate::providers`) rather than the raw signal-detection
+    /// path. `identity_value` supplies the well-known fields
+    /// (`nodeid`/`code`/`message`/`diagnostic_type`) that
+    /// [`fingerprint_finding`] already knows how to read, so a provider does
+    /// not need to duplicate its component-selection logic. `fingerprint` is
+    /// left unset here; the caller in [`ranked_findings`] recomputes it for
+    /// every candidate (generic and provider alike) using the real
+    /// [`FindingIdentityContext`] once, in one place.
+    pub(crate) fn from_provider(spec: ProviderFindingSpec) -> Self {
+        Self {
+            kind: spec.kind.to_string(),
+            path: spec.path,
+            confidence: spec.confidence,
+            score: 0.0,
+            reason: spec.reason,
+            title: spec.title,
+            severity: spec.severity.map(str::to_string),
+            source: spec.source.to_string(),
+            line_range: spec.line_range,
+            redaction_state: redaction_state(&spec.identity_value),
+            primary_span: spec.primary_span,
+            related_spans: spec.related_spans,
+            fingerprint: None,
+            identity_value: spec.identity_value,
+            extra: spec.extra,
         }
     }
 
@@ -899,7 +956,7 @@ fn field_u64(map: &Map<String, Value>, names: &[&str]) -> Option<u64> {
         .find_map(|name| map.get(*name).and_then(Value::as_u64))
 }
 
-fn normalize_workspace_path(raw: &str, workspace_root: Option<&Path>) -> Option<String> {
+pub(crate) fn normalize_workspace_path(raw: &str, workspace_root: Option<&Path>) -> Option<String> {
     if raw.is_empty()
         || raw.contains('\0')
         || raw.contains("[REDACTED:")

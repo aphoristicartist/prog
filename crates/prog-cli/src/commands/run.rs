@@ -191,6 +191,11 @@ pub(crate) async fn run_command(
     );
     capture.budget = capture_budget_for_run(args);
     ctx.set_capture(capture.budget.clone());
+    // Best-match pytest/Cargo/rustc provider identity for this capture (issue
+    // #114), independent of whether it actually produced findings. `provider`
+    // stays the transport identity ("cli"); `parser` is the first place a
+    // tool-format identity is recorded for `prog run` captures.
+    let provider_parser = detect_coding_provider(redacted_payload.as_value());
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
@@ -205,7 +210,7 @@ pub(crate) async fn run_command(
         Some(cache_key.clone()),
         !policy_redactions.is_empty(),
         Some("cli".to_string()),
-        None,
+        provider_parser.map(str::to_string),
         lens.as_ref(),
         None,
     )?;
