@@ -34,6 +34,15 @@
           "delivered_bytes": 1,
           "calls": 1
         }
+      ],
+      "checks": [
+        "alpha_persists_despite_line_position_shift",
+        "alpha_persists_iteration_2_to_3",
+        "beta_resolved_after_iteration_2",
+        "fingerprint_stable_across_three_iterations",
+        "gamma_new_at_iteration_2",
+        "gamma_persists_iteration_2_to_3",
+        "iteration1_to_2_can_prove_absence"
       ]
     },
     {
@@ -44,6 +53,11 @@
           "delivered_bytes": 6147,
           "calls": 4
         }
+      ],
+      "checks": [
+        "can_prove_absence_is_false",
+        "missing_finding_marked_not_observed",
+        "missing_finding_not_marked_resolved"
       ]
     },
     {
@@ -59,6 +73,9 @@
           "delivered_bytes": 5563,
           "calls": 2
         }
+      ],
+      "checks": [
+        "raw_cheaper_than_prog_for_tiny_payload"
       ]
     },
     {
@@ -69,6 +86,11 @@
           "delivered_bytes": 1183,
           "calls": 4
         }
+      ],
+      "checks": [
+        "evidence_marked_stale_after_workspace_edit",
+        "fresh_evidence_reads_passed_before_edit",
+        "stale_reason_names_workspace"
       ]
     }
   ]
