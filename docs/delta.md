@@ -75,6 +75,14 @@ full output is captured and retrievable via `prog evidence`. This does not
 yet reclassify such a finding as `persisting`; that requires deriving
 findings from the full text and is tracked as future work.
 
+The same fail-closed rule applies to registered CLI/MCP text adapters that
+retain only head/tail lines and to payloads that reach the generic finding
+traversal's node or depth bound. Those observations record
+`derivation_windowed`, so a missing finding becomes `unknown`, never
+`resolved`. Within the traversal bound, delta derives every candidate before
+applying its separate 100-entry disclosure cap; the cap can shorten the
+returned `findings` list but cannot manufacture absence.
+
 ## Worked example
 
 The same log goes from an error to a clean run. First, captured without any

@@ -46,7 +46,10 @@ fn delta_findings_for_observation(
     let mut findings = prog_core::ranked_findings(
         payload.as_value(),
         &FindingOptions {
-            limit: 100,
+            // Absence must be evaluated against every candidate the bounded
+            // derivation visited. The observation's CaptureCompleteness is
+            // already forced false when traversal itself hit a bound.
+            limit: usize::MAX,
             identity: FindingIdentityContext {
                 provider: observation.provider.clone(),
                 parser: observation.parser.clone(),
@@ -73,4 +76,48 @@ fn delta_findings_for_observation(
         }));
     }
     Ok(findings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delta_derives_every_finding_within_the_bounded_payload_traversal() {
+        let store_dir = tempfile::tempdir().unwrap();
+        let store = Store::open(store_dir.path()).unwrap();
+        let raw = RawPayload::new(Value::Array(
+            (0..150)
+                .map(|index| json!({"error": format!("failure {index}")}))
+                .collect(),
+        ));
+        let payload = raw.redact(&RedactionPolicy::default()).payload;
+        let payload_hash = store.put_payload(&payload).unwrap();
+        let observation = store
+            .record_observation(NewObservation {
+                payload_hash,
+                availability: EvidenceAvailability::Recoverable,
+                invocation_fingerprint: "same".to_string(),
+                source_id: "fixture".to_string(),
+                operation: "read".to_string(),
+                selection: SelectionCoverage {
+                    scopes: vec!["/".to_string()],
+                    exhaustive: true,
+                    extra: Extra::new(),
+                },
+                capture: CaptureCompleteness::complete(1),
+                source_validity: prog_core::SourceValidity::ConfirmedUnchanged,
+                ..NewObservation::default()
+            })
+            .unwrap();
+
+        let findings = delta_findings_for_observation(&store, &observation).unwrap();
+        assert_eq!(
+            findings
+                .iter()
+                .filter(|finding| finding.kind == "generic_error_field")
+                .count(),
+            150
+        );
+    }
 }

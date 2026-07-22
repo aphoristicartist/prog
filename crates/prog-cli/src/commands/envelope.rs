@@ -73,8 +73,8 @@ fn value_contains_redaction(value: &Value) -> bool {
 pub(crate) fn record_capture(
     store: &Store,
     payload_hash: String,
-    availability: EvidenceAvailability,
-    capture: CaptureCompleteness,
+    mut availability: EvidenceAvailability,
+    mut capture: CaptureCompleteness,
     invocation_fingerprint: String,
     source_id: String,
     operation: String,
@@ -88,6 +88,29 @@ pub(crate) fn record_capture(
     lens: Option<&LensManifest>,
     source_state: Option<SourceStateToken>,
 ) -> Result<String> {
+    if capture.can_prove_absence && availability == EvidenceAvailability::Recoverable {
+        let stop_reason = match store.get_payload(&payload_hash)? {
+            Some(payload) if !finding_derivation_is_complete(payload.as_value()) => {
+                Some(CaptureStopReason::DerivationWindowed)
+            }
+            Some(_) => None,
+            None => {
+                availability = EvidenceAvailability::Unavailable;
+                Some(CaptureStopReason::Unavailable)
+            }
+        };
+        if let Some(stop_reason) = stop_reason {
+            capture.can_prove_absence = false;
+            capture.stop_reason = stop_reason;
+            capture.affected.push(CaptureScope {
+                scope: "payload".to_string(),
+                total_bytes: capture.total_bytes,
+                captured_bytes: capture.captured_bytes,
+                stop_reason,
+                extra: Extra::new(),
+            });
+        }
+    }
     let duration_ms = provenance.as_ref().and_then(|item| item.duration_ms);
     let status = provenance.as_ref().and_then(|item| item.status.clone());
     let captured_at = provenance.as_ref().map(|item| item.captured_at.clone());

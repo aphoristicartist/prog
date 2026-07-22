@@ -3,7 +3,8 @@ use std::path::Path;
 use prog_core::{
     CommandHintConfig, Extra, FindingIdentityContext, FindingOptions, RawPayload, RedactionPolicy,
     SourceSpan, SourceSpanExactness, extract_source_spans,
-    extract_source_spans_with_workspace_root, fingerprint_finding, ranked_findings,
+    extract_source_spans_with_workspace_root, finding_derivation_is_complete, fingerprint_finding,
+    ranked_findings,
 };
 use serde_json::{Value, json};
 
@@ -422,6 +423,70 @@ fn benign_payload_returns_no_findings() {
 
     let findings = ranked_findings(&payload, &FindingOptions::default()).unwrap();
     assert!(findings.is_empty(), "{findings:#?}");
+}
+
+#[test]
+fn finding_derivation_completeness_covers_windows_node_caps_and_depth_caps() {
+    let windowed = json!({
+        "format": "text",
+        "head": ["line 1"],
+        "tail": ["line 21"],
+        "line_count": 21,
+    });
+    assert!(!finding_derivation_is_complete(&windowed));
+
+    let fully_addressable = json!({
+        "format": "text",
+        "head": ["line 1"],
+        "tail": ["line 21"],
+        "lines": (1..=21).map(|line| json!({"number": line})).collect::<Vec<_>>(),
+        "line_count": 21,
+    });
+    assert!(finding_derivation_is_complete(&fully_addressable));
+
+    // The root itself consumes one node from the same 10,000-node budget as
+    // generic finding traversal.
+    assert!(finding_derivation_is_complete(&Value::Array(vec![
+        Value::Null;
+        9_999
+    ])));
+    assert!(!finding_derivation_is_complete(&Value::Array(vec![
+        Value::Null;
+        10_000
+    ])));
+
+    let mut within_depth = Value::Null;
+    for _ in 0..64 {
+        within_depth = Value::Array(vec![within_depth]);
+    }
+    assert!(finding_derivation_is_complete(&within_depth));
+    let beyond_depth = Value::Array(vec![within_depth]);
+    assert!(!finding_derivation_is_complete(&beyond_depth));
+}
+
+#[test]
+fn unlimited_ranking_retains_every_candidate_within_the_derivation_bound() {
+    let payload = Value::Array(
+        (0..150)
+            .map(|index| json!({"error": format!("failure {index}")}))
+            .collect(),
+    );
+    assert!(finding_derivation_is_complete(&payload));
+    let findings = ranked_findings(
+        &payload,
+        &FindingOptions {
+            limit: usize::MAX,
+            ..FindingOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|finding| finding.kind == "generic_error_field")
+            .count(),
+        150
+    );
 }
 
 #[test]
