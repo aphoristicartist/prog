@@ -80,13 +80,14 @@ pub fn compare_observations(
             .cmp(&delta_priority(right.status))
             .then_with(|| left.fingerprint.cmp(&right.fingerprint))
     });
-    findings.truncate(MAX_DELTA_FINDINGS);
     let mut counts = BTreeMap::new();
     for finding in &findings {
         *counts
             .entry(format!("{:?}", finding.status).to_ascii_lowercase())
             .or_insert(0) += 1;
     }
+    let truncated = findings.len() > MAX_DELTA_FINDINGS;
+    findings.truncate(MAX_DELTA_FINDINGS);
     ObservationDelta {
         schema: OBSERVATION_DELTA_SCHEMA.to_string(),
         baseline_observation_id: baseline.observation_id.clone(),
@@ -94,6 +95,7 @@ pub fn compare_observations(
         assessment,
         findings,
         counts,
+        truncated,
         extra: Extra::new(),
     }
 }
@@ -451,6 +453,22 @@ mod tests {
                 (String::from("resolved"), 1)
             ])
         );
+    }
+
+    #[test]
+    fn truncation_discloses_itself_and_counts_reflect_the_full_comparison() {
+        let subject_findings = (0..150)
+            .map(|index| finding(&format!("new-{index}")))
+            .collect::<Vec<_>>();
+        let delta = compare_observations(
+            &observation("a", "same", true),
+            &observation("b", "same", true),
+            &[],
+            &subject_findings,
+        );
+        assert!(delta.truncated);
+        assert_eq!(delta.findings.len(), 100);
+        assert_eq!(delta.counts.get("new"), Some(&150));
     }
 
     #[test]

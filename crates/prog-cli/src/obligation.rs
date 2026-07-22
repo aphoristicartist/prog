@@ -115,7 +115,7 @@ pub(crate) fn evaluate_obligation(
         }
     }
     if let Some(family) = obligation.comparison_family.as_deref()
-        && evidence.invocation_fingerprint != family
+        && evidence.comparison_family.as_deref() != Some(family)
     {
         return Ok(obligation_evaluation(
             obligation,
