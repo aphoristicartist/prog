@@ -34,6 +34,18 @@ pub(crate) fn observe_artifact(
             "redacted_sha256": hex_sha256(&redacted_bytes)
         }),
     )?;
+    // Cache identity includes the payload digest so distinct artifact states
+    // retain distinct entries. Invocation identity must describe how the
+    // artifact was acquired, not what it contained; otherwise every content
+    // change makes a repeated observation incomparable by construction.
+    let invocation_fingerprint = Store::cache_key(
+        "observe",
+        &input.name,
+        &json!({
+            "input": &input.input,
+            "mime": &input.mime,
+        }),
+    )?;
     let payload_hash = store.put_payload(&payload)?;
     let ttl: i64 = args
         .ttl_seconds
@@ -63,7 +75,7 @@ pub(crate) fn observe_artifact(
         payload_hash.clone(),
         availability,
         capture,
-        cache_key.clone(),
+        invocation_fingerprint,
         "observe".to_string(),
         input.name.clone(),
         args.comparison_family.clone(),

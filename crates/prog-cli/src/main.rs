@@ -1083,6 +1083,43 @@ mod capture_lifecycle_tests {
     }
 
     #[test]
+    fn byte_limit_precedes_derivation_window_for_a_truncated_run_stream() {
+        let stdout = RunCapture {
+            stream: "stdout",
+            bytes: vec![b'x'; 64],
+            total_bytes: 100,
+            truncated: true,
+        };
+        let stderr = RunCapture {
+            stream: "stderr",
+            bytes: Vec::new(),
+            total_bytes: 0,
+            truncated: false,
+        };
+        let (availability, capture) = run_capture_completeness(
+            &stdout,
+            &stderr,
+            64,
+            false,
+            &RunProcessStatus::Exited {
+                success: true,
+                code: Some(0),
+                signal: None,
+            },
+            true,
+            false,
+        );
+
+        assert_eq!(availability, EvidenceAvailability::CaptureTruncated);
+        assert_eq!(capture.stop_reason, CaptureStopReason::ByteLimit);
+        assert_eq!(
+            capture.affected[0].stop_reason,
+            CaptureStopReason::ByteLimit
+        );
+        assert!(!capture.can_prove_absence);
+    }
+
+    #[test]
     fn cli_stderr_truncation_uses_diagnostic_capture_accounting() {
         let provenance = provenance(json!({
             "stdout_bytes": 20,

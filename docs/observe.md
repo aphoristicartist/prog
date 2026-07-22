@@ -132,6 +132,14 @@ prog paths pc1_... --prefix /lines
 prog expand pc1_... --path /lines/0/text
 ```
 
+Unlike CLI/MCP text adapters that persist only head/tail finding input, an
+observed text artifact retains every redacted line under `/lines`. Finding
+derivation therefore examines the full stored artifact, not only the preview
+windows. Re-observing the same file or named stdin source also keeps a stable
+invocation fingerprint when its contents change, so `prog delta` can recognize
+a finding that moved to another line as `persisting` rather than treating the
+new payload as an unrelated invocation.
+
 ## Safety
 
 - JSON and NDJSON are redacted through the normal persistence redaction policy.
