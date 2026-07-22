@@ -195,6 +195,11 @@ pub(crate) async fn call_source(
                 capture: prior_observation.capture.clone(),
                 redacted: prior_observation.redacted,
                 source_state: prior_observation.source_state.clone(),
+                // The adapter returned HTTP 304 Not Modified against a known
+                // validator: this is the one case where "unchanged" is
+                // actually proven, matching the "confirmed_unchanged" value
+                // recorded in the envelope's `source_validity` extra below.
+                source_validity: prog_core::SourceValidity::ConfirmedUnchanged,
                 lineage: prog_core::ObservationLineage {
                     revalidates_id: Some(prior_id.clone()),
                     ..prog_core::ObservationLineage::default()
@@ -356,6 +361,22 @@ pub(crate) async fn call_source(
     );
     capture.budget = capture_budget_for_call(&profile, &operation);
     ctx.set_capture(capture.budget.clone());
+    // This branch is reached whenever the adapter did NOT return a 304 (the
+    // confirmed-unchanged case is handled and persisted separately above).
+    // Only a `--refresh` attempt establishes any genuine validity signal
+    // here; a plain (non-refresh) call proves nothing about whether the
+    // source could have drifted, so it stays Unknown.
+    let source_validity = if args.refresh {
+        if received_error {
+            prog_core::SourceValidity::RefreshFailed
+        } else if revalidation.is_some() {
+            prog_core::SourceValidity::SourceChanged
+        } else {
+            prog_core::SourceValidity::ValidatorUnavailable
+        }
+    } else {
+        prog_core::SourceValidity::Unknown
+    };
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
@@ -379,6 +400,7 @@ pub(crate) async fn call_source(
             &call_args,
             &provenance,
         )?,
+        source_validity,
     )?;
 
     let mut cache_disabled_reason = None;
@@ -472,16 +494,10 @@ pub(crate) async fn call_source(
         ctx.max_envelope_bytes(),
     )?;
     if args.refresh {
-        let validity = if received_error {
-            "refresh_failed"
-        } else if revalidation.is_some() {
-            "source_changed"
-        } else {
-            "validator_unavailable"
-        };
-        envelope
-            .extra
-            .insert("source_validity".to_string(), json!(validity));
+        envelope.extra.insert(
+            "source_validity".to_string(),
+            serde_json::to_value(source_validity)?,
+        );
     }
 
     // Auto-pagination: when --pages > 1 on a read-only operation, prefetch up
@@ -652,6 +668,11 @@ pub(crate) async fn call_source(
                         &page_key_args,
                         &page_provenance,
                     )?,
+                    // Prefetched pages belong to the same top-level call as
+                    // page 1; the source-validity determination made for
+                    // page 1 (refresh outcome, or Unknown for a plain call)
+                    // applies uniformly across the whole operation.
+                    source_validity,
                 )?;
                 let page_cursor = if may_cache {
                     let ttl = ttl_seconds(&effective_cache);

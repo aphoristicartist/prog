@@ -87,6 +87,7 @@ pub(crate) fn record_capture(
     parser: Option<String>,
     lens: Option<&LensManifest>,
     source_state: Option<SourceStateToken>,
+    source_validity: prog_core::SourceValidity,
 ) -> Result<String> {
     if capture.can_prove_absence && availability == EvidenceAvailability::Recoverable {
         let stop_reason = match store.get_payload(&payload_hash)? {
@@ -132,6 +133,7 @@ pub(crate) fn record_capture(
             parser,
             lens: lens.map(|item| item.id.clone()),
             source_state,
+            source_validity,
             provenance,
             cache_key,
             ..NewObservation::default()

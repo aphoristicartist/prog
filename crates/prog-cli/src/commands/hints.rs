@@ -51,6 +51,9 @@ pub(crate) fn hints_source(
         None,
         None,
         None,
+        // Discovery/schema-hint path: no source-revalidation signal is
+        // computed here, so this stays the conservative default.
+        prog_core::SourceValidity::Unknown,
     )?;
     entry.observation_id = Some(observation_id.clone());
     let cache_retained = store.put_entry(&cache_key, &entry)?;
