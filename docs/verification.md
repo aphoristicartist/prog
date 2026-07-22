@@ -42,6 +42,7 @@ envelope's `findings`.
 |---|---|
 | `--check` | Human-readable description of the intended check. Required. |
 | `--scope` | Scope the check covers, such as `target` or `regression-suite`. Required. |
+| `--comparison-family` | Canonical invocation family expected for evidence, such as `checkout-log`. Must match the evidence observation's own `--comparison-family` (set via `prog run`) or the obligation evaluates to `stale`. |
 | `--origin-observation` | Baseline observation holding the finding that must disappear. |
 | `--expected-absent-fingerprint` | The finding fingerprint that must be gone. |
 | `--evidence-observation` | The observation used to evaluate the obligation. |
