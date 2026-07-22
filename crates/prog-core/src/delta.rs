@@ -284,6 +284,15 @@ fn source_validity(
     baseline: &ObservationRecord,
     subject: &ObservationRecord,
 ) -> crate::SourceValidity {
+    // A subject-side negative assessment is direct evidence that this later
+    // capture cannot prove source stability. It must win even if an error
+    // response happens to repeat the baseline validator.
+    if !matches!(
+        subject.source_validity,
+        crate::SourceValidity::Unknown | crate::SourceValidity::ConfirmedUnchanged
+    ) {
+        return subject.source_validity;
+    }
     match (&baseline.source_state, &subject.source_state) {
         (Some(left), Some(right))
             if left.source_id == right.source_id
@@ -314,13 +323,9 @@ fn source_validity(
         // capture and could turn a subject marked `source_changed` into a
         // false `confirmed_unchanged` comparison.
         (None, None) => subject.source_validity,
-        // A refresh response may prove that the source changed even if the
-        // new response no longer carries a validator. Conversely,
-        // `confirmed_unchanged` is not trusted when only one side has a token:
-        // the token pair is incomplete, so equality cannot be established.
-        _ if subject.source_validity != crate::SourceValidity::ConfirmedUnchanged => {
-            subject.source_validity
-        }
+        // `confirmed_unchanged` is not trusted when only one side has a
+        // token: the token pair is incomplete, so equality cannot be
+        // established. Negative subject assessments returned above.
         _ => crate::SourceValidity::Unknown,
     }
 }
@@ -498,11 +503,14 @@ mod tests {
         assert!(!delta.assessment.can_prove_absence);
         assert_eq!(delta.findings[0].status, DeltaFindingStatus::Unknown);
 
-        let mut unchanged = changed;
+        baseline.source_validity = crate::SourceValidity::SourceChanged;
+        let mut unchanged = observation("c", "same", true);
+        unchanged.source_id = "api".to_string();
+        unchanged.operation = "get".to_string();
         unchanged.source_state = Some(etag("v1"));
-        // Even a stale per-observation status cannot override two equal,
-        // native source tokens for this exact pair.
-        unchanged.source_validity = crate::SourceValidity::SourceChanged;
+        unchanged.source_validity = crate::SourceValidity::Unknown;
+        // The baseline's capture-time status cannot override two equal,
+        // native source tokens for this later pair.
         let delta = compare_observations(&baseline, &unchanged, &[finding("old")], &[]);
         assert_eq!(
             delta.assessment.source_validity,
@@ -510,6 +518,14 @@ mod tests {
         );
         assert!(delta.assessment.can_prove_absence);
         assert_eq!(delta.findings[0].status, DeltaFindingStatus::Resolved);
+
+        unchanged.source_validity = crate::SourceValidity::RefreshFailed;
+        let delta = compare_observations(&baseline, &unchanged, &[finding("old")], &[]);
+        assert_eq!(
+            delta.assessment.source_validity,
+            crate::SourceValidity::RefreshFailed
+        );
+        assert!(!delta.assessment.can_prove_absence);
     }
 
     #[test]
