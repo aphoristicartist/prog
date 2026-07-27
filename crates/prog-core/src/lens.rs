@@ -83,13 +83,19 @@ pub fn ranked_findings_with_lens(
     };
     validate_lens_manifest(manifest)?;
     let scope = options.scope_path.as_deref().unwrap_or("");
+    // Validate the scope once, here, so the infallible containment check inside
+    // the scan cannot silently turn a malformed scope into "zero findings".
+    parse(scope)?;
     for rule in &manifest.findings {
-        let mut matches = Vec::new();
-        resolve_rule_paths(payload, &parse(&rule.path)?, "", &mut matches, 1_000);
-        for (path, value) in matches {
-            if !is_within(scope, &path)? || !rule_matches_value(rule, value) {
-                continue;
-            }
+        // Select by *content*, not by position. Resolving candidate paths first
+        // and matching afterwards made a wildcard rule blind to everything past
+        // the cap, in document order — so a root cause late in a long log could
+        // never be classified by its lens. The match limit now bounds accepted
+        // findings; a separate, much larger visit budget bounds the traversal
+        // itself so the work stays finite on adversarial payloads.
+        let mut scan = RuleScan::new(scope, rule);
+        resolve_rule_paths(payload, &parse(&rule.path)?, "", &mut scan);
+        for (path, value) in scan.matches {
             let (primary_span, related_spans) =
                 extract_source_spans_with_workspace_root(value, options.workspace_root.as_deref());
             findings.push(Finding {
@@ -136,6 +142,19 @@ pub fn ranked_findings_with_lens(
         }
     }
     let mut findings = best.into_values().collect::<Vec<_>>();
+    // Goal affinity is deliberately ranked *below* confidence and severity: the
+    // caller's goal may reorder equally-strong evidence, but it must never
+    // promote weaker evidence above stronger. Asking for one thing does not
+    // make the evidence for it better.
+    //
+    // Two affinities apply, in order. Kind affinity separates different kinds
+    // at equal confidence; lexical affinity separates findings of the *same*
+    // kind, which is the common case for logs and test output and the reason
+    // `--goal` used to have no observable effect on those payloads.
+    let goal = options.goal.as_deref();
+    let terms = goal_terms(goal);
+    let lexical = goal_lexical_scores(payload, &findings, &terms);
+    let lexical_of = |path: &str| lexical.get(path).copied().unwrap_or(0.0);
     findings.sort_by(|left, right| {
         right
             .confidence
@@ -143,6 +162,16 @@ pub fn ranked_findings_with_lens(
             .unwrap_or(Ordering::Equal)
             .then_with(|| {
                 severity_priority(&right.severity).cmp(&severity_priority(&left.severity))
+            })
+            .then_with(|| {
+                crate::findings::goal_kind_bonus(&right.kind, goal)
+                    .partial_cmp(&crate::findings::goal_kind_bonus(&left.kind, goal))
+                    .unwrap_or(Ordering::Equal)
+            })
+            .then_with(|| {
+                lexical_of(&right.path)
+                    .partial_cmp(&lexical_of(&left.path))
+                    .unwrap_or(Ordering::Equal)
             })
             .then_with(|| left.path.cmp(&right.path))
             .then_with(|| left.kind.cmp(&right.kind))
@@ -380,18 +409,71 @@ fn sanitize_manifest_extra(extra: &Extra) -> Extra {
     redacted.as_object().cloned().unwrap_or_default()
 }
 
+/// Maximum lens findings accepted from one rule. Bounds the *output*.
+const LENS_RULE_MATCH_LIMIT: usize = 1_000;
+
+/// Maximum candidate leaves a single rule may test. Bounds the *work*.
+/// Captures are already capped at 1 MiB per adapter, so this is far above any
+/// real payload; it exists so an adversarial deeply-nested value cannot make
+/// rule resolution unbounded.
+const LENS_RULE_VISIT_BUDGET: usize = 200_000;
+
+/// Content-directed scan state for one lens finding rule.
+///
+/// `scan_complete` records whether the traversal ended because the payload was
+/// exhausted (`true`) or because a bound was hit (`false`). A caller that
+/// reports evidence must not present a bounded scan as an exhaustive one.
+struct RuleScan<'a, 'r> {
+    scope: &'r str,
+    rule: &'r LensFindingRule,
+    matches: Vec<(String, &'a Value)>,
+    visited: usize,
+    scan_complete: bool,
+}
+
+impl<'a, 'r> RuleScan<'a, 'r> {
+    fn new(scope: &'r str, rule: &'r LensFindingRule) -> Self {
+        Self {
+            scope,
+            rule,
+            matches: Vec::new(),
+            visited: 0,
+            scan_complete: true,
+        }
+    }
+
+    fn exhausted(&mut self) -> bool {
+        if self.matches.len() >= LENS_RULE_MATCH_LIMIT || self.visited >= LENS_RULE_VISIT_BUDGET {
+            self.scan_complete = false;
+            return true;
+        }
+        false
+    }
+
+    /// Test one resolved leaf and keep it only when the rule actually matches.
+    fn offer(&mut self, path: &str, value: &'a Value) {
+        self.visited = self.visited.saturating_add(1);
+        if !is_within(self.scope, path).unwrap_or(false) {
+            return;
+        }
+        if !rule_matches_value(self.rule, value) {
+            return;
+        }
+        self.matches.push((path.to_string(), value));
+    }
+}
+
 fn resolve_rule_paths<'a>(
     value: &'a Value,
     segments: &[String],
     path: &str,
-    out: &mut Vec<(String, &'a Value)>,
-    limit: usize,
+    scan: &mut RuleScan<'a, '_>,
 ) {
-    if out.len() >= limit {
+    if scan.exhausted() {
         return;
     }
     let Some((head, tail)) = segments.split_first() else {
-        out.push((path.to_string(), value));
+        scan.offer(path, value);
         return;
     };
     if head == "*" {
@@ -402,10 +484,9 @@ fn resolve_rule_paths<'a>(
                         item,
                         tail,
                         &crate::pointer::push(path, &index.to_string()),
-                        out,
-                        limit,
+                        scan,
                     );
-                    if out.len() >= limit {
+                    if scan.exhausted() {
                         break;
                     }
                 }
@@ -414,14 +495,8 @@ fn resolve_rule_paths<'a>(
                 let mut keys = map.keys().collect::<Vec<_>>();
                 keys.sort();
                 for key in keys {
-                    resolve_rule_paths(
-                        &map[key],
-                        tail,
-                        &crate::pointer::push(path, key),
-                        out,
-                        limit,
-                    );
-                    if out.len() >= limit {
+                    resolve_rule_paths(&map[key], tail, &crate::pointer::push(path, key), scan);
+                    if scan.exhausted() {
                         break;
                     }
                 }
@@ -433,7 +508,7 @@ fn resolve_rule_paths<'a>(
     match value {
         Value::Object(map) => {
             if let Some(child) = map.get(head) {
-                resolve_rule_paths(child, tail, &crate::pointer::push(path, head), out, limit);
+                resolve_rule_paths(child, tail, &crate::pointer::push(path, head), scan);
             }
         }
         Value::Array(items) => {
@@ -442,7 +517,7 @@ fn resolve_rule_paths<'a>(
                 .ok()
                 .and_then(|index| items.get(index))
             {
-                resolve_rule_paths(child, tail, &crate::pointer::push(path, head), out, limit);
+                resolve_rule_paths(child, tail, &crate::pointer::push(path, head), scan);
             }
         }
         _ => {}
@@ -566,6 +641,88 @@ fn count_redactions(value: &Value, depth: usize, visited: &mut usize) -> u64 {
             .sum(),
         _ => 0,
     }
+}
+
+/// Words ignored when deriving goal terms. Deliberately tiny: this is a
+/// tiebreaker, not a retrieval engine, and a longer list would be one more
+/// thing that silently changes ranking.
+const GOAL_STOP_WORDS: &[&str] = &[
+    "the", "and", "for", "with", "from", "this", "that", "find", "show", "list", "what", "which",
+    "why", "how", "into", "over", "only", "all", "any", "get",
+];
+
+/// Bytes of a candidate value scanned for goal terms. Bounds the work; the
+/// scan is a ranking hint, not evidence, so a partial scan is acceptable.
+const GOAL_TEXT_SCAN_BYTES: usize = 4_096;
+
+/// Maximum distinct goal terms considered.
+const GOAL_TERM_LIMIT: usize = 8;
+
+/// Deterministic, model-free goal terms: lowercase alphanumeric words of at
+/// least three characters, minus stop words, deduplicated, in first-seen order.
+fn goal_terms(goal: Option<&str>) -> Vec<String> {
+    let Some(goal) = goal else {
+        return Vec::new();
+    };
+    let mut terms: Vec<String> = Vec::new();
+    for word in goal.split(|character: char| !character.is_ascii_alphanumeric()) {
+        if word.len() < 3 {
+            continue;
+        }
+        let word = word.to_ascii_lowercase();
+        if GOAL_STOP_WORDS.contains(&word.as_str()) || terms.contains(&word) {
+            continue;
+        }
+        terms.push(word);
+        if terms.len() >= GOAL_TERM_LIMIT {
+            break;
+        }
+    }
+    terms
+}
+
+/// Fraction of goal terms present in each finding's own value, keyed by path.
+/// Empty when no usable goal terms exist, which keeps ordering byte-identical
+/// to the no-goal case.
+fn goal_lexical_scores(
+    payload: &Value,
+    findings: &[Finding],
+    terms: &[String],
+) -> BTreeMap<String, f64> {
+    let mut scores = BTreeMap::new();
+    if terms.is_empty() {
+        return scores;
+    }
+    for finding in findings {
+        if scores.contains_key(&finding.path) {
+            continue;
+        }
+        let score = crate::pointer::get(payload, &finding.path)
+            .ok()
+            .flatten()
+            .map_or(0.0, |value| goal_overlap(value, terms));
+        scores.insert(finding.path.clone(), score);
+    }
+    scores
+}
+
+fn goal_overlap(value: &Value, terms: &[String]) -> f64 {
+    let text = match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    let cut = text
+        .char_indices()
+        .map(|(index, _)| index)
+        .take_while(|index| *index <= GOAL_TEXT_SCAN_BYTES)
+        .last()
+        .unwrap_or(0);
+    let text = text[..cut].to_ascii_lowercase();
+    let hits = terms
+        .iter()
+        .filter(|term| text.contains(term.as_str()))
+        .count();
+    hits as f64 / terms.len() as f64
 }
 
 fn severity_priority(severity: &Option<String>) -> u8 {

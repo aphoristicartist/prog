@@ -41,7 +41,7 @@
     "kind": "log_error",
     "path": "/errors/0/message",
     "confidence": 0.72,
-    "reason": "string contains an explicit ERROR or FATAL log line",
+    "reason": "string contains an explicit ERROR log line",
     "title": "log error",
     "severity": "error",
     "source": "generic.string_pattern",

@@ -1802,11 +1802,24 @@ fn string_signal(text: &str) -> Option<Signal> {
             severity: Some("error"),
             source: "generic.string_pattern",
         })
+    } else if has_explicit_log_fatal_line(text) {
+        // A FATAL/PANIC line reports an unrecoverable condition; an ERROR line
+        // is frequently a retried, non-causal step. Ranking them equally buried
+        // real root causes underneath transient retry noise, so they are now
+        // distinct signals with distinct severities.
+        Some(Signal {
+            kind: "log_fatal",
+            confidence: 0.82,
+            reason: "string contains an explicit FATAL or PANIC log line",
+            title: "log fatal",
+            severity: Some("fatal"),
+            source: "generic.string_pattern",
+        })
     } else if has_explicit_log_error_line(text) {
         Some(Signal {
             kind: "log_error",
             confidence: 0.72,
-            reason: "string contains an explicit ERROR or FATAL log line",
+            reason: "string contains an explicit ERROR log line",
             title: "log error",
             severity: Some("error"),
             source: "generic.string_pattern",
@@ -1888,6 +1901,16 @@ fn score_candidate(candidate: &Candidate, intent: GoalIntent) -> f64 {
     score.clamp(0.0, 1.25)
 }
 
+/// Goal-affinity weight for a finding kind.
+///
+/// Exposed for the lens merge in [`crate::lens`] so lens-provided findings
+/// participate in goal-directed ordering. Lens findings previously sorted on
+/// declared confidence alone, which made `--goal` inert for exactly the
+/// payloads lenses cover (logs, test output).
+pub(crate) fn goal_kind_bonus(kind: &str, goal: Option<&str>) -> f64 {
+    kind_bonus(kind, GoalIntent::from_text(goal.unwrap_or("")))
+}
+
 fn kind_bonus(kind: &str, intent: GoalIntent) -> f64 {
     match intent {
         GoalIntent::RootCause => match kind {
@@ -1897,6 +1920,7 @@ fn kind_bonus(kind: &str, intent: GoalIntent) -> f64 {
             | "python_traceback"
             | "command_timeout"
             | "command_spawn_error"
+            | "log_fatal"
             | "test_failure" => 0.12,
             "test_name" => 0.04,
             "diff_hunk" => -0.05,
@@ -1920,6 +1944,7 @@ fn kind_bonus(kind: &str, intent: GoalIntent) -> f64 {
             _ => 0.0,
         },
         GoalIntent::Logs => match kind {
+            "log_fatal" => 0.10,
             "stack_trace" | "stderr_error" | "exception" | "warning" => 0.08,
             _ => 0.0,
         },
@@ -2089,16 +2114,26 @@ fn contains_failure_word(normalized: &str) -> bool {
 }
 
 fn has_explicit_log_error_line(text: &str) -> bool {
+    has_explicit_log_line(text, &["error ", "error:"], &["ERROR"])
+}
+
+/// Fatal-severity counterpart of [`has_explicit_log_error_line`]. Kept disjoint
+/// from it so one line yields exactly one severity classification.
+fn has_explicit_log_fatal_line(text: &str) -> bool {
+    has_explicit_log_line(
+        text,
+        &["fatal ", "fatal:", "panic ", "panic:"],
+        &["FATAL", "PANIC"],
+    )
+}
+
+fn has_explicit_log_line(text: &str, prefixes: &[&str], tokens: &[&str]) -> bool {
     text.lines().any(|line| {
         let normalized = line.trim_start().to_ascii_lowercase();
-        ["error ", "error:", "fatal ", "fatal:"]
-            .iter()
-            .any(|prefix| normalized.starts_with(prefix))
+        prefixes.iter().any(|prefix| normalized.starts_with(prefix))
             || line.split_whitespace().any(|token| {
-                matches!(
-                    token.trim_matches(|character: char| !character.is_ascii_alphabetic()),
-                    "ERROR" | "FATAL"
-                )
+                let token = token.trim_matches(|character: char| !character.is_ascii_alphabetic());
+                tokens.contains(&token)
             })
     })
 }
