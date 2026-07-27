@@ -553,26 +553,10 @@ pub(crate) fn envelope_for_payload(
         policy = next;
     }
     let mut envelope = last.expect("envelope loop always builds at least once");
-    if serde_json::to_vec(&envelope)?.len() > policy.max_envelope_bytes {
-        envelope.schema_hints.clear();
-        envelope.provenance = None;
-        envelope.findings.truncate(1);
-        envelope.next_actions.truncate(4);
-        envelope.omitted.truncate(8);
-        envelope.warnings.truncate(4);
-        envelope
-            .warnings
-            .push("envelope metadata compacted to enforce max_envelope_bytes".to_string());
-        finalize_envelope_bytes(&mut envelope)?;
-    }
-    if serde_json::to_vec(&envelope)?.len() > policy.max_envelope_bytes {
-        envelope.data_preview =
-            Value::String("«preview omitted to enforce envelope budget»".to_string());
-        envelope.omitted.clear();
-        envelope.next_actions.clear();
-        envelope.warnings.truncate(1);
-        finalize_envelope_bytes(&mut envelope)?;
-    }
+    // One ladder, not three. The previous three-stage sequence dropped findings
+    // before `next_actions` and `data_preview`, and each stage truncated
+    // `warnings` — so the highest-value field was surrendered first and the
+    // note explaining it could be evicted by the next stage.
     compact_envelope_to_budget(&mut envelope, max_envelope_bytes)?;
     Ok(envelope)
 }
@@ -872,38 +856,134 @@ pub(crate) fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Resu
     ))
 }
 
+/// Bytes held back from the working budget so the degradation note always
+/// fits. Without a reserve, recording *that* the envelope was degraded could
+/// itself push the envelope back over the ceiling.
+const DEGRADATION_NOTE_RESERVE: usize = 220;
+
+fn over_budget(envelope: &DisclosureEnvelope, budget: usize) -> Result<bool> {
+    Ok(serde_json::to_vec(envelope)?.len() > budget)
+}
+
+/// Shrink an envelope to `max_envelope_bytes`, surrendering the least valuable
+/// content first and recording everything it dropped.
+///
+/// Ordering matters more than it looks. The previous ladder popped `findings`
+/// **first** — before `next_actions` and `data_preview`, which are typically
+/// several times larger — and emitted no warning while doing so. At the default
+/// 16 KiB budget a multi-error compile failure could therefore return
+/// `findings: []` with no indication anything had been withheld, which reads to
+/// a caller as "no failures detected". That is the one defect class this
+/// project treats as unacceptable: quietly claiming less went wrong than did.
+///
+/// Findings are now surrendered last, never below one while any other droppable
+/// field remains, and never silently.
 pub(crate) fn compact_envelope_to_budget(
     envelope: &mut DisclosureEnvelope,
     max_envelope_bytes: usize,
 ) -> Result<()> {
-    let budget = max_envelope_bytes;
-    while serde_json::to_vec(envelope)?.len() > budget && !envelope.findings.is_empty() {
-        envelope.findings.pop();
+    if !over_budget(envelope, max_envelope_bytes)? {
+        finalize_envelope_bytes(envelope)?;
+        return Ok(());
     }
-    if serde_json::to_vec(envelope)?.len() > budget
+    // Work against a reduced budget so the note describing the degradation is
+    // guaranteed to fit inside the real ceiling.
+    let budget = max_envelope_bytes.saturating_sub(DEGRADATION_NOTE_RESERVE);
+    let mut dropped: Vec<String> = Vec::new();
+
+    // 1. next_actions — fully derivable from `findings` plus the cursor, and
+    //    usually the largest single field.
+    if over_budget(envelope, budget)? && !envelope.next_actions.is_empty() {
+        let before = envelope.next_actions.len();
+        envelope.next_actions.truncate(2);
+        if over_budget(envelope, budget)? {
+            envelope.next_actions.clear();
+        }
+        dropped.push(format!(
+            "next_actions:{}",
+            before - envelope.next_actions.len()
+        ));
+    }
+
+    // 2. recipe expansion detail — reproducible from the recorded command.
+    if over_budget(envelope, budget)?
         && let Some(recipe) = envelope
             .extra
             .get_mut("recipe")
             .and_then(Value::as_object_mut)
+        && recipe.remove("expanded_commands").is_some()
     {
-        recipe.remove("expanded_commands");
+        dropped.push("recipe.expanded_commands".to_string());
     }
-    if serde_json::to_vec(envelope)?.len() > budget {
-        envelope.data_preview = json!("preview omitted to enforce envelope budget");
-        envelope.omitted.truncate(4);
-        envelope.next_actions.truncate(4);
-        envelope.warnings.truncate(2);
-    }
-    if serde_json::to_vec(envelope)?.len() > budget {
-        // Keep the observation identity and cursor, which are the recovery
-        // path for the payload, while dropping derivable presentation detail.
-        envelope.provenance = None;
-        envelope.cache = None;
+
+    // 3. schema_hints — a description of the payload, not evidence from it.
+    if over_budget(envelope, budget)? && !envelope.schema_hints.is_empty() {
         envelope.schema_hints.clear();
-        envelope.extra.clear();
-        envelope.omitted.truncate(1);
-        envelope.next_actions.truncate(1);
-        envelope.warnings.truncate(1);
+        dropped.push("schema_hints".to_string());
+    }
+
+    // 4. omitted — the cursor still addresses everything it described.
+    if over_budget(envelope, budget)? && !envelope.omitted.is_empty() {
+        let before = envelope.omitted.len();
+        envelope.omitted.truncate(2);
+        if over_budget(envelope, budget)? {
+            envelope.omitted.clear();
+        }
+        dropped.push(format!("omitted:{}", before - envelope.omitted.len()));
+    }
+
+    // 5. provenance / cache / extra — presentation detail, not recovery path.
+    if over_budget(envelope, budget)? {
+        if envelope.provenance.take().is_some() {
+            dropped.push("provenance".to_string());
+        }
+        if envelope.cache.take().is_some() {
+            dropped.push("cache".to_string());
+        }
+        if !envelope.extra.is_empty() {
+            envelope.extra.clear();
+            dropped.push("extra".to_string());
+        }
+    }
+
+    // 6. data_preview — recoverable through the cursor.
+    if over_budget(envelope, budget)? {
+        envelope.data_preview = json!("preview omitted to enforce envelope budget");
+        dropped.push("data_preview".to_string());
+    }
+
+    // 7. findings — last, and only down to one while anything else remains.
+    if over_budget(envelope, budget)? && envelope.findings.len() > 1 {
+        let before = envelope.findings.len();
+        while over_budget(envelope, budget)? && envelope.findings.len() > 1 {
+            envelope.findings.pop();
+        }
+        dropped.push(format!("findings:{}", before - envelope.findings.len()));
+    }
+
+    // 8. Last resort: a single finding still does not fit. Drop it, but the
+    //    caller is told — the ceiling is hard, the silence is not.
+    if over_budget(envelope, budget)? && !envelope.findings.is_empty() {
+        let before = envelope.findings.len();
+        envelope.findings.clear();
+        dropped.push(format!("findings:{before}(all)"));
+    }
+
+    // `warnings` is never truncated to save bytes. It is the only channel that
+    // explains a degraded view, and the reserve above exists to keep it whole.
+    if !dropped.is_empty() {
+        let mut note = format!(
+            "envelope compacted to enforce max_envelope_bytes; dropped {}",
+            dropped.join(", ")
+        );
+        note.truncate(
+            note.char_indices()
+                .map(|(index, _)| index)
+                .take_while(|index| *index <= DEGRADATION_NOTE_RESERVE - 20)
+                .last()
+                .unwrap_or(0),
+        );
+        envelope.warnings.push(note);
     }
     finalize_envelope_bytes(envelope)?;
     Ok(())
