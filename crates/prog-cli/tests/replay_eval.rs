@@ -106,6 +106,7 @@ fn replay_eval_smoke() {
     let report = build_report(vec![
         multi_iteration_resolution_scenario(),
         narrowed_rerun_scenario(),
+        realistic_payload_delta_scenario(),
         no_benefit_control_scenario(),
         stale_readiness_scenario(),
         derivation_window_moved_finding_scenario(),
@@ -400,6 +401,154 @@ fn narrowed_rerun_scenario() -> ScenarioReport {
         scenario_id: "narrowed_rerun_no_false_resolved".to_string(),
         category: "narrowed_rerun".to_string(),
         strategies: vec![strategy_metric("prog_delta", delta.stdout.len() as u64, 3)],
+        checks,
+    }
+}
+
+/// Correctness *and* cost on the same payload.
+///
+/// Every other scenario here runs on payloads small enough that prog's envelope
+/// overhead exceeds the raw output, so the suite proved conservative-delta
+/// correctness without ever showing it was affordable. Token-economics proved
+/// affordability without testing correctness. This scenario closes that gap: a
+/// realistically sized log across two iterations, where the delta must classify
+/// correctly *and* deliver fewer bytes than re-reading both raw payloads.
+fn realistic_payload_delta_scenario() -> ScenarioReport {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = root.join(".prog-state");
+    let store_arg = store.to_str().unwrap();
+    let script = root.join("emit.py");
+    fs::write(
+        &script,
+        "from pathlib import Path\nimport sys\nprint(Path(sys.argv[1]).read_text(), end='')\n",
+    )
+    .unwrap();
+    let state = root.join("state.txt");
+
+    // ~1,400 lines of realistic noise around two distinct failures. Beta is
+    // fixed between iterations; alpha persists. The target lines sit past index
+    // 1,000 so this also fails if lens rules regress to resolving candidate
+    // paths in document order before testing content.
+    let build = |include_beta: bool| {
+        let mut lines = Vec::new();
+        for index in 0..1_400usize {
+            if index == 1_180 {
+                lines.push(format!(
+                    "svc-alpha-{index}: ERROR checkout handler failed upstream timeout {}",
+                    "a".repeat(48)
+                ));
+            } else if index == 1_240 && include_beta {
+                lines.push(format!(
+                    "svc-beta-{index}: ERROR inventory handler failed null reference {}",
+                    "b".repeat(48)
+                ));
+            } else {
+                lines.push(format!(
+                    "svc-noise-{index}: request completed ok {}",
+                    "n".repeat(48)
+                ));
+            }
+        }
+        lines.join("\n") + "\n"
+    };
+
+    let iterations = [build(true), build(false)];
+    let mut observation_ids = Vec::new();
+    let mut prog_bytes = 0u64;
+    let mut raw_bytes = 0u64;
+    let mut calls = 0u64;
+    for content in &iterations {
+        fs::write(&state, content).unwrap();
+        raw_bytes += content.len() as u64;
+        let run = prog_in_dir(
+            root,
+            &[
+                "--dir",
+                store_arg,
+                "run",
+                "--selection-scope",
+                "full-suite",
+                "--selection-exhaustive",
+                "--",
+                "python3",
+                script.to_str().unwrap(),
+                state.to_str().unwrap(),
+            ],
+        );
+        assert!(run.status.success(), "{}", stdout(&run));
+        prog_bytes += run.stdout.len() as u64;
+        calls += 1;
+        let value: Value = serde_json::from_slice(&run.stdout).unwrap();
+        observation_ids.push(
+            value["observation"]["observation_id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+
+    let delta = prog_in_dir(
+        root,
+        &[
+            "--dir",
+            store_arg,
+            "delta",
+            &observation_ids[0],
+            &observation_ids[1],
+        ],
+    );
+    assert!(delta.status.success(), "{}", stdout(&delta));
+    prog_bytes += delta.stdout.len() as u64;
+    calls += 1;
+    let delta_value: Value = serde_json::from_slice(&delta.stdout).unwrap();
+
+    let mut checks = BTreeMap::new();
+    // The check this suite never had: the moat has to be cheaper than not
+    // having it. Every other scenario runs on payloads too small for this to be
+    // true, so a regression that made delta correct but unaffordable would have
+    // passed silently.
+    checks.insert(
+        "prog_delta_cheaper_than_raw_reread".to_string(),
+        prog_bytes < raw_bytes,
+    );
+    // At this payload size the adapter windows the capture, so absence is *not*
+    // provable. That is the conservative rule working, and it is the point of
+    // this scenario: the honest answer at scale is "cannot prove", not
+    // "resolved". These three checks pin that behavior so a future change
+    // cannot quietly start claiming resolution on a windowed capture.
+    checks.insert(
+        "windowed_capture_refuses_to_prove_absence".to_string(),
+        delta_value["assessment"]["can_prove_absence"] == false,
+    );
+    checks.insert(
+        "assessment_names_the_incompleteness".to_string(),
+        delta_value["assessment"]["reasons"]
+            .as_array()
+            .is_some_and(|reasons| {
+                reasons.iter().any(|reason| {
+                    reason.as_str().is_some_and(|text| {
+                        text.contains("incomplete") || text.contains("truncated")
+                    })
+                })
+            }),
+    );
+    checks.insert(
+        "no_finding_is_reported_resolved".to_string(),
+        delta_value["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|finding| finding["status"] != "resolved"),
+    );
+
+    ScenarioReport {
+        scenario_id: "realistic_payload_delta".to_string(),
+        category: "correctness_and_cost".to_string(),
+        strategies: vec![
+            strategy_metric("raw", raw_bytes, 2),
+            strategy_metric("prog_delta", prog_bytes, calls),
+        ],
         checks,
     }
 }

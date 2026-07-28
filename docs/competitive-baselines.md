@@ -8,14 +8,14 @@ Regenerate this report and the raw metrics with `PROG_BASELINE_EVAL_UPDATE=1 car
 
 | Strategy | Correct | Scenarios | Input tokens | Output tokens | Tool calls | Expansions | Cache hits | Est. Fable cost |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| raw_context | 10 | 10 | 324949 | 640 | 0 | 0 | 0 | 3.281490 |
-| head_tail_truncation | 1 | 10 | 9231 | 64 | 0 | 0 | 0 | 0.095510 |
-| native_field_selection | 8 | 10 | 423 | 512 | 10 | 0 | 0 | 0.029830 |
-| rtk_grep_filter | 10 | 10 | 299946 | 640 | 10 | 0 | 0 | 3.031460 |
-| caveman_terse_output | 10 | 10 | 324949 | 80 | 0 | 0 | 0 | 3.253490 |
-| prog_envelope_only | 1 | 10 | 16536 | 64 | 10 | 0 | 4 | 0.168560 |
-| prog_paths_expand | 10 | 10 | 26933 | 640 | 30 | 10 | 20 | 0.301330 |
-| prog_repeated_cache | 10 | 10 | 28235 | 640 | 30 | 20 | 20 | 0.314350 |
+| raw_context | 11 | 11 | 360543 | 704 | 0 | 0 | 0 | 3.640630 |
+| head_tail_truncation | 1 | 11 | 10255 | 64 | 0 | 0 | 0 | 0.105750 |
+| native_field_selection | 8 | 11 | 423 | 512 | 10 | 0 | 0 | 0.029830 |
+| rtk_grep_filter | 10 | 11 | 300915 | 640 | 11 | 0 | 0 | 3.041150 |
+| caveman_terse_output | 11 | 11 | 360543 | 88 | 0 | 0 | 0 | 3.609830 |
+| prog_envelope_only | 1 | 11 | 23540 | 64 | 11 | 0 | 4 | 0.238600 |
+| prog_paths_expand | 11 | 11 | 46643 | 704 | 33 | 11 | 22 | 0.501630 |
+| prog_repeated_cache | 11 | 11 | 53035 | 704 | 33 | 22 | 22 | 0.565550 |
 
 ## Scenarios
 
@@ -31,6 +31,7 @@ Regenerate this report and the raw metrics with `PROG_BASELINE_EVAL_UPDATE=1 car
 | log-line-180 | Text log | `/lines/180/text` (line 180) | false |
 | sarif-report-message | Structured report | `/runs/0/results/90/message/text` (JSON pointer /runs/0/results/90/message/text) | false |
 | tiny-baseline-counterexample | Tiny JSON | `/answer` (JSON pointer /answer) | true |
+| unknown-target-buried-fatal | Text log | `/lines/1200/text` (line 1201) | false |
 
 ## Wins, Losses, And Counterexamples
 
@@ -39,12 +40,3 @@ Regenerate this report and the raw metrics with `PROG_BASELINE_EVAL_UPDATE=1 car
 - Caveman-style terse output reduces answer tokens but leaves raw tool input cost unchanged.
 - `prog_envelope_only` intentionally loses when the bounded first view hides required evidence.
 - `prog_paths_expand` and `prog_repeated_cache` solve every scenario here, but the tiny payload counterexample is cheaper as raw context.
-
-## Pagination (auto-fetch under the envelope budget)
-
-A separate, self-contained baseline (`crates/prog-cli/tests/competitive_baselines.rs::pagination_competitive_baseline_vs_raw_page_by_page`) compares `prog call --pages N` against raw page-by-page fetching over a 5-page cursor-paginated endpoint (each page ~2 KiB).
-
-- **Correctness parity**: every page's evidence is recoverable through its own `pc1_` per-page cursor (surfaced in `envelope.pagination.pages[].cursor`), so the envelope budget never hides data — correctness matches raw.
-- **Cost win**: `prog --pages` emits a single bounded envelope (page-1 preview + pagination metadata; pages N>=2 contribute only omitted-region counts), whose approx-token cost is strictly less than the raw concatenation of all page bodies. Raw page-by-page pays the full input cost of every page up front.
-
-This rows is maintained as an executable assertion rather than a regenerated metric because the comparison is structural (cheaper-and-equally-correct), not a dollar figure.

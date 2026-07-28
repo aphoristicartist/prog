@@ -46,6 +46,17 @@ struct BaselineScenario {
     evidence_range: String,
     answer: String,
     counterexample: bool,
+    /// Field selector a caller could plausibly write *before* reading the
+    /// artifact. `None` means no selector is derivable — the unknown-path case.
+    ///
+    /// This exists because every baseline used to be handed
+    /// `evidence_path`/`answer` directly, i.e. the answer it was supposed to
+    /// find. That made `native_field_selection` and `rtk_grep_filter` look
+    /// unbeatable while measuring a situation prog does not claim to serve.
+    known_selector: Option<String>,
+    /// Grep term a caller could plausibly guess before reading the artifact.
+    /// `None` means no term is derivable.
+    known_grep_term: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -267,6 +278,18 @@ async fn setup_scenarios(root: &Path, keep_servers: &mut Vec<MockServer>) -> Vec
     scenarios.push(report_scenario());
     scenarios.push(tiny_counterexample_scenario());
 
+    // Every scenario above is a *known-target* task: the caller can already name
+    // the field or the grep term. Granting the oracle explicitly keeps their
+    // historical numbers byte-identical while making the assumption visible.
+    for scenario in &mut scenarios {
+        scenario.known_selector = Some(scenario.evidence_path.clone());
+        scenario.known_grep_term = Some(scenario.answer.clone());
+    }
+
+    // Pushed after the loop so it keeps its `None`s: the unknown-target case,
+    // where the caller cannot name the field or guess the term in advance.
+    scenarios.push(unknown_target_scenario());
+
     scenarios
 }
 
@@ -362,6 +385,8 @@ fn item_scenarios(
                 evidence_range: format!("JSON pointer /items/{index}/{field}"),
                 answer,
                 counterexample: false,
+                known_selector: None,
+                known_grep_term: None,
             }
         })
         .collect()
@@ -399,6 +424,8 @@ fn log_scenario() -> BaselineScenario {
         evidence_range: "line 180".to_string(),
         answer: "trace_id=log-target-180".to_string(),
         counterexample: false,
+        known_selector: None,
+        known_grep_term: None,
     }
 }
 
@@ -433,6 +460,8 @@ fn diff_scenario() -> BaselineScenario {
         evidence_range: format!("diff line {line_index}"),
         answer: "diff-target-96".to_string(),
         counterexample: false,
+        known_selector: None,
+        known_grep_term: None,
     }
 }
 
@@ -470,6 +499,8 @@ fn report_scenario() -> BaselineScenario {
         evidence_range: "JSON pointer /runs/0/results/90/message/text".to_string(),
         answer: "report-target-critical-null-deref".to_string(),
         counterexample: false,
+        known_selector: None,
+        known_grep_term: None,
     }
 }
 
@@ -490,6 +521,61 @@ fn tiny_counterexample_scenario() -> BaselineScenario {
         evidence_range: "JSON pointer /answer".to_string(),
         answer: "tiny-baseline-answer".to_string(),
         counterexample: true,
+        known_selector: None,
+        known_grep_term: None,
+    }
+}
+
+/// The case the product actually claims to serve: a long, noisy artifact whose
+/// causal line is not guessable from the prompt.
+///
+/// The decoys say `ERROR` and are explicitly retryable; the one causal line says
+/// `FATAL` and is not. An agent that has not read the artifact can plausibly
+/// guess `ERROR` — and that guess returns 30 wrong lines and misses the answer.
+/// No field selector exists at all, because the artifact is line-oriented text.
+fn unknown_target_scenario() -> BaselineScenario {
+    // The target sits past index 1000 on purpose: lens finding rules used to
+    // resolve candidate paths in document order up to a fixed cap and only then
+    // test content, which made a late root cause unclassifiable. This scenario
+    // fails if that regression returns.
+    let target = 1_200usize;
+    let lines = (0..1_400usize)
+        .map(|index| {
+            // Deliberately free-form: no commas, no tabs, and a variable-width
+            // leading token, so this stays a text log rather than tripping
+            // delimited/aligned table inference.
+            if index == target {
+                format!(
+                    "svc-fatal-{index}: FATAL commit aborted checksum mismatch in page 8821 data corruption {}",
+                    "f".repeat(64)
+                )
+            } else if index % 45 == 0 {
+                format!(
+                    "svc-retry-{index}: ERROR transient retry 3 of 5 backing off {}",
+                    "r".repeat(64)
+                )
+            } else {
+                format!("svc-noise-{index}: request completed ok {}", "n".repeat(64))
+            }
+        })
+        .collect::<Vec<_>>();
+    let raw = lines.join("\n").into_bytes();
+    BaselineScenario {
+        id: "unknown-target-buried-fatal".to_string(),
+        prompt: "Find the root cause of the failure in this log.".to_string(),
+        artifact: "Text log".to_string(),
+        source: BaselineSource::Observe {
+            name: "baseline-unknown-target".to_string(),
+            mime: "text/plain".to_string(),
+            bytes: raw.clone(),
+        },
+        raw_bytes: raw,
+        evidence_path: format!("/lines/{target}/text"),
+        evidence_range: format!("line {}", target + 1),
+        answer: "checksum mismatch".to_string(),
+        counterexample: false,
+        known_selector: None,
+        known_grep_term: Some("ERROR".to_string()),
     }
 }
 
@@ -544,8 +630,28 @@ fn truncation_metric(scenario: &BaselineScenario) -> BaselineMetric {
 }
 
 fn native_field_metric(scenario: &BaselineScenario) -> BaselineMetric {
+    // Select with what the caller could know in advance, not with the answer.
+    let Some(selector) = scenario.known_selector.as_deref() else {
+        return metric(
+            scenario,
+            "native_field_selection",
+            MetricInput {
+                correct: false,
+                input_bytes: 0,
+                output_tokens: answer_output_tokens("native_field_selection", false),
+                tool_calls: 0,
+                expansion_count: 0,
+                cache_hits: 0,
+                wall_time_ms: 0,
+                notes: vec![
+                    "unavailable: no field selector is derivable before reading the artifact"
+                        .to_string(),
+                ],
+            },
+        );
+    };
     let filtered = if let Ok(value) = serde_json::from_slice::<Value>(&scenario.raw_bytes) {
-        serde_json::to_vec(&extract_json_path(&value, &scenario.evidence_path)).unwrap_or_default()
+        serde_json::to_vec(&extract_json_path(&value, selector)).unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -567,14 +673,39 @@ fn native_field_metric(scenario: &BaselineScenario) -> BaselineMetric {
 }
 
 fn rtk_filter_metric(scenario: &BaselineScenario) -> BaselineMetric {
+    // Grep for what the caller could guess in advance, not for the answer.
+    let Some(term) = scenario.known_grep_term.as_deref() else {
+        return metric(
+            scenario,
+            "rtk_grep_filter",
+            MetricInput {
+                correct: false,
+                input_bytes: 0,
+                output_tokens: answer_output_tokens("rtk_grep_filter", false),
+                tool_calls: 0,
+                expansion_count: 0,
+                cache_hits: 0,
+                wall_time_ms: 0,
+                notes: vec![
+                    "unavailable: no grep term is derivable before reading the artifact"
+                        .to_string(),
+                ],
+            },
+        );
+    };
     let text = String::from_utf8_lossy(&scenario.raw_bytes);
     let filtered = text
         .lines()
-        .filter(|line| line.contains(&scenario.answer))
+        .filter(|line| line.contains(term))
         .collect::<Vec<_>>()
         .join("\n")
         .into_bytes();
     let correct = contains_answer(&filtered, &scenario.answer);
+    let note = if correct {
+        "wins on line-oriented artifacts when the grep term is known"
+    } else {
+        "a plausible pre-read grep term returned matches but missed the causal line"
+    };
     metric(
         scenario,
         "rtk_grep_filter",
@@ -586,7 +717,7 @@ fn rtk_filter_metric(scenario: &BaselineScenario) -> BaselineMetric {
             expansion_count: 0,
             cache_hits: 0,
             wall_time_ms: 3,
-            notes: vec!["wins on line-oriented artifacts when the grep term is known".to_string()],
+            notes: vec![note.to_string()],
         },
     )
 }
