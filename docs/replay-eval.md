@@ -12,7 +12,7 @@ This is a baseline slice of #121's full scenario matrix. The HTTP/API snapshot, 
 
 ## Summary
 
-5 scenarios, 16/16 correctness checks passing.
+6 scenarios, 20/20 correctness checks passing.
 
 ## multi_iteration_resolution (`multi_iteration_resolution`)
 
@@ -20,8 +20,8 @@ This is a baseline slice of #121's full scenario matrix. The HTTP/API snapshot, 
 |---|---:|---:|---:|---:|
 | raw | true | 119 | 30 | 3 |
 | simple_truncation | true | 119 | 30 | 3 |
-| prog_envelope | true | 31257 | 7815 | 3 |
-| prog_delta | true | 17743 | 4436 | 5 |
+| prog_envelope | true | 31212 | 7803 | 3 |
+| prog_delta | true | 17752 | 4438 | 5 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
 
@@ -39,13 +39,27 @@ Checks:
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
-| prog_delta | true | 4918 | 1230 | 3 |
+| prog_delta | true | 4936 | 1234 | 3 |
 
 Checks:
 
 - `can_prove_absence_is_false`: pass
 - `missing_finding_marked_not_observed`: pass
 - `missing_finding_not_marked_resolved`: pass
+
+## realistic_payload_delta (`correctness_and_cost`)
+
+| Strategy | Available | Delivered bytes | Est. tokens | Calls |
+|---|---:|---:|---:|---:|
+| raw | true | 238656 | 59664 | 2 |
+| prog_delta | true | 32694 | 8174 | 3 |
+
+Checks:
+
+- `assessment_names_the_incompleteness`: pass
+- `no_finding_is_reported_resolved`: pass
+- `prog_delta_cheaper_than_raw_reread`: pass
+- `windowed_capture_refuses_to_prove_absence`: pass
 
 ## no_benefit_tiny_payload_control (`no_benefit_control`)
 
@@ -76,8 +90,8 @@ Checks:
 |---|---:|---:|---:|---:|
 | raw | true | 678 | 170 | 2 |
 | simple_truncation | true | 678 | 170 | 2 |
-| prog_envelope | true | 23206 | 5802 | 2 |
-| prog_delta | true | 14533 | 3634 | 3 |
+| prog_envelope | true | 23179 | 5795 | 2 |
+| prog_delta | true | 14524 | 3631 | 3 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
 

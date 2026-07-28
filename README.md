@@ -480,6 +480,32 @@ triage, and MCP incident demos report raw-to-envelope-plus-expansion ratios from
 **9.61x to 15.40x**. These are generated local payloads, not credentialed live
 service measurements. See [`docs/real-world-demos.md`](docs/real-world-demos.md).
 
+### Correctness under an unknown target
+
+Savings ratios assume you already know what you are looking for. The harder and
+more common case is that you do not, and there the relevant number is not
+compression but **whether the answer survives at all**.
+
+Across the eleven checked-in competitive-baseline scenarios:
+
+| Strategy | Correct |
+| --- | --- |
+| `head_tail_truncation` | **1/11** |
+| `rtk_grep_filter` | 10/11 |
+| `native_field_selection` | 8/11 |
+| `prog_paths_expand` | **11/11** |
+
+Truncation is the cheapest bounded strategy and the least correct one: it is
+wrong in ten of eleven scenarios, and its omissions are unrecoverable. Field
+selection and grep are excellent — *when the path or the term is already known*.
+The `unknown-target-buried-fatal` scenario removes that assumption: a long log
+whose one causal `FATAL` line is not guessable from the prompt. There, no field
+selector is derivable, a plausible pre-read `grep ERROR` returns matches but
+misses the causal line, and `prog` is the cheapest correct strategy at **7,917
+versus 35,594 raw input tokens (4.5x)**.
+
+See [`docs/competitive-baselines.md`](docs/competitive-baselines.md).
+
 ### Correctness, not just savings
 
 [`docs/replay-eval.md`](docs/replay-eval.md) replays whole multi-iteration

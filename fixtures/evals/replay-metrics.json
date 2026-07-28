@@ -61,6 +61,27 @@
       ]
     },
     {
+      "scenario_id": "realistic_payload_delta",
+      "strategies": [
+        {
+          "strategy": "raw",
+          "delivered_bytes": 298320,
+          "calls": 3
+        },
+        {
+          "strategy": "prog_delta",
+          "delivered_bytes": 40867,
+          "calls": 4
+        }
+      ],
+      "checks": [
+        "assessment_names_the_incompleteness",
+        "no_finding_is_reported_resolved",
+        "prog_delta_cheaper_than_raw_reread",
+        "windowed_capture_refuses_to_prove_absence"
+      ]
+    },
+    {
       "scenario_id": "no_benefit_tiny_payload_control",
       "strategies": [
         {
