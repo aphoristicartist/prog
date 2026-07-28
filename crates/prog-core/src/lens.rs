@@ -420,15 +420,16 @@ const LENS_RULE_VISIT_BUDGET: usize = 200_000;
 
 /// Content-directed scan state for one lens finding rule.
 ///
-/// `scan_complete` records whether the traversal ended because the payload was
-/// exhausted (`true`) or because a bound was hit (`false`). A caller that
-/// reports evidence must not present a bounded scan as an exhaustive one.
+/// Both bounds sit far above `FindingOptions::limit`, so a scan that stops
+/// early has already collected more candidates than ranking will surface. That
+/// is why nothing here reports scan completeness: it is not observable in the
+/// output. If a bound is ever lowered near the display limit, that stops being
+/// true and the truncation has to become visible to the caller.
 struct RuleScan<'a, 'r> {
     scope: &'r str,
     rule: &'r LensFindingRule,
     matches: Vec<(String, &'a Value)>,
     visited: usize,
-    scan_complete: bool,
 }
 
 impl<'a, 'r> RuleScan<'a, 'r> {
@@ -438,16 +439,11 @@ impl<'a, 'r> RuleScan<'a, 'r> {
             rule,
             matches: Vec::new(),
             visited: 0,
-            scan_complete: true,
         }
     }
 
-    fn exhausted(&mut self) -> bool {
-        if self.matches.len() >= LENS_RULE_MATCH_LIMIT || self.visited >= LENS_RULE_VISIT_BUDGET {
-            self.scan_complete = false;
-            return true;
-        }
-        false
+    fn exhausted(&self) -> bool {
+        self.matches.len() >= LENS_RULE_MATCH_LIMIT || self.visited >= LENS_RULE_VISIT_BUDGET
     }
 
     /// Test one resolved leaf and keep it only when the rule actually matches.
