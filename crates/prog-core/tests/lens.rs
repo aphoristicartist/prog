@@ -4,8 +4,9 @@ use std::{
 };
 
 use prog_core::{
-    LENS_MANIFEST_SCHEMA, LensManifest, PreviewPolicy, RawPayload, RedactedPayload,
-    RedactionPolicy, SliceRequest, lens_slice_request, project_with_lens, validate_lens_manifest,
+    FindingOptions, LENS_MANIFEST_SCHEMA, LensManifest, PreviewPolicy, RawPayload, RedactedPayload,
+    RedactionPolicy, SliceRequest, lens_slice_request, project_with_lens,
+    ranked_findings_with_lens, validate_lens_manifest,
 };
 use serde_json::{Value, json};
 
@@ -294,5 +295,134 @@ fn first_party_lens_pack_is_valid_unique_fixture_backed_and_token_efficient() {
     assert!(
         manifest_count >= 5,
         "first-party pack should ship at least five lenses"
+    );
+}
+
+/// A wildcard lens rule must select by *content*, not by position in the
+/// payload. Candidate paths used to be resolved in document order up to a fixed
+/// cap and only then tested against `contains_any`, which made a rule over
+/// `/lines/*` structurally blind past the cap — the "truncate and lose the
+/// answer" failure prog exists to prevent, inside prog.
+#[test]
+fn lens_rule_matches_content_far_beyond_the_candidate_cap() {
+    let target = 3_000usize;
+    let lines = (0..4_000usize)
+        .map(|index| {
+            if index == target {
+                json!({"number": index + 1, "text": "svc: FATAL unrecoverable commit failure"})
+            } else {
+                json!({"number": index + 1, "text": "svc: request completed ok"})
+            }
+        })
+        .collect::<Vec<_>>();
+    let payload = json!({"lines": lines});
+
+    let lens = manifest(json!({
+        "schema": LENS_MANIFEST_SCHEMA,
+        "id": "cap-probe",
+        "match": {"source_id": "observe", "artifact_kind": "text"},
+        "view": {"limit": 20, "depth": 4, "fields": {}},
+        "findings": [{
+            "kind": "log_fatal",
+            "path": "/lines/*",
+            "confidence": 0.97,
+            "reason": "fatal marker",
+            "severity": "fatal",
+            "contains_any": ["fatal"]
+        }]
+    }));
+
+    let findings =
+        ranked_findings_with_lens(&payload, &FindingOptions::default(), Some(&lens)).unwrap();
+
+    let matched = findings
+        .iter()
+        .find(|finding| finding.path == format!("/lines/{target}"));
+    assert!(
+        matched.is_some(),
+        "lens rule must classify a match at index {target}; got paths {:?}",
+        findings.iter().map(|f| &f.path).collect::<Vec<_>>()
+    );
+    assert_eq!(matched.unwrap().kind, "log_fatal");
+}
+
+/// An unrecoverable FATAL line must outrank retryable ERROR noise. Ranking them
+/// equally buried real root causes underneath transient retries.
+#[test]
+fn fatal_markers_outrank_retryable_error_markers() {
+    let mut lines = (0..40usize)
+        .map(|index| json!({"number": index + 1, "text": "svc: ERROR transient retry 3 of 5"}))
+        .collect::<Vec<_>>();
+    lines.push(json!({"number": 41, "text": "svc: FATAL data corruption, not retryable"}));
+    let payload = json!({"lines": lines});
+
+    let lens: LensManifest = serde_json::from_slice(
+        &std::fs::read(repo_root().join("lenses/logs.json")).expect("logs lens should read"),
+    )
+    .expect("logs lens should deserialize");
+
+    let findings =
+        ranked_findings_with_lens(&payload, &FindingOptions::default(), Some(&lens)).unwrap();
+
+    assert_eq!(
+        findings[0].path,
+        "/lines/40",
+        "the FATAL line must rank first; got {:?}",
+        findings
+            .iter()
+            .map(|f| (&f.path, &f.kind, f.confidence))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(findings[0].kind, "log_fatal");
+    assert_eq!(findings[0].severity.as_deref(), Some("fatal"));
+}
+
+/// `--goal` must reorder equally-strong findings of the *same* kind, and must
+/// never promote weaker evidence above stronger. Goal intent used only to
+/// separate different kinds, which made it inert on log payloads where every
+/// candidate shares one kind.
+#[test]
+fn goal_reorders_same_kind_findings_without_demoting_stronger_evidence() {
+    let payload = json!({"lines": [
+        {"number": 1, "text": "auth: ERROR token refresh failed"},
+        {"number": 2, "text": "pool: ERROR worker checkout failed"},
+        {"number": 3, "text": "svc: FATAL unrecoverable disk failure"},
+    ]});
+
+    let lens: LensManifest = serde_json::from_slice(
+        &std::fs::read(repo_root().join("lenses/logs.json")).expect("logs lens should read"),
+    )
+    .expect("logs lens should deserialize");
+
+    let rank_for = |goal: &str| {
+        let options = FindingOptions {
+            goal: Some(goal.to_string()),
+            ..FindingOptions::default()
+        };
+        ranked_findings_with_lens(&payload, &options, Some(&lens))
+            .unwrap()
+            .into_iter()
+            .map(|finding| finding.path)
+            .collect::<Vec<_>>()
+    };
+
+    let auth = rank_for("investigate the auth token refresh");
+    let pool = rank_for("investigate the pool worker checkout");
+
+    assert_ne!(
+        auth, pool,
+        "two different goals must not produce identical orderings"
+    );
+    // The FATAL line is strictly stronger evidence (0.97 vs 0.92) and stays
+    // first under both goals: a goal orders ties, it does not outrank evidence.
+    assert_eq!(auth[0], "/lines/2");
+    assert_eq!(pool[0], "/lines/2");
+    assert!(
+        auth.iter().position(|p| p == "/lines/0") < auth.iter().position(|p| p == "/lines/1"),
+        "auth goal should surface the auth line before the pool line: {auth:?}"
+    );
+    assert!(
+        pool.iter().position(|p| p == "/lines/1") < pool.iter().position(|p| p == "/lines/0"),
+        "pool goal should surface the pool line before the auth line: {pool:?}"
     );
 }
