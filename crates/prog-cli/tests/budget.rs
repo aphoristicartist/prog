@@ -178,6 +178,26 @@ fn degraded_envelopes_always_report_what_was_dropped() {
         note.contains("dropped"),
         "the compaction note must name what it dropped: {note}"
     );
+    // The note must not itself be lossy. An entry like `findings:` with its
+    // count sheared off is exactly the silent information loss this whole
+    // ladder exists to prevent.
+    assert!(
+        !note.ends_with(':') && !note.ends_with(", "),
+        "the compaction note must not end mid-entry: {note}"
+    );
+    for entry in note
+        .split("dropped ")
+        .nth(1)
+        .expect("note names dropped fields")
+        .split(", ")
+    {
+        if let Some((field, count)) = entry.split_once(':') {
+            assert!(
+                !count.is_empty(),
+                "entry '{field}' must carry its count, got '{entry}' in: {note}"
+            );
+        }
+    }
 
     // The hard ceiling still holds.
     assert!(

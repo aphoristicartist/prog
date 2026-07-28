@@ -861,6 +861,10 @@ pub(crate) fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Resu
 /// itself push the envelope back over the ceiling.
 const DEGRADATION_NOTE_RESERVE: usize = 220;
 
+/// Longest note body, leaving room inside the reserve for the JSON quoting and
+/// array punctuation that wraps it.
+const DEGRADATION_NOTE_BODY_MAX: usize = DEGRADATION_NOTE_RESERVE - 20;
+
 fn over_budget(envelope: &DisclosureEnvelope, budget: usize) -> Result<bool> {
     Ok(serde_json::to_vec(envelope)?.len() > budget)
 }
@@ -976,13 +980,20 @@ pub(crate) fn compact_envelope_to_budget(
             "envelope compacted to enforce max_envelope_bytes; dropped {}",
             dropped.join(", ")
         );
-        note.truncate(
-            note.char_indices()
+        // Only shorten a note that genuinely exceeds the reserve, and cut on a
+        // char boundary at or below the limit. Truncating unconditionally to
+        // the last char index silently ate the final character of every note
+        // that already fit — which for the common case meant the count in the
+        // trailing `findings:N` entry.
+        if note.len() > DEGRADATION_NOTE_BODY_MAX {
+            let cut = note
+                .char_indices()
                 .map(|(index, _)| index)
-                .take_while(|index| *index <= DEGRADATION_NOTE_RESERVE - 20)
+                .take_while(|index| *index <= DEGRADATION_NOTE_BODY_MAX)
                 .last()
-                .unwrap_or(0),
-        );
+                .unwrap_or(0);
+            note.truncate(cut);
+        }
         envelope.warnings.push(note);
     }
     finalize_envelope_bytes(envelope)?;
