@@ -1,0 +1,8 @@
+{
+  "schema": "prog.integration_target",
+  "agent": "agents-md",
+  "skill_path": "AGENTS.md",
+  "hook_dir": null,
+  "frontmatter": "none",
+  "write_mode": "append_marker"
+}

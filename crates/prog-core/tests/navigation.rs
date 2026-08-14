@@ -1,6 +1,6 @@
 use prog_core::{
-    FindingOptions, LensManifest, SearchOptions, evidence_block, ranked_findings_with_lens,
-    search_payload, validate_lens_manifest,
+    FindingOptions, LensManifest, NavigationCommand, SearchOptions, evidence_block,
+    ranked_findings_with_lens, search_payload, validate_lens_manifest,
 };
 use serde_json::json;
 
@@ -23,9 +23,11 @@ fn cached_search_supports_text_regex_key_kind_and_scope() {
     )
     .unwrap();
     assert_eq!(text.hits[0].path, "/failures/0/message");
-    assert_eq!(
-        text.hits[0].commands.evidence.as_deref(),
-        Some("prog evidence pc1_demo --path /failures/0/message")
+    assert!(
+        text.hits[0]
+            .commands
+            .available
+            .contains(&NavigationCommand::Evidence)
     );
 
     let regex = search_payload(

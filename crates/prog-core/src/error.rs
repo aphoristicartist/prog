@@ -127,6 +127,9 @@ pub enum CoreError {
     #[error("storage error: {0}")]
     Storage(String),
 
+    #[error("storage remained busy after {attempts} attempts: {message}")]
+    StorageBusy { attempts: usize, message: String },
+
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
 
@@ -172,6 +175,7 @@ impl CoreError {
             CoreError::McpProtocol { .. } => "mcp_protocol",
             CoreError::McpToolError { .. } => "mcp_tool_error",
             CoreError::Storage(_) => "storage",
+            CoreError::StorageBusy { .. } => "storage_busy",
             CoreError::Json(_) => "json",
             CoreError::Io(_) => "io",
             CoreError::ImportError { .. } => "import_error",
@@ -269,6 +273,9 @@ impl CoreError {
             CoreError::Storage(_) => {
                 "Check the local .prog store and filesystem permissions.".to_string()
             }
+            CoreError::StorageBusy { attempts, .. } => format!(
+                "Retry the operation; the local .prog store was busy for {attempts} bounded attempts."
+            ),
             CoreError::Json(_) => "Provide valid JSON for the requested argument.".to_string(),
             CoreError::Io(_) => "Check the referenced path and filesystem permissions.".to_string(),
             CoreError::ImportError { format, .. } => {
@@ -283,21 +290,29 @@ impl CoreError {
                 kind: self.kind().to_string(),
                 message: self.to_string(),
                 hint: self.hint(),
+                retryable: matches!(self, CoreError::StorageBusy { .. }),
+                attempts: match self {
+                    CoreError::StorageBusy { attempts, .. } => Some(*attempts),
+                    _ => None,
+                },
             },
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub struct ErrorEnvelope {
     pub error: ErrorBody,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub struct ErrorBody {
     pub kind: String,
     pub message: String,
     pub hint: String,
+    pub retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempts: Option<usize>,
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;

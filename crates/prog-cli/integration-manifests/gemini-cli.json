@@ -1,0 +1,8 @@
+{
+  "schema": "prog.integration_target",
+  "agent": "gemini-cli",
+  "skill_path": ".gemini/skills/prog/SKILL.md",
+  "hook_dir": ".gemini/prog-hooks",
+  "frontmatter": "yaml",
+  "write_mode": "create"
+}

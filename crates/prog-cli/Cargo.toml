@@ -6,7 +6,13 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-include = ["src/**/*.rs", "Cargo.toml"]
+include = [
+    "src/**/*.rs",
+    "integration-manifests/*.json",
+    "build.rs",
+    "Cargo.toml",
+    "LICENSE",
+]
 
 [[bin]]
 name = "prog"
@@ -25,6 +31,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 chrono.workspace = true
 sha2.workspace = true
+uuid.workspace = true
 libc.workspace = true
 
 [dev-dependencies]

@@ -8,7 +8,7 @@ pub(crate) fn expand_cursor(
     ctx: &InvocationContext,
 ) -> Result<DisclosureEnvelope> {
     let record = store.get_cursor(&args.cursor)?;
-    let entry = store
+    let mut entry = store
         .get_entry(&record.cache_key)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
     let observation = record
@@ -17,6 +17,17 @@ pub(crate) fn expand_cursor(
         .map(|observation_id| store.get_observation(observation_id))
         .transpose()?
         .flatten();
+    if let Some(observation) = &observation {
+        entry.payload_hash.clone_from(&observation.payload_hash);
+        entry.payload_bytes = observation.capture.stored_bytes;
+        entry.observation_id = Some(observation.observation_id.clone());
+        entry.provenance.clone_from(&observation.provenance);
+        // Cache age/TTL must use one clock pair. Mixing the observation's
+        // capture second with the cursor's expiry second can fabricate a
+        // one-second TTL increase when minting crosses a second boundary.
+        entry.created_at.clone_from(&record.created_at);
+        entry.expires_at.clone_from(&record.expires_at);
+    }
     let payload = store
         .get_payload(&entry.payload_hash)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;

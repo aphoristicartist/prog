@@ -304,3 +304,50 @@ fn source_add_cli_detects_and_optionally_applies_structured_output() {
     );
     assert_eq!(applied_value["structured_output"][0]["status"], "detected");
 }
+
+#[test]
+fn source_add_mcp_matches_discover_profile_and_preserves_argv() {
+    let add_dir = tempfile::tempdir().unwrap();
+    let discover_dir = tempfile::tempdir().unwrap();
+    let fixture = repo_root().join("fixtures/mcp/fixture_mcp.py");
+    let fixture_arg = fixture.to_str().unwrap();
+
+    let added = prog(&[
+        "--dir",
+        add_dir.path().to_str().unwrap(),
+        "source",
+        "add-mcp",
+        "docs",
+        "--",
+        "python3",
+        fixture_arg,
+    ]);
+    assert!(added.status.success(), "{}", stdout(&added));
+    let added_report: Value = serde_json::from_slice(&added.stdout).unwrap();
+    assert_eq!(added_report["generated_seed"]["kind"], "mcp");
+    assert_eq!(added_report["generated_seed"]["command"], "python3");
+    assert_eq!(added_report["generated_seed"]["args"], json!([fixture_arg]));
+    assert_eq!(added_report["operations"], json!(["search_docs"]));
+
+    let seed_path = discover_dir.path().join("seed.json");
+    fs::write(
+        &seed_path,
+        serde_json::to_vec_pretty(&added_report["generated_seed"]).unwrap(),
+    )
+    .unwrap();
+    let discovered = prog(&[
+        "--dir",
+        discover_dir.path().to_str().unwrap(),
+        "discover",
+        "docs",
+        "--kind",
+        "mcp",
+        "--seed",
+        seed_path.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+    assert_eq!(
+        read_profile(add_dir.path(), "docs"),
+        read_profile(discover_dir.path(), "docs")
+    );
+}

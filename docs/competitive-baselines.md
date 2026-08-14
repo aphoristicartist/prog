@@ -13,9 +13,9 @@ Regenerate this report and the raw metrics with `PROG_BASELINE_EVAL_UPDATE=1 car
 | native_field_selection | 8 | 11 | 423 | 512 | 10 | 0 | 0 | 0.029830 |
 | rtk_grep_filter | 10 | 11 | 300915 | 640 | 11 | 0 | 0 | 3.041150 |
 | caveman_terse_output | 11 | 11 | 360543 | 88 | 0 | 0 | 0 | 3.609830 |
-| prog_envelope_only | 1 | 11 | 23540 | 64 | 11 | 0 | 4 | 0.238600 |
-| prog_paths_expand | 11 | 11 | 46643 | 704 | 33 | 11 | 22 | 0.501630 |
-| prog_repeated_cache | 11 | 11 | 53035 | 704 | 33 | 22 | 22 | 0.565550 |
+| prog_envelope_only | 1 | 11 | 18254 | 64 | 11 | 0 | 4 | 0.185740 |
+| prog_paths_expand | 11 | 11 | 41239 | 704 | 33 | 11 | 22 | 0.447590 |
+| prog_repeated_cache | 11 | 11 | 47961 | 704 | 33 | 22 | 22 | 0.514810 |
 
 ## Scenarios
 

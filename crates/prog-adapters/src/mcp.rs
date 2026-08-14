@@ -684,6 +684,7 @@ impl McpSource {
             effects: tool_effects(tool.annotations.as_ref()),
             cache: CachePolicy::default(),
             pagination: None,
+            source_state: None,
             extra,
         }
     }
@@ -1131,6 +1132,7 @@ fn resource_operation(resource: Resource) -> OperationProfile {
         },
         cache: CachePolicy::default(),
         pagination: None,
+        source_state: None,
         extra,
     }
 }
@@ -1182,6 +1184,7 @@ fn prompt_operation(prompt: Prompt) -> OperationProfile {
         },
         cache: CachePolicy::default(),
         pagination: None,
+        source_state: None,
         extra,
     }
 }

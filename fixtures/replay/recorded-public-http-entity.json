@@ -1,0 +1,14 @@
+{
+  "fixture_source": "recorded_public_live",
+  "recorded_at": "2026-08-11",
+  "source_url": "https://api.github.com/repos/aphoristicartist/prog",
+  "payload": {
+    "archived": false,
+    "default_branch": "main",
+    "disabled": false,
+    "full_name": "aphoristicartist/prog",
+    "id": 1288816488,
+    "private": false,
+    "visibility": "public"
+  }
+}

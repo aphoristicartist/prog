@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -109,7 +110,7 @@ fn readme_cli_quickstart_commands_stay_copy_pasteable() {
         "envelope should remain bounded"
     );
     assert_eq!(
-        envelope["summary"]["approx_tokens"],
+        envelope["summary"]["estimated_envelope_tokens"],
         envelope["summary"]["envelope_bytes"]
             .as_u64()
             .unwrap()
@@ -398,7 +399,15 @@ fn documented_command_help_surface_stays_real() {
     }
 
     let init_help = stdout(&prog(&root, &["init", "--help"]));
-    for expected in ["--agent", "--project", "--dry-run", "--root"] {
+    for expected in [
+        "--agent",
+        "--project",
+        "--dry-run",
+        "--root",
+        "--manifest-dir",
+        "--print-skill",
+        "--frontmatter",
+    ] {
         assert!(
             init_help.contains(expected),
             "init help should contain {expected}"
@@ -418,6 +427,14 @@ fn documented_command_help_surface_stays_real() {
         assert!(
             source_cli_help.contains(expected),
             "source add-cli help should contain {expected}"
+        );
+    }
+
+    let source_mcp_help = stdout(&prog(&root, &["source", "add-mcp", "--help"]));
+    for expected in ["SOURCE_ID", "COMMAND"] {
+        assert!(
+            source_mcp_help.contains(expected),
+            "source add-mcp help should contain {expected}"
         );
     }
 
@@ -465,7 +482,7 @@ fn docs_keep_acceptance_topics_visible() {
     let root = repo_root();
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
     for expected in [
-        "34.5x-162.8x",
+        "24.4x-85.2x",
         "Built for loop engineering",
         "fail, inspect, fix, verify",
         "recipe --timeout-ms 180000 cargo-test",
@@ -572,6 +589,7 @@ fn docs_keep_acceptance_topics_visible() {
     for expected in [
         "prog source add-http",
         "prog source add-cli",
+        "prog source add-mcp",
         "prog discover --import",
         "declared_output_schema",
         "MCP tools without `readOnlyHint: true`",
@@ -702,4 +720,73 @@ fn docs_keep_acceptance_topics_visible() {
             "invariants doc should mention {expected}"
         );
     }
+}
+
+#[test]
+fn release_metadata_stays_in_sync() {
+    let root = repo_root();
+    let canonical_license = std::fs::read(root.join("LICENSE")).unwrap();
+    for crate_name in ["prog-core", "prog-adapters", "prog-cli"] {
+        let packaged_license =
+            std::fs::read(root.join("crates").join(crate_name).join("LICENSE")).unwrap();
+        assert_eq!(
+            packaged_license, canonical_license,
+            "{crate_name}/LICENSE must match the canonical workspace license"
+        );
+    }
+
+    let store = std::fs::read_to_string(root.join("crates/prog-core/src/store.rs")).unwrap();
+    let store_schema = store
+        .lines()
+        .find(|line| line.trim_start().starts_with("const STORE_SCHEMA: &str ="))
+        .and_then(|line| line.split('"').nth(1))
+        .expect("STORE_SCHEMA should remain a quoted string constant");
+    let release_notes = std::fs::read_to_string(root.join("docs/release-notes.md")).unwrap();
+    assert!(
+        release_notes.contains(store_schema),
+        "release notes must name the current store schema {store_schema}"
+    );
+    assert!(
+        release_notes.contains("explicit stderr notice"),
+        "release notes must describe the audible pre-release reset"
+    );
+
+    let ci = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
+    let release = std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+    for moving_label in ["ubuntu-latest", "macos-latest"] {
+        assert!(
+            !ci.contains(moving_label) && !release.contains(moving_label),
+            "supported release targets must not depend on moving runner label {moving_label}"
+        );
+    }
+    for target in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ] {
+        assert!(
+            release.contains(target),
+            "release workflow must build and smoke-test {target}"
+        );
+    }
+    assert!(release.contains("workflow_dispatch:"));
+    assert!(release.contains(
+        "needs: [quality, version-consistency, msrv, dependency-policy, build, sbom, cargo-package-dryrun, rc-smoke]"
+    ));
+
+    let contracts_doc = std::fs::read_to_string(root.join("docs/contracts.md")).unwrap();
+    let documented = contracts_doc
+        .split("The current public contracts include:\n")
+        .nth(1)
+        .and_then(|section| section.split("\n## Forward compatibility").next())
+        .expect("contracts doc should retain its generated-contract section")
+        .lines()
+        .filter_map(|line| line.strip_prefix("- `")?.strip_suffix('`'))
+        .collect::<BTreeSet<_>>();
+    let schemas = prog_core::public_contract_schemas().unwrap();
+    let published = schemas.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    assert_eq!(
+        documented, published,
+        "docs/contracts.md must list exactly the contracts published by prog meta"
+    );
 }

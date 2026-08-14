@@ -48,13 +48,25 @@ fn paths_filters_and_planner_actions_cover_omission_reasons() {
     assert_eq!(first_action["kind"], "evidence");
     assert_eq!(first_action["priority"], 90);
     assert_eq!(first_action["omitted_reason"], "large_string");
-    assert_eq!(first_action["argv"][0], "prog");
-    assert_eq!(first_action["argv"][1], "evidence");
-    assert_eq!(first_action["argv"][2], cursor);
+    assert_eq!(envelope["action_templates"]["evidence"]["argv"][0], "prog");
     assert_eq!(
-        first_action["offline"],
-        "uses cached redacted payload; does not contact upstream"
+        envelope["action_templates"]["evidence"]["argv"][1],
+        "evidence"
     );
+    assert_eq!(
+        envelope["action_templates"]["evidence"]["argv"][2],
+        "{cursor}"
+    );
+    assert_eq!(
+        envelope["action_templates"]["evidence"]["argv"][4],
+        "{path}"
+    );
+    assert_eq!(
+        envelope["action_templates"]["evidence"]["scope"],
+        "cached_evidence"
+    );
+    assert!(first_action.get("offline").is_none());
+    assert!(first_action.get("reason").is_none());
 
     let expanded_string = prog(&[
         "--dir", dir_arg, "expand", cursor, "--path", "/large", "--limit", "1000",
@@ -121,10 +133,18 @@ fn paths_filters_and_planner_actions_cover_omission_reasons() {
                 .unwrap()
                 .iter()
                 .any(|action| action["path"] == expected_path
-                    && action["omitted_reason"] == reason
-                    && action["argv"][3] == "--path"),
+                    && action["omitted_reason"] == reason),
             "next actions for {reason} should include {expected_path}: {}",
             stdout(&paths)
+        );
+        let action_kind = if reason == "large_string" {
+            "evidence"
+        } else {
+            "expand"
+        };
+        assert_eq!(
+            listing["action_templates"][action_kind]["argv"][3],
+            "--path"
         );
     }
 

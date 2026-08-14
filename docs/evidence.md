@@ -22,6 +22,7 @@ The structured ref includes:
 - cursor and JSON Pointer path
 - captured timestamp
 - cache status, age, expiry, and stale flag
+- source-native validity and state-token kind (never the opaque token value)
 - observation-wide `availability` and `capture` lifecycle facts
 - redaction and lossiness flags
 - `redacted_slice_sha256`, a hash of the already-redacted visible slice
@@ -51,6 +52,8 @@ non-proving capture record.
 Initial envelopes emit a root `EvidenceRef` whenever a cursor exists. Its
 lifecycle facts match the immutable observation record, so a caller can retain
 a compact citation without inferring completeness from another response field.
+Source-native `source_validity` remains separate from cache age; see
+[source-state evidence](source-state.md).
 
 For CLI runs, capture records report separate `stdout` and `stderr` byte facts.
 For HTTP, the default response-body capture limit is 2 MiB for both direct

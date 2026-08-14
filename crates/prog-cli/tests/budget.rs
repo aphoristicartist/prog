@@ -35,23 +35,38 @@ fn write_failing_source(root: &Path) -> String {
     path.to_str().unwrap().to_string()
 }
 
+fn assert_sizes_are_monotonic(label: &str, observations: &[(u32, usize)]) {
+    for window in observations.windows(2) {
+        let (small_budget, small_bytes) = window[0];
+        let (large_budget, large_bytes) = window[1];
+        assert!(
+            small_bytes <= large_bytes,
+            "{label} must not shrink as the budget grows: budget {small_budget} delivered \
+             {small_bytes} B but budget {large_budget} delivered {large_bytes} B \
+             (full series: {observations:?})"
+        );
+    }
+}
+
 /// Surfaced findings must be non-decreasing in the budget. A larger budget may
 /// never yield a less informative response than a smaller one.
 ///
 /// This is the half of #160's monotonicity criterion that the compaction-ladder
-/// fix makes true. The delivered-bytes half is covered by the `#[ignore]`d test
-/// below, which fails for an unrelated, pre-existing reason.
+/// fix makes true. The delivered-bytes half is covered by the next test.
 #[test]
 fn surfaced_findings_are_monotonic_in_the_budget() {
     let dir = tempfile::tempdir().unwrap();
     let source = write_failing_source(dir.path());
-    let store = dir.path().join(".prog-state");
-    let store_arg = store.to_str().unwrap();
 
     let mut observations = Vec::new();
     for budget in BUDGETS {
+        // Each budget receives the same first observation in a fresh store.
+        // Reusing one store would compare different subjects: automatic delta
+        // metadata depends on the preceding observation and is not a property
+        // of preview-policy selection.
+        let store = dir.path().join(format!("state-{budget}"));
         let output = prog_with_budget(
-            store_arg,
+            store.to_str().unwrap(),
             budget,
             &["run", "--", "rustc", &source, "-o", "/dev/null"],
         );
@@ -74,7 +89,7 @@ fn surfaced_findings_are_monotonic_in_the_budget() {
 
 /// The delivered-bytes half of #160's monotonicity criterion.
 ///
-/// Currently fails, for a cause independent of the compaction ladder:
+/// This used to fail for a cause independent of the compaction ladder:
 /// `shrink_policy` halves `array_items`/`object_fields`/`string_chars`/
 /// `node_budget` and decrements `depth` on each iteration, and the initial
 /// policy is derived from the budget. Different budgets therefore enter the
@@ -83,22 +98,22 @@ fn surfaced_findings_are_monotonic_in_the_budget() {
 /// tighter budget's — observed at 8,192 B delivering 8,181 B while 12,288 B
 /// delivered 5,282 B.
 ///
-/// Fixing it means making preview-policy selection monotonic in the budget
-/// (search for the largest fitting policy rather than the first), which is a
-/// separate change from compaction ordering (tracked in #219). Ignored rather than
-/// deleted so the criterion stays visible and the reproduction stays runnable.
+/// Preview-policy selection now walks one budget-independent finite ladder and
+/// returns the first (richest) policy that fits. Optional delta metadata is
+/// evaluated within each level so it cannot force primary evidence to coarsen.
 #[test]
-#[ignore = "pre-existing: shrink_policy halving search is not monotonic in the budget; see #219"]
 fn delivered_bytes_are_monotonic_in_the_budget() {
     let dir = tempfile::tempdir().unwrap();
     let source = write_failing_source(dir.path());
-    let store = dir.path().join(".prog-state");
-    let store_arg = store.to_str().unwrap();
 
     let mut observations = Vec::new();
     for budget in BUDGETS {
+        // Keep the payload and observation position fixed. Reusing one store
+        // would add state-dependent automatic delta metadata after the first
+        // capture, so the runs would no longer vary only by disclosure budget.
+        let store = dir.path().join(format!("state-{budget}"));
         let output = prog_with_budget(
-            store_arg,
+            store.to_str().unwrap(),
             budget,
             &["run", "--", "rustc", &source, "-o", "/dev/null"],
         );
@@ -106,17 +121,94 @@ fn delivered_bytes_are_monotonic_in_the_budget() {
             .unwrap_or_else(|error| panic!("budget {budget} produced non-JSON: {error}"));
         observations.push((budget, output.stdout.len()));
     }
+    assert_sizes_are_monotonic("run envelope", &observations);
+}
 
-    for window in observations.windows(2) {
-        let (small_budget, small_bytes) = window[0];
-        let (large_budget, large_bytes) = window[1];
-        assert!(
-            small_bytes <= large_bytes,
-            "delivered bytes must not shrink as the budget grows: \
-             budget {small_budget} delivered {small_bytes} B but budget \
-             {large_budget} delivered {large_bytes} B (full series: {observations:?})"
+/// Recovery affordances stay compact enough that evidence, findings, and
+/// observation metadata—not repeated cursor-bearing commands—own the budget.
+#[test]
+fn action_encoding_stays_below_a_fixed_envelope_share() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = write_failing_source(dir.path());
+    let store = dir.path().join(".prog-state");
+    let output = prog_with_budget(
+        store.to_str().unwrap(),
+        65_536,
+        &["run", "--", "rustc", &source, "-o", "/dev/null"],
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let action_bytes = serde_json::to_vec(&value["next_actions"]).unwrap().len()
+        + serde_json::to_vec(&value["action_templates"])
+            .unwrap()
+            .len();
+    assert!(
+        action_bytes * 100 <= output.stdout.len() * 18,
+        "next_actions + action_templates must stay at or below 18% of the envelope: \
+         {action_bytes} of {} bytes",
+        output.stdout.len()
+    );
+    let cursor = value["cursor"].as_str().expect("run cursor");
+    assert!(
+        !serde_json::to_string(&value["next_actions"])
+            .unwrap()
+            .contains(cursor),
+        "per-action records must not repeat the top-level cursor"
+    );
+}
+
+#[test]
+fn observe_and_call_envelopes_are_monotonic_in_the_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = write_failing_source(dir.path());
+
+    let observe_store = dir.path().join("observe-state");
+    let observe_store_arg = observe_store.to_str().unwrap();
+    let mut observe_sizes = Vec::new();
+    for budget in BUDGETS {
+        let output = prog_with_budget(
+            observe_store_arg,
+            budget,
+            &["observe", "--file", &source, "--name", "bad-rust-source"],
         );
+        serde_json::from_slice::<Value>(&output.stdout)
+            .unwrap_or_else(|error| panic!("observe budget {budget} produced non-JSON: {error}"));
+        observe_sizes.push((budget, output.stdout.len()));
     }
+    assert_sizes_are_monotonic("observe envelope", &observe_sizes);
+
+    let call_store = dir.path().join("call-state");
+    let call_store_arg = call_store.to_str().unwrap();
+    let fixture = repo_root().join("fixtures/cli/list_items.py");
+    let fixture_arg = fixture.to_str().unwrap();
+    let added = prog_with_budget(
+        call_store_arg,
+        65_536,
+        &[
+            "source",
+            "add-cli",
+            "demo",
+            "--operation",
+            "list",
+            "--read-only",
+            "--",
+            "python3",
+            fixture_arg,
+        ],
+    );
+    assert!(added.status.success(), "{}", stdout(&added));
+
+    let mut call_sizes = Vec::new();
+    for budget in BUDGETS {
+        let output = prog_with_budget(
+            call_store_arg,
+            budget,
+            &["call", "demo", "list", "--args", "{}"],
+        );
+        serde_json::from_slice::<Value>(&output.stdout)
+            .unwrap_or_else(|error| panic!("call budget {budget} produced non-JSON: {error}"));
+        call_sizes.push((budget, output.stdout.len()));
+    }
+    assert_sizes_are_monotonic("call envelope", &call_sizes);
 }
 
 /// A failing command must never report zero findings merely because the
@@ -223,12 +315,14 @@ fn every_bounded_response_shape_respects_the_ceiling() {
     let seeded: Value = serde_json::from_slice(&seed.stdout).unwrap();
     let cursor = seeded["cursor"].as_str().expect("run should mint a cursor");
 
-    for budget in BUDGETS {
-        for command in [
-            vec!["inspect", cursor, "--goal", "find the compile error"],
-            vec!["search", cursor, "error"],
-            vec!["paths", cursor],
-        ] {
+    for command in [
+        vec!["inspect", cursor, "--goal", "find the compile error"],
+        vec!["search", cursor, "error"],
+        vec!["paths", cursor],
+        vec!["evidence", cursor, "--path", "/failure_sections/0"],
+    ] {
+        let mut observations = Vec::new();
+        for budget in BUDGETS {
             let output = prog_with_budget(store_arg, budget, &command);
             assert!(
                 output.stdout.len() <= budget as usize,
@@ -239,6 +333,8 @@ fn every_bounded_response_shape_respects_the_ceiling() {
             serde_json::from_slice::<Value>(&output.stdout).unwrap_or_else(|error| {
                 panic!("{command:?} at budget {budget} produced non-JSON: {error}")
             });
+            observations.push((budget, output.stdout.len()));
         }
+        assert_sizes_are_monotonic(&format!("{command:?}"), &observations);
     }
 }

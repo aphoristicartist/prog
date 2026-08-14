@@ -9,10 +9,12 @@
     "title": "diff hunk",
     "source": "generic.field_name",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate diff_hunk' --path /review/patch",
-      "expand": "prog expand pc1_golden --path /review/patch",
-      "evidence": "prog evidence pc1_golden --path /review/patch",
-      "search": "prog find pc1_golden --kind diff_hunk --path /review/patch"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   }
 ]

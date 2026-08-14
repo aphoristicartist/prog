@@ -10,9 +10,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 620,
-      "findings_output_tokens": 693,
-      "inspect_output_tokens": 1449,
+      "baseline_output_tokens": 537,
+      "findings_output_tokens": 527,
+      "inspect_output_tokens": 967,
       "ceilings": {
         "baseline_tool_calls": 4,
         "findings_tool_calls": 3,
@@ -31,9 +31,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 630,
-      "findings_output_tokens": 691,
-      "inspect_output_tokens": 1467,
+      "baseline_output_tokens": 552,
+      "findings_output_tokens": 534,
+      "inspect_output_tokens": 979,
       "ceilings": {
         "baseline_tool_calls": 4,
         "findings_tool_calls": 3,
@@ -52,9 +52,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 821,
-      "findings_output_tokens": 488,
-      "inspect_output_tokens": 713,
+      "baseline_output_tokens": 747,
+      "findings_output_tokens": 339,
+      "inspect_output_tokens": 487,
       "ceilings": {
         "baseline_tool_calls": 4,
         "findings_tool_calls": 3,
@@ -73,9 +73,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 665,
-      "findings_output_tokens": 730,
-      "inspect_output_tokens": 1522,
+      "baseline_output_tokens": 581,
+      "findings_output_tokens": 558,
+      "inspect_output_tokens": 1004,
       "ceilings": {
         "baseline_tool_calls": 4,
         "findings_tool_calls": 3,
@@ -94,9 +94,9 @@
       "baseline_tool_calls": 3,
       "findings_tool_calls": 2,
       "inspect_tool_calls": 3,
-      "baseline_output_tokens": 633,
-      "findings_output_tokens": 616,
-      "inspect_output_tokens": 666,
+      "baseline_output_tokens": 554,
+      "findings_output_tokens": 460,
+      "inspect_output_tokens": 510,
       "ceilings": {
         "baseline_tool_calls": 4,
         "findings_tool_calls": 3,
@@ -113,8 +113,8 @@
     "baseline_tool_calls": 15,
     "findings_tool_calls": 10,
     "inspect_tool_calls": 15,
-    "baseline_output_tokens": 3369,
-    "findings_output_tokens": 3218,
-    "inspect_output_tokens": 5817
+    "baseline_output_tokens": 2971,
+    "findings_output_tokens": 2418,
+    "inspect_output_tokens": 3947
   }
 }

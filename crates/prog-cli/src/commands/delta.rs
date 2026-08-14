@@ -9,6 +9,43 @@ pub(crate) fn delta_observations(
     compare_observation_ids(store, &args.baseline, &args.subject)
 }
 
+/// Keep comparison output inside the caller-visible disclosure budget while
+/// preserving the complete aggregate counts and comparability assessment.
+/// Findings are already sorted by deterministic delta priority, so removing
+/// from the tail retains the most actionable evidence first.
+pub(crate) fn bound_delta_response(
+    delta: &mut prog_core::ObservationDelta,
+    max_envelope_bytes: usize,
+) -> Result<()> {
+    // `write_success` adds the disclosure/capture/storage budget block after
+    // this command returns. Reserve enough for that fixed metadata and its
+    // self-referential `actual_bytes` field.
+    let content_budget = max_envelope_bytes.saturating_sub(1_024);
+    let original_len = delta.findings.len();
+    while serde_json::to_vec(delta)?.len() > content_budget && !delta.findings.is_empty() {
+        delta.findings.pop();
+    }
+    if delta.findings.len() < original_len {
+        delta.truncated = true;
+        delta.extra.insert(
+            "compaction".to_string(),
+            json!({
+                "reason": "disclosure_budget",
+                "retained_findings": delta.findings.len(),
+                "total_findings": delta.counts.values().sum::<u64>(),
+                "counts_are_complete": true
+            }),
+        );
+    }
+    while serde_json::to_vec(delta)?.len() > content_budget && !delta.findings.is_empty() {
+        delta.findings.pop();
+        if let Some(compaction) = delta.extra.get_mut("compaction") {
+            compaction["retained_findings"] = json!(delta.findings.len());
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn compare_observation_ids(
     store: &Store,
     baseline_id: &str,

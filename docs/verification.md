@@ -15,6 +15,64 @@ prog session obligation-list
 prog session show --readiness
 ```
 
+For a stateful system changed outside `prog`, use a non-coding read-back
+obligation:
+
+```sh
+prog verification begin \
+  --pre-observation "$PRE" \
+  --read-args '{"id":"entity-1"}' \
+  --identity-path /id \
+  --version-path /version \
+  --expected '{"/state":"enabled"}'
+
+# Execute the mutation externally. prog does not run it.
+
+prog verification readback "$INTENT_ID"
+```
+
+`begin` persists an immutable `ActionIntent` containing the source/read
+operation, redaction-safe structured read arguments, hashes of the pre-change
+identity and version, expected path/value mappings, and a required user
+obligation. It rejects missing, wildcard, malformed, redacted, oversized, or
+non-scalar identity/version mappings. `--eventual-consistency-ms` optionally
+defines the only interval in which a mismatch may remain `pending`.
+
+`readback` rechecks that the stored operation is protocol- or
+descriptor-proven read-only, then invokes it through the ordinary `prog call`
+policy and adapter path with a forced refresh. It never executes a mutation,
+retry, rollback, or repair. `--mutation-response <observation-id>` may link a
+separately captured response as evidence; it does not authorize replaying that
+operation. Repeating `readback` performs another independent read and creates
+a new immutable receipt.
+
+### Read-back receipt statuses
+
+| Status | Meaning |
+|---|---|
+| `verified` | Identity matches, every expected value matches, and the entity version advanced. |
+| `mismatched` | A fresh read completed but at least one expected value differs after any consistency window. |
+| `stale_precondition` | A 409/412 response or divergent mutation-response/read-back versions prove the mutation precondition was stale or another writer intervened. |
+| `pending` | Expected state is not visible and the explicitly declared consistency window is still open. |
+| `readback_failed` | The independent read failed at transport or upstream level. |
+| `unverifiable` | Identity, version, mapping, payload, redaction, retention, or validator evidence is insufficient. |
+
+Receipts link the intent, pre-observation, optional mutation-response
+observation, read-back observation, conservative comparability assessment, and
+the readiness obligation. Readiness maps `verified` to `passed`; every other
+receipt remains blocking except `pending`, which remains pending. Raw entity
+identity/version values are not copied into the intent or receipt.
+
+The agent-facing facade exposes the identical report, optionally alongside the
+canonical delta and comparability assessment:
+
+```bash
+prog status --baseline "$BEFORE" --subject "$AFTER"
+```
+
+Omit the observation pair to request readiness alone. `--session-id` selects a
+specific session; otherwise the active session is used.
+
 ## Declaring an obligation
 
 ```sh
@@ -28,10 +86,15 @@ prog session obligation-add checkout-fixed \
   --evidence-observation "$VERIFICATION_ID"
 ```
 
-**Obligations are immutable.** Re-declaring an existing id in the same session
+**User-declared obligations are immutable.** Re-declaring an existing id in the same session
 is a `bad_args` error, not an update. You cannot quietly move the goalposts
 after seeing a result — which is the point. Attach the evidence observation at
 declaration time, or declare a new obligation with a new id.
+
+`verification begin` creates a special read-back obligation whose declared
+criterion remains immutable. Each `verification readback` may attach only its
+new evidence and receipt id; it cannot change the intended check, expected
+state, entity fingerprints, source operation, or required scope.
 
 Get `$FINGERPRINT` from a finding's `fingerprint` field, via `prog delta` or an
 envelope's `findings`.
@@ -168,10 +231,30 @@ prog session show --readiness
 A calling loop should gate on `ready`, and on `blockers` for the explanation.
 `prog` reports readiness; it does not merge, deploy, or approve anything.
 
+## Example harness consumer
+
+[`fixtures/harness/readiness_consumer.py`](../fixtures/harness/readiness_consumer.py)
+is a tested reference consumer for hosts that choose to gate loop completion.
+`prog` remains advisory: the harness owns the pass/block decision and invokes
+the consumer explicitly:
+
+```bash
+prog session show --readiness | python3 fixtures/harness/readiness_consumer.py
+```
+
+The example passes only a configured `prog.verification` report whose
+`ready` value is true and whose blocker list is empty. Unknown schema,
+malformed input, and inconsistent readiness fields block conservatively. Its
+JSON response retains at most eight blockers of 512 characters each; exit
+codes are 0 for pass, 1 for an ordinary evidence blocker, and 2 for invalid or
+inconsistent input. It does not run checks, infer obligations, or grant
+permission to merge, deploy, send, refund, or approve.
+
 ## Related
 
 - [Conservative observation delta](delta.md) — the comparison underneath a pass.
 - [Evidence and observations](evidence.md) — observation records and lineage.
 - [Replay evaluation](replay-eval.md) — the oracle gating readiness correctness.
 - `prog meta VerificationObligation`, `prog meta ObligationEvaluation`,
-  `prog meta ReadinessReport` — generated contract schemas.
+  `prog meta ReadinessReport`, `prog meta ActionIntent`, and
+  `prog meta ReadbackVerificationReceipt` — generated contract schemas.

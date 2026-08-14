@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use prog_core::{ObligationDeclarer, VerificationStateRelationship};
+use serde::Deserialize;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -46,6 +47,8 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: SourceCommand,
     },
+    /// Classify an exact argv vector as raw, progressive, passthrough, or unknown guidance.
+    Route(RouteArgs),
     /// Show a source operation's arguments, effects, and safety gates before calling it.
     Hints(HintsArgs),
     /// Invoke a registered source operation and return a bounded envelope.
@@ -72,6 +75,13 @@ pub(crate) enum Command {
     Find(FindArgs),
     /// Conservatively compare two observations; only proven absence counts as resolved.
     Delta(DeltaArgs),
+    /// Summarize verification readiness and an optional observation delta.
+    Status(StatusArgs),
+    /// Verify an externally executed mutation using an independent safe read-back.
+    Verification {
+        #[command(subcommand)]
+        command: VerificationCommand,
+    },
     /// Manage long-running MCP tasks that outlive a single call.
     McpTask {
         #[command(subcommand)]
@@ -91,6 +101,16 @@ pub(crate) enum Command {
     },
     /// Print prog's own public contract schemas through the same envelope.
     Meta(MetaArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct RouteArgs {
+    /// Optional JSON RoutePolicy whose exact argv rules take precedence.
+    #[arg(long)]
+    pub(crate) policy: Option<PathBuf>,
+
+    #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
+    pub(crate) command: Vec<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -153,23 +173,12 @@ impl ImportFormat {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub(crate) enum AgentKind {
-    Codex,
-    ClaudeCode,
-    Cursor,
-    GeminiCli,
-}
-
-impl AgentKind {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            AgentKind::Codex => "codex",
-            AgentKind::ClaudeCode => "claude-code",
-            AgentKind::Cursor => "cursor",
-            AgentKind::GeminiCli => "gemini-cli",
-        }
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FrontmatterFlavor {
+    Yaml,
+    Mdc,
+    None,
 }
 
 #[derive(Debug, Args)]
@@ -196,11 +205,16 @@ pub(crate) struct DiscoverArgs {
 }
 
 #[derive(Debug, Subcommand)]
+// The shared Add prefix is the stable public CLI grammar: source add-http,
+// source add-cli, and source add-mcp. Renaming variants would change it.
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum SourceCommand {
     /// Register an HTTP operation with explicit method, URL, auth, and effect policy.
     AddHttp(SourceAddHttpArgs),
     /// Register a local command as argv; never stored or run as a shell string.
     AddCli(SourceAddCliArgs),
+    /// Register an MCP stdio server as argv and discover its advertised operations.
+    AddMcp(SourceAddMcpArgs),
 }
 
 #[derive(Debug, Args)]
@@ -238,6 +252,16 @@ pub(crate) struct SourceAddCliArgs {
     #[arg(long)]
     pub(crate) prefer_json: bool,
 
+    #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
+    pub(crate) command: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct SourceAddMcpArgs {
+    pub(crate) source_id: String,
+
+    /// MCP stdio server command and arguments. The argv is preserved exactly;
+    /// no shell parses or rewrites it.
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
     pub(crate) command: Vec<String>,
 }
@@ -432,17 +456,34 @@ pub(crate) struct RecipeArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct InitArgs {
-    #[arg(long, value_enum)]
-    pub(crate) agent: AgentKind,
+    /// Name of a built-in or manifest-directory integration target.
+    #[arg(
+        long,
+        required_unless_present = "print_skill",
+        conflicts_with = "print_skill"
+    )]
+    pub(crate) agent: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, conflicts_with = "print_skill")]
     pub(crate) project: bool,
 
-    #[arg(long)]
+    #[arg(long, conflicts_with = "print_skill")]
     pub(crate) dry_run: bool,
 
-    #[arg(long, default_value = ".")]
+    #[arg(long, default_value = ".", conflicts_with = "print_skill")]
     pub(crate) root: PathBuf,
+
+    /// Load additional integration-target JSON manifests from this directory.
+    #[arg(long, conflicts_with = "print_skill")]
+    pub(crate) manifest_dir: Option<PathBuf>,
+
+    /// Print the canonical skill to stdout without writing any files.
+    #[arg(long)]
+    pub(crate) print_skill: bool,
+
+    /// Frontmatter format for --print-skill (defaults to yaml).
+    #[arg(long, value_enum, requires = "print_skill")]
+    pub(crate) frontmatter: Option<FrontmatterFlavor>,
 }
 
 #[derive(Debug, Args)]
@@ -558,6 +599,79 @@ pub(crate) struct DeltaArgs {
     pub(crate) baseline: String,
     /// Later observation id compared against the baseline.
     pub(crate) subject: String,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct StatusArgs {
+    /// Earlier observation id used as the optional delta reference point.
+    #[arg(long, requires = "subject")]
+    pub(crate) baseline: Option<String>,
+
+    /// Later observation id used as the optional delta subject.
+    #[arg(long, requires = "baseline")]
+    pub(crate) subject: Option<String>,
+
+    /// Session whose declared verification obligations should be evaluated.
+    /// Defaults to the active session.
+    #[arg(long)]
+    pub(crate) session_id: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum VerificationCommand {
+    /// Record the entity, precondition, expected state, and safe read operation.
+    Begin(VerificationBeginArgs),
+    /// Execute only the declared safe read and record a deterministic verification receipt.
+    Readback(VerificationReadbackArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct VerificationBeginArgs {
+    /// Observation captured before the external mutation.
+    #[arg(long)]
+    pub(crate) pre_observation: String,
+
+    /// Source profile for the independent read. Defaults to the pre-observation source.
+    #[arg(long)]
+    pub(crate) source_id: Option<String>,
+
+    /// Proven read-only operation for the independent read. Defaults to the pre-observation operation.
+    #[arg(long)]
+    pub(crate) read_operation: Option<String>,
+
+    /// Exact JSON arguments passed to the independent read operation.
+    #[arg(long)]
+    pub(crate) read_args: String,
+
+    /// Exact JSON Pointer to the entity identity scalar.
+    #[arg(long)]
+    pub(crate) identity_path: String,
+
+    /// Exact JSON Pointer to the entity version scalar.
+    #[arg(long)]
+    pub(crate) version_path: String,
+
+    /// JSON object mapping exact JSON Pointers to their expected post-mutation values.
+    #[arg(long)]
+    pub(crate) expected: String,
+
+    /// Keep a mismatch pending for this eventual-consistency window.
+    #[arg(long)]
+    pub(crate) eventual_consistency_ms: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct VerificationReadbackArgs {
+    /// Action intent returned by `verification begin`.
+    pub(crate) intent_id: String,
+
+    /// Optional observation containing the externally captured mutation response.
+    #[arg(long)]
+    pub(crate) mutation_response: Option<String>,
+
+    /// Satisfy an independently confirmation-gated read operation; never authorizes mutation.
+    #[arg(long)]
+    pub(crate) yes: bool,
 }
 
 #[derive(Debug, Subcommand)]

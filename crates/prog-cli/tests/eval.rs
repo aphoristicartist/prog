@@ -320,6 +320,7 @@ fn markdown_report(rows: &[EvalRow]) -> String {
     let mut output = String::from(
         "# Token economics eval\n\n\
          Token counts use the project heuristic `bytes / 4`, rounded up. Raw cost is the full fixture payload entering context. prog cost is the sum of every bounded envelope or expansion stdout consumed for the task, including the initial call envelope before any expansion. This is not a latency benchmark or a model-success benchmark.\n\n\
+         Every `DisclosureEnvelope` reports a `disclosure_verdict` using the same fixed thresholds for every capture kind. Its ratio is `payload_bytes / envelope_bytes`: below `1.0` is `raw_cheaper`, from `1.0` through less than `1.25` is `neutral`, and `1.25` or above is `bounded_win` (the envelope is at least 20 percent smaller). The displayed ratio is rounded down to two decimal places, but classification uses the exact byte counts. The verdict reports cost; it does not automatically replace the envelope with raw output.\n\n\
          Regenerate this table with `PROG_TOKEN_EVAL_UPDATE=1 cargo test -p prog-cli --test eval -- --nocapture`.\n\n\
          | Fixture | Task | Raw tokens | prog tokens | Ratio |\n\
          |---|---:|---:|---:|---:|\n",

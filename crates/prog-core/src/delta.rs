@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     ComparabilityAssessment, DeltaFinding, DeltaFindingStatus, EvidenceAvailability, Extra,
     Finding, OBSERVATION_DELTA_SCHEMA, ObservationDelta, ObservationRecord, ScopeRelationship,
-    SourceStateKind, SubjectIdentity, WorkspaceValidity, compare_workspace,
+    SubjectIdentity, WorkspaceValidity, compare_workspace,
 };
 
 const MAX_DELTA_FINDINGS: usize = 100;
@@ -299,11 +299,7 @@ fn source_validity(
             if left.source_id == right.source_id
                 && left.operation == right.operation
                 && left.subject_scope == right.subject_scope
-                && left.kind == right.kind
-                && matches!(
-                    left.kind,
-                    SourceStateKind::HttpEtag | SourceStateKind::HttpLastModified
-                ) =>
+                && left.kind == right.kind =>
         {
             if left.value == right.value {
                 crate::SourceValidity::ConfirmedUnchanged
@@ -366,7 +362,7 @@ mod tests {
     use super::*;
     use crate::{
         CaptureCompleteness, EvidenceAvailability, FindingCommandHints, ObservationLineage,
-        SelectionCoverage, SourceStateToken,
+        SelectionCoverage, SourceStateKind, SourceStateToken,
     };
 
     fn observation(id: &str, invocation: &str, complete: bool) -> ObservationRecord {
@@ -384,7 +380,6 @@ mod tests {
                 exhaustive: true,
                 extra: Extra::new(),
             },
-            subject_keys: Vec::new(),
             captured_at: "2026-07-13T12:00:00Z".to_string(),
             duration_ms: None,
             status: None,
@@ -409,7 +404,6 @@ mod tests {
             source_validity: crate::SourceValidity::ConfirmedUnchanged,
             workspace_state: None,
             source_state: None,
-            environment_state: None,
             lineage: ObservationLineage::default(),
             provenance: None,
             cache_key: None,
@@ -520,6 +514,38 @@ mod tests {
             crate::SourceValidity::RefreshFailed
         );
         assert!(!delta.assessment.can_prove_absence);
+    }
+
+    #[test]
+    fn opaque_change_and_mcp_tokens_participate_in_pairwise_validity() {
+        for kind in [
+            SourceStateKind::ChangeToken,
+            SourceStateKind::McpModification,
+        ] {
+            let mut baseline = observation("a", "same", true);
+            let mut subject = observation("b", "same", true);
+            let mut left = etag("sha256:same");
+            left.kind = kind;
+            let right = left.clone();
+            baseline.source_state = Some(left);
+            subject.source_state = Some(right);
+            baseline.source_validity = crate::SourceValidity::Unknown;
+            subject.source_validity = crate::SourceValidity::Unknown;
+            assert_eq!(
+                compare_observations(&baseline, &subject, &[], &[])
+                    .assessment
+                    .source_validity,
+                crate::SourceValidity::ConfirmedUnchanged
+            );
+
+            subject.source_state.as_mut().unwrap().value = "sha256:changed".to_string();
+            assert_eq!(
+                compare_observations(&baseline, &subject, &[], &[])
+                    .assessment
+                    .source_validity,
+                crate::SourceValidity::SourceChanged
+            );
+        }
     }
 
     #[test]

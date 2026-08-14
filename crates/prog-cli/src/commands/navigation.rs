@@ -14,7 +14,7 @@ struct CursorContext {
 
 fn cursor_context(store: &Store, cursor: &str, requested_path: &str) -> Result<CursorContext> {
     let record = store.get_cursor(cursor)?;
-    let entry = store
+    let mut entry = store
         .get_entry(&record.cache_key)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
     let observation = record
@@ -23,6 +23,19 @@ fn cursor_context(store: &Store, cursor: &str, requested_path: &str) -> Result<C
         .map(|observation_id| store.get_observation(observation_id))
         .transpose()?
         .flatten();
+    if let Some(observation) = &observation {
+        // Cache entries are mutable reuse indexes, while cursors are minted
+        // for one immutable observation. A later refresh may replace the
+        // entry under the same cache key; navigation must remain bound to the
+        // capture named by the cursor or it would return evidence from a
+        // different run.
+        entry.payload_hash.clone_from(&observation.payload_hash);
+        entry.payload_bytes = observation.capture.stored_bytes;
+        entry.observation_id = Some(observation.observation_id.clone());
+        entry.provenance.clone_from(&observation.provenance);
+        entry.created_at.clone_from(&record.created_at);
+        entry.expires_at.clone_from(&record.expires_at);
+    }
     let payload = store
         .get_payload(&entry.payload_hash)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
@@ -403,9 +416,10 @@ fn bound_evidence_block(block: &mut EvidenceBlock, max_envelope_bytes: usize) ->
         block.extra.clear();
         block.warnings.truncate(1);
         block.summary = block.summary.chars().take(180).collect();
-        block.commands.inspect = None;
-        block.commands.search = None;
-        block.commands.evidence = None;
+        block
+            .commands
+            .available
+            .retain(|command| matches!(command, prog_core::NavigationCommand::Expand));
     }
     Ok(())
 }

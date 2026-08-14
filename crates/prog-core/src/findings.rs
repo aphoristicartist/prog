@@ -56,8 +56,8 @@ impl Default for FindingOptions {
 
 /// Which navigation command hints `command_hints` should emit on each [`Finding`].
 ///
-/// The minimal default emits only `prog expand` for compatibility-oriented
-/// library callers. CLI envelopes opt into [`CommandHintConfig::NAV_ALL`] so
+/// The minimal default emits only `prog expand` for low-overhead library
+/// callers. CLI envelopes opt into [`CommandHintConfig::NAV_ALL`] so
 /// every advertised navigation command is directly runnable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandHintConfig {
@@ -68,7 +68,7 @@ pub struct CommandHintConfig {
 }
 
 impl CommandHintConfig {
-    /// Minimal compatibility mode: emit only `prog expand`.
+    /// Minimal hint mode: emit only `prog expand`.
     pub const NAV_EXPAND_ONLY: Self = Self {
         expand: true,
         inspect: false,
@@ -211,6 +211,12 @@ pub fn finding_derivation_is_complete(payload: &Value) -> bool {
                             .is_some_and(|lines| lines.len() as u64 >= count);
                         count > retained as u64 && !has_full_text && !has_all_lines
                     })
+        }) {
+            return false;
+        }
+        if value.as_object().is_some_and(|map| {
+            map.get("schema").and_then(Value::as_str) == Some("prog.coding_provider")
+                && map.get("complete").and_then(Value::as_bool) != Some(true)
         }) {
             return false;
         }
@@ -1793,13 +1799,22 @@ fn string_signal(text: &str) -> Option<Signal> {
             severity: Some("error"),
             source: "generic.string_pattern",
         })
-    } else if is_test_name(&normalized) {
+    } else if is_failing_test_reference(&normalized) {
         Some(Signal {
             kind: "test_name",
             confidence: 0.74,
             reason: "string references a failing test",
             title: "failing test",
             severity: Some("error"),
+            source: "generic.string_pattern",
+        })
+    } else if is_test_name(&normalized) {
+        Some(Signal {
+            kind: "test_reference",
+            confidence: 0.5,
+            reason: "string references a test without evidence that it failed",
+            title: "test reference",
+            severity: Some("info"),
             source: "generic.string_pattern",
         })
     } else if has_explicit_log_fatal_line(text) {
@@ -1974,32 +1989,19 @@ fn compare_candidates(left: &Candidate, right: &Candidate) -> Ordering {
 
 fn command_hints(
     cursor: Option<&str>,
-    path: &str,
-    kind: &str,
+    _path: &str,
+    _kind: &str,
     hints: CommandHintConfig,
 ) -> FindingCommandHints {
-    let Some(cursor) = cursor else {
+    if cursor.is_none() {
         return FindingCommandHints::default();
-    };
-    let cursor = shell_arg(cursor);
-    let path = shell_arg(path);
-    let goal = shell_arg(&format!("investigate {kind}"));
-    let kind = shell_arg(kind);
-    FindingCommandHints {
-        inspect: hints
-            .inspect
-            .then(|| format!("prog inspect {cursor} --goal {goal} --path {path}")),
-        expand: hints
-            .expand
-            .then(|| format!("prog expand {cursor} --path {path}")),
-        evidence: hints
-            .evidence
-            .then(|| format!("prog evidence {cursor} --path {path}")),
-        search: hints
-            .search
-            .then(|| format!("prog find {cursor} --kind {kind} --path {path}")),
-        extra: Extra::new(),
     }
+    let mut available = Vec::new();
+    available.extend(hints.inspect.then_some(crate::NavigationCommand::Inspect));
+    available.extend(hints.expand.then_some(crate::NavigationCommand::Expand));
+    available.extend(hints.evidence.then_some(crate::NavigationCommand::Evidence));
+    available.extend(hints.search.then_some(crate::NavigationCommand::Search));
+    FindingCommandHints { available }
 }
 
 fn redaction_state(value: &Value) -> Option<RedactionState> {
@@ -2088,6 +2090,21 @@ fn is_test_name(normalized: &str) -> bool {
         || has_counted_label(normalized, "failing")
 }
 
+fn is_failing_test_reference(normalized: &str) -> bool {
+    (is_test_name(normalized)
+        && (normalized.contains(" failed")
+            || normalized.contains("failed ")
+            || normalized.contains("[  failed  ]")))
+        || has_positive_counted_label(normalized, "failing")
+}
+
+fn has_positive_counted_label(normalized: &str, label: &str) -> bool {
+    normalized.split_whitespace().any(|word| {
+        word.parse::<u64>().is_ok_and(|count| count > 0)
+            && normalized.contains(&format!("{word} {label}"))
+    })
+}
+
 fn contains_failure_word(normalized: &str) -> bool {
     let mut start = 0;
     while let Some(relative) = normalized[start..].find("failed") {
@@ -2165,15 +2182,4 @@ fn is_diff_hunk(text: &str) -> bool {
         || text.contains("diff --git")
         || text.contains("\n+++ ")
         || text.contains("\n--- ")
-}
-
-fn shell_arg(value: &str) -> String {
-    if !value.is_empty()
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':' | '~'))
-    {
-        return value.to_string();
-    }
-    format!("'{}'", value.replace('\'', "'\\''"))
 }

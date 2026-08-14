@@ -234,6 +234,11 @@ fn prepare_http_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery>
             effects,
             cache: CachePolicy::default(),
             pagination: None,
+            source_state: operation_value
+                .get("source_state")
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()?,
             extra,
         });
         http_operations.push(HttpOperation {
@@ -352,6 +357,11 @@ fn prepare_cli_seed(source_id: &str, seed: &Value) -> Result<PreparedDiscovery> 
             effects,
             cache: CachePolicy::default(),
             pagination: None,
+            source_state: operation_value
+                .get("source_state")
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()?,
             extra,
         });
         cli_operations.push(CliOperation {
@@ -618,6 +628,7 @@ pub(crate) async fn discover_from_seed(
     probe: bool,
 ) -> Result<DiscoverReport> {
     validate_seed_kind(kind, &seed)?;
+    store.release()?;
     let mut prepared = prepare_discovery(source_id, kind, seed).await?;
     let operations_found = prepared.profile.operations.len();
     let mut operations_probed = 0usize;

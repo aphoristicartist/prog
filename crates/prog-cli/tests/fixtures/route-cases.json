@@ -1,0 +1,15 @@
+[
+  {"name":"pytest","argv":["pytest","-q"],"guidance":"progressive","matched_rule":"builtin.noisy_command"},
+  {"name":"cargo-test","argv":["cargo","test"],"guidance":"progressive","matched_rule":"builtin.noisy_command"},
+  {"name":"tiny-pwd","argv":["pwd"],"guidance":"raw","matched_rule":"builtin.tiny_command"},
+  {"name":"nested-prog","argv":["prog","run","--","pytest"],"guidance":"passthrough","matched_rule":"builtin.nested_prog"},
+  {"name":"shell-string","argv":["bash","-c","pytest | tee out"],"guidance":"passthrough","matched_rule":"builtin.opaque_shell"},
+  {"name":"pipeline-token","argv":["cargo","test","|","tee","out"],"guidance":"passthrough","matched_rule":"builtin.opaque_shell"},
+  {"name":"redirect","argv":["cargo","test",">","out"],"guidance":"passthrough","matched_rule":"builtin.opaque_shell"},
+  {"name":"command-substitution","argv":["echo","$(secret-tool)"],"guidance":"passthrough","matched_rule":"builtin.opaque_shell"},
+  {"name":"heredoc","argv":["tool","<<EOF"],"guidance":"passthrough","matched_rule":"builtin.opaque_shell"},
+  {"name":"stateful-compound","argv":["cd","build","&&","cargo","test"],"guidance":"passthrough","matched_rule":"builtin.opaque_shell"},
+  {"name":"docker-tty","argv":["docker","exec","-it","container","pytest"],"guidance":"passthrough","matched_rule":"builtin.opaque_shell"},
+  {"name":"kubectl-stream","argv":["kubectl","logs","--follow","pod/api"],"guidance":"passthrough","matched_rule":"builtin.opaque_shell"},
+  {"name":"unknown","argv":["custom-tool","scan"],"guidance":"unknown","matched_rule":null}
+]

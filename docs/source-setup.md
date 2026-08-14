@@ -58,6 +58,20 @@ prog source add-cli pods --operation list --read-only --prefer-json -- kubectl g
 Unknown or ambiguous CLIs fail `--prefer-json` with an actionable error instead
 of guessing a flag. Detection never executes help commands.
 
+## MCP From A Command
+
+Register an MCP stdio server directly as argv. This uses the same validated
+discovery path as `discover --kind mcp --seed` and never invokes a shell:
+
+```bash
+prog source add-mcp docs -- python3 fixtures/mcp/fixture_mcp.py
+prog call docs search_docs --args '{"query":"release"}'
+```
+
+The server is started during discovery so `prog` can record the operations and
+their advertised effect annotations. Operations without proven read-only
+annotations remain confirmation-gated.
+
 ## Import Existing Descriptors
 
 `prog discover --import` seeds profiles from descriptors that tools already
@@ -109,3 +123,8 @@ Both source-add commands return:
 
 Use `prog discover --seed` when you need advanced seed features such as auth
 refs, headers, templated parameters, shell-backed commands, or MCP servers.
+
+An advanced operation may also declare an exact `source_state.path` JSON
+Pointer and optional `expires_at_path`. Selected values are hashed immediately,
+never persisted raw, and malformed or missing selectors cannot establish
+freshness. See [source-state evidence](source-state.md).

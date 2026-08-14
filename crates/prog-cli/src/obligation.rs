@@ -7,14 +7,51 @@ use crate::commands::delta::compare_observation_ids;
 use serde_json::Value;
 
 use prog_core::{
-    Extra, ObligationEvaluation, Result, Store, VerificationObligation, VerificationOperation,
-    VerificationStateRelationship, VerificationStatus,
+    Extra, ObligationEvaluation, ReadbackVerificationStatus, Result, Store, VerificationObligation,
+    VerificationOperation, VerificationStateRelationship, VerificationStatus,
 };
 
 pub(crate) fn evaluate_obligation(
     store: &Store,
     obligation: VerificationObligation,
 ) -> Result<ObligationEvaluation> {
+    if let Some(receipt_id) = obligation
+        .extra
+        .get("readback_receipt_id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+    {
+        let Some(receipt) = store.get_readback_receipt(&receipt_id)? else {
+            return Ok(obligation_evaluation(
+                obligation,
+                VerificationStatus::Unverifiable,
+                vec![format!("read-back receipt '{receipt_id}' is unavailable")],
+                None,
+            ));
+        };
+        if receipt.obligation_id != obligation.id {
+            return Ok(obligation_evaluation(
+                obligation,
+                VerificationStatus::Unverifiable,
+                vec!["the read-back receipt names a different obligation".to_string()],
+                receipt.assessment,
+            ));
+        }
+        let status = match receipt.status {
+            ReadbackVerificationStatus::Verified => VerificationStatus::Passed,
+            ReadbackVerificationStatus::Mismatched => VerificationStatus::Failed,
+            ReadbackVerificationStatus::StalePrecondition => VerificationStatus::Stale,
+            ReadbackVerificationStatus::Pending => VerificationStatus::Pending,
+            ReadbackVerificationStatus::ReadbackFailed
+            | ReadbackVerificationStatus::Unverifiable => VerificationStatus::Unverifiable,
+        };
+        return Ok(obligation_evaluation(
+            obligation,
+            status,
+            receipt.reasons,
+            receipt.assessment,
+        ));
+    }
     let Some(evidence_id) = obligation.evidence_observation_id.clone() else {
         return Ok(obligation_evaluation(
             obligation,

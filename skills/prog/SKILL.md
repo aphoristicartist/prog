@@ -24,6 +24,10 @@ observe/call/run -> ranked findings -> inspect/search -> evidence exact path -> 
   exists and the operation passes safety gates.
 - Follow the envelope's top findings first. Use `prog inspect <cursor> --goal
   <goal>` when the task needs goal-directed ranking.
+- For `next_actions`, execute direct `argv` as an argv array. For a
+  cursor-backed action, select `action_templates[action.kind]`, replace
+  `{cursor}` from the response and `{path}` from the action, and execute the
+  resolved array without shell parsing. `scope: cached_evidence` is offline.
 - Use `prog search <cursor> <query>` for a known clue and `prog find <cursor>
   --kind error|warning|test_failure` for structural evidence.
 - Use `prog evidence <cursor> --path <json-pointer>` for a compact citation
@@ -49,6 +53,12 @@ A narrower rerun and a real fix produce the same absence.
   `prog session obligation-add <id> --check ... --scope ... --origin-observation
   ... --expected-absent-fingerprint ... --evidence-observation ...`, then read
   `prog session show --readiness`.
+- For an external API or MCP mutation, capture the entity first, run `prog
+  verification begin --pre-observation ... --read-args ... --identity-path ...
+  --version-path ... --expected ...`, execute the mutation outside `prog`, then
+  run `prog verification readback <intent-id>`. Only `verified` passes; do not
+  reinterpret `mismatched`, `stale_precondition`, `readback_failed`, or
+  `unverifiable` as success.
 - `ready` is true only when every required obligation passed. `configured:
   false` means nothing was declared — that is not a pass. Obligations are
   immutable, so declare them with the evidence observation attached.
@@ -102,24 +112,35 @@ are present. Expand the exact path first.
 ## Hook Usage
 
 Project-local hooks installed by `prog init --agent <agent> --project` are
-explicit wrappers, not hidden command rewrites:
+explicit argv wrappers. They may wrap the identical argv for capture, but never
+perform semantic substitution or narrow the requested command:
 
 ```bash
 <agent-dir>/prog-hooks/prog-run.sh cargo test
 ```
 
-The wrapper returns a normal `DisclosureEnvelope`. Follow its findings, then use
-`prog inspect` and `prog evidence` for exact cached evidence.
+The wrapper uses `prog route`: progressive commands return a normal
+`DisclosureEnvelope`; raw, passthrough, unknown, TTY/streaming, and shell-
+structural commands run directly. Check `disclosure_verdict`
+first. When it is `raw_cheaper`, use direct raw output on the next iteration;
+the current envelope remains available for cached `prog inspect` and `prog
+evidence` retrieval. Otherwise, follow its findings and retrieve exact cached
+evidence as needed.
 
 ## MCP Stance
 
 MCP is optional compatibility. Prefer the CLI, this skill, and explicit hooks as
 the durable contract. Use MCP only when the host agent already speaks MCP well
 and it preserves the same safety gates, cache semantics, cursor expansion, and
-redaction behavior as the CLI.
+redaction behavior as the CLI. `prog` has no MCP server mode in the first
+release, so an MCP-only host with no CLI, skill, or hook capability cannot use
+it. Do not invent a bridge: #216 defers any facade-only transport until #120's
+three-operation facade exists and has measured schema cost.
 
 ## Counterexamples
 
-Do not use `prog` when the payload is tiny, a known `jq` query is enough, the
-user needs live interactive streaming, the command requires a TTY, or the
-upstream API already returns exactly the needed fields.
+Do not use `prog` when a known `jq` query is enough, the user needs live
+interactive streaming, the command requires a TTY, or the upstream API already
+returns exactly the needed fields. For payload size, follow the envelope's
+machine-readable `disclosure_verdict`: route the next iteration to raw output
+when it reports `raw_cheaper`.

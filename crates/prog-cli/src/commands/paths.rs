@@ -149,9 +149,9 @@ pub(crate) fn expansion_next_actions(
     omitted: &[OmittedRegion],
     limit: usize,
 ) -> Vec<NextAction> {
-    let Some(cursor) = cursor else {
+    if cursor.is_none() {
         return Vec::new();
-    };
+    }
     let mut ranked = omitted.iter().collect::<Vec<_>>();
     ranked.sort_by(|left, right| {
         omission_priority(right.reason)
@@ -161,15 +161,11 @@ pub(crate) fn expansion_next_actions(
     ranked
         .into_iter()
         .take(limit)
-        .map(|region| expansion_next_action(cursor, operation, region))
+        .map(|region| expansion_next_action(operation, region))
         .collect()
 }
 
-fn expansion_next_action(
-    cursor: &str,
-    operation: Option<&str>,
-    region: &OmittedRegion,
-) -> NextAction {
+fn expansion_next_action(operation: Option<&str>, region: &OmittedRegion) -> NextAction {
     let action_kind = if region.reason == OmissionReason::LargeString {
         "evidence"
     } else {
@@ -187,37 +183,42 @@ fn expansion_next_action(
     if let Some(detail) = &region.detail {
         extra.insert("detail".to_string(), json!(detail));
     }
-    extra.insert(
-        "offline".to_string(),
-        json!("uses cached redacted payload; does not contact upstream"),
-    );
     NextAction {
         kind: action_kind.to_string(),
         operation: operation.map(str::to_string),
         path: Some(region.path.clone()),
-        reason: Some(omission_action_reason(region)),
-        argv: Some(match region.reason {
-            OmissionReason::LargeString => vec![
-                "prog".to_string(),
-                "evidence".to_string(),
-                cursor.to_string(),
-                "--path".to_string(),
-                region.path.clone(),
-            ],
-            _ => vec![
-                "prog".to_string(),
-                "expand".to_string(),
-                cursor.to_string(),
-                "--path".to_string(),
-                region.path.clone(),
-            ],
-        }),
-        scope: Some("cached_evidence".to_string()),
-        exactness: Some(prog_core::ActionExactness::Exact),
-        derived_from: Some("omitted_region".to_string()),
+        reason: None,
+        scope: None,
+        exactness: None,
+        derived_from: None,
         extra,
         ..NextAction::default()
     }
+}
+
+pub(crate) fn action_templates(
+    actions: &[NextAction],
+) -> BTreeMap<String, prog_core::ActionTemplate> {
+    let mut templates = BTreeMap::new();
+    for kind in ["evidence", "expand"] {
+        if actions.iter().any(|action| action.kind == kind) {
+            templates.insert(
+                kind.to_string(),
+                prog_core::ActionTemplate {
+                    argv: vec![
+                        "prog".to_string(),
+                        kind.to_string(),
+                        "{cursor}".to_string(),
+                        "--path".to_string(),
+                        "{path}".to_string(),
+                    ],
+                    scope: prog_core::ActionScope::CachedEvidence,
+                    exactness: prog_core::ActionExactness::Exact,
+                },
+            );
+        }
+    }
+    templates
 }
 
 fn omission_priority(reason: OmissionReason) -> u8 {
@@ -242,35 +243,6 @@ fn omission_reason_name(reason: OmissionReason) -> &'static str {
     }
 }
 
-fn omission_action_reason(region: &OmittedRegion) -> String {
-    match region.reason {
-        OmissionReason::LargeString => format!(
-            "{} is a large string; emit a bounded evidence excerpt, or use expand --out for the full stored redacted value",
-            region.path
-        ),
-        OmissionReason::LongArray => format!(
-            "{} is a long array; expand with --limit to inspect selected items",
-            region.path
-        ),
-        OmissionReason::ManyFields => format!(
-            "{} has many fields; expand with --fields or --omit to inspect selected fields",
-            region.path
-        ),
-        OmissionReason::DeepObject => format!(
-            "{} was omitted by depth; expand with --depth to inspect nested structure",
-            region.path
-        ),
-        OmissionReason::NodeBudget => format!(
-            "{} was omitted by the global node budget; expand a narrower prefix",
-            region.path
-        ),
-        OmissionReason::Redacted => format!(
-            "{} is redacted before persistence; expansion will not reveal the original secret",
-            region.path
-        ),
-    }
-}
-
 struct PathFilters {
     reason: Option<OmissionReason>,
     fields: BTreeSet<String>,
@@ -281,7 +253,7 @@ struct PathFilters {
 pub(crate) fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsResponse> {
     let filters = path_filters(args)?;
     let record = store.get_cursor(&args.cursor)?;
-    let entry = store
+    let mut entry = store
         .get_entry(&record.cache_key)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
     let observation = record
@@ -290,6 +262,14 @@ pub(crate) fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsRespo
         .map(|observation_id| store.get_observation(observation_id))
         .transpose()?
         .flatten();
+    if let Some(observation) = &observation {
+        entry.payload_hash.clone_from(&observation.payload_hash);
+        entry.payload_bytes = observation.capture.stored_bytes;
+        entry.observation_id = Some(observation.observation_id.clone());
+        entry.provenance.clone_from(&observation.provenance);
+        entry.created_at.clone_from(&record.created_at);
+        entry.expires_at.clone_from(&record.expires_at);
+    }
     let payload = store
         .get_payload(&entry.payload_hash)?
         .ok_or_else(|| CoreError::CacheMiss(record.cache_key.clone()))?;
@@ -361,6 +341,7 @@ pub(crate) fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsRespo
         },
     )?;
 
+    let action_templates = action_templates(&next_actions);
     Ok(PathsResponse {
         schema: DISCLOSURE_SCHEMA,
         cursor: args.cursor.clone(),
@@ -371,6 +352,7 @@ pub(crate) fn paths_cursor(store: &Store, args: &PathsArgs) -> Result<PathsRespo
         paths,
         omitted,
         next_actions,
+        action_templates,
         cache,
         warnings,
     })

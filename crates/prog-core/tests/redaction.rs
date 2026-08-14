@@ -302,7 +302,7 @@ fn redaction_config_round_trips() {
     let json_str = serde_json::to_string(&config).unwrap();
     let back: RedactionConfig = serde_json::from_str(&json_str).unwrap();
     assert_eq!(config, back);
-    // Default deserializes from an empty object (backward compatible).
+    // The current empty configuration resolves to the documented defaults.
     let empty: RedactionConfig = serde_json::from_str("{}").unwrap();
     assert!(empty.extra_keywords.is_empty());
     assert!(empty.allowlist.is_empty());

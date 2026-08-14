@@ -1,0 +1,8 @@
+{
+  "schema": "prog.integration_target",
+  "agent": "claude-code",
+  "skill_path": ".claude/skills/prog/SKILL.md",
+  "hook_dir": ".claude/prog-hooks",
+  "frontmatter": "yaml",
+  "write_mode": "create"
+}

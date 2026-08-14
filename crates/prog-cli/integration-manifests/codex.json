@@ -1,0 +1,8 @@
+{
+  "schema": "prog.integration_target",
+  "agent": "codex",
+  "skill_path": ".codex/skills/prog/SKILL.md",
+  "hook_dir": ".codex/prog-hooks",
+  "frontmatter": "yaml",
+  "write_mode": "create"
+}

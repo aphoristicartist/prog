@@ -6,24 +6,42 @@ Regenerate this report and the raw metrics with `PROG_REPLAY_EVAL_BLESS=1 cargo 
 
 Strategies marked unavailable (`evidence_packet`, `ranked_retrieval`) are reported as unavailable, never simulated: issues #116 and #118 have not landed.
 
-This is a baseline slice of #121's full scenario matrix. The HTTP/API snapshot, pagination, and noisy-log-with-one-changing-event categories remain future work.
+The fixture inventory distinguishes generated, recorded public-live, and optional credentialed inputs. Credentialed capture is never required in CI, and neither raw credentials nor credentialed payloads are committed.
 
-**This report makes no savings claim.** Its scenario payloads are deliberately tiny (a handful of synthetic lines) so the suite stays fast and deterministic; at that scale `prog`'s envelope overhead legitimately costs more than raw output, matching the project's documented small-payload caveat. The byte/token/call columns exist to make that cost visible, not to claim a win. Token/call savings evidence lives in `docs/token-economics.md`, `docs/task-success-eval.md`, and `docs/competitive-baselines.md`, which use realistic payload sizes. This report's claim is narrower and, for the loop kernel, more load-bearing: every delta, fingerprint, and readiness classification below is correct across a real multi-iteration trajectory.
+**This report makes no aggregate savings claim.** The byte/token/call columns exist to make cost and no-benefit controls visible. Token estimates use the named `bytes/4-ceiling` estimator over delivered bytes. Token/call savings evidence lives in `docs/token-economics.md`, `docs/task-success-eval.md`, and `docs/competitive-baselines.md`, which use realistic payload sizes. This report's claim is narrower and, for the loop kernel, more load-bearing: every delta, fingerprint, and readiness classification below is correct across a real multi-iteration trajectory.
 
 ## Summary
 
-6 scenarios, 20/20 correctness checks passing.
+12 scenarios, 56/56 correctness checks passing; 5/11 comparison pairs can prove absence; 48/49 compared findings have fingerprints; 0 false freshness/resolution/readiness decisions.
+
+## Fixture sources
+
+| Kind | Checked in | CI required | Description |
+|---|---:|---:|---|
+| generated | true | true | deterministic fixtures generated locally by the harness |
+| recorded_public_live | true | true | redacted recording of a public, unauthenticated endpoint |
+| credentialed_optional | false | false | optional local capture; credentials and raw payloads are never committed |
 
 ## multi_iteration_resolution (`multi_iteration_resolution`)
+
+Fixture source: `generated`. Wall time: 1223 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 119 | 30 | 3 |
 | simple_truncation | true | 119 | 30 | 3 |
-| prog_envelope | true | 31212 | 7803 | 3 |
-| prog_delta | true | 17752 | 4438 | 5 |
+| prog_envelope | true | 29021 | 7256 | 3 |
+| prog_delta | true | 17022 | 4256 | 5 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
+
+Evidence available: true; first-view hit: true; comparison coverage: 2/2; fingerprint coverage: 9/9; budget compliant: true; redaction compliant: true; false decisions: 0.
+
+| Delta status | Expected | Correct |
+|---|---:|---:|
+| new | 1 | 1 |
+| persisting | 3 | 3 |
+| resolved | 1 | 1 |
 
 Checks:
 
@@ -34,25 +52,105 @@ Checks:
 - `gamma_new_at_iteration_2`: pass
 - `gamma_persists_iteration_2_to_3`: pass
 - `iteration1_to_2_can_prove_absence`: pass
+- `small_payload_envelopes_report_raw_cheaper`: pass
+
+## pytest_multi_iteration_failure_loop (`pytest_loop`)
+
+Fixture source: `generated`. Wall time: 343 ms (informational; excluded from deterministic correctness baselines).
+
+| Strategy | Available | Delivered bytes | Est. tokens | Calls |
+|---|---:|---:|---:|---:|
+| raw | true | 1416 | 354 | 2 |
+| simple_truncation | true | 1416 | 354 | 2 |
+| prog_envelope | true | 18355 | 4589 | 3 |
+| prog_delta | true | 22214 | 5554 | 3 |
+| evidence_packet | false | 0 | 0 | 0 |
+| ranked_retrieval | false | 0 | 0 | 0 |
+
+Evidence available: true; first-view hit: true; comparison coverage: 1/1; fingerprint coverage: 6/6; budget compliant: true; redaction compliant: true; false decisions: 0.
+
+| Delta status | Expected | Correct |
+|---|---:|---:|
+| new | 1 | 1 |
+| persisting | 1 | 1 |
+| resolved | 1 | 1 |
+
+Checks:
+
+- `compacted_delta_preserves_complete_counts`: pass
+- `complete_loop_can_prove_absence`: pass
+- `delta_output_respects_disclosure_budget`: pass
+- `loop_has_new_failure`: pass
+- `loop_has_persisting_failure`: pass
+- `loop_has_resolved_failure`: pass
+- `new_failure_evidence_is_exactly_recoverable`: pass
+
+## cargo_multi_iteration_failure_loop (`cargo_loop`)
+
+Fixture source: `generated`. Wall time: 368 ms (informational; excluded from deterministic correctness baselines).
+
+| Strategy | Available | Delivered bytes | Est. tokens | Calls |
+|---|---:|---:|---:|---:|
+| raw | true | 901 | 226 | 2 |
+| simple_truncation | true | 901 | 226 | 2 |
+| prog_envelope | true | 19993 | 4999 | 3 |
+| prog_delta | true | 22966 | 5742 | 3 |
+| evidence_packet | false | 0 | 0 | 0 |
+| ranked_retrieval | false | 0 | 0 | 0 |
+
+Evidence available: true; first-view hit: true; comparison coverage: 1/1; fingerprint coverage: 6/6; budget compliant: true; redaction compliant: true; false decisions: 0.
+
+| Delta status | Expected | Correct |
+|---|---:|---:|
+| new | 1 | 1 |
+| persisting | 1 | 1 |
+| resolved | 1 | 1 |
+
+Checks:
+
+- `compacted_delta_preserves_complete_counts`: pass
+- `complete_loop_can_prove_absence`: pass
+- `delta_output_respects_disclosure_budget`: pass
+- `loop_has_new_failure`: pass
+- `loop_has_persisting_failure`: pass
+- `loop_has_resolved_failure`: pass
+- `new_failure_evidence_is_exactly_recoverable`: pass
 
 ## narrowed_rerun_no_false_resolved (`narrowed_rerun`)
+
+Fixture source: `generated`. Wall time: 287 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | prog_delta | true | 4936 | 1234 | 3 |
+
+Evidence available: true; first-view hit: true; comparison coverage: 0/1; fingerprint coverage: 6/6; budget compliant: true; redaction compliant: true; false decisions: 0.
+
+| Delta status | Expected | Correct |
+|---|---:|---:|
+| not_observed | 1 | 1 |
 
 Checks:
 
 - `can_prove_absence_is_false`: pass
 - `missing_finding_marked_not_observed`: pass
 - `missing_finding_not_marked_resolved`: pass
+- `small_payload_envelopes_report_raw_cheaper`: pass
 
 ## realistic_payload_delta (`correctness_and_cost`)
+
+Fixture source: `generated`. Wall time: 1856 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 238656 | 59664 | 2 |
-| prog_delta | true | 32694 | 8174 | 3 |
+| prog_delta | true | 20265 | 5067 | 3 |
+
+Evidence available: true; first-view hit: false; comparison coverage: 0/1; fingerprint coverage: 4/4; budget compliant: true; redaction compliant: true; false decisions: 0.
+
+| Delta status | Expected | Correct |
+|---|---:|---:|
+| unknown | 1 | 1 |
 
 Checks:
 
@@ -63,20 +161,29 @@ Checks:
 
 ## no_benefit_tiny_payload_control (`no_benefit_control`)
 
+Fixture source: `generated`. Wall time: 125 ms (informational; excluded from deterministic correctness baselines).
+
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 3 | 1 | 1 |
-| prog_envelope | true | 4451 | 1113 | 1 |
+| prog_envelope | true | 4709 | 1178 | 1 |
+
+Evidence available: true; first-view hit: true; comparison coverage: 0/0; fingerprint coverage: 0/0; budget compliant: true; redaction compliant: true; false decisions: 0.
 
 Checks:
 
 - `raw_cheaper_than_prog_for_tiny_payload`: pass
+- `small_payload_envelope_reports_raw_cheaper`: pass
 
 ## stale_evidence_readiness_after_workspace_touch (`stale_workspace_state`)
+
+Fixture source: `generated`. Wall time: 480 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | prog_verification_ledger | true | 947 | 237 | 3 |
+
+Evidence available: true; first-view hit: true; comparison coverage: 0/0; fingerprint coverage: 0/0; budget compliant: true; redaction compliant: true; false decisions: 0.
 
 Checks:
 
@@ -86,17 +193,125 @@ Checks:
 
 ## derivation_window_moved_finding (`derivation_window_moved_finding`)
 
+Fixture source: `generated`. Wall time: 294 ms (informational; excluded from deterministic correctness baselines).
+
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 678 | 170 | 2 |
 | simple_truncation | true | 678 | 170 | 2 |
-| prog_envelope | true | 23179 | 5795 | 2 |
-| prog_delta | true | 14524 | 3631 | 3 |
+| prog_envelope | true | 19653 | 4914 | 2 |
+| prog_delta | true | 12597 | 3150 | 3 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
+
+Evidence available: true; first-view hit: false; comparison coverage: 0/1; fingerprint coverage: 5/5; budget compliant: true; redaction compliant: true; false decisions: 0.
+
+| Delta status | Expected | Correct |
+|---|---:|---:|
+| unknown | 1 | 1 |
 
 Checks:
 
 - `assessment_is_non_provable_due_to_derivation_window`: pass
 - `moved_finding_is_not_falsely_resolved`: pass
+- `small_payload_envelopes_report_raw_cheaper`: pass
+
+## noisy_log_one_changing_causal_event (`noisy_repeated_log`)
+
+Fixture source: `generated`. Wall time: 346 ms (informational; excluded from deterministic correctness baselines).
+
+| Strategy | Available | Delivered bytes | Est. tokens | Calls |
+|---|---:|---:|---:|---:|
+| raw | true | 1526 | 382 | 2 |
+| simple_truncation | true | 1526 | 382 | 2 |
+| prog_envelope | true | 25566 | 6392 | 3 |
+| prog_delta | true | 13546 | 3387 | 3 |
+| evidence_packet | false | 0 | 0 | 0 |
+| ranked_retrieval | false | 0 | 0 | 0 |
+
+Evidence available: true; first-view hit: true; comparison coverage: 1/1; fingerprint coverage: 6/6; budget compliant: true; redaction compliant: true; false decisions: 0.
+
+| Delta status | Expected | Correct |
+|---|---:|---:|
+| new | 1 | 1 |
+| resolved | 1 | 1 |
+
+Checks:
+
+- `new_causal_event_detected`: pass
+- `old_causal_event_resolved`: pass
+- `only_causal_event_changes_in_fixture`: pass
+- `secret_is_redacted_from_initial_views_and_evidence`: pass
+
+## compiler_diagnostics_reordered_and_shifted (`compiler_static_analysis`)
+
+Fixture source: `generated`. Wall time: 243 ms (informational; excluded from deterministic correctness baselines).
+
+| Strategy | Available | Delivered bytes | Est. tokens | Calls |
+|---|---:|---:|---:|---:|
+| raw | true | 844 | 211 | 2 |
+| simple_truncation | true | 844 | 211 | 2 |
+| prog_envelope | true | 15739 | 3935 | 2 |
+| prog_delta | true | 10135 | 2534 | 3 |
+| evidence_packet | false | 0 | 0 | 0 |
+| ranked_retrieval | false | 0 | 0 | 0 |
+
+Evidence available: true; first-view hit: true; comparison coverage: 0/1; fingerprint coverage: 6/6; budget compliant: true; redaction compliant: true; false decisions: 0.
+
+| Delta status | Expected | Correct |
+|---|---:|---:|
+| persisting | 2 | 2 |
+
+Checks:
+
+- `location_shifts_do_not_change_fingerprints`: pass
+- `persisting_diagnostics_move_array_positions`: pass
+- `reordered_diagnostics_are_not_new_or_resolved`: pass
+- `two_diagnostics_persist_after_reorder`: pass
+
+## http_error_and_repeated_public_entity (`http_api_snapshot`)
+
+Fixture source: `recorded_public_live`. Wall time: 403 ms (informational; excluded from deterministic correctness baselines).
+
+| Strategy | Available | Delivered bytes | Est. tokens | Calls |
+|---|---:|---:|---:|---:|
+| raw | true | 390 | 98 | 3 |
+| simple_truncation | true | 390 | 98 | 3 |
+| prog_envelope | true | 15196 | 3799 | 4 |
+| prog_delta | true | 8928 | 2232 | 3 |
+| evidence_packet | false | 0 | 0 | 0 |
+| ranked_retrieval | false | 0 | 0 | 0 |
+
+Evidence available: true; first-view hit: true; comparison coverage: 0/1; fingerprint coverage: 0/1; budget compliant: true; redaction compliant: true; false decisions: 0.
+
+Checks:
+
+- `http_error_is_returned_and_persisted_as_evidence`: pass
+- `http_error_secret_value_is_redacted`: pass
+- `public_recording_is_redacted_and_checked_in`: pass
+- `repeated_entity_snapshot_exposes_changed_fields`: pass
+- `unknown_http_source_state_never_claims_resolution`: pass
+
+## paginated_api_unchanged_and_changed_pages (`paginated_api`)
+
+Fixture source: `generated`. Wall time: 461 ms (informational; excluded from deterministic correctness baselines).
+
+| Strategy | Available | Delivered bytes | Est. tokens | Calls |
+|---|---:|---:|---:|---:|
+| raw | true | 146 | 37 | 4 |
+| simple_truncation | true | 146 | 37 | 4 |
+| prog_envelope | true | 13609 | 3403 | 4 |
+| prog_delta | true | 10364 | 2591 | 3 |
+| evidence_packet | false | 0 | 0 | 0 |
+| ranked_retrieval | false | 0 | 0 | 0 |
+
+Evidence available: true; first-view hit: true; comparison coverage: 0/1; fingerprint coverage: 0/0; budget compliant: true; redaction compliant: true; false decisions: 0.
+
+Checks:
+
+- `both_trajectories_fetch_two_pages`: pass
+- `changed_downstream_page_hits_first_view_and_remains_navigable`: pass
+- `changed_second_page_is_exactly_recoverable`: pass
+- `unchanged_first_page_delta_has_no_false_resolution`: pass
+- `unchanged_first_page_remains_identical`: pass
 

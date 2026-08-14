@@ -41,6 +41,11 @@ prog recipe logs-root-cause --file service.log
 Every navigation action is recorded as metadata in the current local session.
 No payload body is copied into the trail.
 
+The Cargo recipe prefers compiler JSON without hiding the argv change. For
+example, `prog recipe cargo-test -- cargo test` records and executes
+`["cargo", "test", "--message-format=json"]`; explicit existing
+`--message-format` options are preserved.
+
 ```bash
 prog session start --goal "debug checkout failure"
 prog session show

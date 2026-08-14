@@ -17,8 +17,62 @@ pub const OBSERVATION_SCHEMA: &str = "prog.observation";
 pub const SOURCE_STATE_SCHEMA: &str = "prog.source_state";
 pub const OBSERVATION_DELTA_SCHEMA: &str = "prog.observation_delta";
 pub const VERIFICATION_SCHEMA: &str = "prog.verification";
+pub const ACTION_INTENT_SCHEMA: &str = "prog.action_intent";
+pub const READBACK_VERIFICATION_SCHEMA: &str = "prog.readback_verification";
+pub const STATUS_SCHEMA: &str = "prog.status";
 
 pub type Extra = Map<String, Value>;
+
+pub const ROUTE_SCHEMA: &str = "prog.route";
+
+/// Advisory capture guidance for an authored argv vector. `Progressive`
+/// means a host may prepend the exact wrapper prefix returned by the route
+/// assessment; it never authorizes changing or narrowing the authored argv.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteGuidance {
+    Raw,
+    Progressive,
+    Passthrough,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct RouteRule {
+    pub id: String,
+    pub argv: Vec<String>,
+    pub guidance: RouteGuidance,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct RoutePolicy {
+    #[serde(default)]
+    pub rules: Vec<RouteRule>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct RouteAssessment {
+    pub schema: String,
+    pub guidance: RouteGuidance,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_rule: Option<String>,
+    pub reason: String,
+    pub argv_count: u64,
+    /// Prefix a host may place before the authored argv without reparsing it.
+    /// Present only for progressive guidance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrapper_prefix: Option<Vec<String>>,
+    pub preserves_authored_argv: bool,
+    pub semantic_substitution_allowed: bool,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
 
 /// Reject compatibility-era profile data instead of attempting to interpret it.
 /// Adapter metadata remains in `extra`, but contract identity and local profile
@@ -45,6 +99,11 @@ pub fn validate_source_profile(profile: &SourceProfile) -> crate::Result<()> {
                 operation: "source profile".to_string(),
                 reason: format!("'{legacy}' is unsupported; regenerate this pre-release profile"),
             });
+        }
+    }
+    for operation in &profile.operations {
+        if let Some(selector) = &operation.source_state {
+            crate::validate_source_state_selector(selector)?;
         }
     }
     Ok(())
@@ -117,8 +176,23 @@ pub struct OperationProfile {
     pub cache: CachePolicy,
     #[serde(default)]
     pub pagination: Option<Value>,
+    /// Optional exact JSON Pointer selecting a source-native change token from
+    /// the unredacted response. The selected scalar is immediately hashed;
+    /// raw token material never enters an observation or cache record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_state: Option<SourceStateSelector>,
     #[serde(default, flatten)]
     pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct SourceStateSelector {
+    /// Exact RFC 6901 pointer to one scalar change token.
+    pub path: String,
+    /// Optional exact pointer to an RFC 3339 expiry timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -234,6 +308,10 @@ pub struct DisclosureEnvelope {
     #[serde(default)]
     pub operation: Option<String>,
     pub summary: Summary,
+    /// Honest comparison of the captured payload cost with the complete JSON
+    /// envelope delivered to the caller. This is never removed by budget
+    /// compaction and never changes capture behavior by itself.
+    pub disclosure_verdict: DisclosureVerdict,
     #[serde(default)]
     pub data_preview: Value,
     #[serde(default)]
@@ -246,6 +324,8 @@ pub struct DisclosureEnvelope {
     pub cursor: Option<String>,
     #[serde(default)]
     pub next_actions: Vec<NextAction>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub action_templates: BTreeMap<String, ActionTemplate>,
     #[serde(default)]
     pub provenance: Option<CallProvenance>,
     #[serde(default)]
@@ -369,6 +449,12 @@ pub struct EvidenceRef {
     #[serde(default)]
     pub expires_at: Option<String>,
     pub stale: bool,
+    /// Source-native validity is independent of cache age/staleness.
+    #[serde(default)]
+    pub source_validity: SourceValidity,
+    /// Kind only; opaque token values are never copied into evidence refs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_state_kind: Option<SourceStateKind>,
     /// Lifecycle state of the immutable observation this reference names.
     /// `unavailable` is explicit when no observation record is attached.
     pub availability: EvidenceAvailability,
@@ -452,18 +538,21 @@ pub struct Finding {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct FindingCommandHints {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub inspect: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expand: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub evidence: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub search: Option<String>,
-    #[serde(default, flatten)]
-    pub extra: Extra,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub available: Vec<NavigationCommand>,
+}
+
+/// Navigation operation whose arguments are derived from the containing
+/// finding's path/kind and the response's top-level cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NavigationCommand {
+    Inspect,
+    Expand,
+    Evidence,
+    Search,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -658,12 +747,91 @@ pub struct Summary {
     pub preview_count: Option<u64>,
     #[serde(default)]
     pub payload_bytes: u64,
+    /// Named bytes/4 estimate for the complete delivered envelope, never the
+    /// underlying cached payload.
     #[serde(default)]
-    pub approx_tokens: u64,
+    pub estimated_envelope_tokens: u64,
     #[serde(default)]
     pub envelope_bytes: Option<u64>,
     #[serde(default, flatten)]
     pub extra: Extra,
+}
+
+/// `payload_bytes / envelope_bytes` below this boundary means that reading the
+/// captured payload directly would have delivered fewer bytes.
+pub const RAW_CHEAPER_BELOW_RATIO: f64 = 1.0;
+
+/// `payload_bytes / envelope_bytes` at or above this boundary means that the
+/// envelope is at least 20 percent smaller than the captured payload.
+pub const BOUNDED_WIN_AT_OR_ABOVE_RATIO: f64 = 1.25;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DisclosureVerdictResult {
+    BoundedWin,
+    Neutral,
+    RawCheaper,
+}
+
+/// Machine-readable cost comparison for a disclosure envelope.
+///
+/// `ratio` is `payload_bytes / envelope_bytes`, rounded down to two decimal
+/// places for a conservative display. Classification uses the exact integer
+/// byte counts, so rounding can never turn a real cost regression into a
+/// favorable verdict.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct DisclosureVerdict {
+    pub result: DisclosureVerdictResult,
+    pub payload_bytes: u64,
+    pub envelope_bytes: u64,
+    pub ratio: f64,
+    pub raw_cheaper_below_ratio: f64,
+    pub bounded_win_at_or_above_ratio: f64,
+    pub reason: String,
+}
+
+impl DisclosureVerdict {
+    pub fn for_sizes(payload_bytes: u64, envelope_bytes: u64) -> Self {
+        let result = if payload_bytes < envelope_bytes {
+            DisclosureVerdictResult::RawCheaper
+        } else if u128::from(payload_bytes).saturating_mul(4)
+            >= u128::from(envelope_bytes).saturating_mul(5)
+        {
+            DisclosureVerdictResult::BoundedWin
+        } else {
+            DisclosureVerdictResult::Neutral
+        };
+        let ratio = if envelope_bytes == 0 {
+            0.0
+        } else {
+            let unrounded = payload_bytes as f64 / envelope_bytes as f64;
+            (unrounded * 100.0).floor() / 100.0
+        };
+        // The result plus reason strings have equal encoded lengths. That
+        // keeps the self-referential envelope byte count convergent even at a
+        // classification boundary.
+        let reason = match result {
+            DisclosureVerdictResult::BoundedWin => {
+                "envelope is at least 20 percent smaller than the captured payload."
+            }
+            DisclosureVerdictResult::Neutral => {
+                "envelope and captured payload byte costs fall within the neutral range"
+            }
+            DisclosureVerdictResult::RawCheaper => {
+                "envelope exceeds captured payload; direct output costs fewer bytes"
+            }
+        };
+        Self {
+            result,
+            payload_bytes,
+            envelope_bytes,
+            ratio,
+            raw_cheaper_below_ratio: RAW_CHEAPER_BELOW_RATIO,
+            bounded_win_at_or_above_ratio: BOUNDED_WIN_AT_OR_ABOVE_RATIO,
+            reason: reason.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -698,21 +866,42 @@ pub enum ActionExactness {
     Approximate,
 }
 
+/// Execution boundary for a recommended action. `cached_evidence` is offline
+/// by contract: it reads only the persisted, redacted payload and never
+/// contacts the upstream source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionScope {
+    CachedEvidence,
+    FailureSection,
+    TargetTest,
+    TargetFile,
+}
+
+/// One reusable symbolic argv template referenced by `NextAction.kind`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct ActionTemplate {
+    pub argv: Vec<String>,
+    pub scope: ActionScope,
+    pub exactness: ActionExactness,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct NextAction {
     pub kind: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// Never a shell string. Consumers must execute only after their own policy checks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub argv: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
+    pub scope: Option<ActionScope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exactness: Option<ActionExactness>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1194,8 +1383,6 @@ pub struct ObservationRecord {
     /// from a complete observation of the same invocation.
     #[serde(default)]
     pub selection: SelectionCoverage,
-    #[serde(default)]
-    pub subject_keys: Vec<String>,
     pub captured_at: String,
     #[serde(default)]
     pub duration_ms: Option<u64>,
@@ -1215,8 +1402,6 @@ pub struct ObservationRecord {
     pub source_state: Option<SourceStateToken>,
     #[serde(default)]
     pub source_validity: SourceValidity,
-    #[serde(default)]
-    pub environment_state: Option<String>,
     #[serde(default)]
     pub lineage: ObservationLineage,
     #[serde(default)]
@@ -1395,6 +1580,81 @@ pub enum VerificationStatus {
     Unverifiable,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct ExpectedStateChange {
+    pub path: String,
+    pub expected: Value,
+}
+
+/// User-authored description of an externally executed mutation. This is
+/// evidence and an obligation, never authority for `prog` to mutate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ActionIntent {
+    pub schema: String,
+    pub intent_id: String,
+    pub session_id: String,
+    pub source_id: String,
+    pub read_operation: String,
+    pub read_args: Value,
+    pub pre_observation_id: String,
+    pub identity_path: String,
+    pub version_path: String,
+    pub pre_identity_fingerprint: String,
+    pub pre_version_fingerprint: String,
+    #[serde(default)]
+    pub expected_changes: Vec<ExpectedStateChange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eventual_consistency_until: Option<String>,
+    pub obligation_id: String,
+    pub created_at: String,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadbackVerificationStatus {
+    Verified,
+    Mismatched,
+    StalePrecondition,
+    Pending,
+    ReadbackFailed,
+    Unverifiable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ReadbackCheck {
+    pub path: String,
+    pub matched: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ReadbackVerificationReceipt {
+    pub schema: String,
+    pub receipt_id: String,
+    pub intent_id: String,
+    pub status: ReadbackVerificationStatus,
+    pub obligation_id: String,
+    pub pre_observation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mutation_response_observation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readback_observation_id: Option<String>,
+    #[serde(default)]
+    pub checks: Vec<ReadbackCheck>,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assessment: Option<ComparabilityAssessment>,
+    pub created_at: String,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
 /// Who declared an obligation. Declarations are never execution authority:
 /// recipe, normalizer, and harness declarations remain advisory by contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1495,21 +1755,43 @@ pub struct ReadinessReport {
     pub extra: Extra,
 }
 
+/// Agent-facing status facade composed from the canonical verification and
+/// delta contracts. It intentionally contains no independent decision logic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct StatusReport {
+    pub schema: String,
+    pub readiness: ReadinessReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<ObservationDelta>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
 pub fn canonical_json(value: &Value) -> crate::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&sort_json(value))?)
 }
 
 pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     let mut schemas = Map::new();
+    insert_schema::<crate::ErrorEnvelope>(&mut schemas, "ErrorEnvelope")?;
+    insert_schema::<crate::ErrorBody>(&mut schemas, "ErrorBody")?;
     insert_schema::<SourceProfile>(&mut schemas, "SourceProfile")?;
     insert_schema::<DisclosureBudget>(&mut schemas, "DisclosureBudget")?;
+    insert_schema::<SourceKind>(&mut schemas, "SourceKind")?;
     insert_schema::<OperationProfile>(&mut schemas, "OperationProfile")?;
     insert_schema::<Shape>(&mut schemas, "Shape")?;
     insert_schema::<EffectSet>(&mut schemas, "EffectSet")?;
     insert_schema::<ObservationMetadata>(&mut schemas, "ObservationMetadata")?;
+    insert_schema::<ObservationCompleteness>(&mut schemas, "ObservationCompleteness")?;
+    insert_schema::<ObservationFreshness>(&mut schemas, "ObservationFreshness")?;
+    insert_schema::<ObservationTrust>(&mut schemas, "ObservationTrust")?;
+    insert_schema::<ObservationSafety>(&mut schemas, "ObservationSafety")?;
+    insert_schema::<ObservationPayloadStatus>(&mut schemas, "ObservationPayloadStatus")?;
     insert_schema::<ObservationRecord>(&mut schemas, "ObservationRecord")?;
     insert_schema::<crate::WorkspaceState>(&mut schemas, "WorkspaceState")?;
     insert_schema::<crate::WorkspacePathState>(&mut schemas, "WorkspacePathState")?;
+    insert_schema::<crate::SubmoduleState>(&mut schemas, "SubmoduleState")?;
     insert_schema::<crate::WorkspaceValidity>(&mut schemas, "WorkspaceValidity")?;
     insert_schema::<crate::WorkspaceComparison>(&mut schemas, "WorkspaceComparison")?;
     insert_schema::<ObservationLineage>(&mut schemas, "ObservationLineage")?;
@@ -1524,9 +1806,14 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<CaptureScope>(&mut schemas, "CaptureScope")?;
     insert_schema::<CaptureCompleteness>(&mut schemas, "CaptureCompleteness")?;
     insert_schema::<SourceStateToken>(&mut schemas, "SourceStateToken")?;
+    insert_schema::<SourceStateSelector>(&mut schemas, "SourceStateSelector")?;
     insert_schema::<SourceStateKind>(&mut schemas, "SourceStateKind")?;
     insert_schema::<SourceValidity>(&mut schemas, "SourceValidity")?;
+    insert_schema::<SubjectIdentity>(&mut schemas, "SubjectIdentity")?;
+    insert_schema::<ScopeRelationship>(&mut schemas, "ScopeRelationship")?;
+    insert_schema::<SelectionCoverage>(&mut schemas, "SelectionCoverage")?;
     insert_schema::<ComparabilityAssessment>(&mut schemas, "ComparabilityAssessment")?;
+    insert_schema::<DeltaFindingStatus>(&mut schemas, "DeltaFindingStatus")?;
     insert_schema::<DeltaFinding>(&mut schemas, "DeltaFinding")?;
     insert_schema::<ObservationDelta>(&mut schemas, "ObservationDelta")?;
     insert_schema::<ObligationDeclarer>(&mut schemas, "ObligationDeclarer")?;
@@ -1535,14 +1822,28 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<VerificationObligation>(&mut schemas, "VerificationObligation")?;
     insert_schema::<ObligationEvaluation>(&mut schemas, "ObligationEvaluation")?;
     insert_schema::<ReadinessReport>(&mut schemas, "ReadinessReport")?;
+    insert_schema::<VerificationStatus>(&mut schemas, "VerificationStatus")?;
+    insert_schema::<ExpectedStateChange>(&mut schemas, "ExpectedStateChange")?;
+    insert_schema::<ActionIntent>(&mut schemas, "ActionIntent")?;
+    insert_schema::<ReadbackVerificationStatus>(&mut schemas, "ReadbackVerificationStatus")?;
+    insert_schema::<ReadbackCheck>(&mut schemas, "ReadbackCheck")?;
+    insert_schema::<ReadbackVerificationReceipt>(&mut schemas, "ReadbackVerificationReceipt")?;
+    insert_schema::<RouteGuidance>(&mut schemas, "RouteGuidance")?;
+    insert_schema::<RouteRule>(&mut schemas, "RouteRule")?;
+    insert_schema::<RoutePolicy>(&mut schemas, "RoutePolicy")?;
+    insert_schema::<RouteAssessment>(&mut schemas, "RouteAssessment")?;
+    insert_schema::<StatusReport>(&mut schemas, "StatusReport")?;
     insert_schema::<CachePolicy>(&mut schemas, "CachePolicy")?;
     insert_schema::<TrustSettings>(&mut schemas, "TrustSettings")?;
     insert_schema::<AuthRef>(&mut schemas, "AuthRef")?;
     insert_schema::<DisclosureEnvelope>(&mut schemas, "DisclosureEnvelope")?;
+    insert_schema::<DisclosureVerdict>(&mut schemas, "DisclosureVerdict")?;
+    insert_schema::<DisclosureVerdictResult>(&mut schemas, "DisclosureVerdictResult")?;
     insert_schema::<EvidenceRef>(&mut schemas, "EvidenceRef")?;
     insert_schema::<InspectResponse>(&mut schemas, "InspectResponse")?;
     insert_schema::<Finding>(&mut schemas, "Finding")?;
     insert_schema::<FindingCommandHints>(&mut schemas, "FindingCommandHints")?;
+    insert_schema::<NavigationCommand>(&mut schemas, "NavigationCommand")?;
     insert_schema::<EvidenceBlock>(&mut schemas, "EvidenceBlock")?;
     insert_schema::<EvidenceCitation>(&mut schemas, "EvidenceCitation")?;
     insert_schema::<SearchResponse>(&mut schemas, "SearchResponse")?;
@@ -1554,7 +1855,10 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<RedactionState>(&mut schemas, "RedactionState")?;
     insert_schema::<Summary>(&mut schemas, "Summary")?;
     insert_schema::<OmittedRegion>(&mut schemas, "OmittedRegion")?;
+    insert_schema::<OmissionReason>(&mut schemas, "OmissionReason")?;
     insert_schema::<ActionExactness>(&mut schemas, "ActionExactness")?;
+    insert_schema::<ActionScope>(&mut schemas, "ActionScope")?;
+    insert_schema::<ActionTemplate>(&mut schemas, "ActionTemplate")?;
     insert_schema::<NextAction>(&mut schemas, "NextAction")?;
     insert_schema::<LensManifest>(&mut schemas, "LensManifest")?;
     insert_schema::<LensFindingRule>(&mut schemas, "LensFindingRule")?;
@@ -1569,7 +1873,10 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<CacheEntryMeta>(&mut schemas, "CacheEntryMeta")?;
     insert_schema::<CallProvenance>(&mut schemas, "CallProvenance")?;
     insert_schema::<CacheInfo>(&mut schemas, "CacheInfo")?;
+    insert_schema::<CacheStatus>(&mut schemas, "CacheStatus")?;
     insert_schema::<crate::store::CacheList>(&mut schemas, "CacheList")?;
+    insert_schema::<crate::store::ObservationList>(&mut schemas, "ObservationList")?;
+    insert_schema::<crate::store::ObligationList>(&mut schemas, "ObligationList")?;
     insert_schema::<crate::store::PurgeSummary>(&mut schemas, "PurgeSummary")?;
     Ok(schemas)
 }

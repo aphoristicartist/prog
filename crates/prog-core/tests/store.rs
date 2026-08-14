@@ -640,7 +640,6 @@ fn observations_are_immutable_redacted_and_metadata_survive_payload_purge() {
             invocation_fingerprint: "sha256:invocation".to_string(),
             source_id: "source".to_string(),
             operation: "read".to_string(),
-            subject_keys: vec!["account:sha256:abc".to_string()],
             captured_at: Some(captured_at.clone()),
             capture: CaptureCompleteness::complete(0),
             lineage: ObservationLineage::default(),
@@ -702,7 +701,7 @@ fn observations_are_immutable_redacted_and_metadata_survive_payload_purge() {
 }
 
 #[test]
-fn observations_have_bounded_stable_listing_and_reject_sensitive_subject_keys() {
+fn observations_have_bounded_stable_listing() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path()).unwrap();
     for (index, captured_at) in ["2026-07-12T12:00:00Z", "2026-07-13T12:00:00Z"]
@@ -725,18 +724,6 @@ fn observations_have_bounded_stable_listing_and_reject_sensitive_subject_keys() 
     let listed = store.list_observations(1).unwrap();
     assert_eq!(listed.observations.len(), 1);
     assert_eq!(listed.observations[0].captured_at, "2026-07-13T12:00:00Z");
-
-    let error = store
-        .record_observation(NewObservation {
-            payload_hash: "sha256:payload".to_string(),
-            invocation_fingerprint: "sha256:invoke".to_string(),
-            source_id: "source".to_string(),
-            operation: "read".to_string(),
-            subject_keys: vec!["account:api_token=plain-secret".to_string()],
-            ..NewObservation::default()
-        })
-        .unwrap_err();
-    assert_eq!(error.kind(), "bad_args");
 }
 
 #[test]
@@ -947,6 +934,7 @@ fn add_operation(current: Option<SourceProfile>, id: &str) -> SourceProfile {
             effects: EffectSet::default(),
             cache: CachePolicy::default(),
             pagination: None,
+            source_state: None,
             extra: serde_json::Map::new(),
         });
     }

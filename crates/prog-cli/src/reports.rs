@@ -42,6 +42,7 @@ pub(crate) struct SourceAddReport {
     pub(crate) source_id: String,
     pub(crate) kind: prog_core::SourceKind,
     pub(crate) operation: String,
+    pub(crate) operations: Vec<String>,
     pub(crate) generated_seed: Value,
     pub(crate) discovery: DiscoverReport,
     pub(crate) next_steps: Vec<String>,
@@ -253,6 +254,7 @@ pub(crate) struct RunPayloadInput<'a> {
     pub(crate) stderr: &'a RunText,
     pub(crate) combined: Vec<Value>,
     pub(crate) failure_sections: &'a [RunFailureSection],
+    pub(crate) provider: Option<&'a prog_core::CodingProviderResult>,
     pub(crate) out: Option<&'a PathBuf>,
 }
 
@@ -260,6 +262,7 @@ pub(crate) struct InitFileSpec {
     pub(crate) relative_path: String,
     pub(crate) content: String,
     pub(crate) executable: bool,
+    pub(crate) append_marker: bool,
 }
 
 pub(crate) struct EvidenceRefInput<'a> {
@@ -358,7 +361,7 @@ pub(crate) struct CostScenario {
 #[derive(Debug, Serialize)]
 pub(crate) struct InitReport {
     pub(crate) schema: &'static str,
-    pub(crate) agent: &'static str,
+    pub(crate) agent: String,
     pub(crate) scope: &'static str,
     pub(crate) root: String,
     pub(crate) dry_run: bool,
@@ -388,6 +391,7 @@ pub(crate) struct PathsResponse {
     pub(crate) paths: Vec<PathEntry>,
     pub(crate) omitted: Vec<OmittedRegion>,
     pub(crate) next_actions: Vec<NextAction>,
+    pub(crate) action_templates: BTreeMap<String, prog_core::ActionTemplate>,
     pub(crate) cache: CacheInfo,
     pub(crate) warnings: Vec<String>,
 }

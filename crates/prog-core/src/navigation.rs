@@ -553,32 +553,14 @@ fn evidence_summary(value: &Value, finding_reason: Option<&str>) -> String {
     }
 }
 
-fn navigation_commands(cursor: &str, path: &str, kind: Option<&str>) -> FindingCommandHints {
-    let cursor = shell_arg(cursor);
-    let path = shell_arg(path);
-    let goal = shell_arg(&format!("investigate {}", kind.unwrap_or("evidence")));
-    FindingCommandHints {
-        inspect: Some(format!("prog inspect {cursor} --goal {goal} --path {path}")),
-        expand: Some(format!("prog expand {cursor} --path {path}")),
-        evidence: Some(format!("prog evidence {cursor} --path {path}")),
-        search: kind.map(|kind| {
-            let kind = shell_arg(kind);
-            format!("prog find {cursor} --kind {kind} --path {path}")
-        }),
-        extra: Extra::new(),
-    }
-}
-
-fn shell_arg(value: &str) -> String {
-    if !value.is_empty()
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':'))
-    {
-        value.to_string()
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
-    }
+fn navigation_commands(_cursor: &str, _path: &str, kind: Option<&str>) -> FindingCommandHints {
+    let mut available = vec![
+        crate::NavigationCommand::Inspect,
+        crate::NavigationCommand::Expand,
+        crate::NavigationCommand::Evidence,
+    ];
+    available.extend(kind.map(|_| crate::NavigationCommand::Search));
+    FindingCommandHints { available }
 }
 
 fn redaction_state(value: &Value) -> Option<RedactionState> {

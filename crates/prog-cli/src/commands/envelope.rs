@@ -46,6 +46,13 @@ pub(crate) fn evidence_ref(input: EvidenceRefInput<'_>) -> EvidenceRef {
         age_seconds,
         expires_at: input.cache.and_then(|cache| cache.expires_at.clone()),
         stale,
+        source_validity: input
+            .observation
+            .map(|observation| observation.source_validity)
+            .unwrap_or_default(),
+        source_state_kind: input
+            .observation
+            .and_then(|observation| observation.source_state.as_ref().map(|state| state.kind)),
         availability,
         capture,
         redacted,
@@ -355,6 +362,8 @@ pub(crate) fn run_capture_completeness(
     let total_bytes = stdout.total_bytes.saturating_add(stderr.total_bytes) as u64;
     let reason = if matches!(status, RunProcessStatus::TimedOut) {
         CaptureStopReason::Timeout
+    } else if matches!(status, RunProcessStatus::Cancelled { .. }) {
+        CaptureStopReason::Cancelled
     } else if truncated {
         CaptureStopReason::ByteLimit
     } else if redacted {
@@ -362,7 +371,11 @@ pub(crate) fn run_capture_completeness(
     } else {
         CaptureStopReason::Complete
     };
-    let availability = if matches!(status, RunProcessStatus::TimedOut) || truncated {
+    let availability = if matches!(
+        status,
+        RunProcessStatus::TimedOut | RunProcessStatus::Cancelled { .. }
+    ) || truncated
+    {
         EvidenceAvailability::CaptureTruncated
     } else if redacted {
         EvidenceAvailability::Redacted
@@ -405,8 +418,10 @@ pub(crate) fn run_capture_completeness(
                     extra: Extra::new(),
                 },
             ],
-            can_prove_absence: !matches!(status, RunProcessStatus::TimedOut)
-                && !truncated
+            can_prove_absence: !matches!(
+                status,
+                RunProcessStatus::TimedOut | RunProcessStatus::Cancelled { .. }
+            ) && !truncated
                 && !redacted
                 && !stdout_windowed
                 && !stderr_windowed,
@@ -415,39 +430,92 @@ pub(crate) fn run_capture_completeness(
     )
 }
 
-pub(crate) fn source_state_from_provenance(
+pub(crate) fn source_state_from_response(
     kind: prog_core::SourceKind,
+    operation_profile: &OperationProfile,
     source_id: &str,
     operation: &str,
     invocation: &Value,
+    payload: &Value,
     provenance: &CallProvenance,
-) -> Result<Option<SourceStateToken>> {
-    if kind != prog_core::SourceKind::Http {
-        return Ok(None);
+) -> Result<prog_core::SourceStateCapture> {
+    let mut warnings = Vec::new();
+    let mut unavailable = false;
+
+    if kind == prog_core::SourceKind::Http {
+        let headers = provenance
+            .extra
+            .get("adapter")
+            .and_then(|adapter| adapter.get("selected_headers"))
+            .and_then(Value::as_object)
+            .map(|headers| {
+                headers
+                    .iter()
+                    .filter_map(|(name, value)| {
+                        value
+                            .as_str()
+                            .map(|value| (name.to_ascii_lowercase(), value.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut capture = prog_core::capture_http_source_state(
+            source_id,
+            operation,
+            invocation,
+            &headers,
+            &provenance.captured_at,
+        );
+        warnings.append(&mut capture.warnings);
+        unavailable |= capture.validity == prog_core::SourceValidity::ValidatorUnavailable;
+        if capture.token.is_some() {
+            capture.warnings = warnings;
+            return Ok(capture);
+        }
     }
-    let headers = provenance
-        .extra
-        .get("adapter")
-        .and_then(|adapter| adapter.get("selected_headers"))
-        .and_then(Value::as_object)
-        .map(|headers| {
-            headers
-                .iter()
-                .filter_map(|(name, value)| {
-                    value
-                        .as_str()
-                        .map(|value| (name.to_ascii_lowercase(), value.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    http_source_state(
-        source_id,
-        operation,
-        invocation,
-        &headers,
-        &provenance.captured_at,
-    )
+
+    if let Some(selector) = &operation_profile.source_state {
+        let mut capture = prog_core::capture_profile_source_state(
+            selector,
+            payload,
+            source_id,
+            operation,
+            invocation,
+            &provenance.captured_at,
+        )?;
+        warnings.append(&mut capture.warnings);
+        unavailable |= capture.validity == prog_core::SourceValidity::ValidatorUnavailable;
+        if capture.token.is_some() {
+            capture.warnings = warnings;
+            return Ok(capture);
+        }
+    }
+
+    if kind == prog_core::SourceKind::Mcp {
+        let mut capture = prog_core::capture_mcp_source_state(
+            payload,
+            source_id,
+            operation,
+            invocation,
+            &provenance.captured_at,
+        )?;
+        warnings.append(&mut capture.warnings);
+        unavailable |= capture.validity == prog_core::SourceValidity::ValidatorUnavailable;
+        if capture.token.is_some() {
+            capture.warnings = warnings;
+            return Ok(capture);
+        }
+    }
+
+    Ok(prog_core::SourceStateCapture {
+        token: None,
+        validity: if unavailable {
+            prog_core::SourceValidity::ValidatorUnavailable
+        } else {
+            prog_core::SourceValidity::Unknown
+        },
+        warnings,
+    })
 }
 
 pub(crate) fn cursor_lens_extra(lens: Option<&LensManifest>) -> Extra {
@@ -497,8 +565,13 @@ pub(crate) fn envelope_for_payload(
         .map(|id| store.get_observation(id))
         .transpose()?
         .flatten();
+    let changes_since = automatic_changes_since(store, &input);
     let mut policy = PreviewPolicy {
-        max_envelope_bytes,
+        // Envelope fitting is handled by the outer search below. Keeping the
+        // projection's own byte ceiling independent from the caller budget is
+        // essential: otherwise `project()` runs a second, budget-dependent
+        // coarsening loop and two invocations walk different policy ladders.
+        max_envelope_bytes: usize::MAX,
         ..PreviewPolicy::default()
     };
     let mut last = None;
@@ -534,15 +607,28 @@ pub(crate) fn envelope_for_payload(
             &policy,
             input.lens.as_ref(),
         )?;
-        let mut envelope = make_envelope(
+        let envelope = make_envelope(
             &input,
             lens_projection,
             cursor.clone(),
             findings.clone(),
             observation_record.as_ref(),
         );
+        // Prefer optional delta context at the same disclosure level, but
+        // never coarsen primary evidence merely to make that metadata fit.
+        if let Some(changes_since) = &changes_since {
+            let mut with_delta = envelope.clone();
+            with_delta
+                .extra
+                .insert("changes_since".to_string(), changes_since.clone());
+            let bytes = finalize_envelope_bytes(&mut with_delta)?;
+            if bytes <= max_envelope_bytes {
+                return Ok(with_delta);
+            }
+        }
+        let mut envelope = envelope;
         let bytes = finalize_envelope_bytes(&mut envelope)?;
-        if bytes <= policy.max_envelope_bytes {
+        if bytes <= max_envelope_bytes {
             return Ok(envelope);
         }
         last = Some(envelope);
@@ -605,6 +691,7 @@ pub(crate) fn make_envelope(
         }
     }
     next_actions.truncate(10);
+    let action_templates = action_templates(&next_actions);
     let mut extra = Extra::new();
     if let Some(lens) = &input.lens {
         extra.insert(
@@ -642,22 +729,40 @@ pub(crate) fn make_envelope(
             item_count: item_count(input.payload.as_value()),
             preview_count: item_count(&preview),
             payload_bytes: input.payload_bytes,
-            approx_tokens: 0,
+            estimated_envelope_tokens: 0,
             envelope_bytes: None,
             extra: Extra::new(),
         },
+        disclosure_verdict: prog_core::DisclosureVerdict::for_sizes(input.payload_bytes, 0),
         data_preview: preview,
         schema_hints: input.schema_hints.clone(),
         omitted,
         findings,
         cursor,
         next_actions,
+        action_templates,
         provenance: input.provenance.clone(),
         cache: input.cache.clone(),
         observation: Some(observation),
         warnings: input.warnings.clone(),
         extra,
     }
+}
+
+fn automatic_changes_since(store: &Store, input: &EnvelopeInput) -> Option<Value> {
+    let observation_id = input.observation_id.as_deref()?;
+    let subject = store.get_observation(observation_id).ok()??;
+    let baseline = store
+        .latest_session_predecessor(
+            &subject.invocation_fingerprint,
+            subject.comparison_family.as_deref(),
+            observation_id,
+        )
+        .ok()??;
+    let mut delta =
+        compare_observation_ids(store, &baseline.observation_id, observation_id).ok()?;
+    delta.findings.truncate(10);
+    serde_json::to_value(delta).ok()
 }
 
 pub(crate) fn observation_metadata(
@@ -839,17 +944,45 @@ pub(crate) fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Resu
     // Both fields describe the delivered JSON, including their own encoded
     // digits. Iterate to the small fixed point rather than estimating from
     // the much larger cached payload.
-    for _ in 0..8 {
+    let mut conservative_ratio = f64::INFINITY;
+    for _ in 0..16 {
         let bytes = serde_json::to_vec(envelope)?.len();
         let envelope_bytes = bytes.try_into().unwrap_or(u64::MAX);
-        let approx_tokens = envelope_bytes.saturating_add(3) / 4;
+        let estimated_envelope_tokens = envelope_bytes.saturating_add(3) / 4;
+        let disclosure_verdict =
+            prog_core::DisclosureVerdict::for_sizes(envelope.summary.payload_bytes, envelope_bytes);
+        conservative_ratio = conservative_ratio.min(disclosure_verdict.ratio);
         if envelope.summary.envelope_bytes == Some(envelope_bytes)
-            && envelope.summary.approx_tokens == approx_tokens
+            && envelope.summary.estimated_envelope_tokens == estimated_envelope_tokens
+            && envelope.disclosure_verdict == disclosure_verdict
         {
             return Ok(bytes);
         }
         envelope.summary.envelope_bytes = Some(envelope_bytes);
-        envelope.summary.approx_tokens = approx_tokens;
+        envelope.summary.estimated_envelope_tokens = estimated_envelope_tokens;
+        envelope.disclosure_verdict = disclosure_verdict;
+    }
+    // A rounded numeric ratio can straddle a JSON-width boundary: for example,
+    // one denominator serializes as `7.9`, making the envelope one byte
+    // smaller, while that smaller denominator rounds to `7.91` and adds the
+    // byte back. Keep the lower (conservative) display value in that rare
+    // two-cycle, then converge the authoritative byte counts and exact result.
+    for _ in 0..8 {
+        let bytes = serde_json::to_vec(envelope)?.len();
+        let envelope_bytes = bytes.try_into().unwrap_or(u64::MAX);
+        let estimated_envelope_tokens = envelope_bytes.saturating_add(3) / 4;
+        let mut disclosure_verdict =
+            prog_core::DisclosureVerdict::for_sizes(envelope.summary.payload_bytes, envelope_bytes);
+        disclosure_verdict.ratio = conservative_ratio;
+        if envelope.summary.envelope_bytes == Some(envelope_bytes)
+            && envelope.summary.estimated_envelope_tokens == estimated_envelope_tokens
+            && envelope.disclosure_verdict == disclosure_verdict
+        {
+            return Ok(bytes);
+        }
+        envelope.summary.envelope_bytes = Some(envelope_bytes);
+        envelope.summary.estimated_envelope_tokens = estimated_envelope_tokens;
+        envelope.disclosure_verdict = disclosure_verdict;
     }
     Err(CoreError::Storage(
         "envelope size accounting did not converge".to_string(),
@@ -907,6 +1040,7 @@ pub(crate) fn compact_envelope_to_budget(
             "next_actions:{}",
             before - envelope.next_actions.len()
         ));
+        envelope.action_templates = action_templates(&envelope.next_actions);
     }
 
     // 2. recipe expansion detail — reproducible from the recorded command.
@@ -936,13 +1070,20 @@ pub(crate) fn compact_envelope_to_budget(
         dropped.push(format!("omitted:{}", before - envelope.omitted.len()));
     }
 
-    // 5. provenance / cache / extra — presentation detail, not recovery path.
+    // 5. provenance / cache / parser extras — presentation detail, not the
+    //    observation identity or recovery path. Core lifecycle metadata stays.
     if over_budget(envelope, budget)? {
         if envelope.provenance.take().is_some() {
             dropped.push("provenance".to_string());
         }
         if envelope.cache.take().is_some() {
             dropped.push("cache".to_string());
+        }
+        if let Some(observation) = envelope.observation.as_mut()
+            && !observation.extra.is_empty()
+        {
+            observation.extra.clear();
+            dropped.push("observation.extra".to_string());
         }
         if !envelope.extra.is_empty() {
             envelope.extra.clear();

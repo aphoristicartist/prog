@@ -31,7 +31,9 @@ pub(crate) async fn mcp_task_command(
             let tool_name = required_profile_string(invocation, "name")?;
             let call_args = parse_json_argument(&args.args, "mcp-task start --args")?;
             validate_call_args(&operation, &call_args)?;
-            let result = mcp_source_from_profile(&profile)?
+            let source = mcp_source_from_profile(&profile)?;
+            store.release()?;
+            let result = source
                 .call_tool_as_task(&tool_name, &call_args, args.ttl_ms)
                 .await?;
             record_mcp_task_observation(
@@ -47,10 +49,9 @@ pub(crate) async fn mcp_task_command(
         }
         McpTaskCommand::Get(args) => {
             let profile = mcp_task_profile(store, &args.source_id, ctx)?;
-            match mcp_source_from_profile(&profile)?
-                .get_task(&args.task_id)
-                .await
-            {
+            let source = mcp_source_from_profile(&profile)?;
+            store.release()?;
+            match source.get_task(&args.task_id).await {
                 Ok(result) => record_mcp_task_observation(
                     store,
                     &profile,
@@ -76,10 +77,9 @@ pub(crate) async fn mcp_task_command(
         }
         McpTaskCommand::Result(args) => {
             let profile = mcp_task_profile(store, &args.source_id, ctx)?;
-            match mcp_source_from_profile(&profile)?
-                .get_task_result(&args.task_id)
-                .await
-            {
+            let source = mcp_source_from_profile(&profile)?;
+            store.release()?;
+            match source.get_task_result(&args.task_id).await {
                 Ok(result) => record_mcp_task_observation(
                     store,
                     &profile,
@@ -105,10 +105,9 @@ pub(crate) async fn mcp_task_command(
         }
         McpTaskCommand::Cancel(args) => {
             let profile = mcp_task_profile(store, &args.source_id, ctx)?;
-            match mcp_source_from_profile(&profile)?
-                .cancel_task(&args.task_id)
-                .await
-            {
+            let source = mcp_source_from_profile(&profile)?;
+            store.release()?;
+            match source.cancel_task(&args.task_id).await {
                 Ok(result) => record_mcp_task_observation(
                     store,
                     &profile,

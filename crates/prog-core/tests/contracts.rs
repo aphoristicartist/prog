@@ -1,11 +1,11 @@
 use prog_core::{
     AuthRef, CacheEntryMeta, CacheInfo, CachePolicy, CallProvenance, CaptureCompleteness,
-    CursorRecord, DISCLOSURE_SCHEMA, DisclosureBudget, DisclosureEnvelope, EVIDENCE_BLOCK_SCHEMA,
-    EffectSet, EvidenceAvailability, EvidenceBlock, EvidenceRef, Finding, FindingCommandHints,
-    INSPECT_SCHEMA, InspectResponse, LENS_MANIFEST_SCHEMA, LensFindingRule, LensManifest,
-    NextAction, OmittedRegion, SEARCH_SCHEMA, SearchResponse, SessionEvent, SessionTrail,
-    SliceRequest, SourceProfile, Summary, TrustSettings, canonical_json, public_contract_schemas,
-    validate_source_profile,
+    CursorRecord, DISCLOSURE_SCHEMA, DisclosureBudget, DisclosureEnvelope, DisclosureVerdict,
+    DisclosureVerdictResult, EVIDENCE_BLOCK_SCHEMA, EffectSet, EvidenceAvailability, EvidenceBlock,
+    EvidenceRef, Finding, FindingCommandHints, INSPECT_SCHEMA, InspectResponse,
+    LENS_MANIFEST_SCHEMA, LensFindingRule, LensManifest, NextAction, OmittedRegion, SEARCH_SCHEMA,
+    SearchResponse, SessionEvent, SessionTrail, SliceRequest, SourceProfile, SourceValidity,
+    Summary, TrustSettings, canonical_json, public_contract_schemas, validate_source_profile,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -45,6 +45,7 @@ fn unknown_fields_survive_roundtrip_for_public_contracts() {
         json!({
             "schema": DISCLOSURE_SCHEMA,
             "summary": {"kind": "object"},
+            "disclosure_verdict": DisclosureVerdict::for_sizes(1, 2),
             "x_future": "kept"
         }),
         "x_future",
@@ -426,9 +427,12 @@ fn canonical_json_sorts_object_keys_recursively_without_sorting_arrays() {
 #[test]
 fn schemas_generate_for_all_public_contracts() {
     let schemas = public_contract_schemas().unwrap();
-    for expected in [
+    let expected = [
+        "ErrorEnvelope",
+        "ErrorBody",
         "SourceProfile",
         "DisclosureBudget",
+        "SourceKind",
         "OperationProfile",
         "Shape",
         "EffectSet",
@@ -436,25 +440,64 @@ fn schemas_generate_for_all_public_contracts() {
         "TrustSettings",
         "AuthRef",
         "DisclosureEnvelope",
+        "DisclosureVerdict",
+        "DisclosureVerdictResult",
         "ObservationMetadata",
+        "ObservationCompleteness",
+        "ObservationFreshness",
+        "ObservationTrust",
+        "ObservationSafety",
+        "ObservationPayloadStatus",
         "ObservationRecord",
         "WorkspaceState",
         "WorkspacePathState",
+        "SubmoduleState",
         "WorkspaceValidity",
         "WorkspaceComparison",
+        "ObservationLineage",
         "EvidenceAvailability",
         "BudgetSource",
         "CaptureLimit",
         "CaptureBudget",
         "StorageBudget",
+        "StorageQuotaSummary",
         "StorageBudgetSummary",
         "CaptureStopReason",
         "CaptureScope",
         "CaptureCompleteness",
+        "SourceStateToken",
+        "SourceStateSelector",
+        "SourceStateKind",
+        "SourceValidity",
+        "SubjectIdentity",
+        "ScopeRelationship",
+        "SelectionCoverage",
+        "ComparabilityAssessment",
+        "DeltaFindingStatus",
+        "DeltaFinding",
+        "ObservationDelta",
+        "ObligationDeclarer",
+        "VerificationOperation",
+        "VerificationStateRelationship",
+        "VerificationObligation",
+        "ObligationEvaluation",
+        "ReadinessReport",
+        "VerificationStatus",
+        "ExpectedStateChange",
+        "ActionIntent",
+        "ReadbackVerificationStatus",
+        "ReadbackCheck",
+        "ReadbackVerificationReceipt",
+        "RouteGuidance",
+        "RouteRule",
+        "RoutePolicy",
+        "RouteAssessment",
+        "StatusReport",
         "EvidenceRef",
         "InspectResponse",
         "Finding",
         "FindingCommandHints",
+        "NavigationCommand",
         "EvidenceBlock",
         "EvidenceCitation",
         "SearchResponse",
@@ -466,7 +509,10 @@ fn schemas_generate_for_all_public_contracts() {
         "RedactionState",
         "Summary",
         "OmittedRegion",
+        "OmissionReason",
         "ActionExactness",
+        "ActionScope",
+        "ActionTemplate",
         "NextAction",
         "LensManifest",
         "LensFindingRule",
@@ -479,16 +525,60 @@ fn schemas_generate_for_all_public_contracts() {
         "CacheEntryMeta",
         "CallProvenance",
         "CacheInfo",
+        "CacheStatus",
         "CacheList",
+        "ObservationList",
+        "ObligationList",
         "PurgeSummary",
         "SessionEvent",
         "SessionTrail",
-    ] {
+    ];
+    assert_eq!(
+        schemas.len(),
+        expected.len(),
+        "public contract registry contains an unreviewed or duplicate surface"
+    );
+    for expected in expected {
         assert!(
             schemas.contains_key(expected),
             "schema missing for {expected}"
         );
     }
+}
+
+#[test]
+fn disclosure_verdict_uses_fixed_exact_byte_thresholds() {
+    let raw_cheaper = DisclosureVerdict::for_sizes(999, 1_000);
+    assert_eq!(raw_cheaper.result, DisclosureVerdictResult::RawCheaper);
+    assert_eq!(raw_cheaper.raw_cheaper_below_ratio, 1.0);
+
+    let neutral = DisclosureVerdict::for_sizes(1_000, 1_000);
+    assert_eq!(neutral.result, DisclosureVerdictResult::Neutral);
+
+    let just_below_win = DisclosureVerdict::for_sizes(1_249, 1_000);
+    assert_eq!(just_below_win.result, DisclosureVerdictResult::Neutral);
+
+    let bounded_win = DisclosureVerdict::for_sizes(1_250, 1_000);
+    assert_eq!(bounded_win.result, DisclosureVerdictResult::BoundedWin);
+    assert_eq!(bounded_win.bounded_win_at_or_above_ratio, 1.25);
+}
+
+#[test]
+fn disclosure_verdict_result_and_reason_have_stable_encoded_width() {
+    let widths = [
+        DisclosureVerdict::for_sizes(1_250, 1_000),
+        DisclosureVerdict::for_sizes(1_000, 1_000),
+        DisclosureVerdict::for_sizes(999, 1_000),
+    ]
+    .map(|verdict| {
+        serde_json::to_vec(&json!({
+            "result": verdict.result,
+            "reason": verdict.reason,
+        }))
+        .unwrap()
+        .len()
+    });
+    assert_eq!(widths, [widths[0]; 3]);
 }
 
 #[test]
@@ -523,6 +613,8 @@ fn evidence_navigation_contracts_cover_north_star_workflow() {
                 age_seconds: Some(0),
                 expires_at: None,
                 stale: false,
+                source_validity: SourceValidity::Unknown,
+                source_state_kind: None,
                 availability: EvidenceAvailability::Recoverable,
                 capture: CaptureCompleteness::complete(64),
                 redacted: true,
@@ -536,11 +628,10 @@ fn evidence_navigation_contracts_cover_north_star_workflow() {
             related_spans: Vec::new(),
             redaction_state: None,
             commands: FindingCommandHints {
-                inspect: None,
-                expand: Some("prog expand pc1_demo --path /failure_sections/0".to_string()),
-                evidence: Some("prog evidence pc1_demo --path /failure_sections/0".to_string()),
-                search: None,
-                extra: Default::default(),
+                available: vec![
+                    prog_core::NavigationCommand::Expand,
+                    prog_core::NavigationCommand::Evidence,
+                ],
             },
             extra: Default::default(),
         }],
@@ -554,15 +645,18 @@ fn evidence_navigation_contracts_cover_north_star_workflow() {
     assert_eq!(encoded["schema"], INSPECT_SCHEMA);
     assert_eq!(encoded["findings"][0]["kind"], "rust_compile_error");
     assert_eq!(
-        encoded["findings"][0]["commands"]["evidence"],
-        "prog evidence pc1_demo --path /failure_sections/0"
+        encoded["findings"][0]["commands"]["available"][1],
+        "evidence"
     );
 
     let decoded: InspectResponse = serde_json::from_value(encoded).unwrap();
     assert_eq!(decoded.findings[0].confidence, 0.96);
     assert_eq!(
-        decoded.findings[0].commands.expand.as_deref(),
-        Some("prog expand pc1_demo --path /failure_sections/0")
+        decoded.findings[0].commands.available,
+        vec![
+            prog_core::NavigationCommand::Expand,
+            prog_core::NavigationCommand::Evidence,
+        ]
     );
 }
 

@@ -66,6 +66,11 @@ following hold:
 The assessment always reports `reasons`, so a non-provable comparison explains
 itself rather than failing silently.
 
+Pairwise source validity may come from equal scoped HTTP validators, equal
+hashed profile change tokens, or equal hashed MCP modification annotations.
+Cache age alone never supplies this proof; see
+[source-state evidence](source-state.md).
+
 `prog run`'s per-line finding derivation only examines the first and last 10
 lines of stdout/stderr, even though the full output is captured and stored. A
 finding whose evidence lies outside that head/tail window — for example, an

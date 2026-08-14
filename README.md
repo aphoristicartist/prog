@@ -20,7 +20,7 @@ on every turn.
 ```
 
 <sub>One row from [`docs/token-economics.md`](docs/token-economics.md): the "discover shape"
-task over the checked-in HTTP fixture. Ratios across all fixtures range 34.5x-162.8x.
+task over the checked-in HTTP fixture. Ratios across all fixtures range 24.4x-85.2x.
 Measured on deterministic fixtures with a bytes/4 heuristic — not a promise about your workload.</sub>
 
 The difference isn't compression. `prog` captures the payload **once**, redacts
@@ -76,8 +76,9 @@ For development, replace `prog` with `cargo run --` in the examples below.
 
 ### Supported platforms
 
-- **Ubuntu** (linux-x86_64) and **macOS** are supported and CI-verified on every
-  push and pull request (formatting, Clippy, full test suite, and an MSRV gate).
+- **Ubuntu 22.04+ on x86_64** and **macOS 15+ on Apple Silicon or Intel** are
+  supported and CI-verified on every push and pull request (formatting, Clippy,
+  full test suite, and an MSRV gate).
 - **Windows is not supported.** The process-group, permissions, and signal
   semantics `prog` relies on are not implemented for Windows; see
   [#140](https://github.com/aphoristicartist/prog/issues/140).
@@ -320,7 +321,7 @@ and `evidence` have smaller dedicated JSON contracts.
   "summary": {
     "kind": "...",
     "payload_bytes": 0,
-    "approx_tokens": 0,
+    "estimated_envelope_tokens": 0,
     "envelope_bytes": 0
   },
   "data_preview": {},
@@ -331,14 +332,16 @@ and `evidence` have smaller dedicated JSON contracts.
   "cache": { "status": "stored", "ttl_seconds": 86400 },
   "capture_budget": { "source": "default", "limits": [] },
   "storage_budget": { "source": "default" },
-  "next_actions": []
+  "next_actions": [],
+  "action_templates": {}
 }
 ```
 
 The values above illustrate field shape only. `schema_hints` describe the full
 payload, `omitted` explains what the preview withheld, and `next_actions`
-contains machine-readable follow-up commands. Use `prog meta DisclosureEnvelope`
-for the generated contract schema.
+references machine-readable follow-ups. Cursor-backed actions select one
+symbolic argv entry in `action_templates`; direct reruns carry exact argv. Use
+`prog meta DisclosureEnvelope` for the generated contract schema.
 
 ## Inputs and adapters
 
@@ -386,30 +389,38 @@ Install a project-local skill and explicit hook wrapper for a supported agent:
 ```sh
 prog init --agent codex --project --dry-run
 prog init --agent codex --project
+prog init --agent agents-md --project
+prog init --print-skill --frontmatter yaml
 ```
 
-Supported values are `codex`, `claude-code`, `cursor`, and `gemini-cli`. The
-installer reports every planned file, does not silently overwrite existing
-files, and includes a generated uninstall script. See
+Built-in values are `agents-md`, `codex`, `claude-code`, `cursor`, and
+`gemini-cli`. Additional targets come from validated JSON passed with
+`--manifest-dir`, so they do not require a `prog` release. The installer reports
+every planned file and does not silently overwrite existing files; hook-based
+targets include a generated uninstall script. `--print-skill` writes only the
+chosen `yaml`, `mdc`, or frontmatter-free skill to stdout. See
 [`docs/integrations.md`](docs/integrations.md) for the exact paths.
 
 `prog` can consume MCP as an upstream source, but **prog itself does not expose
-an MCP server mode**. The durable integration surface is CLI + agent skill +
-explicit project hooks.
+an MCP server mode**. The measured facade remains CLI-native pending the actual
+agent evaluation; today the durable integration surface is CLI + agent skill +
+explicit project wrappers.
 
 ## Command map
 
 | Workflow | Commands |
 | --- | --- |
 | Capture one command or artifact | `run`, `observe` |
-| Register and understand sources | `source add-http`, `source add-cli`, `discover`, `hints` |
+| Classify exact argv without executing it | `route` |
+| Register and understand sources | `source add-http`, `source add-cli`, `source add-mcp`, `discover`, `hints` |
 | Call a reusable source | `call` |
 | Navigate cached evidence | `inspect`, `search`, `find`, `evidence`, `paths`, `expand` |
 | Run a domain workflow | `recipe` |
 | Compare two observations | `delta` |
+| Read facade readiness and optional delta | `status` |
 | Drive long-running MCP tasks | `mcp-task start`, `get`, `result`, `cancel` |
 | Retain investigation metadata | `session start`, `session note`, `session show` |
-| Gate on verification criteria | `session obligation-add`, `session obligation-list`, `session show --readiness` |
+| Gate on verification criteria | `verification begin`, `verification readback`, `session obligation-add`, `session obligation-list`, `session show --readiness` |
 | Inspect storage and economics | `cache`, `cost` |
 | Inspect public contracts | `meta` |
 | Install agent integration | `init` |
@@ -444,6 +455,13 @@ The safety model is enforced in code and mapped to executable tests in
   enforced on every cache write; evicted evidence remains metadata-only.
 - `cache purge --all` removes cache state and session trails while preserving
   the retention policy.
+- Parallel processes may share one `--dir`: `prog` releases the database while
+  waiting on commands or upstream sources, retries brief redb contention with
+  bounded backoff, and reports exhausted contention as retryable
+  `storage_busy` JSON with the attempt count. The default `./.prog` is relative
+  to the current working directory, so agents launched from separate Git
+  worktree roots already receive separate stores. Set `PROG_DIR` explicitly
+  only when evidence and cursors are intended to be shared across worktrees.
 
 Source profiles can be committed when they contain stable configuration and
 environment references rather than literal credentials. The `.prog/` runtime
@@ -458,7 +476,7 @@ not universal promises about model quality, latency, or cost.
 ### Token-economics fixtures
 
 Across the checked-in HTTP, CLI, and MCP tasks, raw-payload tokens divided by
-the complete `prog` task tokens range from **34.5x-162.8x**. Each task includes
+the complete `prog` task tokens range from **24.4x-85.2x**. Each task includes
 the initial envelope and any expansion used to answer it. See
 [`docs/token-economics.md`](docs/token-economics.md) for every row and the
 regeneration command.
@@ -523,6 +541,8 @@ Use the simplest precise tool available. `prog` is usually the wrong layer when:
 - a native field selector, exact API query, or known `jq` expression returns
   the required value directly;
 - an interactive TTY or live streaming output is the product experience;
+- the host can only call MCP servers and cannot invoke a CLI, install a skill,
+  or use an explicit hook;
 - the loop needs an orchestrator, scheduler, isolated worktrees, merge policy,
   or deployment approval rather than an evidence layer;
 - one expansion would reveal almost the entire artifact anyway.
@@ -546,6 +566,7 @@ queries beat `prog`: [`docs/positioning.md`](docs/positioning.md) and
 
 - [Conservative observation delta](docs/delta.md)
 - [Verification obligations and readiness](docs/verification.md)
+- [Actual-agent evaluation and claim gate](docs/agent-eval.md)
 - [Long-running MCP tasks](docs/mcp-tasks.md)
 
 ### Contracts and safety
@@ -591,7 +612,9 @@ Editing the README can fail the test suite. See [`AGENTS.md`](AGENTS.md).
 - `prog` is not a general-purpose HTTP proxy or transparent cache.
 - `prog` is not an agent runtime, autonomous coding loop, or deployment system.
 - `prog` has no interactive UI.
-- No MCP server mode is planned; MCP is supported as an upstream adapter.
+- No MCP server mode exists for the first release; #216 defers reconsideration
+  until the measured three-operation facade in #120 exists. MCP is supported as
+  an upstream adapter.
 
 `prog` keeps the first observation small, makes omitted evidence recoverable,
 and gives repeated engineering loops a stable way to inspect what already ran.
