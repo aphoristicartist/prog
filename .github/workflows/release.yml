@@ -4,19 +4,70 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 # Minimal default permissions; per-job grants widen what each job needs.
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  quality:
+    name: quality (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-targets --all-features
+      - run: cargo run -p prog-cli -- --help
+
+  version-consistency:
+    name: version consistency
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-version-consistency.sh
+
+  msrv:
+    name: msrv
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - run: cargo +1.89.0 build --workspace --all-features
+      - run: cargo +1.89.0 test --workspace
+
+  dependency-policy:
+    name: dependency policy
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
     permissions:
       id-token: write      # required by actions/attest-build-provenance
       attestations: write  # required by actions/attest-build-provenance
@@ -26,19 +77,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build release binary
-        run: cargo build --release --locked -p prog-cli
+        run: cargo build --release --locked -p prog-cli --target "${{ matrix.target }}"
 
       - name: Stage tarball
         run: |
-          # Capture the host target triple (e.g. x86_64-unknown-linux-gnu).
-          target="$(rustc -vV | sed -n 's/^host: //p')"
+          target="${{ matrix.target }}"
           echo "target=$target" >> "$GITHUB_ENV"
           staging="prog-${target}"
           mkdir -p "$staging"
-          cp target/release/prog "$staging/"
+          cp "target/${target}/release/prog" "$staging/"
           cp LICENSE README.md CHANGELOG.md "$staging/"
+          version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
+          printf '%s\n' "$version" > "$staging/VERSION"
+          printf '%s\n' "$target" > "$staging/TARGET"
           mkdir -p "$staging/docs"
-          cp docs/release-notes.md "$staging/docs/" || true
+          cp docs/release-notes.md "$staging/docs/"
           tar -czf "prog-${target}.tar.gz" "$staging"
           shasum -a 256 "prog-${target}.tar.gz" > "SHA256SUMS-${target}"
           echo "::group::tarball contents"; tar -tzf "prog-${target}.tar.gz"; echo "::endgroup::"
@@ -61,7 +114,7 @@ jobs:
 
   sbom:
     name: sbom (cyclonedx)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
     steps:
@@ -69,7 +122,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-cyclonedx
-        run: cargo install cargo-cyclonedx --locked
+        run: cargo install cargo-cyclonedx --version 0.5.9 --locked
 
       - name: Generate SBOM
         run: cargo cyclonedx --workspace --format json --output-pattern package
@@ -89,51 +142,30 @@ jobs:
 
   cargo-package-dryrun:
     name: cargo package (dry-run leak check)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: cargo package --workspace
-        run: cargo package --workspace --locked --no-verify --allow-dirty
-
-      - name: Assert no runtime artifacts leak into .crate archives
-        run: |
-          # No redb stores, local .prog/ directories, or workspace-level
-          # fixtures should be bundled into a published crate. Test fixtures
-          # under tests/fixtures/ are legitimate crate test data and allowed.
-          found=0
-          for crate in target/package/*.crate; do
-            echo "inspecting $crate"
-            # Every published crate must carry the canonical license text, not
-            # just the SPDX metadata from Cargo.toml.
-            if [ "$(tar -tzf "$crate" | grep -Ec '/LICENSE$')" -ne 1 ]; then
-              echo "::error::expected exactly one LICENSE in $crate"
-              found=1
-            fi
-            # Hard bans: runtime stores and local prog dirs never belong.
-            if tar -tzf "$crate" | grep -E '\.redb$|\.prog/'; then
-              echo "::error::runtime artifact leaked into $crate"
-              found=1
-            fi
-            # fixtures/ outside tests/ is a workspace-level leak.
-            if tar -tzf "$crate" | grep -E 'fixtures/' | grep -vE 'tests/fixtures/'; then
-              echo "::error::workspace fixtures/ leaked into $crate"
-              found=1
-            fi
-          done
-          exit "$found"
+      - name: Verify exact crate package contents
+        run: bash .github/scripts/check-package-contents.sh
 
   rc-smoke:
-    name: rc smoke (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: rc smoke (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
     needs: build
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
     permissions:
       contents: read
     steps:
@@ -142,7 +174,7 @@ jobs:
 
       - name: Resolve target triple
         run: |
-          target="$(rustc -vV | sed -n 's/^host: //p')"
+          target="${{ matrix.target }}"
           echo "target=$target" >> "$GITHUB_ENV"
 
       - name: Download matching build artifact
@@ -155,6 +187,12 @@ jobs:
           tar -xzf "prog-${{ env.target }}.tar.gz"
           chmod +x "prog-${{ env.target }}/prog"
           echo "$PWD/prog-${{ env.target }}" >> "$GITHUB_PATH"
+
+      - name: Artifact provenance matches the release candidate
+        run: |
+          expected_version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
+          test "$(cat "prog-${{ env.target }}/VERSION")" = "$expected_version"
+          test "$(cat "prog-${{ env.target }}/TARGET")" = "${{ env.target }}"
 
       - name: prog --help exits 0
         run: prog --help
@@ -180,8 +218,8 @@ jobs:
 
   release:
     name: publish github release
-    runs-on: ubuntu-latest
-    needs: [build, sbom, cargo-package-dryrun, rc-smoke]
+    runs-on: ubuntu-22.04
+    needs: [quality, version-consistency, msrv, dependency-policy, build, sbom, cargo-package-dryrun, rc-smoke]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write   # required to create the release and upload assets
@@ -217,14 +255,17 @@ jobs:
           body: |
             ## Release artifacts
 
-            Prebuilt binaries for Ubuntu (linux-x86_64) and macOS are attached as
-            tarballs, alongside a combined `SHA256SUMS` and CycloneDX SBOM files.
+            Prebuilt binaries for Ubuntu 22.04+ (x86_64) and macOS 15+
+            (Apple Silicon and Intel) are attached as tarballs, alongside a
+            combined `SHA256SUMS` and CycloneDX SBOM files.
 
             ### Verify an artifact
 
             ```sh
             # Checksum
             sha256sum -c SHA256SUMS --ignore-missing
+            # macOS equivalent
+            shasum -a 256 -c SHA256SUMS
             # Build provenance (requires gh CLI)
             gh attestation verify <tarball> --owner aphoristicartist
             ```

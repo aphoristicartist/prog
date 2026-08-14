@@ -7,15 +7,20 @@ per-version changes, see [`../CHANGELOG.md`](../CHANGELOG.md).
 
 ## Supported platforms
 
-`prog` is supported and CI-verified on:
+`prog` is supported and CI-verified on these exact platform families:
 
-- **Ubuntu** (linux-x86_64). Built and tested on `ubuntu-latest` in CI.
-- **macOS**. Built and tested on `macos-latest` in CI.
+- **Ubuntu 22.04 or newer on x86_64**
+  (`x86_64-unknown-linux-gnu`). Release binaries are built on Ubuntu 22.04 so
+  the supported glibc floor is not inherited from a moving `ubuntu-latest`.
+- **macOS 15 or newer on Apple Silicon** (`aarch64-apple-darwin`).
+- **macOS 15 or newer on Intel** (`x86_64-apple-darwin`).
 
-Both platforms run the full formatting + Clippy + test gate, plus an MSRV
-(`rust-toolchain@1.89.0`) build/test on Ubuntu. Release tarballs are cut for
-both platforms on every `v*` tag (see
+Every supported target runs the full formatting + Clippy + test gate. An MSRV
+(`rust-toolchain@1.89.0`) build/test also runs on Ubuntu. Release tarballs are
+cut for all three targets on every `v*` tag (see
 [`.github/workflows/release.yml`](../.github/workflows/release.yml)).
+Each tarball also contains `VERSION` and `TARGET` files, and the release-candidate
+smoke job verifies both before executing the binary.
 
 **Windows is not supported.** Process-group, permissions, and signal semantics
 that `prog` relies on are not implemented for Windows, and there is no timeline
@@ -34,11 +39,17 @@ and will be called out in the CHANGELOG.
   checksums, SBOM, and build provenance. Publishing to crates.io is deferred to
   the release-readiness parent ([#140](https://github.com/aphoristicartist/prog/issues/140))
   and will be an explicit owner approval, not an automated step.
+- **Exact crate manifests are pinned.** CI fails when any packaged file is
+  added or removed until `.github/package-contents/` is reviewed and updated;
+  runtime stores, local `.prog/` directories, and workspace fixtures remain
+  hard-banned.
 - **Pre-release store resets.** The local observation store is wiped, not
   migrated, whenever an immutable-record invariant changes (see the
   schema/store-reset policy below). This is intentional during `0.x`.
 - **Single-machine stores.** The `redb`-backed store is local to a `--dir`;
-  there is no remote or shared store.
+  there is no remote or networked store. Local processes may share one `--dir`:
+  external waits do not retain the database lock, brief contention is retried,
+  and exhausted contention is a typed retryable error.
 
 ## Schema / store-reset policy
 
@@ -46,7 +57,7 @@ The local observation store carries a **schema identity** — not a compatibilit
 version — at:
 
 - `crates/prog-core/src/store.rs:39`
-- `const STORE_SCHEMA: &str = "prog.store.capture_lifecycle";`
+- `const STORE_SCHEMA: &str = "prog.store.readback_verification_contract";`
 
 On open, if the persisted `store_schema` key does not equal `STORE_SCHEMA`,
 `prog` **resets the local store** rather than migrating it. This is a deliberate
@@ -56,9 +67,10 @@ so a mixed-shape store can never be read by a newer binary.
 
 Practical implications:
 
-- Upgrading `prog` across a `STORE_SCHEMA` change silently wipes `--dir`. There
-  is no data loss in the upstream sources (observations can be re-captured), but
-  cached cursors and local lineage are gone.
+- Upgrading `prog` across a `STORE_SCHEMA` change resets `--dir` and emits an
+  explicit stderr notice naming the directory and number of records dropped.
+  There is no data loss in the upstream sources (observations can be
+  re-captured), but cached cursors and local lineage are gone.
 - The schema identity string is stable within a release; it changes only when an
   immutable record invariant changes, and any such change is noted in the
   CHANGELOG.
