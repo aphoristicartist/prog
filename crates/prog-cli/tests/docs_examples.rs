@@ -771,8 +771,16 @@ fn release_metadata_stays_in_sync() {
     }
     assert!(release.contains("workflow_dispatch:"));
     assert!(release.contains(
-        "needs: [quality, version-consistency, msrv, dependency-policy, build, sbom, cargo-package-dryrun, rc-smoke]"
+        "needs: [quality, version-consistency, msrv, dependency-policy, build, sbom, cargo-package-dryrun, installer, rc-smoke]"
     ));
+
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let installer = std::fs::read_to_string(root.join("install.sh")).unwrap();
+    assert!(readme.contains("releases/latest/download/install.sh | sh"));
+    assert!(readme.contains("prog update --yes"));
+    assert!(installer.contains("gh attestation verify"));
+    assert!(installer.contains("checksum verification failed"));
+    assert!(release.contains("Install verified release candidate"));
 }
 
 #[test]

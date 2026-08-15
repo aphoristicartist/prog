@@ -36,9 +36,13 @@ and will be called out in the CHANGELOG.
 
 - **No Windows support.** See above.
 - **No `cargo publish` flow yet.** Releases ship as GitHub Release tarballs with
-  checksums, SBOM, and build provenance. Publishing to crates.io is deferred to
-  the release-readiness parent ([#140](https://github.com/aphoristicartist/prog/issues/140))
-  and will be an explicit owner approval, not an automated step.
+  checksums, SBOM, and build provenance. Publishing to crates.io is deferred
+  beyond v0.1.0 and remains an explicit owner decision, not an automated
+  release step.
+- **Verified installer and explicit self-update.** `install.sh` requires both a
+  SHA-256 match and a GitHub build-provenance attestation before extraction.
+  `prog update --yes` verifies the release installer and archive before atomic
+  replacement. There is no hidden background update.
 - **Exact crate manifests are pinned.** CI fails when any packaged file is
   added or removed until `.github/package-contents/` is reviewed and updated;
   runtime stores, local `.prog/` directories, and workspace fixtures remain

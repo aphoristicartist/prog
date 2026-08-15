@@ -142,6 +142,7 @@ fn help_shows_complete_command_tree() {
         "observe",
         "run",
         "init",
+        "update",
         "cost",
         "paths",
         "expand",

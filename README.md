@@ -52,27 +52,39 @@ Nothing was truncated away. The full redacted payload is still on disk.
 
 ## Install
 
-The repository is a Rust workspace at version `0.1.0`. Install the `prog`
-binary from a checkout:
+Install the latest verified binary with `curl` (requires
+[`gh`](https://cli.github.com/) for mandatory build-provenance verification):
 
 ```sh
-git clone https://github.com/aphoristicartist/prog.git
-cd prog
-cargo install --path crates/prog-cli
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/releases/latest/download/install.sh | sh
 prog --help
 ```
 
-Prebuilt binaries for Ubuntu and macOS are published on the
-[GitHub Releases page](https://github.com/aphoristicartist/prog/releases).
-Each release ships a tarball per platform, a combined `SHA256SUMS`, a CycloneDX
-SBOM, and a build-provenance attestation. Verify a download before use:
+The installer selects the supported target, downloads into a temporary
+directory, verifies both `SHA256SUMS` and the GitHub build-provenance
+attestation, and only then atomically places `prog` in `~/.local/bin`. Override
+the destination with `PROG_INSTALL_DIR`. It refuses unsupported platforms,
+checksum mismatches, missing attestations, and missing verification tools.
+
+Update a curl-managed installation to the latest verified release explicitly:
 
 ```sh
-sha256sum -c SHA256SUMS --ignore-missing
-gh attestation verify prog-*.tar.gz --owner aphoristicartist
+prog update --yes
 ```
 
-For development, replace `prog` with `cargo run --` in the examples below.
+`prog update` never runs in the background. Without `--yes` it fails closed
+before network access or filesystem mutation; package-manager installations
+are not overwritten unless an explicit `--install-dir` is supplied. See
+[`docs/install.md`](docs/install.md) for exact-version installs, manual
+verification, PATH setup, and the updater trust model.
+
+For development from a checkout:
+
+```sh
+cargo install --path crates/prog-cli
+```
+
+Replace `prog` with `cargo run --` in the examples below when developing.
 
 ### Supported platforms
 
@@ -424,6 +436,7 @@ explicit project wrappers.
 | Inspect storage and economics | `cache`, `cost` |
 | Inspect public contracts | `meta` |
 | Install agent integration | `init` |
+| Update a curl-managed binary | `update --yes` |
 
 Run `prog <command> --help` for the complete argument surface; every command and
 subcommand self-describes. Global options are `--dir <DIR>` (`PROG_DIR`, default

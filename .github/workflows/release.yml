@@ -25,8 +25,10 @@ jobs:
           - runner: macos-15-intel
             target: x86_64-apple-darwin
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-targets --all-features
@@ -36,15 +38,17 @@ jobs:
     name: version consistency
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: bash .github/scripts/check-version-consistency.sh
 
   msrv:
     name: msrv
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.89.0
       - run: cargo +1.89.0 build --workspace --all-features
       - run: cargo +1.89.0 test --workspace
 
@@ -52,8 +56,8 @@ jobs:
     name: dependency policy
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
 
   build:
     name: build (${{ matrix.target }})
@@ -73,8 +77,10 @@ jobs:
       attestations: write  # required by actions/attest-build-provenance
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
 
       - name: Build release binary
         run: cargo build --release --locked -p prog-cli --target "${{ matrix.target }}"
@@ -98,7 +104,7 @@ jobs:
           echo "::group::checksum"; cat "SHA256SUMS-${target}"; echo "::endgroup::"
 
       - name: Upload tarball artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: prog-${{ env.target }}
           path: |
@@ -106,7 +112,7 @@ jobs:
             SHA256SUMS-${{ env.target }}
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             prog-${{ env.target }}.tar.gz
@@ -118,8 +124,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
 
       - name: Install cargo-cyclonedx
         run: cargo install cargo-cyclonedx --version 0.5.9 --locked
@@ -135,7 +143,7 @@ jobs:
           ls -la sbom/
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom
           path: sbom/*.cdx.json
@@ -146,11 +154,34 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
 
       - name: Verify exact crate package contents
         run: bash .github/scripts/check-package-contents.sh
+
+  installer:
+    name: verified curl installer
+    runs-on: ubuntu-22.04
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate installer syntax
+        run: sh -n install.sh
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: installer
+          path: install.sh
+      - name: Attest installer provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: install.sh
 
   rc-smoke:
     name: rc smoke (${{ matrix.target }})
@@ -168,9 +199,12 @@ jobs:
             target: x86_64-apple-darwin
     permissions:
       contents: read
+      attestations: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
 
       - name: Resolve target triple
         run: |
@@ -178,21 +212,28 @@ jobs:
           echo "target=$target" >> "$GITHUB_ENV"
 
       - name: Download matching build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: prog-${{ env.target }}
 
-      - name: Extract binary
+      - name: Install verified release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          tar -xzf "prog-${{ env.target }}.tar.gz"
-          chmod +x "prog-${{ env.target }}/prog"
-          echo "$PWD/prog-${{ env.target }}" >> "$GITHUB_PATH"
+          cp "SHA256SUMS-${{ env.target }}" SHA256SUMS
+          install_dir="$PWD/installed"
+          PROG_RELEASE_URL="file://$PWD" \
+          PROG_ALLOW_FILE_URL=1 \
+          PROG_TARGET="${{ env.target }}" \
+          PROG_INSTALL_DIR="$install_dir" \
+            sh install.sh
+          echo "$install_dir" >> "$GITHUB_PATH"
 
       - name: Artifact provenance matches the release candidate
         run: |
           expected_version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
-          test "$(cat "prog-${{ env.target }}/VERSION")" = "$expected_version"
-          test "$(cat "prog-${{ env.target }}/TARGET")" = "${{ env.target }}"
+          test "$(prog --version | awk '{print $2}')" = "$expected_version"
+          grep -Fx "target=${{ env.target }}" installed/.prog-install
 
       - name: prog --help exits 0
         run: prog --help
@@ -219,15 +260,15 @@ jobs:
   release:
     name: publish github release
     runs-on: ubuntu-22.04
-    needs: [quality, version-consistency, msrv, dependency-policy, build, sbom, cargo-package-dryrun, rc-smoke]
+    needs: [quality, version-consistency, msrv, dependency-policy, build, sbom, cargo-package-dryrun, installer, rc-smoke]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write   # required to create the release and upload assets
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
 
@@ -237,19 +278,21 @@ jobs:
           # Collect the per-platform tarballs and SBOM files.
           find dist -name '*.tar.gz' -exec cp {} release/ \;
           find dist -name '*.cdx.json' -exec cp {} release/sbom/ \;
+          find dist -name 'install.sh' -exec cp {} release/ \;
           # Recompute SHA256SUMS over the tarballs we actually ship, so the file
           # is self-consistent regardless of where it was assembled. The per-
           # target checksums produced in the build jobs are attested separately
           # and serve as a cross-check; this combined file is what users verify.
-          (cd release && shasum -a 256 *.tar.gz > SHA256SUMS)
+          (cd release && shasum -a 256 *.tar.gz install.sh > SHA256SUMS)
           echo "::group::release contents"; ls -laR release; echo "::endgroup::"
           echo "::group::SHA256SUMS"; cat release/SHA256SUMS; echo "::endgroup::"
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: |
             release/*.tar.gz
+            release/install.sh
             release/SHA256SUMS
             release/sbom/*.cdx.json
           body: |
@@ -258,6 +301,15 @@ jobs:
             Prebuilt binaries for Ubuntu 22.04+ (x86_64) and macOS 15+
             (Apple Silicon and Intel) are attached as tarballs, alongside a
             combined `SHA256SUMS` and CycloneDX SBOM files.
+
+            ### Install
+
+            ```sh
+            curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/releases/latest/download/install.sh | sh
+            ```
+
+            The installer requires GitHub CLI (`gh`) and refuses to extract a
+            binary unless both its checksum and build attestation verify.
 
             ### Verify an artifact
 
