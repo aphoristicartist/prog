@@ -16,7 +16,7 @@
 
 use std::{fs, path::Path};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 mod support;
 
@@ -46,6 +46,19 @@ fn assert_sizes_are_monotonic(label: &str, observations: &[(u32, usize)]) {
              (full series: {observations:?})"
         );
     }
+}
+
+fn normalized_run_envelope_bytes(mut envelope: Value) -> usize {
+    // Every budget executes the command independently. `duration_ms` is real
+    // provenance, but its decimal width varies with runner scheduling and is
+    // unrelated to disclosure-policy selection. Canonicalize that one value
+    // while retaining the field and every budget-dependent byte. Without this,
+    // a 99 ms versus 101 ms execution can fabricate a two-byte monotonicity
+    // failure even when both envelopes selected the identical policy.
+    if let Some(duration_ms) = envelope.pointer_mut("/provenance/duration_ms") {
+        *duration_ms = json!(1_000);
+    }
+    serde_json::to_vec(&envelope).unwrap().len()
 }
 
 /// Surfaced findings must be non-decreasing in the budget. A larger budget may
@@ -117,9 +130,9 @@ fn delivered_bytes_are_monotonic_in_the_budget() {
             budget,
             &["run", "--", "rustc", &source, "-o", "/dev/null"],
         );
-        serde_json::from_slice::<Value>(&output.stdout)
+        let value = serde_json::from_slice::<Value>(&output.stdout)
             .unwrap_or_else(|error| panic!("budget {budget} produced non-JSON: {error}"));
-        observations.push((budget, output.stdout.len()));
+        observations.push((budget, normalized_run_envelope_bytes(value)));
     }
     assert_sizes_are_monotonic("run envelope", &observations);
 }
