@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.1.0 - 2026-08-14
+## 0.1.0 - 2026-08-15
 
 - Added non-coding read-back verification for externally executed mutations:
   immutable action intents, identity/version fingerprints, safe fresh reads,
@@ -32,6 +32,10 @@
 - Pinned supported CI/release runners and target triples, verified crate license
   contents and exact package manifests, expanded release-candidate smoke tests,
   and documented the deferred MCP-server decision (#140, #216).
+- Added a curl-first installer that verifies checksums and GitHub attestations,
+  plus an explicit confirmation-gated `prog update` command for verified atomic
+  self-updates. Release-candidate CI installs through the same script on every
+  supported target (#214).
 
 - Pinned MSRV at Rust 1.89 (`rust-version = "1.89"` in the workspace manifest), propagated to all crates, and added a dedicated CI job that builds and tests on `rust-toolchain@1.89.0` (#167).
 - Extended macOS CI to match Ubuntu: `cargo fmt --all --check` and `cargo clippy --all-targets --all-features -- -D warnings` now run before tests on both platforms (#167).

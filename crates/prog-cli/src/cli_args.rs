@@ -61,6 +61,8 @@ pub(crate) enum Command {
     Recipe(RecipeArgs),
     /// Install a project-local agent skill and explicit hook wrappers.
     Init(InitArgs),
+    /// Replace a curl-managed prog binary with a verified release.
+    Update(UpdateArgs),
     /// Report stored payload bytes, cache entries, and disclosure economics.
     Cost(CostArgs),
     /// List addressable JSON Pointer paths within a cursor's cached payload.
@@ -484,6 +486,21 @@ pub(crate) struct InitArgs {
     /// Frontmatter format for --print-skill (defaults to yaml).
     #[arg(long, value_enum, requires = "print_skill")]
     pub(crate) frontmatter: Option<FrontmatterFlavor>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UpdateArgs {
+    /// Confirm the network download and replacement of the installed binary.
+    #[arg(long)]
+    pub(crate) yes: bool,
+
+    /// Install an exact release tag instead of the latest release.
+    #[arg(long)]
+    pub(crate) target_version: Option<String>,
+
+    /// Explicit destination for non-curl-managed installations.
+    #[arg(long)]
+    pub(crate) install_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

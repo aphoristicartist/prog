@@ -17,6 +17,7 @@ overview and quickstart; contributors and coding agents should read
 | [findings.md](findings.md) | How deterministic findings are produced and ranked. |
 | [coding-providers.md](coding-providers.md) | Bounded pytest and Cargo/rustc normalization. |
 | [integrations.md](integrations.md) | Agent skills, hooks, and the MCP stance. |
+| [install.md](install.md) | Verified curl install, manual verification, and explicit self-update. |
 
 ## Verification
 

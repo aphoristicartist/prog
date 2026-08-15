@@ -21,4 +21,5 @@ pub(crate) mod run;
 pub(crate) mod session;
 pub(crate) mod source;
 pub(crate) mod status;
+pub(crate) mod update;
 pub(crate) mod verification;

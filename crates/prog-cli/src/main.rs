@@ -92,6 +92,7 @@ use commands::{
     session::{bound_readiness_report, declare_recipe_obligation, readiness_report, session_show},
     source::{shell_quote, source_command},
     status::status_report,
+    update::update_command,
     verification::{begin_verification, readback_verification},
 };
 pub(crate) use obligation::evaluate_obligation;
@@ -374,6 +375,11 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
                 let report = init_integration(args)?;
                 write_success(&report, cli.pretty, ctx)?;
             }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Update(args) => {
+            let report = update_command(args)?;
+            write_success(&report, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Cost(args) => {

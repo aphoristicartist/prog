@@ -34,6 +34,7 @@ src/commands/run.rs
 src/commands/session.rs
 src/commands/source.rs
 src/commands/status.rs
+src/commands/update.rs
 src/commands/verification.rs
 src/main.rs
 src/obligation.rs
