@@ -65,6 +65,94 @@
     }
   },
   {
+    "name": "pytest-json-report-failure",
+    "equivalence_group": "pytest-unicode-failure",
+    "argv": ["pytest", "tests/test_api.py", "--json-report"],
+    "stdout": "{\"exitcode\":1,\"summary\":{\"failed\":1,\"passed\":1,\"total\":2},\"tests\":[{\"nodeid\":\"tests/test_api.py::test_other\",\"outcome\":\"passed\",\"call\":{\"outcome\":\"passed\"}},{\"nodeid\":\"tests/test_api.py::test_total[€]\",\"outcome\":\"failed\",\"call\":{\"outcome\":\"failed\",\"crash\":{\"message\":\"AssertionError: wrong total\"}}}]}\n",
+    "stderr": "",
+    "capture_complete": true,
+    "expected": {
+      "provider": "pytest.v1",
+      "input_format": "pytest_json_report",
+      "complete": true,
+      "selection": {"scopes": ["pytest:tests/test_api.py"], "exhaustive": true},
+      "normalized": {
+        "tests": [
+          {"node_id": "tests/test_api.py::test_other", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1},
+          {"node_id": "tests/test_api.py::test_total[€]", "status": "failed", "message": "AssertionError: wrong total", "evidence_stream": "stdout", "evidence_line": 2}
+        ],
+        "summary_seen": true,
+        "early_terminated": false,
+        "targets": ["tests/test_api.py"],
+        "exitcode": 1,
+        "deselected": 0
+      }
+    }
+  },
+  {
+    "name": "pytest-json-report-success",
+    "argv": ["pytest", "--json-report"],
+    "stdout": "{\"exitcode\":0,\"summary\":{\"passed\":1,\"total\":1},\"tests\":[{\"nodeid\":\"tests/test_math.py::test_add\",\"outcome\":\"passed\",\"call\":{\"outcome\":\"passed\"}}]}\n",
+    "stderr": "",
+    "capture_complete": true,
+    "expected": {
+      "provider": "pytest.v1",
+      "input_format": "pytest_json_report",
+      "complete": true,
+      "selection": {"scopes": ["pytest:all"], "exhaustive": true},
+      "normalized": {
+        "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1}],
+        "summary_seen": true,
+        "early_terminated": false,
+        "targets": [],
+        "exitcode": 0,
+        "deselected": 0
+      }
+    }
+  },
+  {
+    "name": "pytest-json-report-missing-exitcode",
+    "argv": ["pytest", "--json-report"],
+    "stdout": "{\"summary\":{\"passed\":1,\"total\":1},\"tests\":[{\"nodeid\":\"tests/test_math.py::test_add\",\"outcome\":\"passed\"}]}\n",
+    "stderr": "",
+    "capture_complete": true,
+    "expected": {
+      "provider": "pytest.v1",
+      "input_format": "pytest_json_report",
+      "complete": false,
+      "selection": {"scopes": ["pytest:all"], "exhaustive": false},
+      "normalized": {
+        "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1}],
+        "summary_seen": true,
+        "early_terminated": false,
+        "targets": [],
+        "exitcode": null,
+        "deselected": 0
+      }
+    }
+  },
+  {
+    "name": "pytest-json-report-deselected",
+    "argv": ["pytest", "--json-report"],
+    "stdout": "{\"exitcode\":0,\"summary\":{\"passed\":1,\"deselected\":2,\"total\":3},\"tests\":[{\"nodeid\":\"tests/test_math.py::test_add\",\"outcome\":\"passed\"}]}\n",
+    "stderr": "",
+    "capture_complete": true,
+    "expected": {
+      "provider": "pytest.v1",
+      "input_format": "pytest_json_report",
+      "complete": false,
+      "selection": {"scopes": ["pytest:all"], "exhaustive": false},
+      "normalized": {
+        "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1}],
+        "summary_seen": true,
+        "early_terminated": true,
+        "targets": [],
+        "exitcode": 0,
+        "deselected": 2
+      }
+    }
+  },
+  {
     "name": "pytest-early-stop",
     "argv": ["pytest", "-x"],
     "stdout": "FAILED tests/test_api.py::test_one - AssertionError\nstopping after 1 failures\n================ 1 failed in 0.01s ================\n",

@@ -247,7 +247,10 @@ pub(crate) async fn run_command(
         ),
         provider
             .as_ref()
-            .map(|provider| provider.input_format.clone()),
+            // Parser identity names the normalized semantic family, not the
+            // transport encoding. Text and structured variants must remain
+            // comparable when they carry equivalent evidence.
+            .map(|provider| provider.provider.clone()),
         lens.as_ref(),
         None,
         // A local `run` executes a subprocess directly; there is no external

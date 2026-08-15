@@ -19,19 +19,24 @@ prog cache observations --limit 1
 
 | Provider | Recognized invocations | Preferred input | Text fallback |
 |---|---|---|---|
-| `pytest.v1` | `pytest`, `py.test`, `python -m pytest` | Captured standard pytest result output | Node IDs, statuses, terminal summary, targets, and early-stop markers |
+| `pytest.v1` | `pytest`, `py.test`, `python -m pytest` | A complete `pytest-json-report` object captured on stdout or stderr | Node IDs, statuses, terminal summary, targets, and early-stop markers |
 | `cargo_rustc.v1` | `rustc`; Cargo `bench`, `build`, `check`, `clippy`, `rustc`, and `test` | Cargo/rustc JSON diagnostics | rustc diagnostics and stable libtest lines |
 
 `prog recipe cargo-test` adds `--message-format=json` to a Cargo test argv when
 the option is absent. The expanded argv is recorded in the recipe envelope.
 User-supplied argv is never converted into a shell string.
 
+Structured and text encodings retain distinct `input_format` values inside
+`/provider`, but share one stable observation parser identity per provider.
+Equivalent evidence therefore remains comparable across a format transition.
+
 ## Completeness
 
 Provider completeness is narrower than process completion. A complete capture
 can still be marked incomplete when, for example, pytest stopped early, a
-capture was truncated, Cargo JSON was malformed, or a Cargo test invocation
-does not identify one exact harness. Incomplete provider output changes the
+capture was truncated, a pytest JSON report omitted `exitcode` or reported
+deselected tests, Cargo JSON was malformed, or a Cargo test invocation does
+not identify one exact harness. Incomplete provider output changes the
 observation's capture stop reason to `derivation_windowed`; it cannot prove a
 finding resolved.
 

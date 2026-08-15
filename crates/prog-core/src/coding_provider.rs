@@ -95,6 +95,8 @@ pub fn normalize_coding_output(
     match provider_kind(argv)? {
         ProviderKind::Pytest { args } => Some(normalize_pytest(
             args,
+            stdout,
+            stderr,
             &lines,
             input_bytes,
             bound_hit,
@@ -196,11 +198,16 @@ fn bounded_lines<'a>(stdout: &'a str, stderr: &'a str) -> (Vec<InputLine<'a>>, u
 
 fn normalize_pytest(
     args: &[String],
+    stdout: &str,
+    stderr: &str,
     lines: &[InputLine<'_>],
     input_bytes: usize,
     mut bound_hit: bool,
     capture_complete: bool,
 ) -> CodingProviderResult {
+    if !bound_hit && let Some((stream, report)) = pytest_json_report(stdout, stderr) {
+        return normalize_pytest_json(args, stream, &report, input_bytes, capture_complete);
+    }
     let mut tests = Vec::new();
     let mut summary_seen = false;
     let mut early_terminated = pytest_early_stop_args(args);
@@ -266,6 +273,145 @@ fn normalize_pytest(
         }),
         warnings,
     )
+}
+
+fn pytest_json_report(stdout: &str, stderr: &str) -> Option<(&'static str, Value)> {
+    for (stream, text) in [("stdout", stdout), ("stderr", stderr)] {
+        let trimmed = text.trim();
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed)
+            && is_pytest_json_report(&value)
+        {
+            return Some((stream, value));
+        }
+        for line in text.lines() {
+            if let Ok(value) = serde_json::from_str::<Value>(line.trim())
+                && is_pytest_json_report(&value)
+            {
+                return Some((stream, value));
+            }
+        }
+    }
+    None
+}
+
+fn is_pytest_json_report(value: &Value) -> bool {
+    value.get("tests").is_some_and(Value::is_array)
+        && value.get("summary").is_some_and(Value::is_object)
+}
+
+fn normalize_pytest_json(
+    args: &[String],
+    stream: &'static str,
+    report: &Value,
+    input_bytes: usize,
+    capture_complete: bool,
+) -> CodingProviderResult {
+    let report_tests = report["tests"].as_array().expect("validated pytest tests");
+    let mut bound_hit =
+        report_tests.len() > MAX_PROVIDER_ITEMS || report_tests.len() > MAX_PROVIDER_LINES;
+    let mut tests = Vec::new();
+    for (index, test) in report_tests.iter().take(MAX_PROVIDER_ITEMS).enumerate() {
+        let Some(node_id) = test.get("nodeid").and_then(Value::as_str) else {
+            bound_hit = true;
+            continue;
+        };
+        let Some(status) = test.get("outcome").and_then(Value::as_str) else {
+            bound_hit = true;
+            continue;
+        };
+        if !matches!(
+            status,
+            "passed" | "failed" | "error" | "skipped" | "xfailed" | "xpassed"
+        ) {
+            bound_hit = true;
+            continue;
+        }
+        tests.push(NormalizedTest {
+            node_id: bounded_text(node_id),
+            status: status.to_string(),
+            message: pytest_json_message(test).map(bounded_text),
+            evidence_stream: stream,
+            evidence_line: index.saturating_add(1).try_into().unwrap_or(u64::MAX),
+        });
+    }
+    tests.sort();
+    tests.dedup_by(|left, right| left.node_id == right.node_id && left.status == right.status);
+
+    let exitcode = report.get("exitcode").and_then(Value::as_i64);
+    let deselected = report
+        .get("summary")
+        .and_then(|summary| summary.get("deselected"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let normal_exit = matches!(exitcode, Some(0 | 1));
+    let targets = pytest_targets(args);
+    let early_terminated = pytest_early_stop_args(args) || deselected > 0;
+    let complete = capture_complete && !bound_hit && normal_exit && !early_terminated;
+    let selection = SelectionCoverage {
+        scopes: if targets.is_empty() {
+            vec!["pytest:all".to_string()]
+        } else {
+            targets
+                .iter()
+                .map(|target| format!("pytest:{target}"))
+                .collect()
+        },
+        exhaustive: complete,
+        ..SelectionCoverage::default()
+    };
+    let mut warnings = Vec::new();
+    if exitcode.is_none() {
+        warnings.push("pytest JSON report omitted exitcode; completion is unproven".to_string());
+    } else if !normal_exit {
+        warnings.push("pytest JSON report did not record a normal completed test exit".to_string());
+    }
+    if deselected > 0 {
+        warnings.push(
+            "pytest JSON report contains deselected tests; broader absence is unproven".to_string(),
+        );
+    }
+    if bound_hit {
+        warnings.push("pytest JSON report was malformed or exceeded provider bounds".to_string());
+    }
+    provider_result(
+        "pytest.v1",
+        "pytest_json_report",
+        0.99,
+        complete,
+        selection,
+        input_bytes,
+        report_tests.len().min(MAX_PROVIDER_LINES),
+        tests.len(),
+        bound_hit,
+        json!({
+            "tests": tests,
+            "summary_seen": true,
+            "early_terminated": early_terminated,
+            "targets": targets,
+            "exitcode": exitcode,
+            "deselected": deselected
+        }),
+        warnings,
+    )
+}
+
+fn pytest_json_message(test: &Value) -> Option<&str> {
+    for stage_name in ["call", "setup", "teardown"] {
+        let Some(stage) = test.get(stage_name) else {
+            continue;
+        };
+        if let Some(message) = stage
+            .get("crash")
+            .and_then(|crash| crash.get("message"))
+            .and_then(Value::as_str)
+        {
+            return Some(message);
+        }
+        if let Some(message) = stage.get("longrepr").and_then(Value::as_str) {
+            return Some(message.lines().next().unwrap_or(message));
+        }
+    }
+    None
 }
 
 fn pytest_test_line(line: &str) -> Option<(String, String, Option<String>)> {

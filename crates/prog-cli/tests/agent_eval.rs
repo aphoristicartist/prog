@@ -96,8 +96,8 @@ struct TraceResult {
     source: String,
     accepted: bool,
     expected_accepted: bool,
-    model_visible_tool_response_bytes: u64,
-    estimated_tool_response_tokens: u64,
+    model_visible_tool_response_bytes: Option<u64>,
+    estimated_tool_response_tokens: Option<u64>,
     graders: BTreeMap<String, bool>,
 }
 
@@ -126,6 +126,11 @@ async fn agent_eval_replay_rejects_false_coding_and_state_completions() {
     let state = state_token_oracle().await;
     assert!(coding.correctness_checks.values().all(|passed| *passed));
     assert!(state.correctness_checks.values().all(|passed| *passed));
+    // The live outputs must be non-empty, but their exact byte sizes include
+    // absolute temporary paths and therefore legitimately differ by runner.
+    // Do not bless one machine's path lengths as a cross-platform metric.
+    assert!(coding.model_visible_tool_response_bytes > 0);
+    assert!(state.model_visible_tool_response_bytes > 0);
     let oracles = BTreeMap::from([
         ("coding_narrowed_rerun", coding),
         ("state_token_expired_validator", state),
@@ -432,8 +437,8 @@ fn grade_trace(trace: &AgentTrace, oracle: &WorkflowOracle) -> TraceResult {
         source: trace.source.clone(),
         accepted: graders.values().all(|passed| *passed),
         expected_accepted: trace.expected_accepted,
-        model_visible_tool_response_bytes: oracle.model_visible_tool_response_bytes,
-        estimated_tool_response_tokens: div_ceil_four(oracle.model_visible_tool_response_bytes),
+        model_visible_tool_response_bytes: None,
+        estimated_tool_response_tokens: None,
         graders,
     }
 }
@@ -514,6 +519,8 @@ fn build_report(root: &Path, trace_results: Vec<TraceResult>) -> AgentEvalReport
         limitations: vec![
             "checked-in traces are synthetic grader fixtures, not model runs".to_string(),
             "no provider token accounting is available without credentialed live trials"
+                .to_string(),
+            "synthetic replay byte counts include environment-specific absolute paths and are not persisted as cross-platform performance metrics"
                 .to_string(),
             "no performance or makes-agents-better claim is supported by this report".to_string(),
         ],
