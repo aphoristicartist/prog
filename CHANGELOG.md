@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-08-14
+
+- Added non-coding read-back verification for externally executed mutations:
+  immutable action intents, identity/version fingerprints, safe fresh reads,
+  deterministic receipts, eventual-consistency handling, and direct readiness
+  integration. The verifier cannot execute mutations and fails closed on stale,
+  redacted, truncated, expired, conflicting, or unavailable evidence (#133).
+- Added the deterministic replay half of the actual-agent claim gate. It runs
+  narrowed coding and expired-validator entity trajectories through the real
+  CLI, resolves cited evidence and slice hashes, and proves deliberately false
+  completion claims are rejected. Reports explicitly remain ineligible for a
+  performance claim until credentialed multi-trial model runs exist (#139).
+
+- Hardened the first-release contract: local stores reset audibly on the
+  canonical observation shape, inert public fields and legacy compatibility
+  paths were removed, and `prog meta` plus contract documentation now enumerate
+  the complete current schema surface (#142, #200).
+- Made disclosure budgets monotonic across capture kinds, retained findings and
+  degradation warnings under pressure, compacted reusable action templates, and
+  added an honest `disclosure_verdict` for cases where raw output costs fewer
+  bytes (#212, #213, #219).
+- Made shared local stores safe for concurrent processes with bounded lock
+  retry, typed retryable contention errors, and lock release during external
+  waits; added concurrent capture and navigation integration tests (#211).
+- Replaced hardcoded integration targets with checked-in manifests, added an
+  append-only `agents-md` target, external manifest directories, and zero-write
+  YAML/MDC/plain skill export (#215).
+- Pinned supported CI/release runners and target triples, verified crate license
+  contents and exact package manifests, expanded release-candidate smoke tests,
+  and documented the deferred MCP-server decision (#140, #216).
+
 - Pinned MSRV at Rust 1.89 (`rust-version = "1.89"` in the workspace manifest), propagated to all crates, and added a dedicated CI job that builds and tests on `rust-toolchain@1.89.0` (#167).
 - Extended macOS CI to match Ubuntu: `cargo fmt --all --check` and `cargo clippy --all-targets --all-features -- -D warnings` now run before tests on both platforms (#167).
 - Added a tag-triggered release pipeline (`release.yml`): cross-platform tarballs with SHA256SUMS, CycloneDX SBOM, build-provenance attestations, a `cargo package` leak guard, and a release-candidate smoke test that reopens the local store across process exits (#167).
@@ -37,4 +68,5 @@
 - Added progressive-disclosure docs, fixture walkthroughs, cache and safety notes, JSON contract documentation, and a token economics report.
 - Added local HTTP, CLI, and MCP fixtures for copy-pasteable acceptance examples.
 
-Release entries will use this file once versioned packages are cut.
+Changes after a versioned package is cut remain under `Unreleased` until the
+next release entry is prepared.

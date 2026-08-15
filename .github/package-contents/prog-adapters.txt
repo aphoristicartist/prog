@@ -1,0 +1,12 @@
+.cargo_vcs_info.json
+Cargo.lock
+Cargo.toml
+Cargo.toml.orig
+LICENSE
+src/cli.rs
+src/http.rs
+src/lib.rs
+src/mcp.rs
+tests/cli.rs
+tests/http.rs
+tests/mcp.rs

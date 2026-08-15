@@ -6,7 +6,7 @@ on:
 
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -16,7 +16,16 @@ jobs:
       - run: cargo run -p prog-cli -- --help
 
   macos:
-    runs-on: macos-latest
+    name: macos (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -28,7 +37,7 @@ jobs:
     # CLI tests must never observe the checkout that runs them. Keep an
     # untracked file changing at the repository root while the suite runs so
     # inherited-CWD regressions fail deterministically in CI.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -50,7 +59,7 @@ jobs:
   msrv:
     # Verifies the rust-version pin declared in Cargo.toml actually builds and
     # tests cleanly on the declared floor, rather than being dead metadata.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.89.0
@@ -60,13 +69,20 @@ jobs:
   version-consistency:
     # Guards against drift between Cargo.toml version, the CHANGELOG, and git
     # tags. See .github/scripts/check-version-consistency.sh for the contract.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-version-consistency.sh
 
   dependency-policy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  package-policy:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: bash .github/scripts/check-package-contents.sh

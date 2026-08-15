@@ -723,6 +723,59 @@ fn docs_keep_acceptance_topics_visible() {
 }
 
 #[test]
+fn release_metadata_stays_in_sync() {
+    let root = repo_root();
+    let canonical_license = std::fs::read(root.join("LICENSE")).unwrap();
+    for crate_name in ["prog-core", "prog-adapters", "prog-cli"] {
+        let packaged_license =
+            std::fs::read(root.join("crates").join(crate_name).join("LICENSE")).unwrap();
+        assert_eq!(
+            packaged_license, canonical_license,
+            "{crate_name}/LICENSE must match the canonical workspace license"
+        );
+    }
+
+    let store = std::fs::read_to_string(root.join("crates/prog-core/src/store.rs")).unwrap();
+    let store_schema = store
+        .lines()
+        .find(|line| line.trim_start().starts_with("const STORE_SCHEMA: &str ="))
+        .and_then(|line| line.split('"').nth(1))
+        .expect("STORE_SCHEMA should remain a quoted string constant");
+    let release_notes = std::fs::read_to_string(root.join("docs/release-notes.md")).unwrap();
+    assert!(
+        release_notes.contains(store_schema),
+        "release notes must name the current store schema {store_schema}"
+    );
+    assert!(
+        release_notes.contains("explicit stderr notice"),
+        "release notes must describe the audible pre-release reset"
+    );
+
+    let ci = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
+    let release = std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+    for moving_label in ["ubuntu-latest", "macos-latest"] {
+        assert!(
+            !ci.contains(moving_label) && !release.contains(moving_label),
+            "supported release targets must not depend on moving runner label {moving_label}"
+        );
+    }
+    for target in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+    ] {
+        assert!(
+            release.contains(target),
+            "release workflow must build and smoke-test {target}"
+        );
+    }
+    assert!(release.contains("workflow_dispatch:"));
+    assert!(release.contains(
+        "needs: [quality, version-consistency, msrv, dependency-policy, build, sbom, cargo-package-dryrun, rc-smoke]"
+    ));
+}
+
+#[test]
 fn public_contract_docs_stay_in_sync() {
     let root = repo_root();
     let contracts_doc = std::fs::read_to_string(root.join("docs/contracts.md")).unwrap();
