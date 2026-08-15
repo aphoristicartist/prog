@@ -708,6 +708,23 @@ fn conditional_header(
             reason: "conditional source-state token does not match source or operation".to_string(),
         });
     }
+    if !matches!(
+        source_state.validity,
+        prog_core::SourceValidity::Unknown | prog_core::SourceValidity::ConfirmedUnchanged
+    ) || source_state
+        .expires_at
+        .as_deref()
+        .is_some_and(|expires_at| {
+            chrono::DateTime::parse_from_rfc3339(expires_at)
+                .map(|expiry| expiry <= chrono::Utc::now())
+                .unwrap_or(true)
+        })
+    {
+        return Err(CoreError::BadArgs {
+            operation: operation.id.clone(),
+            reason: "conditional source-state token is expired or invalid".to_string(),
+        });
+    }
     let scope = invocation_scope(&Value::Object(args.clone()))?;
     if source_state.subject_scope.as_deref() != Some(scope.as_str()) {
         return Err(CoreError::BadArgs {

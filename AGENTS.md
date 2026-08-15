@@ -56,7 +56,7 @@ prog-cli  ──depends on──>  prog-adapters  ──depends on──>  prog-
 
 ## Non-negotiable invariants
 
-[`INVARIANTS.md`](INVARIANTS.md) maps thirteen invariants (I1–I13) to the exact
+[`INVARIANTS.md`](INVARIANTS.md) maps fourteen invariants (I1–I14) to the exact
 tests that execute them. **Read it before changing anything in `prog-core`.**
 The ones that most often catch people:
 
@@ -119,7 +119,7 @@ the process-group and signal semantics are POSIX-only.
 
 1. **Re-runs the README quickstart** end to end against `fixtures/cli/list_items.py`.
 2. **Asserts specific literal strings exist in `README.md`**, including
-   `34.5x-162.8x`, `5/5`, `Built for loop engineering`, `No MCP server mode`,
+   `24.4x-85.2x`, `5/5`, `Built for loop engineering`, `No MCP server mode`,
    and several exact command lines.
 3. **Asserts a list of `docs/*.md` files and fixtures still exist.**
 
@@ -161,10 +161,15 @@ interpreting stale cursor records.
 - **argv, never shell strings.** CLI sources store `Vec<String>`. Do not add a
   code path that builds a command by string concatenation.
 - **JSON out, text help in.** Operational output — successes, errors, schemas,
-  evidence, receipts — is JSON. `--help` stays conventional text.
-- **No MCP server mode.** `prog` consumes MCP as an upstream adapter. Exposing
-  `prog` as an MCP server is a documented non-goal, not a missing feature; the
-  durable integration surface is CLI + agent skill + explicit hooks.
+  evidence, receipts — is JSON. `--help` and the explicit
+  `init --print-skill` document export stay conventional text.
+- **No MCP server mode before the facade evidence exists.** The August 2026
+  decision on #216 is to defer any server transport until #120 has produced and
+  measured its three-operation facade. Until then, `prog` only consumes MCP as
+  an upstream adapter and MCP-only harnesses are unsupported. A future decision
+  may consider a separate, stateless facade-only shim, but never an MCP mirror
+  of the full command tree; it must be a 1:1 CLI transport with the same policy,
+  store, redaction, and cursor behavior and no cache or state of its own.
 - **No model calls in the library.** Ranking and findings are deterministic.
 
 ## Non-goals

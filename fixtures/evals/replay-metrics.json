@@ -1,8 +1,63 @@
 {
   "schema": "prog.replay_eval",
+  "fixture_sources": [
+    {
+      "kind": "generated",
+      "checked_in": true,
+      "ci_required": true,
+      "description": "deterministic fixtures generated locally by the harness"
+    },
+    {
+      "kind": "recorded_public_live",
+      "checked_in": true,
+      "ci_required": true,
+      "description": "redacted recording of a public, unauthenticated endpoint"
+    },
+    {
+      "kind": "credentialed_optional",
+      "checked_in": false,
+      "ci_required": false,
+      "description": "optional local capture; credentials and raw payloads are never committed"
+    }
+  ],
+  "summary": {
+    "scenario_count": 12,
+    "checks_total": 56,
+    "checks_passed": 56,
+    "comparison_pairs_total": 11,
+    "comparison_pairs_provable": 5,
+    "findings_considered": 49,
+    "findings_fingerprinted": 48,
+    "false_decisions": 0,
+    "budget_compliant_scenarios": 12,
+    "redaction_compliant_scenarios": 12
+  },
   "scenarios": [
     {
       "scenario_id": "multi_iteration_resolution",
+      "fixture_source": "generated",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": true,
+        "comparison_pairs_total": 2,
+        "comparison_pairs_provable": 2,
+        "findings_considered": 9,
+        "findings_fingerprinted": 9,
+        "delta_expected": {
+          "new": 1,
+          "persisting": 3,
+          "resolved": 1
+        },
+        "delta_correct": {
+          "new": 1,
+          "persisting": 3,
+          "resolved": 1
+        },
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
       "strategies": [
         {
           "strategy": "raw",
@@ -42,11 +97,165 @@
         "fingerprint_stable_across_three_iterations",
         "gamma_new_at_iteration_2",
         "gamma_persists_iteration_2_to_3",
-        "iteration1_to_2_can_prove_absence"
+        "iteration1_to_2_can_prove_absence",
+        "small_payload_envelopes_report_raw_cheaper"
+      ]
+    },
+    {
+      "scenario_id": "pytest_multi_iteration_failure_loop",
+      "fixture_source": "generated",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": true,
+        "comparison_pairs_total": 1,
+        "comparison_pairs_provable": 1,
+        "findings_considered": 6,
+        "findings_fingerprinted": 6,
+        "delta_expected": {
+          "new": 1,
+          "persisting": 1,
+          "resolved": 1
+        },
+        "delta_correct": {
+          "new": 1,
+          "persisting": 1,
+          "resolved": 1
+        },
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
+      "strategies": [
+        {
+          "strategy": "raw",
+          "delivered_bytes": 1770,
+          "calls": 3
+        },
+        {
+          "strategy": "simple_truncation",
+          "delivered_bytes": 1770,
+          "calls": 3
+        },
+        {
+          "strategy": "prog_envelope",
+          "delivered_bytes": 22943,
+          "calls": 4
+        },
+        {
+          "strategy": "prog_delta",
+          "delivered_bytes": 27767,
+          "calls": 4
+        },
+        {
+          "strategy": "evidence_packet",
+          "delivered_bytes": 1,
+          "calls": 1
+        },
+        {
+          "strategy": "ranked_retrieval",
+          "delivered_bytes": 1,
+          "calls": 1
+        }
+      ],
+      "checks": [
+        "compacted_delta_preserves_complete_counts",
+        "complete_loop_can_prove_absence",
+        "delta_output_respects_disclosure_budget",
+        "loop_has_new_failure",
+        "loop_has_persisting_failure",
+        "loop_has_resolved_failure",
+        "new_failure_evidence_is_exactly_recoverable"
+      ]
+    },
+    {
+      "scenario_id": "cargo_multi_iteration_failure_loop",
+      "fixture_source": "generated",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": true,
+        "comparison_pairs_total": 1,
+        "comparison_pairs_provable": 1,
+        "findings_considered": 6,
+        "findings_fingerprinted": 6,
+        "delta_expected": {
+          "new": 1,
+          "persisting": 1,
+          "resolved": 1
+        },
+        "delta_correct": {
+          "new": 1,
+          "persisting": 1,
+          "resolved": 1
+        },
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
+      "strategies": [
+        {
+          "strategy": "raw",
+          "delivered_bytes": 1126,
+          "calls": 3
+        },
+        {
+          "strategy": "simple_truncation",
+          "delivered_bytes": 1126,
+          "calls": 3
+        },
+        {
+          "strategy": "prog_envelope",
+          "delivered_bytes": 24991,
+          "calls": 4
+        },
+        {
+          "strategy": "prog_delta",
+          "delivered_bytes": 28707,
+          "calls": 4
+        },
+        {
+          "strategy": "evidence_packet",
+          "delivered_bytes": 1,
+          "calls": 1
+        },
+        {
+          "strategy": "ranked_retrieval",
+          "delivered_bytes": 1,
+          "calls": 1
+        }
+      ],
+      "checks": [
+        "compacted_delta_preserves_complete_counts",
+        "complete_loop_can_prove_absence",
+        "delta_output_respects_disclosure_budget",
+        "loop_has_new_failure",
+        "loop_has_persisting_failure",
+        "loop_has_resolved_failure",
+        "new_failure_evidence_is_exactly_recoverable"
       ]
     },
     {
       "scenario_id": "narrowed_rerun_no_false_resolved",
+      "fixture_source": "generated",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": true,
+        "comparison_pairs_total": 1,
+        "comparison_pairs_provable": 0,
+        "findings_considered": 6,
+        "findings_fingerprinted": 6,
+        "delta_expected": {
+          "not_observed": 1
+        },
+        "delta_correct": {
+          "not_observed": 1
+        },
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
       "strategies": [
         {
           "strategy": "prog_delta",
@@ -57,11 +266,31 @@
       "checks": [
         "can_prove_absence_is_false",
         "missing_finding_marked_not_observed",
-        "missing_finding_not_marked_resolved"
+        "missing_finding_not_marked_resolved",
+        "small_payload_envelopes_report_raw_cheaper"
       ]
     },
     {
       "scenario_id": "realistic_payload_delta",
+      "fixture_source": "generated",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": false,
+        "comparison_pairs_total": 1,
+        "comparison_pairs_provable": 0,
+        "findings_considered": 4,
+        "findings_fingerprinted": 4,
+        "delta_expected": {
+          "unknown": 1
+        },
+        "delta_correct": {
+          "unknown": 1
+        },
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
       "strategies": [
         {
           "strategy": "raw",
@@ -83,6 +312,21 @@
     },
     {
       "scenario_id": "no_benefit_tiny_payload_control",
+      "fixture_source": "generated",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": true,
+        "comparison_pairs_total": 0,
+        "comparison_pairs_provable": 0,
+        "findings_considered": 0,
+        "findings_fingerprinted": 0,
+        "delta_expected": {},
+        "delta_correct": {},
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
       "strategies": [
         {
           "strategy": "raw",
@@ -96,11 +340,27 @@
         }
       ],
       "checks": [
-        "raw_cheaper_than_prog_for_tiny_payload"
+        "raw_cheaper_than_prog_for_tiny_payload",
+        "small_payload_envelope_reports_raw_cheaper"
       ]
     },
     {
       "scenario_id": "stale_evidence_readiness_after_workspace_touch",
+      "fixture_source": "generated",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": true,
+        "comparison_pairs_total": 0,
+        "comparison_pairs_provable": 0,
+        "findings_considered": 0,
+        "findings_fingerprinted": 0,
+        "delta_expected": {},
+        "delta_correct": {},
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
       "strategies": [
         {
           "strategy": "prog_verification_ledger",
@@ -116,6 +376,25 @@
     },
     {
       "scenario_id": "derivation_window_moved_finding",
+      "fixture_source": "generated",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": false,
+        "comparison_pairs_total": 1,
+        "comparison_pairs_provable": 0,
+        "findings_considered": 5,
+        "findings_fingerprinted": 5,
+        "delta_expected": {
+          "unknown": 1
+        },
+        "delta_correct": {
+          "unknown": 1
+        },
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
       "strategies": [
         {
           "strategy": "raw",
@@ -150,7 +429,244 @@
       ],
       "checks": [
         "assessment_is_non_provable_due_to_derivation_window",
-        "moved_finding_is_not_falsely_resolved"
+        "moved_finding_is_not_falsely_resolved",
+        "small_payload_envelopes_report_raw_cheaper"
+      ]
+    },
+    {
+      "scenario_id": "noisy_log_one_changing_causal_event",
+      "fixture_source": "generated",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": true,
+        "comparison_pairs_total": 1,
+        "comparison_pairs_provable": 1,
+        "findings_considered": 6,
+        "findings_fingerprinted": 6,
+        "delta_expected": {
+          "new": 1,
+          "resolved": 1
+        },
+        "delta_correct": {
+          "new": 1,
+          "resolved": 1
+        },
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
+      "strategies": [
+        {
+          "strategy": "raw",
+          "delivered_bytes": 1907,
+          "calls": 3
+        },
+        {
+          "strategy": "simple_truncation",
+          "delivered_bytes": 1907,
+          "calls": 3
+        },
+        {
+          "strategy": "prog_envelope",
+          "delivered_bytes": 31957,
+          "calls": 4
+        },
+        {
+          "strategy": "prog_delta",
+          "delivered_bytes": 16932,
+          "calls": 4
+        },
+        {
+          "strategy": "evidence_packet",
+          "delivered_bytes": 1,
+          "calls": 1
+        },
+        {
+          "strategy": "ranked_retrieval",
+          "delivered_bytes": 1,
+          "calls": 1
+        }
+      ],
+      "checks": [
+        "new_causal_event_detected",
+        "old_causal_event_resolved",
+        "only_causal_event_changes_in_fixture",
+        "secret_is_redacted_from_initial_views_and_evidence"
+      ]
+    },
+    {
+      "scenario_id": "compiler_diagnostics_reordered_and_shifted",
+      "fixture_source": "generated",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": true,
+        "comparison_pairs_total": 1,
+        "comparison_pairs_provable": 0,
+        "findings_considered": 6,
+        "findings_fingerprinted": 6,
+        "delta_expected": {
+          "persisting": 2
+        },
+        "delta_correct": {
+          "persisting": 2
+        },
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
+      "strategies": [
+        {
+          "strategy": "raw",
+          "delivered_bytes": 1055,
+          "calls": 3
+        },
+        {
+          "strategy": "simple_truncation",
+          "delivered_bytes": 1055,
+          "calls": 3
+        },
+        {
+          "strategy": "prog_envelope",
+          "delivered_bytes": 19673,
+          "calls": 3
+        },
+        {
+          "strategy": "prog_delta",
+          "delivered_bytes": 12668,
+          "calls": 4
+        },
+        {
+          "strategy": "evidence_packet",
+          "delivered_bytes": 1,
+          "calls": 1
+        },
+        {
+          "strategy": "ranked_retrieval",
+          "delivered_bytes": 1,
+          "calls": 1
+        }
+      ],
+      "checks": [
+        "location_shifts_do_not_change_fingerprints",
+        "persisting_diagnostics_move_array_positions",
+        "reordered_diagnostics_are_not_new_or_resolved",
+        "two_diagnostics_persist_after_reorder"
+      ]
+    },
+    {
+      "scenario_id": "http_error_and_repeated_public_entity",
+      "fixture_source": "recorded_public_live",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": true,
+        "comparison_pairs_total": 1,
+        "comparison_pairs_provable": 0,
+        "findings_considered": 1,
+        "findings_fingerprinted": 0,
+        "delta_expected": {},
+        "delta_correct": {},
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
+      "strategies": [
+        {
+          "strategy": "raw",
+          "delivered_bytes": 487,
+          "calls": 4
+        },
+        {
+          "strategy": "simple_truncation",
+          "delivered_bytes": 487,
+          "calls": 4
+        },
+        {
+          "strategy": "prog_envelope",
+          "delivered_bytes": 18995,
+          "calls": 5
+        },
+        {
+          "strategy": "prog_delta",
+          "delivered_bytes": 11160,
+          "calls": 4
+        },
+        {
+          "strategy": "evidence_packet",
+          "delivered_bytes": 1,
+          "calls": 1
+        },
+        {
+          "strategy": "ranked_retrieval",
+          "delivered_bytes": 1,
+          "calls": 1
+        }
+      ],
+      "checks": [
+        "http_error_is_returned_and_persisted_as_evidence",
+        "http_error_secret_value_is_redacted",
+        "public_recording_is_redacted_and_checked_in",
+        "repeated_entity_snapshot_exposes_changed_fields",
+        "unknown_http_source_state_never_claims_resolution"
+      ]
+    },
+    {
+      "scenario_id": "paginated_api_unchanged_and_changed_pages",
+      "fixture_source": "generated",
+      "metrics": {
+        "wall_time_ms": 0,
+        "required_evidence_available": true,
+        "first_view_hit": true,
+        "comparison_pairs_total": 1,
+        "comparison_pairs_provable": 0,
+        "findings_considered": 0,
+        "findings_fingerprinted": 0,
+        "delta_expected": {},
+        "delta_correct": {},
+        "false_decisions": 0,
+        "disclosure_budget_compliant": true,
+        "redaction_compliant": true
+      },
+      "strategies": [
+        {
+          "strategy": "raw",
+          "delivered_bytes": 182,
+          "calls": 5
+        },
+        {
+          "strategy": "simple_truncation",
+          "delivered_bytes": 182,
+          "calls": 5
+        },
+        {
+          "strategy": "prog_envelope",
+          "delivered_bytes": 17011,
+          "calls": 5
+        },
+        {
+          "strategy": "prog_delta",
+          "delivered_bytes": 12955,
+          "calls": 4
+        },
+        {
+          "strategy": "evidence_packet",
+          "delivered_bytes": 1,
+          "calls": 1
+        },
+        {
+          "strategy": "ranked_retrieval",
+          "delivered_bytes": 1,
+          "calls": 1
+        }
+      ],
+      "checks": [
+        "both_trajectories_fetch_two_pages",
+        "changed_downstream_page_hits_first_view_and_remains_navigable",
+        "changed_second_page_is_exactly_recoverable",
+        "unchanged_first_page_delta_has_no_false_resolution",
+        "unchanged_first_page_remains_identical"
       ]
     }
   ]

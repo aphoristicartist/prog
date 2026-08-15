@@ -73,6 +73,7 @@ pub(crate) async fn run_recipe(
             } else {
                 args.command.clone()
             };
+            let command = configure_recipe_command(recipe, command);
             let lens = match recipe {
                 RecipeKind::CargoTest => "cargo-test",
                 RecipeKind::Pytest => "pytest",
@@ -119,9 +120,22 @@ pub(crate) async fn run_recipe(
     let recommended_next = envelope.findings.first().and_then(|finding| {
         finding
             .commands
-            .evidence
-            .clone()
-            .or(finding.commands.expand.clone())
+            .available
+            .iter()
+            .find(|command| {
+                matches!(
+                    command,
+                    prog_core::NavigationCommand::Evidence | prog_core::NavigationCommand::Expand
+                )
+            })
+            .map(|command| {
+                json!({
+                    "command": command,
+                    "path": finding.path,
+                    "kind": finding.kind,
+                    "cursor": "{cursor}"
+                })
+            })
     });
     envelope.extra.insert(
         "recipe".to_string(),
@@ -151,5 +165,73 @@ fn default_recipe_command(recipe: RecipeKind) -> Vec<String> {
             "number,title,state,labels,updatedAt,url".to_string(),
         ],
         RecipeKind::DiffReview | RecipeKind::LogsRootCause => Vec::new(),
+    }
+}
+
+fn configure_recipe_command(recipe: RecipeKind, mut command: Vec<String>) -> Vec<String> {
+    if recipe != RecipeKind::CargoTest
+        || command
+            .first()
+            .and_then(|program| std::path::Path::new(program).file_name())
+            .and_then(|program| program.to_str())
+            != Some("cargo")
+    {
+        return command;
+    }
+    let subcommand_index = 1 + usize::from(
+        command
+            .get(1)
+            .is_some_and(|argument| argument.starts_with('+')),
+    );
+    if command.get(subcommand_index).map(String::as_str) != Some("test")
+        || command.iter().any(|argument| {
+            argument == "--message-format" || argument.starts_with("--message-format=")
+        })
+    {
+        return command;
+    }
+    let insertion = command
+        .iter()
+        .position(|argument| argument == "--")
+        .unwrap_or(command.len());
+    command.insert(insertion, "--message-format=json".to_string());
+    command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn cargo_recipe_adds_one_visible_structured_output_option() {
+        assert_eq!(
+            configure_recipe_command(RecipeKind::CargoTest, argv(&["cargo", "test"])),
+            argv(&["cargo", "test", "--message-format=json"])
+        );
+        assert_eq!(
+            configure_recipe_command(
+                RecipeKind::CargoTest,
+                argv(&["cargo", "+stable", "test", "--", "one_case"]),
+            ),
+            argv(&[
+                "cargo",
+                "+stable",
+                "test",
+                "--message-format=json",
+                "--",
+                "one_case",
+            ])
+        );
+        assert_eq!(
+            configure_recipe_command(
+                RecipeKind::CargoTest,
+                argv(&["cargo", "test", "--message-format=short"]),
+            ),
+            argv(&["cargo", "test", "--message-format=short"])
+        );
     }
 }

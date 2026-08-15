@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{ExitCode, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -33,10 +33,10 @@ use prog_core::{
     VerificationStateRelationship, VerificationStatus, build_inspect_response, cache_allowed,
     call_effect_warnings, canonical_json, check_call, check_discovery, cli_adapter_effects,
     cli_hardening_effects, effective_effects, evidence_block, expand,
-    finding_derivation_is_complete, http_adapter_effects, http_hardening_effects,
-    http_source_state, infer, join, lens_slice_request, new_cache_entry, project,
-    project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
-    search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
+    finding_derivation_is_complete, http_adapter_effects, http_hardening_effects, infer, join,
+    lens_slice_request, new_cache_entry, project, project_with_lens, public_contract_schemas,
+    ranked_findings_with_lens, render_hints, search_payload_with_lens, slice_value,
+    tighten_effects, validate_lens_manifest,
 };
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -60,17 +60,17 @@ use commands::{
     cache::cache_command,
     call::call_source,
     cost::cost_report,
-    delta::{compare_observation_ids, delta_observations},
+    delta::{bound_delta_response, compare_observation_ids, delta_observations},
     discover::{discover_from_seed, discover_source, profile_operation},
     envelope::{
         adapter_capture, compact_envelope_to_budget, compact_pagination_extra_to_budget,
         complete_capture, cursor_for_projection, cursor_lens_extra, envelope_for_payload,
         evidence_ref, record_capture, run_capture_completeness, selection_coverage, shrink_policy,
-        source_kind_provider, source_state_from_provenance,
+        source_kind_provider, source_state_from_response,
     },
     expand::expand_cursor,
     hints::hints_source,
-    init::init_integration,
+    init::{init_integration, print_skill_content},
     lenses::{
         load_lens, parse_json_argument, parse_view, validate_lens_matches_call,
         validate_lens_matches_observe, validate_lens_matches_run,
@@ -82,14 +82,17 @@ use commands::{
         normalize_observation, observe_artifact, redact_observed_text, sniff_mime_from_bytes,
     },
     paths::{
-        annotate_path_omissions, append_missing_omitted_paths, collect_paths,
+        action_templates, annotate_path_omissions, append_missing_omitted_paths, collect_paths,
         expansion_next_actions, paths_cursor,
     },
     profiles::*,
     recipe::run_recipe,
+    route::route_command,
     run::{RunProcessStatus, child_exit_code, redact_run_argv, run_command},
-    session::{declare_recipe_obligation, readiness_report, session_show},
+    session::{bound_readiness_report, declare_recipe_obligation, readiness_report, session_show},
     source::{shell_quote, source_command},
+    status::status_report,
+    verification::{begin_verification, readback_verification},
 };
 pub(crate) use obligation::evaluate_obligation;
 use reports::*;
@@ -105,7 +108,7 @@ const PROG_AGENT_SKILL: &str = include_str!("../../../skills/prog/SKILL.md");
 const DEFAULT_DISCLOSURE_BUDGET_BYTES: usize = 16 * 1024;
 const MAX_DISCLOSURE_BUDGET_BYTES: usize = 64 * 1024;
 const MIN_DISCLOSURE_BUDGET_BYTES: usize = 512;
-const BUDGET_METADATA_RESERVE_BYTES: usize = 384;
+const BUDGET_METADATA_RESERVE_BYTES: usize = 512;
 const TOKEN_ESTIMATOR: &str = "bytes_div_4_approximate";
 
 #[derive(Clone, Debug)]
@@ -314,6 +317,11 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
             write_success(&report, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::Route(args) => {
+            let assessment = route_command(args)?;
+            write_success(&assessment, cli.pretty, ctx)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Hints(args) => {
             let store = open_store(&cli.dir, ctx)?;
             let response = hints_source(&store, args, ctx)?;
@@ -323,7 +331,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
         Command::Call(args) => {
             let store = open_store(&cli.dir, ctx)?;
             let mut result = call_source(&store, &cli.lens_dir, args, ctx).await?;
-            record_envelope_event(&store, &mut result.envelope, "call", ctx);
+            record_envelope_event(&store, &mut result.envelope, "call");
             write_success(&result.envelope, cli.pretty, ctx)?;
             Ok(if result.received_error {
                 ExitCode::FAILURE
@@ -334,14 +342,14 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
         Command::Observe(args) => {
             let store = open_store(&cli.dir, ctx)?;
             let mut envelope = observe_artifact(&store, &cli.lens_dir, args, ctx)?;
-            record_envelope_event(&store, &mut envelope, "observe", ctx);
+            record_envelope_event(&store, &mut envelope, "observe");
             write_success(&envelope, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Run(args) => {
             let store = open_store(&cli.dir, ctx)?;
             let mut result = run_command(&store, &cli.lens_dir, args, ctx).await?;
-            record_envelope_event(&store, &mut result.envelope, "run", ctx);
+            record_envelope_event(&store, &mut result.envelope, "run");
             write_success(&result.envelope, cli.pretty, ctx)?;
             Ok(if args.preserve_exit_code {
                 child_exit_code(result.exit_code)
@@ -353,13 +361,19 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
             let store = open_store(&cli.dir, ctx)?;
             let mut envelope = run_recipe(&store, &cli.lens_dir, args, ctx).await?;
             declare_recipe_obligation(&store, args, &envelope)?;
-            record_envelope_event(&store, &mut envelope, "recipe", ctx);
+            record_envelope_event(&store, &mut envelope, "recipe");
             write_success(&envelope, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Init(args) => {
-            let report = init_integration(args)?;
-            write_success(&report, cli.pretty, ctx)?;
+            if args.print_skill {
+                let skill =
+                    print_skill_content(args.frontmatter.unwrap_or(FrontmatterFlavor::Yaml));
+                std::io::stdout().lock().write_all(skill.as_bytes())?;
+            } else {
+                let report = init_integration(args)?;
+                write_success(&report, cli.pretty, ctx)?;
+            }
             Ok(ExitCode::SUCCESS)
         }
         Command::Cost(args) => {
@@ -472,9 +486,40 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
         }
         Command::Delta(args) => {
             let store = open_store(&cli.dir, ctx)?;
-            let delta = delta_observations(&store, args)?;
+            let mut delta = delta_observations(&store, args)?;
+            bound_delta_response(&mut delta, ctx.max_envelope_bytes())?;
             write_success(&delta, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
+        }
+        Command::Status(args) => {
+            let store = open_store(&cli.dir, ctx)?;
+            let report = status_report(&store, args, ctx.max_envelope_bytes())?;
+            write_success(&report, cli.pretty, ctx)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Verification { command } => {
+            let store = open_store(&cli.dir, ctx)?;
+            match command {
+                VerificationCommand::Begin(args) => {
+                    let intent = begin_verification(&store, args)?;
+                    write_success(&intent, cli.pretty, ctx)?;
+                    Ok(ExitCode::SUCCESS)
+                }
+                VerificationCommand::Readback(args) => {
+                    let receipt = readback_verification(&store, &cli.lens_dir, args, ctx).await?;
+                    let exit = if matches!(
+                        receipt.status,
+                        prog_core::ReadbackVerificationStatus::Verified
+                            | prog_core::ReadbackVerificationStatus::Pending
+                    ) {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    };
+                    write_success(&receipt, cli.pretty, ctx)?;
+                    Ok(exit)
+                }
+            }
         }
         Command::McpTask { command } => {
             let store = open_store(&cli.dir, ctx)?;
@@ -492,7 +537,8 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
                 SessionCommand::Show(args) => {
                     if args.readiness {
                         let session_id = args.session_id.as_deref();
-                        let report = readiness_report(&store, session_id)?;
+                        let mut report = readiness_report(&store, session_id)?;
+                        bound_readiness_report(&mut report, ctx.max_envelope_bytes())?;
                         write_success(&report, cli.pretty, ctx)?;
                     } else {
                         let trail = session_show(&store, args)?;
@@ -551,7 +597,8 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
                     write_success(&obligation, cli.pretty, ctx)?;
                 }
                 SessionCommand::ObligationList(args) => {
-                    let report = readiness_report(&store, args.session_id.as_deref())?;
+                    let mut report = readiness_report(&store, args.session_id.as_deref())?;
+                    bound_readiness_report(&mut report, ctx.max_envelope_bytes())?;
                     write_success(&report, cli.pretty, ctx)?;
                 }
             }
@@ -560,7 +607,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
         Command::Expand(args) => {
             let store = open_store(&cli.dir, ctx)?;
             let mut envelope = expand_cursor(&store, args, ctx)?;
-            record_envelope_event(&store, &mut envelope, "expand", ctx);
+            record_envelope_event(&store, &mut envelope, "expand");
             write_success(&envelope, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
@@ -613,37 +660,7 @@ fn resolve_redaction(profile: Option<&SourceProfile>) -> RedactionPolicy {
     policy
 }
 
-fn record_envelope_event(
-    store: &Store,
-    envelope: &mut DisclosureEnvelope,
-    kind: &str,
-    ctx: &InvocationContext,
-) {
-    if let Some(observation_id) = envelope
-        .observation
-        .as_ref()
-        .and_then(|observation| observation.observation_id.as_deref())
-        && let Ok(Some(subject)) = store.get_observation(observation_id)
-        && let Ok(Some(baseline)) = store.latest_session_predecessor(
-            &subject.invocation_fingerprint,
-            subject.comparison_family.as_deref(),
-            observation_id,
-        )
-        && let Ok(mut delta) =
-            compare_observation_ids(store, &baseline.observation_id, &subject.observation_id)
-    {
-        delta.findings.truncate(10);
-        envelope.extra.insert(
-            "changes_since".to_string(),
-            serde_json::to_value(delta).unwrap_or(Value::Null),
-        );
-        if let Err(error) = compact_envelope_to_budget(envelope, ctx.max_envelope_bytes()) {
-            envelope.extra.remove("changes_since");
-            envelope.warnings.push(format!(
-                "automatic changes_since was omitted because it could not fit the envelope budget: {error}"
-            ));
-        }
-    }
+fn record_envelope_event(store: &Store, envelope: &mut DisclosureEnvelope, kind: &str) {
     let evidence_ref = envelope
         .extra
         .get("evidence_ref")
@@ -670,6 +687,7 @@ fn record_envelope_event(
         extra,
         ..NewSessionEvent::default()
     });
+    let _ = store.release();
 }
 
 fn record_navigation_event(
@@ -688,6 +706,7 @@ fn record_navigation_event(
         summary,
         extra: Extra::new(),
     });
+    let _ = store.release();
 }
 
 fn capture_budget_for_run(args: &RunArgs) -> CaptureBudget {
@@ -896,13 +915,14 @@ fn write_error(error: &CoreError, pretty: bool, ctx: &InvocationContext) -> Exit
                 "error": {
                     "kind": "budget_too_small",
                     "message": format!("response cannot fit in {} bytes", budget.effective_bytes),
-                    "hint": format!("Raise --budget-bytes to at least {MIN_DISCLOSURE_BUDGET_BYTES}.")
+                    "hint": format!("Raise --budget-bytes to at least {MIN_DISCLOSURE_BUDGET_BYTES}."),
+                    "retryable": false
                 }
             });
             println!(
                 "{}",
                 serde_json::to_string(&fallback).unwrap_or_else(|_| {
-                    "{\"error\":{\"kind\":\"json\",\"message\":\"failed to render error\",\"hint\":\"Report this bug.\"}}".to_string()
+                    "{\"error\":{\"kind\":\"json\",\"message\":\"failed to render error\",\"hint\":\"Report this bug.\",\"retryable\":false}}".to_string()
                 })
             );
             ExitCode::FAILURE
@@ -1278,7 +1298,6 @@ mod capture_lifecycle_tests {
             CaptureStopReason::Unavailable
         );
         assert!(!observation.capture.can_prove_absence);
-        assert!(observation.subject_keys.is_empty());
         let task_reference = observation.lineage.extra["mcp_task_ref"].as_str().unwrap();
         assert!(task_reference.starts_with("sha256:"));
         assert!(!task_reference.contains("external-task-42"));

@@ -1,23 +1,26 @@
 use std::{
     fs::{self, OpenOptions},
+    ops::Deref,
     path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard},
     thread,
     time::Duration,
 };
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
+use redb::{Database, DatabaseError, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    CacheEntryMeta, CallProvenance, CaptureCompleteness, CoreError, CursorRecord,
-    EvidenceAvailability, OBSERVATION_SCHEMA, ObservationLineage, ObservationRecord,
-    PersistedPayload, RedactedPayload, RedactionPolicy, Result, SESSION_SCHEMA, SessionEvent,
-    SessionTrail, SourceProfile, StorageBudget, VERIFICATION_SCHEMA, ValidatedCursor,
-    VerificationObligation, canonical_json, validate_source_profile,
+    ACTION_INTENT_SCHEMA, ActionIntent, CacheEntryMeta, CallProvenance, CaptureCompleteness,
+    CoreError, CursorRecord, EvidenceAvailability, OBSERVATION_SCHEMA, ObservationLineage,
+    ObservationRecord, PersistedPayload, READBACK_VERIFICATION_SCHEMA, ReadbackVerificationReceipt,
+    RedactedPayload, RedactionPolicy, Result, SESSION_SCHEMA, SessionEvent, SessionTrail,
+    SourceProfile, StorageBudget, VERIFICATION_SCHEMA, ValidatedCursor, VerificationObligation,
+    canonical_json, validate_source_profile,
 };
 
 const PAYLOADS: TableDefinition<&str, &[u8]> = TableDefinition::new("payloads");
@@ -25,24 +28,27 @@ const ENTRIES: TableDefinition<&str, &[u8]> = TableDefinition::new("entries");
 const CURSORS: TableDefinition<&str, &[u8]> = TableDefinition::new("cursors");
 const SESSIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("sessions");
 const OBSERVATIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("observations");
-const OBSERVATION_SUBJECTS: TableDefinition<&str, &[u8]> =
-    TableDefinition::new("observation_subjects");
 const OBSERVATION_LINEAGE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("observation_lineage");
 const OBLIGATIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("obligations");
+const ACTION_INTENTS: TableDefinition<&str, &[u8]> = TableDefinition::new("action_intents");
+const READBACK_RECEIPTS: TableDefinition<&str, &[u8]> = TableDefinition::new("readback_receipts");
 const STATE: TableDefinition<&str, &[u8]> = TableDefinition::new("state");
 const CURRENT_SESSION_KEY: &str = "current_session";
 const STORE_SCHEMA_KEY: &str = "store_schema";
 const STORAGE_BUDGET_KEY: &str = "storage_budget";
+const STORE_OPEN_ATTEMPTS: usize = 200;
+const STORE_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(2);
+const STORE_RETRY_MAX_DELAY: Duration = Duration::from_millis(25);
 // Pre-release storage is intentionally reset, rather than migrated, whenever
 // an immutable-record invariant changes. This is a contract identity, not a
 // compatibility version.
-const STORE_SCHEMA: &str = "prog.store.derivation_complete_observations";
+const STORE_SCHEMA: &str = "prog.store.readback_verification_contract";
 
 #[derive(Debug)]
 pub struct Store {
     dir: PathBuf,
-    db: Database,
+    db: Mutex<Option<Database>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -72,7 +78,6 @@ pub struct NewObservation {
     pub operation: String,
     pub comparison_family: Option<String>,
     pub selection: crate::SelectionCoverage,
-    pub subject_keys: Vec<String>,
     pub captured_at: Option<String>,
     pub duration_ms: Option<u64>,
     pub status: Option<String>,
@@ -84,7 +89,6 @@ pub struct NewObservation {
     pub workspace_state: Option<crate::WorkspaceState>,
     pub source_state: Option<crate::SourceStateToken>,
     pub source_validity: crate::SourceValidity,
-    pub environment_state: Option<String>,
     pub lineage: ObservationLineage,
     pub provenance: Option<CallProvenance>,
     pub cache_key: Option<String>,
@@ -157,7 +161,7 @@ impl Store {
 
         let db_path = cache.join("data.redb");
         let store_existed = db_path.exists();
-        let db = Database::create(&db_path).map_err(CoreError::storage)?;
+        let db = open_database_with_retry(&db_path)?;
         set_file_permissions(&db_path)?;
 
         let write = db.begin_write().map_err(CoreError::storage)?;
@@ -168,12 +172,15 @@ impl Store {
             write.open_table(SESSIONS).map_err(CoreError::storage)?;
             write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
             write
-                .open_table(OBSERVATION_SUBJECTS)
-                .map_err(CoreError::storage)?;
-            write
                 .open_table(OBSERVATION_LINEAGE)
                 .map_err(CoreError::storage)?;
             write.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
+            write
+                .open_table(ACTION_INTENTS)
+                .map_err(CoreError::storage)?;
+            write
+                .open_table(READBACK_RECEIPTS)
+                .map_err(CoreError::storage)?;
             write.open_table(STATE).map_err(CoreError::storage)?;
         }
         write.commit().map_err(CoreError::storage)?;
@@ -196,13 +203,16 @@ impl Store {
                 let mut sessions = write.open_table(SESSIONS).map_err(CoreError::storage)?;
                 let mut observations =
                     write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
-                let mut observation_subjects = write
-                    .open_table(OBSERVATION_SUBJECTS)
-                    .map_err(CoreError::storage)?;
                 let mut observation_lineage = write
                     .open_table(OBSERVATION_LINEAGE)
                     .map_err(CoreError::storage)?;
                 let mut obligations = write.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
+                let mut action_intents = write
+                    .open_table(ACTION_INTENTS)
+                    .map_err(CoreError::storage)?;
+                let mut readback_receipts = write
+                    .open_table(READBACK_RECEIPTS)
+                    .map_err(CoreError::storage)?;
                 let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
                 dropped = if store_existed {
                     retain_none(&mut entries)?
@@ -210,9 +220,10 @@ impl Store {
                         + retain_none(&mut cursors)?
                         + retain_none(&mut sessions)?
                         + retain_none(&mut observations)?
-                        + retain_none(&mut observation_subjects)?
                         + retain_none(&mut observation_lineage)?
                         + retain_none(&mut obligations)?
+                        + retain_none(&mut action_intents)?
+                        + retain_none(&mut readback_receipts)?
                         + retain_none(&mut state)?
                 } else {
                     0
@@ -227,13 +238,42 @@ impl Store {
             }
         }
 
-        Ok(Self { dir, db })
+        Ok(Self {
+            dir,
+            db: Mutex::new(Some(db)),
+        })
+    }
+
+    fn open_database(&self) -> Result<StoreDatabaseGuard<'_>> {
+        let mut guard = self
+            .db
+            .lock()
+            .map_err(|_| CoreError::storage("store handle mutex was poisoned"))?;
+        if guard.is_none() {
+            *guard = Some(open_database_with_retry(&self.dir.join("cache/data.redb"))?);
+        }
+        Ok(StoreDatabaseGuard { guard })
+    }
+
+    fn open_read_only_database(&self) -> Result<StoreDatabaseGuard<'_>> {
+        self.open_database()
+    }
+
+    /// Drop this process's redb handle before waiting on an external source.
+    /// The next store operation reopens it through the bounded retry path.
+    pub fn release(&self) -> Result<()> {
+        self.db
+            .lock()
+            .map_err(|_| CoreError::storage("store handle mutex was poisoned"))?
+            .take();
+        Ok(())
     }
 
     pub fn put_payload(&self, payload: &RedactedPayload) -> Result<String> {
         let bytes = serde_json::to_vec(payload.as_value())?;
         let hash = format!("sha256:{}", hex_sha256(&bytes));
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         {
             let mut table = write.open_table(PAYLOADS).map_err(CoreError::storage)?;
             table
@@ -247,7 +287,8 @@ impl Store {
     /// Read the durable retention policy. Stores created before this policy
     /// existed behave explicitly as unbounded defaults.
     pub fn storage_budget(&self) -> Result<StorageBudget> {
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let state = read.open_table(STATE).map_err(CoreError::storage)?;
         let Some(value) = state.get(STORAGE_BUDGET_KEY).map_err(CoreError::storage)? else {
             return Ok(StorageBudget::default());
@@ -260,7 +301,8 @@ impl Store {
     /// capture happens.
     pub fn set_storage_budget(&self, budget: &StorageBudget) -> Result<StorageBudgetSummary> {
         let bytes = serde_json::to_vec(budget)?;
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         {
             let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
             state
@@ -268,6 +310,7 @@ impl Store {
                 .map_err(CoreError::storage)?;
         }
         write.commit().map_err(CoreError::storage)?;
+        drop(db);
         self.enforce_storage_budget(Utc::now())
     }
 
@@ -315,7 +358,6 @@ impl Store {
             operation: input.operation,
             comparison_family: input.comparison_family,
             selection: input.selection,
-            subject_keys: input.subject_keys,
             captured_at: input.captured_at.unwrap_or_else(|| format_time(Utc::now())),
             duration_ms: input.duration_ms,
             status: input.status,
@@ -329,31 +371,22 @@ impl Store {
                 .or_else(|| std::env::current_dir().ok().map(crate::capture_workspace)),
             source_state: input.source_state,
             source_validity: input.source_validity,
-            environment_state: input.environment_state,
             lineage: input.lineage,
             provenance: input.provenance,
             cache_key: input.cache_key,
             extra: redacted_extra.as_object().cloned().unwrap_or_default(),
         };
         let bytes = serde_json::to_vec(&record)?;
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         {
             let mut table = write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
-            let mut subjects = write
-                .open_table(OBSERVATION_SUBJECTS)
-                .map_err(CoreError::storage)?;
             let mut lineage = write
                 .open_table(OBSERVATION_LINEAGE)
                 .map_err(CoreError::storage)?;
             table
                 .insert(record.observation_id.as_str(), bytes.as_slice())
                 .map_err(CoreError::storage)?;
-            for subject_key in &record.subject_keys {
-                let key = observation_index_key(subject_key, &record.observation_id);
-                subjects
-                    .insert(key.as_str(), b"".as_slice())
-                    .map_err(CoreError::storage)?;
-            }
             for related_id in observation_lineage_ids(&record.lineage) {
                 let key = observation_index_key(related_id, &record.observation_id);
                 lineage
@@ -366,7 +399,8 @@ impl Store {
     }
 
     pub fn get_observation(&self, observation_id: &str) -> Result<Option<ObservationRecord>> {
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
         let Some(value) = table.get(observation_id).map_err(CoreError::storage)? else {
             return Ok(None);
@@ -379,7 +413,8 @@ impl Store {
     /// observation surface.
     pub fn list_observations(&self, limit: usize) -> Result<ObservationList> {
         let limit = limit.min(100);
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
         let mut observations = Vec::new();
         for entry in table.iter().map_err(CoreError::storage)? {
@@ -397,7 +432,8 @@ impl Store {
     }
 
     pub fn get_payload(&self, hash: &str) -> Result<Option<PersistedPayload>> {
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(PAYLOADS).map_err(CoreError::storage)?;
         let Some(bytes) = table.get(hash).map_err(CoreError::storage)? else {
             return Ok(None);
@@ -425,7 +461,8 @@ impl Store {
             return Ok(false);
         }
         let bytes = serde_json::to_vec(meta)?;
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         {
             let mut table = write.open_table(ENTRIES).map_err(CoreError::storage)?;
             table
@@ -433,6 +470,7 @@ impl Store {
                 .map_err(CoreError::storage)?;
         }
         write.commit().map_err(CoreError::storage)?;
+        drop(db);
         self.enforce_storage_budget(Utc::now())?;
         Ok(self.read_entry(key)?.is_some())
     }
@@ -453,7 +491,8 @@ impl Store {
     }
 
     pub fn list_entries(&self, limit: usize) -> Result<CacheList> {
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(ENTRIES).map_err(CoreError::storage)?;
         let mut entries = Vec::new();
         for entry in table.iter().map_err(CoreError::storage)? {
@@ -520,7 +559,8 @@ impl Store {
 
     pub fn put_cursor(&self, token: &str, record: &CursorRecord) -> Result<()> {
         let bytes = serde_json::to_vec(record)?;
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         {
             let mut table = write.open_table(CURSORS).map_err(CoreError::storage)?;
             table
@@ -536,7 +576,8 @@ impl Store {
     }
 
     pub fn get_cursor_at(&self, token: &str, now: DateTime<Utc>) -> Result<ValidatedCursor> {
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(CURSORS).map_err(CoreError::storage)?;
         let Some(bytes) = table.get(token).map_err(CoreError::storage)? else {
             return Err(CoreError::CursorNotFound(token.to_string()));
@@ -544,6 +585,7 @@ impl Store {
         let record: CursorRecord = serde_json::from_slice(bytes.value())?;
         drop(table);
         drop(read);
+        drop(db);
         if parse_time(&record.expires_at)? <= now {
             self.mark_observations_expired(record.observation_id.as_deref())?;
             return Err(CoreError::CursorExpired(
@@ -577,7 +619,8 @@ impl Store {
             extra: serde_json::Map::new(),
         };
         let bytes = serde_json::to_vec(&trail)?;
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         {
             let mut sessions = write.open_table(SESSIONS).map_err(CoreError::storage)?;
             let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
@@ -593,7 +636,8 @@ impl Store {
     }
 
     pub fn current_session_id(&self) -> Result<Option<String>> {
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let state = read.open_table(STATE).map_err(CoreError::storage)?;
         Ok(state
             .get(CURRENT_SESSION_KEY)
@@ -613,7 +657,8 @@ impl Store {
                 session_id
             }
         };
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let sessions = read.open_table(SESSIONS).map_err(CoreError::storage)?;
         let Some(value) = sessions.get(session_id).map_err(CoreError::storage)? else {
             return Ok(None);
@@ -683,7 +728,8 @@ impl Store {
         }
         let key = obligation_key(&obligation.session_id, &obligation.id)?;
         let bytes = serde_json::to_vec(obligation)?;
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         {
             let mut table = write.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
             if table
@@ -706,6 +752,145 @@ impl Store {
         write.commit().map_err(CoreError::storage)
     }
 
+    pub fn get_obligation(
+        &self,
+        session_id: &str,
+        obligation_id: &str,
+    ) -> Result<Option<VerificationObligation>> {
+        let key = obligation_key(session_id, obligation_id)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
+        let table = read.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
+        let Some(value) = table.get(key.as_str()).map_err(CoreError::storage)? else {
+            return Ok(None);
+        };
+        Ok(Some(serde_json::from_slice(value.value())?))
+    }
+
+    /// Attach immutable read-back evidence to an existing obligation. This is
+    /// the only supported obligation update; declaration semantics cannot be
+    /// rewritten after creation.
+    pub fn attach_readback_receipt(
+        &self,
+        session_id: &str,
+        obligation_id: &str,
+        evidence_observation_id: Option<&str>,
+        receipt_id: &str,
+    ) -> Result<VerificationObligation> {
+        let mut obligation = self
+            .get_obligation(session_id, obligation_id)?
+            .ok_or_else(|| CoreError::BadArgs {
+                operation: "read-back verification".to_string(),
+                reason: format!("unknown obligation '{obligation_id}'"),
+            })?;
+        obligation.evidence_observation_id = evidence_observation_id.map(ToOwned::to_owned);
+        obligation.extra.insert(
+            "readback_receipt_id".to_string(),
+            Value::String(receipt_id.to_string()),
+        );
+        let key = obligation_key(session_id, obligation_id)?;
+        let bytes = serde_json::to_vec(&obligation)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
+        {
+            let mut table = write.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
+            table
+                .insert(key.as_str(), bytes.as_slice())
+                .map_err(CoreError::storage)?;
+        }
+        write.commit().map_err(CoreError::storage)?;
+        Ok(obligation)
+    }
+
+    pub fn put_action_intent(&self, intent: &ActionIntent) -> Result<()> {
+        if intent.schema != ACTION_INTENT_SCHEMA
+            || intent.intent_id.trim().is_empty()
+            || intent.session_id.trim().is_empty()
+            || intent.source_id.trim().is_empty()
+            || intent.read_operation.trim().is_empty()
+            || intent.obligation_id.trim().is_empty()
+        {
+            return Err(CoreError::BadArgs {
+                operation: "verification begin".to_string(),
+                reason: "action intent identifiers and read operation are required".to_string(),
+            });
+        }
+        let bytes = serde_json::to_vec(intent)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
+        {
+            let mut table = write
+                .open_table(ACTION_INTENTS)
+                .map_err(CoreError::storage)?;
+            if table
+                .get(intent.intent_id.as_str())
+                .map_err(CoreError::storage)?
+                .is_some()
+            {
+                return Err(CoreError::BadArgs {
+                    operation: "verification begin".to_string(),
+                    reason: format!("action intent '{}' already exists", intent.intent_id),
+                });
+            }
+            table
+                .insert(intent.intent_id.as_str(), bytes.as_slice())
+                .map_err(CoreError::storage)?;
+        }
+        write.commit().map_err(CoreError::storage)
+    }
+
+    pub fn get_action_intent(&self, intent_id: &str) -> Result<Option<ActionIntent>> {
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
+        let table = read
+            .open_table(ACTION_INTENTS)
+            .map_err(CoreError::storage)?;
+        let Some(value) = table.get(intent_id).map_err(CoreError::storage)? else {
+            return Ok(None);
+        };
+        Ok(Some(serde_json::from_slice(value.value())?))
+    }
+
+    pub fn put_readback_receipt(&self, receipt: &ReadbackVerificationReceipt) -> Result<()> {
+        if receipt.schema != READBACK_VERIFICATION_SCHEMA
+            || receipt.receipt_id.trim().is_empty()
+            || receipt.intent_id.trim().is_empty()
+            || receipt.obligation_id.trim().is_empty()
+        {
+            return Err(CoreError::BadArgs {
+                operation: "verification readback".to_string(),
+                reason: "receipt, intent, and obligation identifiers are required".to_string(),
+            });
+        }
+        let bytes = serde_json::to_vec(receipt)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
+        {
+            let mut table = write
+                .open_table(READBACK_RECEIPTS)
+                .map_err(CoreError::storage)?;
+            table
+                .insert(receipt.receipt_id.as_str(), bytes.as_slice())
+                .map_err(CoreError::storage)?;
+        }
+        write.commit().map_err(CoreError::storage)
+    }
+
+    pub fn get_readback_receipt(
+        &self,
+        receipt_id: &str,
+    ) -> Result<Option<ReadbackVerificationReceipt>> {
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
+        let table = read
+            .open_table(READBACK_RECEIPTS)
+            .map_err(CoreError::storage)?;
+        let Some(value) = table.get(receipt_id).map_err(CoreError::storage)? else {
+            return Ok(None);
+        };
+        Ok(Some(serde_json::from_slice(value.value())?))
+    }
+
     pub fn list_obligations(&self, session_id: Option<&str>) -> Result<ObligationList> {
         let session_id = match session_id {
             Some(value) => value.to_string(),
@@ -717,7 +902,8 @@ impl Store {
             });
         }
         let prefix = format!("{session_id}\0");
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
         let mut obligations = Vec::new();
         for entry in table.iter().map_err(CoreError::storage)? {
@@ -778,7 +964,8 @@ impl Store {
                 .push("oldest session events were dropped at the 1000-event cap".to_string());
         }
         let bytes = serde_json::to_vec(&trail)?;
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         {
             let mut sessions = write.open_table(SESSIONS).map_err(CoreError::storage)?;
             sessions
@@ -790,7 +977,8 @@ impl Store {
     }
 
     pub fn purge_all(&self) -> Result<PurgeSummary> {
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         let summary;
         {
             let mut entries = write.open_table(ENTRIES).map_err(CoreError::storage)?;
@@ -798,13 +986,16 @@ impl Store {
             let mut cursors = write.open_table(CURSORS).map_err(CoreError::storage)?;
             let mut sessions = write.open_table(SESSIONS).map_err(CoreError::storage)?;
             let mut observations = write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
-            let mut observation_subjects = write
-                .open_table(OBSERVATION_SUBJECTS)
-                .map_err(CoreError::storage)?;
             let mut observation_lineage = write
                 .open_table(OBSERVATION_LINEAGE)
                 .map_err(CoreError::storage)?;
             let mut obligations = write.open_table(OBLIGATIONS).map_err(CoreError::storage)?;
+            let mut action_intents = write
+                .open_table(ACTION_INTENTS)
+                .map_err(CoreError::storage)?;
+            let mut readback_receipts = write
+                .open_table(READBACK_RECEIPTS)
+                .map_err(CoreError::storage)?;
             let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
             let storage_budget = state
                 .get(STORAGE_BUDGET_KEY)
@@ -817,9 +1008,10 @@ impl Store {
                 purged_sessions: retain_none(&mut sessions)?,
                 purged_observations: retain_none(&mut observations)?,
             };
-            retain_none(&mut observation_subjects)?;
             retain_none(&mut observation_lineage)?;
             retain_none(&mut obligations)?;
+            retain_none(&mut action_intents)?;
+            retain_none(&mut readback_receipts)?;
             retain_none(&mut state)?;
             state
                 .insert(STORE_SCHEMA_KEY, STORE_SCHEMA.as_bytes())
@@ -873,7 +1065,8 @@ impl Store {
 
     pub fn purge_source(&self, source_id: &str) -> Result<PurgeSummary> {
         let mut keys = Vec::new();
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(ENTRIES).map_err(CoreError::storage)?;
         for entry in table.iter().map_err(CoreError::storage)? {
             let (key, value) = entry.map_err(CoreError::storage)?;
@@ -884,6 +1077,7 @@ impl Store {
         }
         drop(table);
         drop(read);
+        drop(db);
         self.purge_entries_and_cursors(&keys, Some(source_id))
     }
 
@@ -895,7 +1089,8 @@ impl Store {
     /// behind with a missing expansion target. Immutable observations survive
     /// as metadata-only lineage records.
     pub fn enforce_payload_quota(&self, max_payload_bytes: u64) -> Result<StorageQuotaSummary> {
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         let summary;
         {
             let mut entries = write.open_table(ENTRIES).map_err(CoreError::storage)?;
@@ -1027,7 +1222,8 @@ impl Store {
     }
 
     fn read_entry(&self, key: &str) -> Result<Option<CacheEntryMeta>> {
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(ENTRIES).map_err(CoreError::storage)?;
         let Some(bytes) = table.get(key).map_err(CoreError::storage)? else {
             return Ok(None);
@@ -1036,7 +1232,8 @@ impl Store {
     }
 
     fn expired_entries(&self, now: DateTime<Utc>) -> Result<Vec<CacheEntryMeta>> {
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(ENTRIES).map_err(CoreError::storage)?;
         let mut entries = Vec::new();
         for entry in table.iter().map_err(CoreError::storage)? {
@@ -1051,7 +1248,8 @@ impl Store {
     }
 
     fn entries_created_at_or_before(&self, cutoff: DateTime<Utc>) -> Result<Vec<CacheEntryMeta>> {
-        let read = self.db.begin_read().map_err(CoreError::storage)?;
+        let db = self.open_read_only_database()?;
+        let read = db.begin_read().map_err(CoreError::storage)?;
         let table = read.open_table(ENTRIES).map_err(CoreError::storage)?;
         let mut entries = Vec::new();
         for entry in table.iter().map_err(CoreError::storage)? {
@@ -1075,7 +1273,8 @@ impl Store {
         if ids.is_empty() {
             return Ok(0);
         }
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         let updated;
         {
             let payloads = write.open_table(PAYLOADS).map_err(CoreError::storage)?;
@@ -1126,7 +1325,8 @@ impl Store {
             }
         }
 
-        let write = self.db.begin_write().map_err(CoreError::storage)?;
+        let db = self.open_database()?;
+        let write = db.begin_write().map_err(CoreError::storage)?;
         let summary;
         {
             let mut entries = write.open_table(ENTRIES).map_err(CoreError::storage)?;
@@ -1239,30 +1439,6 @@ fn validate_observation_input(input: &NewObservation) -> Result<()> {
                 reason: format!("{name} must not be empty"),
             });
         }
-    }
-    for subject_key in &input.subject_keys {
-        if subject_key.len() > 256 || !subject_key.contains(':') {
-            return Err(CoreError::BadArgs {
-                operation: "observation record".to_string(),
-                reason: "subject keys must be namespaced and at most 256 bytes".to_string(),
-            });
-        }
-        let lower = subject_key.to_ascii_lowercase();
-        if ["token", "secret", "password", "authorization", "api_key"]
-            .iter()
-            .any(|needle| lower.contains(needle))
-        {
-            return Err(CoreError::BadArgs {
-                operation: "observation record".to_string(),
-                reason: "subject keys must not contain sensitive identifiers".to_string(),
-            });
-        }
-    }
-    if input.subject_keys.len() > 32 {
-        return Err(CoreError::BadArgs {
-            operation: "observation record".to_string(),
-            reason: "at most 32 subject keys are allowed".to_string(),
-        });
     }
     Ok(())
 }
@@ -1422,6 +1598,61 @@ fn set_file_permissions(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn open_database_with_retry(path: &Path) -> Result<Database> {
+    open_store_handle_with_retry(|| Database::create(path))
+}
+
+struct StoreDatabaseGuard<'a> {
+    guard: MutexGuard<'a, Option<Database>>,
+}
+
+impl Deref for StoreDatabaseGuard<'_> {
+    type Target = Database;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard
+            .as_ref()
+            .expect("store database guard is initialized before construction")
+    }
+}
+
+fn open_store_handle_with_retry<T>(
+    mut open: impl FnMut() -> std::result::Result<T, DatabaseError>,
+) -> Result<T> {
+    open_store_handle_with_policy(
+        &mut open,
+        STORE_OPEN_ATTEMPTS,
+        STORE_RETRY_INITIAL_DELAY,
+        STORE_RETRY_MAX_DELAY,
+    )
+}
+
+fn open_store_handle_with_policy<T>(
+    mut open: impl FnMut() -> std::result::Result<T, DatabaseError>,
+    attempts: usize,
+    initial_delay: Duration,
+    max_delay: Duration,
+) -> Result<T> {
+    let mut delay = initial_delay;
+    for attempt in 1..=attempts {
+        match open() {
+            Ok(handle) => return Ok(handle),
+            Err(DatabaseError::DatabaseAlreadyOpen) if attempt < attempts => {
+                thread::sleep(delay);
+                delay = delay.saturating_mul(2).min(max_delay);
+            }
+            Err(DatabaseError::DatabaseAlreadyOpen) => {
+                return Err(CoreError::StorageBusy {
+                    attempts: attempt,
+                    message: DatabaseError::DatabaseAlreadyOpen.to_string(),
+                });
+            }
+            Err(error) => return Err(CoreError::storage(error)),
+        }
+    }
+    unreachable!("the bounded store-open loop either returns a handle or an error")
+}
+
 struct ProfileLock {
     path: PathBuf,
 }
@@ -1451,5 +1682,31 @@ impl ProfileLock {
 impl Drop for ProfileLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exhausted_store_retry_is_typed_and_reports_the_bound() {
+        let error = open_store_handle_with_policy(
+            || Err::<(), _>(DatabaseError::DatabaseAlreadyOpen),
+            3,
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), "storage_busy");
+        let envelope = serde_json::to_value(error.envelope()).unwrap();
+        assert_eq!(envelope["error"]["retryable"], true);
+        assert_eq!(envelope["error"]["attempts"], 3);
+        assert!(
+            envelope["error"]["hint"]
+                .as_str()
+                .unwrap()
+                .contains("Retry")
+        );
     }
 }

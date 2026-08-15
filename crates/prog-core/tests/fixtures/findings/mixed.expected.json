@@ -11,10 +11,12 @@
     "severity": "error",
     "source": "generic.string_pattern",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate compile_error' --path /diagnostics/0/message",
-      "expand": "prog expand pc1_golden --path /diagnostics/0/message",
-      "evidence": "prog evidence pc1_golden --path /diagnostics/0/message",
-      "search": "prog find pc1_golden --kind compile_error --path /diagnostics/0/message"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   },
   {
@@ -28,10 +30,12 @@
     "severity": "error",
     "source": "generic.field_name",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate generic_error_field' --path /errors",
-      "expand": "prog expand pc1_golden --path /errors",
-      "evidence": "prog evidence pc1_golden --path /errors",
-      "search": "prog find pc1_golden --kind generic_error_field --path /errors"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   },
   {
@@ -46,10 +50,12 @@
     "severity": "error",
     "source": "generic.string_pattern",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate log_error' --path /errors/0/message",
-      "expand": "prog expand pc1_golden --path /errors/0/message",
-      "evidence": "prog evidence pc1_golden --path /errors/0/message",
-      "search": "prog find pc1_golden --kind log_error --path /errors/0/message"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   },
   {
@@ -64,10 +70,12 @@
     "severity": "error",
     "source": "generic.object.severity",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate diagnostic' --path /diagnostics/0",
-      "expand": "prog expand pc1_golden --path /diagnostics/0",
-      "evidence": "prog evidence pc1_golden --path /diagnostics/0",
-      "search": "prog find pc1_golden --kind diagnostic --path /diagnostics/0"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   },
   {
@@ -81,10 +89,12 @@
     "severity": "error",
     "source": "generic.field_name",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate diagnostic' --path /diagnostics",
-      "expand": "prog expand pc1_golden --path /diagnostics",
-      "evidence": "prog evidence pc1_golden --path /diagnostics",
-      "search": "prog find pc1_golden --kind diagnostic --path /diagnostics"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   },
   {
@@ -97,10 +107,12 @@
     "title": "diff hunk",
     "source": "generic.field_name",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate diff_hunk' --path /review/diff",
-      "expand": "prog expand pc1_golden --path /review/diff",
-      "evidence": "prog evidence pc1_golden --path /review/diff",
-      "search": "prog find pc1_golden --kind diff_hunk --path /review/diff"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   },
   {
@@ -115,10 +127,12 @@
     "severity": "warning",
     "source": "generic.string_pattern",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate warning' --path /log",
-      "expand": "prog expand pc1_golden --path /log",
-      "evidence": "prog evidence pc1_golden --path /log",
-      "search": "prog find pc1_golden --kind warning --path /log"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   }
 ]

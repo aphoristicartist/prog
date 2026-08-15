@@ -17,8 +17,13 @@ ranked and include:
 - `path`: the exact JSON Pointer to inspect
 - `omitted_reason`: why the preview omitted or redacted it
 - `detail`: source-specific size or omission detail when available
-- `argv`: exact `prog expand` arguments
-- `offline`: confirmation that expansion reads the cached redacted payload
+- `kind`: the key of one reusable entry in top-level `action_templates`
+
+Each action template is symbolic argv, never a shell string. Replace
+`{cursor}` with the response cursor and `{path}` with the action path. Its typed
+`scope: "cached_evidence"` declares once that these actions read the persisted,
+redacted payload and do not contact upstream. Direct rerun actions use their own
+exact `argv` instead of a template.
 
 Agents should prefer `next_actions` first, then use `prog paths` when they need
 to search or filter the address space.

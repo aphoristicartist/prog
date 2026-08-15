@@ -12,8 +12,8 @@ Regenerate this report and the raw metrics with `PROG_TASK_EVAL_UPDATE=1 cargo t
 | simple_truncation | 1 | 13 | 12302 | 0 | 0 | 0 |
 | jq_field_selection | 11 | 13 | 1068 | 13 | 0 | 0 |
 | rtk_grep_filter | 13 | 13 | 732819 | 13 | 0 | 0 |
-| prog_call_only | 1 | 13 | 21420 | 13 | 0 | 0 |
-| prog_expand | 13 | 13 | 29532 | 26 | 13 | 13 |
+| prog_call_only | 1 | 13 | 21794 | 13 | 0 | 0 |
+| prog_expand | 13 | 13 | 34486 | 26 | 13 | 13 |
 
 ## Scenarios
 

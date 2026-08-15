@@ -13,6 +13,12 @@ text that has already been through redaction. Reason and title text are static
 literals — payload values are never echoed into reasons, and secrets are never
 persisted or replayed.
 
+Recognized pytest and Cargo/rustc commands may also contribute a bounded,
+deterministic `/provider/normalized` subtree before ranking. Provider and parser
+identities participate in cross-observation fingerprints; raw line numbers do
+not. If provider derivation is incomplete, the observation cannot prove
+absence. See [coding-output providers](coding-providers.md).
+
 ## Entry points
 
 ```rust
@@ -186,14 +192,15 @@ Each `Finding` carries `commands: FindingCommandHints` populated from
 `options.hints: CommandHintConfig`:
 
 - `CommandHintConfig::NAV_EXPAND_ONLY` (the **default**) emits only
-  `prog expand {cursor} --path {path}` for library callers that want the
-  narrowest compatibility surface.
-- `CommandHintConfig::NAV_ALL` additionally emits `prog inspect`, `prog
-  evidence`, and a runnable semantic `prog find --kind ...` hint.
+  `"expand"` for low-overhead library callers.
+- `CommandHintConfig::NAV_ALL` advertises `inspect`, `expand`, `evidence`, and
+  semantic `search` navigation kinds.
 
 CLI envelopes and `inspect` use `NAV_ALL`; low-level library callers retain the
-minimal default. Every emitted command is runnable: the `search` hint field uses
-`prog find <cursor> --kind <kind> --path <path>` because a text search command
+minimal default. The response's top-level cursor plus each finding's path and
+kind are the complete parameters; the contract no longer repeats four rendered
+shell strings on every finding. `search` means the structural `prog find
+<cursor> --kind <kind> --path <path>` operation because a text search command
 cannot honestly invent a query.
 
 The evidence-acquisition pipeline is documented

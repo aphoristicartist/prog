@@ -24,8 +24,14 @@ The stored payload includes:
 - practical combined stream chunks
 - failure sections for common Rust, Python, Node, timeout, spawn, and generic
   diagnostics
+- bounded pytest and Cargo/rustc normalized evidence at `/provider`, when the
+  argv matches a supported coding provider
 - cursor-backed expansion paths such as `/stdout/text`, `/stderr/text`, and
   `/failure_sections/0`
+
+Provider parsing never replaces the raw capture. See
+[coding-output providers](coding-providers.md) for supported formats,
+selection scopes, hard bounds, and conservative completeness rules.
 
 `prog run` returns a successful `prog` process exit when it successfully writes
 an envelope, even if the child command exits non-zero. Use
@@ -35,6 +41,10 @@ the child failure:
 ```bash
 prog run --preserve-exit-code -- cargo test
 ```
+
+On POSIX systems, `SIGINT` and `SIGTERM` cancel the captured process group,
+persist a conservative `cancelled` observation, and return `128 + signal` when
+`--preserve-exit-code` is active. Cancelled evidence cannot prove absence.
 
 Use output caps to keep local capture bounded:
 

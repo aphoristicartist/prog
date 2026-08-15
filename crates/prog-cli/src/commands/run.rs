@@ -1,6 +1,7 @@
 //! Local command execution, capture, and failure analysis.
 
 use crate::*;
+use prog_core::normalize_coding_output;
 
 struct RunProcessResult {
     stdout: RunCapture,
@@ -16,6 +17,9 @@ pub(crate) enum RunProcessStatus {
         signal: Option<i32>,
     },
     TimedOut,
+    Cancelled {
+        signal: i32,
+    },
     SpawnError(String),
 }
 
@@ -88,6 +92,7 @@ pub(crate) async fn run_command(
         .kill_on_drop(true);
     configure_run_process_group(&mut command);
 
+    store.release()?;
     let run = match command.spawn() {
         Ok(child) => {
             run_spawned_child(
@@ -129,6 +134,14 @@ pub(crate) async fn run_command(
         })
         .collect::<Vec<_>>();
     let failure_sections = detect_run_failure_sections(&run.status, &stdout_text, &stderr_text);
+    let provider = normalize_coding_output(
+        &args.command,
+        &stdout_text.text,
+        &stderr_text.text,
+        matches!(run.status, RunProcessStatus::Exited { .. })
+            && !run.stdout.truncated
+            && !run.stderr.truncated,
+    );
     let payload = run_payload(RunPayloadInput {
         run_id: &run_id,
         argv: &args.command,
@@ -142,6 +155,7 @@ pub(crate) async fn run_command(
         stderr: &stderr_text,
         combined,
         failure_sections: &failure_sections,
+        provider: provider.as_ref(),
         out: args.out.as_ref(),
     });
     let redaction = RedactionPolicy::default();
@@ -173,6 +187,17 @@ pub(crate) async fn run_command(
         &run.status,
         args,
     );
+    if let Some(provider) = &provider {
+        provenance.extra.insert(
+            "coding_provider".to_string(),
+            json!({
+                "provider": provider.provider,
+                "input_format": provider.input_format,
+                "complete": provider.complete,
+                "limits": provider.limits
+            }),
+        );
+    }
     let mut entry = new_cache_entry(
         cache_key.clone(),
         payload_hash.clone(),
@@ -195,6 +220,14 @@ pub(crate) async fn run_command(
     );
     capture.budget = capture_budget_for_run(args);
     ctx.set_capture(capture.budget.clone());
+    let selection = if args.selection_scopes.is_empty() {
+        provider.as_ref().map_or_else(
+            || selection_coverage(&args.selection_scopes, args.selection_exhaustive),
+            |provider| provider.selection.clone(),
+        )
+    } else {
+        selection_coverage(&args.selection_scopes, args.selection_exhaustive)
+    };
     let observation_id = record_capture(
         store,
         payload_hash.clone(),
@@ -204,12 +237,20 @@ pub(crate) async fn run_command(
         "run".to_string(),
         operation.clone(),
         args.comparison_family.clone(),
-        selection_coverage(&args.selection_scopes, args.selection_exhaustive),
+        selection,
         Some(provenance.clone()),
         Some(cache_key.clone()),
         !policy_redactions.is_empty(),
-        Some("cli".to_string()),
-        None,
+        provider.as_ref().map_or_else(
+            || Some("cli".to_string()),
+            |provider| Some(provider.provider.clone()),
+        ),
+        provider
+            .as_ref()
+            // Parser identity names the normalized semantic family, not the
+            // transport encoding. Text and structured variants must remain
+            // comparable when they carry equivalent evidence.
+            .map(|provider| provider.provider.clone()),
         lens.as_ref(),
         None,
         // A local `run` executes a subprocess directly; there is no external
@@ -235,6 +276,9 @@ pub(crate) async fn run_command(
     provenance.cache_key = Some(cache_key.clone());
 
     let mut warnings = run_warnings(&run.status, args, &run.stdout, &run.stderr);
+    if let Some(provider) = &provider {
+        warnings.extend(provider.warnings.clone());
+    }
     let text_redactions = stdout_text
         .redactions
         .saturating_add(stderr_text.redactions)
@@ -337,9 +381,10 @@ async fn run_spawned_child(
     ));
     drop(tx);
 
-    let wait = tokio::time::timeout(Duration::from_millis(timeout_ms), child.wait()).await;
-    let status = match wait {
-        Ok(result) => {
+    let timeout = tokio::time::sleep(Duration::from_millis(timeout_ms));
+    tokio::pin!(timeout);
+    let status = tokio::select! {
+        result = child.wait() => {
             let status = result.map_err(|error| CoreError::CliTransport {
                 operation: "run".to_string(),
                 message: error.to_string(),
@@ -350,22 +395,18 @@ async fn run_spawned_child(
                 signal: exit_signal(&status),
             }
         }
-        Err(_) => {
+        _ = &mut timeout => {
             kill_run_process_group(&mut child).await;
-            let _ = tokio::join!(
-                finish_run_reader_or_abort(stdout_task),
-                finish_run_reader_or_abort(stderr_task)
-            );
-            let mut combined = Vec::new();
-            while let Ok(chunk) = rx.try_recv() {
-                combined.push(chunk);
-            }
-            return Ok(RunProcessResult {
-                stdout: empty_run_capture("stdout"),
-                stderr: empty_run_capture("stderr"),
-                combined,
-                status: RunProcessStatus::TimedOut,
-            });
+            return interrupted_run_result(stdout_task, stderr_task, &mut rx, RunProcessStatus::TimedOut).await;
+        }
+        signal = termination_signal() => {
+            kill_run_process_group(&mut child).await;
+            return interrupted_run_result(
+                stdout_task,
+                stderr_task,
+                &mut rx,
+                RunProcessStatus::Cancelled { signal },
+            ).await;
         }
     };
     let stdout = stdout_task
@@ -395,9 +436,65 @@ async fn run_spawned_child(
     Ok(RunProcessResult {
         stdout,
         stderr,
-        combined,
+        combined: coalesce_run_chunks(combined),
         status,
     })
+}
+
+async fn interrupted_run_result(
+    stdout_task: JoinHandle<std::io::Result<RunCapture>>,
+    stderr_task: JoinHandle<std::io::Result<RunCapture>>,
+    rx: &mut mpsc::UnboundedReceiver<RunChunk>,
+    status: RunProcessStatus,
+) -> Result<RunProcessResult> {
+    let _ = tokio::join!(
+        finish_run_reader_or_abort(stdout_task),
+        finish_run_reader_or_abort(stderr_task)
+    );
+    let mut combined = Vec::new();
+    while let Ok(chunk) = rx.try_recv() {
+        combined.push(chunk);
+    }
+    Ok(RunProcessResult {
+        stdout: empty_run_capture("stdout"),
+        stderr: empty_run_capture("stderr"),
+        combined: coalesce_run_chunks(combined),
+        status,
+    })
+}
+
+#[cfg(unix)]
+async fn termination_signal() -> i32 {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut interrupt = signal(SignalKind::interrupt()).expect("SIGINT handler should install");
+    let mut terminate = signal(SignalKind::terminate()).expect("SIGTERM handler should install");
+    tokio::select! {
+        _ = interrupt.recv() => libc::SIGINT,
+        _ = terminate.recv() => libc::SIGTERM,
+    }
+}
+
+#[cfg(not(unix))]
+async fn termination_signal() -> i32 {
+    std::future::pending::<i32>().await
+}
+
+/// Pipe read boundaries depend on executor scheduling and are not evidence.
+/// Coalesce adjacent chunks from one stream so the persisted payload is stable
+/// when identical output happens to arrive as one read or several reads.
+fn coalesce_run_chunks(chunks: Vec<RunChunk>) -> Vec<RunChunk> {
+    let mut coalesced: Vec<RunChunk> = Vec::new();
+    for chunk in chunks {
+        if let Some(previous) = coalesced.last_mut()
+            && previous.stream == chunk.stream
+        {
+            previous.bytes.extend(chunk.bytes);
+        } else {
+            coalesced.push(chunk);
+        }
+    }
+    coalesced
 }
 
 #[cfg(unix)]
@@ -547,9 +644,11 @@ fn run_payload(input: RunPayloadInput<'_>) -> Value {
             },
             "signal": match input.status {
                 RunProcessStatus::Exited { signal, .. } => json!(signal),
+                RunProcessStatus::Cancelled { signal } => json!(signal),
                 _ => Value::Null,
             },
             "timed_out": matches!(input.status, RunProcessStatus::TimedOut),
+            "cancelled": matches!(input.status, RunProcessStatus::Cancelled { .. }),
             "spawn_error": match input.status {
                 RunProcessStatus::SpawnError(message) => json!(message),
                 _ => Value::Null,
@@ -574,7 +673,8 @@ fn run_payload(input: RunPayloadInput<'_>) -> Value {
                     "lines": section.lines
                 })
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>(),
+        "provider": input.provider
     })
 }
 
@@ -633,6 +733,15 @@ fn detect_run_failure_sections(
                 lines: vec!["command timed out".to_string()],
                 reason: "command exceeded --timeout-ms".to_string(),
                 priority: 95,
+            }),
+            RunProcessStatus::Cancelled { signal } => sections.push(RunFailureSection {
+                kind: "cancelled",
+                stream: "stderr",
+                line_start: 1,
+                line_end: 1,
+                lines: vec![format!("command cancelled by signal {signal}")],
+                reason: "command was cancelled before completion".to_string(),
+                priority: 100,
             }),
             RunProcessStatus::SpawnError(message) => sections.push(RunFailureSection {
                 kind: "spawn_error",
@@ -724,9 +833,9 @@ fn collect_failure_sections(
 }
 
 fn run_next_actions(cursor: Option<&str>, sections: &[RunFailureSection]) -> Vec<NextAction> {
-    let Some(cursor) = cursor else {
+    if cursor.is_none() {
         return Vec::new();
-    };
+    }
     sections
         .iter()
         .take(6)
@@ -744,14 +853,8 @@ fn run_next_actions(cursor: Option<&str>, sections: &[RunFailureSection]) -> Vec
                 operation: None,
                 path: Some(path),
                 reason: Some(section.reason.clone()),
-                argv: Some(vec![
-                    "prog".to_string(),
-                    "expand".to_string(),
-                    cursor.to_string(),
-                    "--path".to_string(),
-                    format!("/failure_sections/{index}"),
-                ]),
-                scope: Some("failure_section".to_string()),
+                argv: None,
+                scope: Some(prog_core::ActionScope::FailureSection),
                 exactness: Some(prog_core::ActionExactness::Exact),
                 derived_from: Some("run.failure_section".to_string()),
                 extra,
@@ -829,7 +932,7 @@ fn pytest_target_actions(
             path: None,
             reason: Some("rerun this exact pytest node ID for a focused diagnostic".to_string()),
             argv: Some(vec!["pytest".to_string(), node_id.clone()]),
-            scope: Some("target_test".to_string()),
+            scope: Some(prog_core::ActionScope::TargetTest),
             exactness: Some(prog_core::ActionExactness::Exact),
             derived_from: Some("pytest.failed_node_id".to_string()),
             does_not_satisfy: does_not_satisfy.to_vec(),
@@ -872,7 +975,7 @@ pub(crate) fn go_test_target_actions(
                 "-run".to_string(),
                 anchored_go_test_pattern(&name),
             ]),
-            scope: Some("target_test".to_string()),
+            scope: Some(prog_core::ActionScope::TargetTest),
             exactness: Some(prog_core::ActionExactness::Exact),
             derived_from: Some("go_test.failed_name_and_package".to_string()),
             does_not_satisfy: does_not_satisfy.to_vec(),
@@ -927,7 +1030,7 @@ pub(crate) fn cargo_test_target_actions(
                 path: None,
                 reason: Some(reason.to_string()),
                 argv: Some(argv),
-                scope: Some("target_test".to_string()),
+                scope: Some(prog_core::ActionScope::TargetTest),
                 exactness: Some(exactness),
                 derived_from: Some(derived_from.to_string()),
                 does_not_satisfy: does_not_satisfy.to_vec(),
@@ -975,7 +1078,7 @@ pub(crate) fn jest_vitest_target_actions(
                     "--testNamePattern".to_string(),
                     anchored_regex(name),
                 ]),
-                scope: Some("target_test".to_string()),
+                scope: Some(prog_core::ActionScope::TargetTest),
                 exactness: Some(prog_core::ActionExactness::Exact),
                 derived_from: Some("jest_vitest.failed_path_and_name".to_string()),
                 does_not_satisfy: does_not_satisfy.to_vec(),
@@ -1000,7 +1103,7 @@ pub(crate) fn jest_vitest_target_actions(
                     "--testNamePattern".to_string(),
                     anchored_regex(name),
                 ]),
-                scope: Some("target_test".to_string()),
+                scope: Some(prog_core::ActionScope::TargetTest),
                 exactness: Some(prog_core::ActionExactness::Filter),
                 derived_from: Some("jest_vitest.failed_name_filter".to_string()),
                 does_not_satisfy: does_not_satisfy.to_vec(),
@@ -1021,7 +1124,7 @@ pub(crate) fn jest_vitest_target_actions(
                     "rerun this failed test file; no individual test name was proven".to_string(),
                 ),
                 argv: Some(vec![runner.clone(), path.clone()]),
-                scope: Some("target_file".to_string()),
+                scope: Some(prog_core::ActionScope::TargetFile),
                 exactness: Some(prog_core::ActionExactness::Approximate),
                 derived_from: Some("jest_vitest.failed_path".to_string()),
                 does_not_satisfy: does_not_satisfy.to_vec(),
@@ -1231,9 +1334,11 @@ fn run_provenance(
             },
             "signal": match status {
                 RunProcessStatus::Exited { signal, .. } => json!(signal),
+                RunProcessStatus::Cancelled { signal } => json!(signal),
                 _ => Value::Null,
             },
-            "timed_out": matches!(status, RunProcessStatus::TimedOut)
+            "timed_out": matches!(status, RunProcessStatus::TimedOut),
+            "cancelled": matches!(status, RunProcessStatus::Cancelled { .. })
         }),
     );
     CallProvenance {
@@ -1267,6 +1372,9 @@ fn run_warnings(
             "child command timed out after {} ms and was killed",
             args.timeout_ms
         )),
+        RunProcessStatus::Cancelled { signal } => warnings.push(format!(
+            "child command was cancelled by signal {signal} and its process group was killed"
+        )),
         RunProcessStatus::SpawnError(message) => {
             warnings.push(format!("child command could not be started: {message}"));
         }
@@ -1292,6 +1400,7 @@ fn run_status_name(status: &RunProcessStatus) -> &'static str {
         RunProcessStatus::Exited { success: true, .. } => "success",
         RunProcessStatus::Exited { success: false, .. } => "exit_nonzero",
         RunProcessStatus::TimedOut => "timeout",
+        RunProcessStatus::Cancelled { .. } => "cancelled",
         RunProcessStatus::SpawnError(_) => "spawn_error",
     }
 }
@@ -1308,6 +1417,7 @@ fn run_exit_code(status: &RunProcessStatus) -> RunExitCode {
         } => RunExitCode::Signal(*signal),
         RunProcessStatus::Exited { .. } => RunExitCode::Code(1),
         RunProcessStatus::TimedOut => RunExitCode::Timeout,
+        RunProcessStatus::Cancelled { signal } => RunExitCode::Signal(*signal),
         RunProcessStatus::SpawnError(_) => RunExitCode::SpawnError,
     }
 }

@@ -18,7 +18,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml_ng = "0.10"
 schemars = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "time", "signal"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }

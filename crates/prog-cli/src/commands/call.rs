@@ -21,6 +21,7 @@ pub(crate) async fn call_source(
     // and the upgrade is inspectable.
     let (effective_effects, auto_upgrade_audit) =
         check_call(&operation, CallFlags { yes: args.yes }, &profile.trust)?;
+    let state_policy_scope = source_state_policy_scope(&profile, &operation, &effective_effects)?;
     let requested_view = parse_view(args.view.as_deref())?;
     let lens = match &args.lens {
         Some(id) => {
@@ -139,12 +140,14 @@ pub(crate) async fn call_source(
         {
             Some(observation_id) => store
                 .get_observation(observation_id)?
-                .and_then(|observation| observation.source_state),
+                .and_then(|observation| observation.source_state)
+                .filter(|state| source_state_is_revalidatable(state, &state_policy_scope)),
             None => None,
         }
     } else {
         None
     };
+    store.release()?;
     let adapter_call =
         execute_callable_conditional(&source, &operation, &call_args, revalidation.as_ref())
             .await?;
@@ -294,6 +297,22 @@ pub(crate) async fn call_source(
     }
     let received_error = adapter_call.received_error;
     let first_pagination = adapter_call.pagination.clone();
+    let mut provenance = call_provenance(
+        &cache_key,
+        adapter_call.status,
+        adapter_call.duration_ms,
+        adapter_call.provenance,
+    );
+    let mut source_state_capture = source_state_from_response(
+        profile.kind,
+        &operation,
+        &args.source_id,
+        &args.operation,
+        &call_args,
+        &adapter_call.data,
+        &provenance,
+    )?;
+    stamp_source_state_policy(&mut source_state_capture, &state_policy_scope);
     let redaction = resolve_redaction(Some(&profile));
     let redacted = RawPayload::new(adapter_call.data).redact(&redaction);
     let redacted_paths = redacted.redacted_paths;
@@ -302,16 +321,11 @@ pub(crate) async fn call_source(
     let payload_bytes = json_len_u64(payload.as_value())?;
     let observed = infer(payload.as_value());
 
-    let mut provenance = call_provenance(
-        &cache_key,
-        adapter_call.status,
-        adapter_call.duration_ms,
-        adapter_call.provenance,
-    );
     provenance
         .extra
         .insert("received_error".to_string(), Value::Bool(received_error));
     let mut warnings = adapter_call.warnings;
+    warnings.extend(source_state_capture.warnings);
     warnings.extend(call_effect_warnings(&operation));
     if args.no_cache {
         warnings.push("profile learning skipped because --no-cache was requested".to_string());
@@ -342,13 +356,30 @@ pub(crate) async fn call_source(
         ));
     }
 
+    let preserve_prior_cache = args.refresh && received_error && cached_entry.is_some();
+    let persistence_cache_key = if preserve_prior_cache {
+        warnings.push(
+            "refresh failed; retained the prior cache entry and stored this error as a separate observation"
+                .to_string(),
+        );
+        Store::cache_key(
+            &args.source_id,
+            &args.operation,
+            &json!({
+                "call_args": call_args,
+                "refresh_error_at": provenance.captured_at
+            }),
+        )?
+    } else {
+        cache_key.clone()
+    };
     let payload_hash = if may_cache {
         store.put_payload(&payload)?
     } else {
         Store::payload_hash(&payload)?
     };
     if may_cache {
-        provenance.cache_key = Some(cache_key.clone());
+        provenance.cache_key = Some(persistence_cache_key.clone());
     } else {
         provenance.cache_key = None;
     }
@@ -375,7 +406,7 @@ pub(crate) async fn call_source(
             prog_core::SourceValidity::ValidatorUnavailable
         }
     } else {
-        prog_core::SourceValidity::Unknown
+        source_state_capture.validity
     };
     let observation_id = record_capture(
         store,
@@ -388,18 +419,12 @@ pub(crate) async fn call_source(
         args.comparison_family.clone(),
         selection_coverage(&args.selection_scopes, args.selection_exhaustive),
         Some(provenance.clone()),
-        may_cache.then(|| cache_key.clone()),
+        may_cache.then(|| persistence_cache_key.clone()),
         !redacted_paths.is_empty(),
         Some(source_kind_provider(profile.kind)),
         None,
         lens.as_ref(),
-        source_state_from_provenance(
-            profile.kind,
-            &args.source_id,
-            &args.operation,
-            &call_args,
-            &provenance,
-        )?,
+        source_state_capture.token,
         source_validity,
     )?;
 
@@ -407,7 +432,7 @@ pub(crate) async fn call_source(
     let cache_retained = if may_cache {
         let ttl = ttl_seconds(&effective_cache);
         let mut entry = new_cache_entry(
-            cache_key.clone(),
+            persistence_cache_key.clone(),
             payload_hash,
             args.source_id.clone(),
             args.operation.clone(),
@@ -416,7 +441,7 @@ pub(crate) async fn call_source(
         );
         entry.observation_id = Some(observation_id.clone());
         entry.provenance = Some(provenance.clone());
-        let retained = store.put_entry(&cache_key, &entry)?;
+        let retained = store.put_entry(&persistence_cache_key, &entry)?;
         if !retained {
             let reason =
                 "cache retention policy evicted this payload before it could be reused".to_string();
@@ -429,8 +454,8 @@ pub(crate) async fn call_source(
     };
     let cache_status = if cache_retained {
         let entry = store
-            .get_entry(&cache_key)?
-            .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?;
+            .get_entry(&persistence_cache_key)?
+            .ok_or_else(|| CoreError::CacheMiss(persistence_cache_key.clone()))?;
         Some(cache_info(CacheStatus::Stored, &entry, Some(0)))
     } else if !may_cache {
         let reason = cache_skip_warning(args.no_cache, &operation);
@@ -454,7 +479,7 @@ pub(crate) async fn call_source(
     let cursor = cursor_for_projection(
         store,
         CursorInput {
-            cache_key: &cache_key,
+            cache_key: &persistence_cache_key,
             source_id: &args.source_id,
             operation: &args.operation,
             root_path: &root_path,
@@ -553,6 +578,7 @@ pub(crate) async fn call_source(
                 // Resolve the target into a fetched page + the args used for
                 // the cache key. URL continuation (Link rel="next") now follows
                 // the same-host guard inside HttpSource::execute_url.
+                store.release()?;
                 let (page_call, page_key_args) = match target {
                     prog_core::PageTarget::Args(page_args) => {
                         let call = match execute_callable(&source, &operation, &page_args).await {
@@ -596,6 +622,25 @@ pub(crate) async fn call_source(
                         }
                     }
                 };
+                let page_cache_key =
+                    Store::cache_key(&args.source_id, &args.operation, &page_key_args)?;
+                let page_provenance = call_provenance(
+                    &page_cache_key,
+                    page_call.status.clone(),
+                    page_call.duration_ms,
+                    page_call.provenance.clone(),
+                );
+                let mut page_source_state = source_state_from_response(
+                    profile.kind,
+                    &operation,
+                    &args.source_id,
+                    &args.operation,
+                    &page_key_args,
+                    &page_call.data,
+                    &page_provenance,
+                )?;
+                stamp_source_state_policy(&mut page_source_state, &state_policy_scope);
+                prefetch_warnings.extend(page_source_state.warnings);
                 // redact -> infer -> store -> project, per page (I2/I8).
                 let page_payload = RawPayload::new(page_call.data).redact(&redaction).payload;
                 let page_bytes = json_len_u64(page_payload.as_value())?;
@@ -623,19 +668,11 @@ pub(crate) async fn call_source(
                     .map(|region| region.path.clone())
                     .collect();
 
-                let page_cache_key =
-                    Store::cache_key(&args.source_id, &args.operation, &page_key_args)?;
                 let page_hash = if may_cache {
                     store.put_payload(&page_payload)?
                 } else {
                     Store::payload_hash(&page_payload)?
                 };
-                let page_provenance = call_provenance(
-                    &page_cache_key,
-                    page_call.status.clone(),
-                    page_call.duration_ms,
-                    page_call.provenance.clone(),
-                );
                 let (availability, mut capture) = adapter_capture(
                     Some(&page_provenance),
                     page_payload.as_value(),
@@ -661,18 +698,16 @@ pub(crate) async fn call_source(
                     Some(source_kind_provider(profile.kind)),
                     None,
                     lens.as_ref(),
-                    source_state_from_provenance(
-                        profile.kind,
-                        &args.source_id,
-                        &args.operation,
-                        &page_key_args,
-                        &page_provenance,
-                    )?,
+                    page_source_state.token,
                     // Prefetched pages belong to the same top-level call as
                     // page 1; the source-validity determination made for
                     // page 1 (refresh outcome, or Unknown for a plain call)
                     // applies uniformly across the whole operation.
-                    source_validity,
+                    if source_validity == prog_core::SourceValidity::Unknown {
+                        page_source_state.validity
+                    } else {
+                        source_validity
+                    },
                 )?;
                 let page_cursor = if may_cache {
                     let ttl = ttl_seconds(&effective_cache);
@@ -859,5 +894,63 @@ pub(crate) async fn call_source(
     Ok(CallSourceResult {
         envelope,
         received_error,
+    })
+}
+
+fn source_state_policy_scope(
+    profile: &SourceProfile,
+    operation: &OperationProfile,
+    effective_effects: &EffectSet,
+) -> Result<String> {
+    let auth = profile
+        .auth
+        .iter()
+        .map(|auth| {
+            json!({
+                "name": auth.name,
+                "env": auth.env,
+                "header": auth.header,
+                "format": auth.format,
+                // Credential values are present only in this transient hash
+                // input. Neither the value nor a separately reusable digest
+                // is persisted.
+                "credential": std::env::var(&auth.env).ok()
+            })
+        })
+        .collect::<Vec<_>>();
+    prog_core::invocation_scope(&json!({
+        "source_id": profile.id,
+        "source_kind": profile.kind,
+        "operation": operation.id,
+        "auth": auth,
+        "effects": effective_effects
+    }))
+}
+
+fn stamp_source_state_policy(capture: &mut prog_core::SourceStateCapture, policy_scope: &str) {
+    if let Some(token) = &mut capture.token {
+        token.extra.insert(
+            "policy_scope".to_string(),
+            Value::String(policy_scope.to_string()),
+        );
+    }
+}
+
+fn source_state_is_revalidatable(state: &SourceStateToken, policy_scope: &str) -> bool {
+    if !matches!(
+        state.kind,
+        prog_core::SourceStateKind::HttpEtag | prog_core::SourceStateKind::HttpLastModified
+    ) || state.extra.get("policy_scope").and_then(Value::as_str) != Some(policy_scope)
+        || !matches!(
+            state.validity,
+            prog_core::SourceValidity::Unknown | prog_core::SourceValidity::ConfirmedUnchanged
+        )
+    {
+        return false;
+    }
+    state.expires_at.as_deref().is_none_or(|expires_at| {
+        chrono::DateTime::parse_from_rfc3339(expires_at)
+            .map(|expiry| expiry > chrono::Utc::now())
+            .unwrap_or(false)
     })
 }

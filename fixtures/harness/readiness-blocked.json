@@ -1,0 +1,9 @@
+{
+  "schema": "prog.verification",
+  "configured": true,
+  "ready": false,
+  "evaluations": [],
+  "blockers": [
+    "affected-suite: no evidence observation is attached"
+  ]
+}

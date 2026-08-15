@@ -9,6 +9,16 @@ identifies the source and limits that governed source capture when one was
 performed. `storage_budget` identifies the durable retention policy used by the
 local store. See `prog --help` for `--budget-bytes` and `--budget-tokens`.
 
+`DisclosureEnvelope.summary` keeps payload cost and immediate envelope cost
+separate. `payload_bytes` is the size of the complete redacted payload retained
+behind the cursor. `envelope_bytes` is the serialized disclosure envelope, and
+`estimated_envelope_tokens` is exactly `ceil(envelope_bytes / 4)` using the
+named approximate estimator; it never estimates the hidden payload. For the
+final process-level response, including the common budget blocks and trailing
+newline, use `disclosure_budget.actual_bytes`. Replay reports likewise label
+actual model-visible response bytes separately from their `bytes/4-ceiling`
+token estimate.
+
 For `call` and `hints`, a source profile may declare
 `"disclosure_budget": {"max_bytes": 4096}`. Precedence is command flag,
 environment variable, source profile, then the default. The response's
@@ -28,36 +38,84 @@ prog --pretty meta DisclosureEnvelope
 prog --pretty meta EvidenceRef
 prog --pretty meta InspectResponse
 prog --pretty meta EvidenceBlock
+prog --pretty meta ActionIntent
+prog --pretty meta ReadbackVerificationReceipt
 prog --pretty meta SearchResponse
 prog --pretty meta CacheEntryMeta
 ```
 
 The current public contracts include:
 
+- `ErrorEnvelope`
+- `ErrorBody`
 - `SourceProfile`
 - `DisclosureBudget`
+- `SourceKind`
 - `OperationProfile`
 - `Shape`
 - `EffectSet`
-- `CachePolicy`
-- `TrustSettings`
-- `AuthRef`
-- `DisclosureEnvelope`
 - `ObservationMetadata`
+- `ObservationCompleteness`
+- `ObservationFreshness`
+- `ObservationTrust`
+- `ObservationSafety`
+- `ObservationPayloadStatus`
 - `ObservationRecord`
+- `WorkspaceState`
+- `WorkspacePathState`
+- `SubmoduleState`
+- `WorkspaceValidity`
+- `WorkspaceComparison`
+- `ObservationLineage`
 - `EvidenceAvailability`
 - `BudgetSource`
 - `CaptureLimit`
 - `CaptureBudget`
 - `StorageBudget`
+- `StorageQuotaSummary`
 - `StorageBudgetSummary`
 - `CaptureStopReason`
 - `CaptureScope`
 - `CaptureCompleteness`
+- `SourceStateToken`
+- `SourceStateSelector`
+- `SourceStateKind`
+- `SourceValidity`
+- `SubjectIdentity`
+- `ScopeRelationship`
+- `SelectionCoverage`
+- `ComparabilityAssessment`
+- `DeltaFindingStatus`
+- `DeltaFinding`
+- `ObservationDelta`
+- `ObligationDeclarer`
+- `VerificationOperation`
+- `VerificationStateRelationship`
+- `VerificationObligation`
+- `ObligationEvaluation`
+- `ReadinessReport`
+- `VerificationStatus`
+- `ExpectedStateChange`
+- `ActionIntent`
+- `ReadbackVerificationStatus`
+- `ReadbackCheck`
+- `ReadbackVerificationReceipt`
+- `RouteGuidance`
+- `RouteRule`
+- `RoutePolicy`
+- `RouteAssessment`
+- `StatusReport`
+- `CachePolicy`
+- `TrustSettings`
+- `AuthRef`
+- `DisclosureEnvelope`
+- `DisclosureVerdict`
+- `DisclosureVerdictResult`
 - `EvidenceRef`
 - `InspectResponse`
 - `Finding`
 - `FindingCommandHints`
+- `NavigationCommand`
 - `EvidenceBlock`
 - `EvidenceCitation`
 - `SearchResponse`
@@ -69,6 +127,10 @@ The current public contracts include:
 - `RedactionState`
 - `Summary`
 - `OmittedRegion`
+- `OmissionReason`
+- `ActionExactness`
+- `ActionScope`
+- `ActionTemplate`
 - `NextAction`
 - `LensManifest`
 - `LensFindingRule`
@@ -81,14 +143,43 @@ The current public contracts include:
 - `CacheEntryMeta`
 - `CallProvenance`
 - `CacheInfo`
+- `CacheStatus`
 - `CacheList`
+- `ObservationList`
+- `ObligationList`
 - `PurgeSummary`
 - `SessionEvent`
 - `SessionTrail`
 
 ## Forward compatibility
 
-Consumers must ignore unknown object fields. The contracts intentionally allow extra fields in profiles, envelopes, cache metadata, and provenance so adapters can add details without breaking older clients.
+The pre-release reset leaves one representation of each current contract. There
+are no migration tables, deprecated aliases, dual-write records, or accepted
+internal `schema_version`/`version` fields. Profiles and lenses with an obsolete
+identity are rejected; persisted stores with a different `STORE_SCHEMA` are
+audibly reset instead of interpreted.
+
+The remaining version-like values are evidence, not compatibility scaffolding:
+
+- `SourceProfile.revision` serializes concurrent profile updates and must
+  increase locally; it does not select a wire format.
+- MCP `protocol_version` is the negotiated upstream protocol revision.
+- OpenAPI and API-info versions describe an imported upstream document.
+- Cargo/package versions identify a released artifact.
+
+The extension audit follows two rules. Closed user-authored manifests such as
+`LensManifest`, and closed result subobjects such as `CacheInfo`, reject unknown
+fields. Provider-owned profile invocation data, provenance, and agent-facing
+result objects retain flattened extension maps because those fields carry
+source-specific evidence and additive output metadata; they do not select a
+legacy parser or alternate representation. Inert observation fields are not
+kept as speculative extensions: `subject_keys` and `environment_state` were
+removed with the canonical observation-store reset because no capture populated
+them and no reader consumed them.
+
+Consumers must ignore unknown object fields on additive result and provider
+extension surfaces. Those contracts intentionally allow extra fields so
+adapters can add evidence details without breaking older clients.
 
 Consumers should branch on stable required fields first:
 
@@ -104,9 +195,16 @@ Consumers should branch on stable required fields first:
 
 For expansions, use JSON Pointer paths from `omitted` or `next_actions` instead of guessing positions from a preview. Previews are bounded and may omit long arrays, large strings, deep objects, or high-cardinality fields.
 
-`next_actions` may include forward-compatible planner metadata such as
-`priority`, `omitted_reason`, `detail`, `argv`, and `offline`. Consumers should
-use known fields and ignore unknown extras.
+`next_actions` may include planner metadata such as `priority`,
+`omitted_reason`, and `detail`. Cursor-backed actions do not repeat rendered
+commands: `action_templates` declares symbolic argv once per action kind using
+`{cursor}` and `{path}`, and `NextAction.kind` selects that template. The typed
+`cached_evidence` scope is offline by contract and never contacts upstream.
+Direct rerun recommendations keep an exact argv on the individual action.
+
+Finding command hints are similarly compact. `commands.available` lists typed
+navigation kinds; their cursor, path, and finding kind come from the containing
+response/finding instead of being repeated as shell strings.
 
 `observation` describes how to interpret the preview: completeness, freshness,
 trust, safety, and cache-backed payload availability. This metadata is additive;

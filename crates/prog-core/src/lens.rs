@@ -555,45 +555,36 @@ fn value_contains_any(value: &Value, terms: &[String], depth: usize, visited: &m
     }
 }
 
-fn lens_command_hints(options: &FindingOptions, path: &str, kind: &str) -> FindingCommandHints {
-    let Some(cursor) = options.cursor.as_deref() else {
+fn lens_command_hints(options: &FindingOptions, _path: &str, _kind: &str) -> FindingCommandHints {
+    if options.cursor.is_none() {
         return FindingCommandHints::default();
-    };
-    let cursor = shell_arg(cursor);
-    let path = shell_arg(path);
-    let goal = shell_arg(&format!("investigate {kind}"));
-    let kind = shell_arg(kind);
-    FindingCommandHints {
-        inspect: options
+    }
+    let mut available = Vec::new();
+    available.extend(
+        options
             .hints
             .inspect
-            .then(|| format!("prog inspect {cursor} --goal {goal} --path {path}")),
-        expand: options
+            .then_some(crate::NavigationCommand::Inspect),
+    );
+    available.extend(
+        options
             .hints
             .expand
-            .then(|| format!("prog expand {cursor} --path {path}")),
-        evidence: options
+            .then_some(crate::NavigationCommand::Expand),
+    );
+    available.extend(
+        options
             .hints
             .evidence
-            .then(|| format!("prog evidence {cursor} --path {path}")),
-        search: options
+            .then_some(crate::NavigationCommand::Evidence),
+    );
+    available.extend(
+        options
             .hints
             .search
-            .then(|| format!("prog find {cursor} --kind {kind} --path {path}")),
-        extra: Extra::new(),
-    }
-}
-
-fn shell_arg(value: &str) -> String {
-    if !value.is_empty()
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':'))
-    {
-        value.to_string()
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
-    }
+            .then_some(crate::NavigationCommand::Search),
+    );
+    FindingCommandHints { available }
 }
 
 fn object_line_range(value: &Value) -> Option<crate::LineRange> {

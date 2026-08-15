@@ -10,7 +10,67 @@ pub(crate) async fn source_command(
     match command {
         SourceCommand::AddHttp(args) => source_add_http(store, dir, args).await,
         SourceCommand::AddCli(args) => source_add_cli(store, dir, args).await,
+        SourceCommand::AddMcp(args) => source_add_mcp(store, dir, args).await,
     }
+}
+
+async fn source_add_mcp(
+    store: &Store,
+    dir: &Path,
+    args: &SourceAddMcpArgs,
+) -> Result<SourceAddReport> {
+    let Some((command, command_args)) = args.command.split_first() else {
+        return Err(CoreError::BadArgs {
+            operation: "source add-mcp".to_string(),
+            reason: "pass an MCP stdio server command after --".to_string(),
+        });
+    };
+    let seed = json!({
+        "kind": "mcp",
+        "command": command,
+        "args": command_args
+    });
+    let discovery =
+        discover_from_seed(store, &args.source_id, SourceKind::Mcp, seed.clone(), false).await?;
+    let profile = store
+        .read_profile(&args.source_id)?
+        .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
+    let operations = profile
+        .operations
+        .iter()
+        .map(|operation| operation.id.clone())
+        .collect::<Vec<_>>();
+    let mut next_steps = vec![format!(
+        "prog --dir {} hints {}",
+        shell_quote(&dir.to_string_lossy()),
+        args.source_id
+    )];
+    for operation in &profile.operations {
+        let (effects, _) = effective_effects(&operation.effects, &profile.trust);
+        next_steps.extend(source_add_next_steps(
+            dir,
+            &args.source_id,
+            &operation.id,
+            effects.mutating || effects.requires_confirmation,
+        ));
+    }
+    next_steps.sort();
+    next_steps.dedup();
+    Ok(SourceAddReport {
+        schema: DISCLOSURE_SCHEMA,
+        source_id: args.source_id.clone(),
+        kind: prog_core::SourceKind::Mcp,
+        operation: operations
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "*".to_string()),
+        operations,
+        generated_seed: seed,
+        next_steps,
+        structured_output: Vec::new(),
+        warnings: discovery.warnings.clone(),
+        discovery,
+    })
 }
 
 async fn source_add_http(
@@ -54,6 +114,7 @@ async fn source_add_http(
         schema: DISCLOSURE_SCHEMA,
         source_id: args.source_id.clone(),
         kind: prog_core::SourceKind::Http,
+        operations: vec![operation.clone()],
         operation,
         generated_seed: seed,
         next_steps,
@@ -132,6 +193,7 @@ async fn source_add_cli(
         schema: DISCLOSURE_SCHEMA,
         source_id: args.source_id.clone(),
         kind: prog_core::SourceKind::Cli,
+        operations: vec![operation.clone()],
         operation,
         generated_seed: seed,
         next_steps,

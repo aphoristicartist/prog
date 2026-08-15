@@ -128,7 +128,7 @@ The value proposition of `prog` is bounded context injection. That bound is a co
 - Every agent-visible document (envelope, hints, expansion result) respects `max_envelope_bytes` (default 16 KiB, configurable per store and per call).
 - The projection algorithm is deterministic: per-node caps (array items, object fields, string length, depth) plus a global node budget, applied in traversal order. Same payload + same policy = same preview, always.
 - If a projection still exceeds the budget, it is re-projected at a coarser policy (reflexive budgeting), never silently truncated mid-JSON.
-- Summaries include `approx_tokens`, an explicit `envelope_bytes / 4` ceiling estimate for the delivered JSON envelope, so agents can reason about immediate context cost before expanding.
+- Summaries include `estimated_envelope_tokens`, an explicit `envelope_bytes / 4` ceiling estimate for the delivered JSON envelope, so agents can reason about immediate context cost before expanding.
 
 ## Example Interaction
 
@@ -151,7 +151,7 @@ A `call` should return something like:
     "item_count": 87,
     "preview_count": 5,
     "payload_bytes": 412773,
-    "approx_tokens": 103193,
+    "estimated_envelope_tokens": 103193,
     "envelope_bytes": 2841
   },
   "data_preview": [
@@ -316,19 +316,20 @@ Pre-release contract rule: profile and lens inputs must match the current contra
   "schema": "prog.source_profile",
   "id": "github",
   "kind": "http",
-  "display_name": "GitHub REST API",
-  "version": 3,
-  "auth_refs": [{ "name": "token", "env": "GITHUB_TOKEN" }],
+  "revision": 1,
+  "description": "GitHub REST API",
+  "auth": [{ "name": "token", "env": "GITHUB_TOKEN" }],
   "operations": [],
-  "cache_policy": { "enabled": true, "ttl_seconds": 86400, "max_payload_bytes": 33554432 },
-  "safety": {},
-  "trust": { "allow_shell": false, "allow_mutating": false },
-  "learned_at": "2026-07-04T14:21:00Z",
-  "provenance": { "created_by": "seed", "discovery_runs": 2 }
+  "cache": { "enabled": true, "ttl_seconds": 86400 },
+  "trust": { "allow_network": true },
+  "effect_defaults": {},
+  "redaction": {}
 }
 ```
 
-Required fields: `schema`, `id`, `kind`, `revision`, `operations`, `cache_policy`, `safety`, `provenance`.
+Required identity fields are `schema`, `id`, and `kind`; validation additionally
+requires the local `revision` to be greater than zero. Other fields have current
+fail-closed defaults.
 
 Profiles must never contain secrets. Auth is referenced by environment-variable name only; profiles are designed to be committed to a repo.
 
@@ -336,7 +337,7 @@ Profiles must never contain secrets. Auth is referenced by environment-variable 
 
 ```json
 {
-  "name": "list_issues",
+  "id": "list_issues",
   "description": "List issues for a repository.",
   "input_schema": { "type": "object", "required": ["owner", "repo"] },
   "output_shape": { "kind": "unknown" },
@@ -345,7 +346,7 @@ Profiles must never contain secrets. Auth is referenced by environment-variable 
   "pagination": { "style": "link_header", "note": "agent decides; prog does not auto-follow" },
   "examples": [],
   "cost_hint": { "network": true, "estimated_bytes": null },
-  "effect": {
+  "effects": {
     "read_only": true,
     "mutating": false,
     "network": true,
@@ -682,7 +683,9 @@ Policy rules (all fail closed; unknown = worst case):
 
 Two agent processes may run `prog` against the same `.prog/` simultaneously.
 
-- The redb store has a single-writer model; concurrent writers block briefly. Acceptable for V1.
+- The redb store has a single-writer model. `prog` releases its handle before
+  waiting on external work, retries brief acquisition contention with bounded
+  backoff, and returns typed `storage_busy` JSON if that bound is exhausted.
 - Profiles-as-JSON-files are the hazard: racy read-modify-write loses learned schema, which silently violates monotone learning (I5). Profile writes therefore go through a lock-protected update with a monotonically increasing local `revision` (write to temp file and atomically rename). This revision is local state bookkeeping, not a wire-schema compatibility version.
 
 ## Storage Layout

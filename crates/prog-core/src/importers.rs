@@ -262,6 +262,7 @@ pub fn import_json_schema(
             extra: Map::new(),
         },
         pagination: None,
+        source_state: None,
         extra: schema_prior("json_schema", false),
     };
 
@@ -367,6 +368,7 @@ pub fn import_mcp_schemas(
                 extra: Map::new(),
             },
             pagination: None,
+            source_state: None,
             extra,
         });
     }
@@ -418,6 +420,7 @@ pub fn import_mcp_schemas(
                 extra: Map::new(),
             },
             pagination: None,
+            source_state: None,
             extra,
         });
     }
@@ -728,6 +731,7 @@ fn import_openapi_operation(
                 extra: Map::new(),
             },
             pagination: None,
+            source_state: None,
             extra,
         },
         declared_output_schema.is_some(),
@@ -1096,6 +1100,7 @@ fn cli_operation(
         },
         cache: CachePolicy::default(),
         pagination: None,
+        source_state: None,
         extra,
     }
 }

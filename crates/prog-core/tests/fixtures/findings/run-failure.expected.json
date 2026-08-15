@@ -15,10 +15,12 @@
       "end": 4
     },
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate python_traceback' --path /failure_sections/0",
-      "expand": "prog expand pc1_golden --path /failure_sections/0",
-      "evidence": "prog evidence pc1_golden --path /failure_sections/0",
-      "search": "prog find pc1_golden --kind python_traceback --path /failure_sections/0"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     },
     "section_kind": "python",
     "stream": "stderr",
@@ -36,10 +38,12 @@
     "severity": "error",
     "source": "generic.string_pattern",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate test_failure' --path /failure_sections/0/lines/3",
-      "expand": "prog expand pc1_golden --path /failure_sections/0/lines/3",
-      "evidence": "prog evidence pc1_golden --path /failure_sections/0/lines/3",
-      "search": "prog find pc1_golden --kind test_failure --path /failure_sections/0/lines/3"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   },
   {
@@ -54,10 +58,12 @@
     "severity": "error",
     "source": "generic.string_pattern",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate stack_trace' --path /failure_sections/0/lines/0",
-      "expand": "prog expand pc1_golden --path /failure_sections/0/lines/0",
-      "evidence": "prog evidence pc1_golden --path /failure_sections/0/lines/0",
-      "search": "prog find pc1_golden --kind stack_trace --path /failure_sections/0/lines/0"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   },
   {
@@ -72,10 +78,12 @@
     "severity": "error",
     "source": "generic.string_pattern",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate stack_trace' --path /stderr/text",
-      "expand": "prog expand pc1_golden --path /stderr/text",
-      "evidence": "prog evidence pc1_golden --path /stderr/text",
-      "search": "prog find pc1_golden --kind stack_trace --path /stderr/text"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   },
   {
@@ -89,10 +97,12 @@
     "severity": "error",
     "source": "generic.run.command",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate nonzero_exit' --path /command",
-      "expand": "prog expand pc1_golden --path /command",
-      "evidence": "prog evidence pc1_golden --path /command",
-      "search": "prog find pc1_golden --kind nonzero_exit --path /command"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   }
 ]

@@ -1,4 +1,4 @@
-//! Lens parsing, loading, and compatibility validation.
+//! Lens parsing, loading, and source-match validation.
 
 use crate::*;
 

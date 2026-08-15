@@ -15,10 +15,12 @@
       "end": 3
     },
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate rust_compile_error' --path /failure_sections/0",
-      "expand": "prog expand pc1_golden --path /failure_sections/0",
-      "evidence": "prog evidence pc1_golden --path /failure_sections/0",
-      "search": "prog find pc1_golden --kind rust_compile_error --path /failure_sections/0"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     },
     "section_kind": "rust",
     "stream": "stderr",
@@ -40,10 +42,12 @@
       "end": 5
     },
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate compile_error' --path /failure_sections/1",
-      "expand": "prog expand pc1_golden --path /failure_sections/1",
-      "evidence": "prog evidence pc1_golden --path /failure_sections/1",
-      "search": "prog find pc1_golden --kind compile_error --path /failure_sections/1"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     },
     "section_kind": "build",
     "stream": "stderr",
@@ -61,10 +65,12 @@
     "severity": "error",
     "source": "generic.string_pattern",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate rust_compile_error' --path /failure_sections/0/lines/0",
-      "expand": "prog expand pc1_golden --path /failure_sections/0/lines/0",
-      "evidence": "prog evidence pc1_golden --path /failure_sections/0/lines/0",
-      "search": "prog find pc1_golden --kind rust_compile_error --path /failure_sections/0/lines/0"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   },
   {
@@ -79,10 +85,12 @@
     "severity": "error",
     "source": "generic.string_pattern",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate compile_error' --path /failure_sections/1/lines/0",
-      "expand": "prog expand pc1_golden --path /failure_sections/1/lines/0",
-      "evidence": "prog evidence pc1_golden --path /failure_sections/1/lines/0",
-      "search": "prog find pc1_golden --kind compile_error --path /failure_sections/1/lines/0"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   },
   {
@@ -96,10 +104,12 @@
     "severity": "error",
     "source": "generic.run.command",
     "commands": {
-      "inspect": "prog inspect pc1_golden --goal 'investigate nonzero_exit' --path /command",
-      "expand": "prog expand pc1_golden --path /command",
-      "evidence": "prog evidence pc1_golden --path /command",
-      "search": "prog find pc1_golden --kind nonzero_exit --path /command"
+      "available": [
+        "inspect",
+        "expand",
+        "evidence",
+        "search"
+      ]
     }
   }
 ]

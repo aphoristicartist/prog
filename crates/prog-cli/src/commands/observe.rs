@@ -8,6 +8,7 @@ pub(crate) fn observe_artifact(
     args: &ObserveArgs,
     ctx: &mut InvocationContext,
 ) -> Result<DisclosureEnvelope> {
+    store.release()?;
     let input = read_observation_input(args)?;
     let normalized = normalize_observation(&input.bytes, &input.mime)?;
     let lens = match &args.lens {

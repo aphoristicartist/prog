@@ -15,6 +15,7 @@ overview and quickstart; contributors and coding agents should read
 | [evidence-navigation.md](evidence-navigation.md) | `inspect`, `search`, `find`, `evidence`, `expand`. |
 | [paths.md](paths.md) | Listing addressable JSON Pointer paths. |
 | [findings.md](findings.md) | How deterministic findings are produced and ranked. |
+| [coding-providers.md](coding-providers.md) | Bounded pytest and Cargo/rustc normalization. |
 | [integrations.md](integrations.md) | Agent skills, hooks, and the MCP stance. |
 
 ## Verification
@@ -22,9 +23,10 @@ overview and quickstart; contributors and coding agents should read
 | Doc | Covers |
 |---|---|
 | [delta.md](delta.md) | Conservative comparison of two observations; when absence is provable. |
-| [verification.md](verification.md) | Verification obligations and readiness gating. |
+| [verification.md](verification.md) | Verification obligations, independent mutation read-back, and readiness gating. |
 | [mcp-tasks.md](mcp-tasks.md) | Long-running MCP task lifecycle. |
 | [evidence.md](evidence.md) | Observation records, lineage, and evidence references. |
+| [source-state.md](source-state.md) | Native validators, declared change tokens, MCP modification annotations, and revalidation. |
 | [evidence-acquisition.md](evidence-acquisition.md) | Evidence-acquisition eval and its baseline. |
 
 ## Contracts and safety
@@ -37,7 +39,7 @@ overview and quickstart; contributors and coding agents should read
 | [metadata.md](metadata.md) | Observation metadata fields. |
 | [lenses.md](lenses.md) | Lens manifests. Lenses are data and cannot execute code. |
 | [lens-packs.md](lens-packs.md) | Distributing lenses as packs. |
-| [../INVARIANTS.md](../INVARIANTS.md) | The thirteen invariants and their executable tests. |
+| [../INVARIANTS.md](../INVARIANTS.md) | The fourteen invariants and their executable tests. |
 
 ## Evaluation and positioning
 
@@ -46,6 +48,7 @@ overview and quickstart; contributors and coding agents should read
 | [token-economics.md](token-economics.md) | Raw-vs-prog token ratios across fixtures. |
 | [task-success-eval.md](task-success-eval.md) | Task-success evaluation. |
 | [replay-eval.md](replay-eval.md) | Multi-iteration replay oracle for delta and readiness correctness. |
+| [agent-eval.md](agent-eval.md) | Actual-agent claim gate status and false-completion grader replay. |
 | [competitive-baselines.md](competitive-baselines.md) | Comparisons, including cases prog loses. |
 | [real-world-demos.md](real-world-demos.md) | Real-world-shaped local demos. |
 | [positioning.md](positioning.md) | When to use prog and when not to. |

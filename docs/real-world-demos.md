@@ -8,11 +8,11 @@ Regenerate with `PROG_REAL_WORLD_DEMO_UPDATE=1 cargo test -p prog-cli --test rea
 
 | Demo | Raw bytes | call envelope bytes | expansion task bytes | cache hit | Token ratio |
 |---|---:|---:|---:|---|---:|
-| github-pr-review | 191790 | 11319 | 14301 | hit | 13.41x |
-| kubectl-events | 145813 | 7846 | 10727 | hit | 13.59x |
-| cloudwatch-logs | 157667 | 7244 | 10233 | hit | 15.40x |
-| jira-triage | 169953 | 10330 | 13253 | hit | 12.82x |
-| mcp-incidents | 150772 | 12787 | 15684 | hit | 9.61x |
+| github-pr-review | 191790 | 9824 | 13641 | hit | 14.06x |
+| kubectl-events | 145813 | 7511 | 11244 | hit | 12.97x |
+| cloudwatch-logs | 157667 | 6897 | 10648 | hit | 14.81x |
+| jira-triage | 169953 | 8845 | 12611 | hit | 13.48x |
+| mcp-incidents | 150772 | 11684 | 15430 | hit | 9.77x |
 
 ## Copy-paste seeds
 

@@ -2,6 +2,7 @@ use std::{
     fs,
     path::Path,
     process::Command,
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 
@@ -30,6 +31,100 @@ impl Respond for EtagResponder {
     }
 }
 
+struct ChangingEntityResponder {
+    calls: AtomicUsize,
+}
+
+impl Respond for ChangingEntityResponder {
+    fn respond(&self, _request: &Request) -> ResponseTemplate {
+        let version = if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            "first"
+        } else {
+            "second"
+        };
+        ResponseTemplate::new(200).set_body_json(json!({
+            "version": version,
+            "nested": {"value": version}
+        }))
+    }
+}
+
+#[tokio::test]
+async fn old_cursor_remains_bound_to_its_observation_after_cache_refresh() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/entity"))
+        .respond_with(ChangingEntityResponder {
+            calls: AtomicUsize::new(0),
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let url = format!("{}/entity", server.uri());
+    let added = prog(&[
+        "--dir",
+        dir_arg,
+        "source",
+        "add-http",
+        "changing",
+        "--operation",
+        "get",
+        "--url",
+        &url,
+    ]);
+    assert!(added.status.success(), "{}", stdout(&added));
+
+    let first = prog(&["--dir", dir_arg, "call", "changing", "get", "--args", "{}"]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let first_cursor = first["cursor"].as_str().unwrap();
+
+    let second = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "changing",
+        "get",
+        "--args",
+        "{}",
+        "--refresh",
+    ]);
+    assert!(second.status.success(), "{}", stdout(&second));
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(second["data_preview"]["version"], "second");
+
+    let expanded = prog(&[
+        "--dir",
+        dir_arg,
+        "expand",
+        first_cursor,
+        "--path",
+        "/nested/value",
+    ]);
+    assert!(expanded.status.success(), "{}", stdout(&expanded));
+    let expanded: Value = serde_json::from_slice(&expanded.stdout).unwrap();
+    assert_eq!(expanded["data_preview"], "first");
+    assert_eq!(
+        expanded["observation"]["observation_id"],
+        first["observation"]["observation_id"]
+    );
+
+    let evidence = prog(&[
+        "--dir",
+        dir_arg,
+        "evidence",
+        first_cursor,
+        "--path",
+        "/version",
+    ]);
+    assert!(evidence.status.success(), "{}", stdout(&evidence));
+    let evidence: Value = serde_json::from_slice(&evidence.stdout).unwrap();
+    assert_eq!(evidence["excerpt"], "first");
+    assert_eq!(evidence["evidence_ref"]["availability"], "recoverable");
+}
+
 #[test]
 fn help_shows_complete_command_tree() {
     let output = prog(&["--help"]);
@@ -40,6 +135,8 @@ fn help_shows_complete_command_tree() {
     for expected in [
         "discover",
         "source",
+        "route",
+        "status",
         "hints",
         "call",
         "observe",
@@ -56,6 +153,79 @@ fn help_shows_complete_command_tree() {
     ] {
         assert!(help.contains(expected), "help should include {expected}");
     }
+}
+
+#[test]
+fn route_golden_table_is_deterministic_and_policy_precedes_builtins() {
+    let fixture: Value = serde_json::from_slice(
+        &fs::read(repo_root().join("crates/prog-cli/tests/fixtures/route-cases.json")).unwrap(),
+    )
+    .unwrap();
+    for case in fixture.as_array().unwrap() {
+        let mut args = vec!["route", "--"];
+        args.extend(case["argv"].as_array().unwrap().iter().map(|value| {
+            value
+                .as_str()
+                .unwrap_or_else(|| panic!("{} has a non-string argv", case["name"]))
+        }));
+        let first = prog(&args);
+        let second = prog(&args);
+        assert!(
+            first.status.success(),
+            "{}: {}",
+            case["name"],
+            stdout(&first)
+        );
+        assert!(
+            second.status.success(),
+            "{}: {}",
+            case["name"],
+            stdout(&second)
+        );
+        let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+        let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+        assert_eq!(first["guidance"], case["guidance"], "{}", case["name"]);
+        assert_eq!(
+            first["matched_rule"], case["matched_rule"],
+            "{}",
+            case["name"]
+        );
+        assert_eq!(first["reason"], second["reason"], "{}", case["name"]);
+        assert_eq!(first["wrapper_prefix"], second["wrapper_prefix"]);
+        assert_eq!(first["preserves_authored_argv"], true);
+        assert_eq!(first["semantic_substitution_allowed"], false);
+        assert!(
+            first.get("argv").is_none(),
+            "route output must not echo secrets"
+        );
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let policy = dir.path().join("route-policy.json");
+    fs::write(
+        &policy,
+        serde_json::to_vec_pretty(&json!({
+            "rules": [{
+                "id": "owner.raw-cargo",
+                "argv": ["cargo", "test"],
+                "guidance": "raw"
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let routed = prog(&[
+        "route",
+        "--policy",
+        policy.to_str().unwrap(),
+        "--",
+        "cargo",
+        "test",
+    ]);
+    assert!(routed.status.success(), "{}", stdout(&routed));
+    let routed: Value = serde_json::from_slice(&routed.stdout).unwrap();
+    assert_eq!(routed["guidance"], "raw");
+    assert_eq!(routed["matched_rule"], "owner.raw-cargo");
 }
 
 #[test]
@@ -991,6 +1161,7 @@ sys.exit(101)"#;
         "--goal",
         "identify the exact failing assertion",
         cargo.to_str().unwrap(),
+        "test",
     ]);
 
     assert!(output.status.success(), "{}", stdout(&output));
@@ -1003,6 +1174,10 @@ sys.exit(101)"#;
     assert_eq!(findings.len(), unique_paths.len());
     assert_eq!(findings[0]["kind"], "cargo_test_failure");
     assert_eq!(findings[0]["path"], "/failure_sections/0");
+    assert_eq!(
+        envelope["recipe"]["expanded_commands"][0],
+        serde_json::json!([cargo.to_str().unwrap(), "test", "--message-format=json"])
+    );
 
     let first_section = &envelope["data_preview"]["failures"][0];
     assert_eq!(first_section["kind"], "rust");
@@ -1116,7 +1291,15 @@ fn run_failure_returns_envelope_and_can_preserve_exit_code() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|action| action["path"] == "/failure_sections/0" && action["argv"][3] == "--path")
+            .any(|action| {
+                action["kind"] == "expand"
+                    && action["path"] == "/failure_sections/0"
+                    && action.get("argv").is_none()
+            })
+    );
+    assert_eq!(
+        envelope["action_templates"]["expand"]["argv"],
+        json!(["prog", "expand", "{cursor}", "--path", "{path}"])
     );
     let cursor = envelope["cursor"].as_str().unwrap();
     let expanded = prog(&[
@@ -4216,6 +4399,11 @@ fn disclosure_budget_flag_is_hard_and_retains_recovery_metadata() {
     );
     assert!(value["cursor"].as_str().is_some());
     assert!(value["observation"]["observation_id"].as_str().is_some());
+    assert_eq!(value["disclosure_verdict"]["result"], "bounded_win");
+    assert_eq!(
+        value["disclosure_verdict"]["envelope_bytes"],
+        value["summary"]["envelope_bytes"]
+    );
 }
 
 #[test]
@@ -6044,11 +6232,11 @@ fn log_recipe_composes_observe_lens_findings_and_recommended_evidence() {
     let value: Value = serde_json::from_slice(&recipe.stdout).unwrap();
     assert_eq!(value["recipe"]["id"], "logs-root-cause");
     assert_eq!(value["findings"][0]["kind"], "log_error");
-    assert!(
-        value["recipe"]["recommended_next"]
-            .as_str()
-            .unwrap()
-            .contains("prog evidence")
+    assert_eq!(value["recipe"]["recommended_next"]["command"], "expand");
+    assert_eq!(
+        value["recipe"]["recommended_next"]["path"],
+        value["findings"][0]["path"]
     );
+    assert_eq!(value["recipe"]["recommended_next"]["cursor"], "{cursor}");
     assert!(recipe.stdout.len() <= 16 * 1024);
 }

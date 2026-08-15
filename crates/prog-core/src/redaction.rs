@@ -950,7 +950,7 @@ mod tests {
         let serialized = serde_json::to_string(&config).unwrap();
         let back: RedactionConfig = serde_json::from_str(&serialized).unwrap();
         assert!(back.redact_low_confidence_values);
-        // Backward compat: `{}` deserializes with the flag defaulted to false.
+        // The current empty configuration keeps the opt-in flag false.
         let empty: RedactionConfig = serde_json::from_str("{}").unwrap();
         assert!(!empty.redact_low_confidence_values);
     }

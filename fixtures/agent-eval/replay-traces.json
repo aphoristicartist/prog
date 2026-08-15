@@ -1,0 +1,46 @@
+{
+  "schema": "prog.agent_eval.trace_set",
+  "harness_version": "1",
+  "traces": [
+    {
+      "trace_id": "coding-conservative",
+      "workflow_id": "coding_narrowed_rerun",
+      "arm": "prog",
+      "source": "synthetic_grader_fixture",
+      "decision": "not_verified",
+      "citations": [{"role": "subject", "path": "/command/success"}],
+      "shown_false_findings": 0,
+      "expected_accepted": true
+    },
+    {
+      "trace_id": "coding-false-completion",
+      "workflow_id": "coding_narrowed_rerun",
+      "arm": "prog",
+      "source": "synthetic_grader_fixture",
+      "decision": "verified",
+      "citations": [{"role": "subject", "path": "/command/success"}],
+      "shown_false_findings": 0,
+      "expected_accepted": false
+    },
+    {
+      "trace_id": "entity-conservative",
+      "workflow_id": "state_token_expired_validator",
+      "arm": "prog",
+      "source": "synthetic_grader_fixture",
+      "decision": "unverifiable",
+      "citations": [{"role": "pre", "path": "/version"}],
+      "shown_false_findings": 0,
+      "expected_accepted": true
+    },
+    {
+      "trace_id": "entity-false-verification",
+      "workflow_id": "state_token_expired_validator",
+      "arm": "prog",
+      "source": "synthetic_grader_fixture",
+      "decision": "verified",
+      "citations": [{"role": "pre", "path": "/version"}],
+      "shown_false_findings": 0,
+      "expected_accepted": false
+    }
+  ]
+}

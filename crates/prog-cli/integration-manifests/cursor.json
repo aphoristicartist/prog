@@ -1,0 +1,8 @@
+{
+  "schema": "prog.integration_target",
+  "agent": "cursor",
+  "skill_path": ".cursor/rules/prog.mdc",
+  "hook_dir": ".cursor/prog-hooks",
+  "frontmatter": "mdc",
+  "write_mode": "create"
+}

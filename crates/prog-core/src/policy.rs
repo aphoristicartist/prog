@@ -65,8 +65,7 @@ impl EvidenceGrade {
     }
 
     /// Read the grade from an `EffectSet`'s `extra["evidence_grade"]`, defaulting
-    /// to `Unproven` when unset so legacy/ungauged operations keep their current
-    /// behavior.
+    /// to `Unproven` when unset so absent evidence always fails closed.
     pub fn from_extra(extra: &Extra) -> Self {
         match extra.get("evidence_grade").and_then(Value::as_str) {
             Some("proven") => Self::Proven,

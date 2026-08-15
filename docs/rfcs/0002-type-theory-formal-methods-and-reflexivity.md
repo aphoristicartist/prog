@@ -170,7 +170,7 @@ survives.
   (default 16 KiB), deterministic projection via per-node caps *plus a global
   node budget* (per-node caps alone still explode combinatorially at
   depth × fields), reflexive re-projection at a coarser policy when exceeded,
-  and `approx_tokens` in summaries.
+  and `estimated_envelope_tokens` in summaries.
 - **G2 — Concurrency was unaddressed.** redb's single-writer model is fine,
   but profiles-as-JSON-files had racy read-modify-write; a lost update
   silently violates monotone learning (I5). Draft v2: profile writes go

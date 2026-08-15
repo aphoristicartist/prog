@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -109,7 +110,7 @@ fn readme_cli_quickstart_commands_stay_copy_pasteable() {
         "envelope should remain bounded"
     );
     assert_eq!(
-        envelope["summary"]["approx_tokens"],
+        envelope["summary"]["estimated_envelope_tokens"],
         envelope["summary"]["envelope_bytes"]
             .as_u64()
             .unwrap()
@@ -398,7 +399,15 @@ fn documented_command_help_surface_stays_real() {
     }
 
     let init_help = stdout(&prog(&root, &["init", "--help"]));
-    for expected in ["--agent", "--project", "--dry-run", "--root"] {
+    for expected in [
+        "--agent",
+        "--project",
+        "--dry-run",
+        "--root",
+        "--manifest-dir",
+        "--print-skill",
+        "--frontmatter",
+    ] {
         assert!(
             init_help.contains(expected),
             "init help should contain {expected}"
@@ -418,6 +427,14 @@ fn documented_command_help_surface_stays_real() {
         assert!(
             source_cli_help.contains(expected),
             "source add-cli help should contain {expected}"
+        );
+    }
+
+    let source_mcp_help = stdout(&prog(&root, &["source", "add-mcp", "--help"]));
+    for expected in ["SOURCE_ID", "COMMAND"] {
+        assert!(
+            source_mcp_help.contains(expected),
+            "source add-mcp help should contain {expected}"
         );
     }
 
@@ -465,7 +482,7 @@ fn docs_keep_acceptance_topics_visible() {
     let root = repo_root();
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
     for expected in [
-        "34.5x-162.8x",
+        "24.4x-85.2x",
         "Built for loop engineering",
         "fail, inspect, fix, verify",
         "recipe --timeout-ms 180000 cargo-test",
@@ -572,6 +589,7 @@ fn docs_keep_acceptance_topics_visible() {
     for expected in [
         "prog source add-http",
         "prog source add-cli",
+        "prog source add-mcp",
         "prog discover --import",
         "declared_output_schema",
         "MCP tools without `readOnlyHint: true`",
@@ -702,4 +720,24 @@ fn docs_keep_acceptance_topics_visible() {
             "invariants doc should mention {expected}"
         );
     }
+}
+
+#[test]
+fn public_contract_docs_stay_in_sync() {
+    let root = repo_root();
+    let contracts_doc = std::fs::read_to_string(root.join("docs/contracts.md")).unwrap();
+    let documented = contracts_doc
+        .split("The current public contracts include:\n")
+        .nth(1)
+        .and_then(|section| section.split("\n## Forward compatibility").next())
+        .expect("contracts doc should retain its generated-contract section")
+        .lines()
+        .filter_map(|line| line.strip_prefix("- `")?.strip_suffix('`'))
+        .collect::<BTreeSet<_>>();
+    let schemas = prog_core::public_contract_schemas().unwrap();
+    let published = schemas.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    assert_eq!(
+        documented, published,
+        "docs/contracts.md must list exactly the contracts published by prog meta"
+    );
 }

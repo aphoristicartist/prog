@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use prog_core::{
-    CommandHintConfig, Extra, FindingIdentityContext, FindingOptions, RawPayload, RedactionPolicy,
-    SourceSpan, SourceSpanExactness, extract_source_spans,
+    CommandHintConfig, Extra, FindingIdentityContext, FindingOptions, NavigationCommand,
+    RawPayload, RedactionPolicy, SourceSpan, SourceSpanExactness, extract_source_spans,
     extract_source_spans_with_workspace_root, finding_derivation_is_complete, fingerprint_finding,
     ranked_findings,
 };
@@ -59,12 +59,13 @@ fn run_failure_sections_rank_first_with_commands_and_line_range() {
     assert_eq!(first.line_range.as_ref().unwrap().start, 1);
     assert_eq!(first.line_range.as_ref().unwrap().end, 4);
     assert_eq!(
-        first.commands.expand.as_deref(),
-        Some("prog expand pc1_demo --path /failure_sections/0")
-    );
-    assert_eq!(
-        first.commands.evidence.as_deref(),
-        Some("prog evidence pc1_demo --path /failure_sections/0")
+        first.commands.available,
+        vec![
+            NavigationCommand::Inspect,
+            NavigationCommand::Expand,
+            NavigationCommand::Evidence,
+            NavigationCommand::Search,
+        ]
     );
 }
 
@@ -84,13 +85,7 @@ fn default_hints_remain_minimal_while_nav_all_emits_runnable_commands() {
     .unwrap();
 
     let first = &findings[0];
-    assert_eq!(
-        first.commands.expand.as_deref(),
-        Some("prog expand pc1_demo --path /errors")
-    );
-    assert_eq!(first.commands.evidence, None);
-    assert_eq!(first.commands.inspect, None);
-    assert_eq!(first.commands.search, None);
+    assert_eq!(first.commands.available, vec![NavigationCommand::Expand]);
 
     // Opting into NAV_ALL surfaces every hint with identical cursor/path framing.
     let all = ranked_findings(
@@ -104,20 +99,13 @@ fn default_hints_remain_minimal_while_nav_all_emits_runnable_commands() {
     .unwrap();
     let first = &all[0];
     assert_eq!(
-        first.commands.expand.as_deref(),
-        Some("prog expand pc1_demo --path /errors")
-    );
-    assert_eq!(
-        first.commands.inspect.as_deref(),
-        Some("prog inspect pc1_demo --goal 'investigate generic_error_field' --path /errors")
-    );
-    assert_eq!(
-        first.commands.evidence.as_deref(),
-        Some("prog evidence pc1_demo --path /errors")
-    );
-    assert_eq!(
-        first.commands.search.as_deref(),
-        Some("prog find pc1_demo --kind generic_error_field --path /errors")
+        first.commands.available,
+        vec![
+            NavigationCommand::Inspect,
+            NavigationCommand::Expand,
+            NavigationCommand::Evidence,
+            NavigationCommand::Search,
+        ]
     );
 }
 
@@ -850,14 +838,39 @@ fn test_name_detects_pytest_cargo_gtest_and_mocha_summaries() {
         assert_eq!(top.severity.as_deref(), Some("error"));
     }
 
-    // String-signal path: a bare pytest nodeid is enough to flag a failing test.
+    // Outside a proven failure section, a bare nodeid is evidence of a test
+    // reference only. It does not support claiming that the test failed.
     let payload = json!({ "note": "tests/test_x.py::test_case" });
     let findings = ranked_findings(&payload, &FindingOptions::default()).unwrap();
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.kind == "test_name" && finding.path == "/note")
-    );
+    let reference = findings
+        .iter()
+        .find(|finding| finding.path == "/note")
+        .unwrap();
+    assert_eq!(reference.kind, "test_reference");
+    assert_eq!(reference.title.as_deref(), Some("test reference"));
+    assert_eq!(reference.severity.as_deref(), Some("info"));
+}
+
+#[test]
+fn green_test_output_never_claims_a_failure() {
+    for text in [
+        "42 passing (1.2s)\n0 failing",
+        "PASSED tests/test_core.py::test_alpha",
+        "tests/test_core.py::test_alpha PASSED",
+    ] {
+        let findings =
+            ranked_findings(&json!({"output": text}), &FindingOptions::default()).unwrap();
+        assert!(
+            findings.iter().all(|finding| finding.kind != "test_name"
+                || finding.severity.as_deref() != Some("error")),
+            "green output produced a failure claim: {findings:#?}"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.kind == "test_reference")
+        );
+    }
 }
 
 #[test]
@@ -920,9 +933,11 @@ fn build_inspect_response_assembles_ranked_response_and_round_trips_serde() {
     assert!(response.cache.is_none());
     assert!(response.warnings.is_empty());
 
-    // Default hints: only `expand` is populated.
-    assert!(response.findings[0].commands.expand.is_some());
-    assert_eq!(response.findings[0].commands.evidence, None);
+    // Default hints: only `expand` is advertised.
+    assert_eq!(
+        response.findings[0].commands.available,
+        vec![NavigationCommand::Expand]
+    );
 
     // Serde round-trip: deserialize(reserialize) is identical (contract stable).
     let serialized = serde_json::to_value(&response).unwrap();

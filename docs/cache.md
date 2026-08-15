@@ -2,6 +2,19 @@
 
 `prog call` stores read-only, cacheable, non-sensitive responses in the local store under `--dir`. `prog expand` reads those cached payloads by cursor and never contacts the upstream source.
 
+## Parallel agents and worktrees
+
+Multiple `prog` processes can share a store. Database ownership is released
+while a command or upstream source is running; brief transaction collisions are
+retried with bounded backoff. If contention outlasts that bound, the JSON error
+uses `kind: "storage_busy"`, `retryable: true`, and reports the attempt count.
+
+The default store is `./.prog`, resolved from the process working directory.
+Separate Git worktree roots therefore get separate stores by default. Keep that
+isolation when agents should not share cursors or observations. Set the same
+`PROG_DIR` (or pass the same `--dir`) only when those processes intentionally
+share evidence; cursors are scoped to the store that created them.
+
 ## TTLs
 
 Profiles and operations can define a `cache` policy with `enabled`, `ttl_seconds`, and `refresh_after_seconds`. If no policy is enabled but the operation effects say `cacheable: true` and `sensitive: false`, `prog` enables a default TTL of 86400 seconds.
@@ -66,6 +79,12 @@ fresh for its reported TTL; merely being older than one second does not make it
 stale. Expired entries and cursors fail closed instead of returning old data.
 
 Use `--refresh` when the workflow needs a new observation before the TTL ends.
+Cache age does not prove whether an upstream entity changed. HTTP validators,
+declared change tokens, and MCP modification annotations are recorded as a
+separate source-state dimension; see [source-state evidence](source-state.md).
+
+A failed refresh is retained as a separate error observation and does not
+replace the prior successful cache entry.
 
 ## Purge behavior
 

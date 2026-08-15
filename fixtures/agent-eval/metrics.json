@@ -1,0 +1,119 @@
+{
+  "schema": "prog.agent_eval.metrics",
+  "harness_version": "1",
+  "estimator": "bytes_div_4_approximate",
+  "actual_agent_trials": 0,
+  "claim_eligible": false,
+  "fixed_context": {
+    "prog_skill_bytes": 6848,
+    "prog_skill_estimated_tokens": 1712,
+    "tool_schema_tokens": null
+  },
+  "strategy_status": [
+    {
+      "strategy": "raw",
+      "live_trials": 0,
+      "performance_available": false
+    },
+    {
+      "strategy": "equal_budget_truncation",
+      "live_trials": 0,
+      "performance_available": false
+    },
+    {
+      "strategy": "native_selector",
+      "live_trials": 0,
+      "performance_available": false
+    },
+    {
+      "strategy": "prog",
+      "live_trials": 0,
+      "performance_available": false
+    }
+  ],
+  "trace_results": [
+    {
+      "trace_id": "coding-conservative",
+      "workflow_id": "coding_narrowed_rerun",
+      "arm": "prog",
+      "source": "synthetic_grader_fixture",
+      "accepted": true,
+      "expected_accepted": true,
+      "model_visible_tool_response_bytes": null,
+      "estimated_tool_response_tokens": null,
+      "graders": {
+        "answer_correct": true,
+        "evidence_resolves": true,
+        "finding_precision": true,
+        "no_false_completion": true,
+        "verdict_matches_truth": true
+      }
+    },
+    {
+      "trace_id": "coding-false-completion",
+      "workflow_id": "coding_narrowed_rerun",
+      "arm": "prog",
+      "source": "synthetic_grader_fixture",
+      "accepted": false,
+      "expected_accepted": false,
+      "model_visible_tool_response_bytes": null,
+      "estimated_tool_response_tokens": null,
+      "graders": {
+        "answer_correct": false,
+        "evidence_resolves": true,
+        "finding_precision": true,
+        "no_false_completion": false,
+        "verdict_matches_truth": false
+      }
+    },
+    {
+      "trace_id": "entity-conservative",
+      "workflow_id": "state_token_expired_validator",
+      "arm": "prog",
+      "source": "synthetic_grader_fixture",
+      "accepted": true,
+      "expected_accepted": true,
+      "model_visible_tool_response_bytes": null,
+      "estimated_tool_response_tokens": null,
+      "graders": {
+        "answer_correct": true,
+        "evidence_resolves": true,
+        "finding_precision": true,
+        "no_false_completion": true,
+        "verdict_matches_truth": true
+      }
+    },
+    {
+      "trace_id": "entity-false-verification",
+      "workflow_id": "state_token_expired_validator",
+      "arm": "prog",
+      "source": "synthetic_grader_fixture",
+      "accepted": false,
+      "expected_accepted": false,
+      "model_visible_tool_response_bytes": null,
+      "estimated_tool_response_tokens": null,
+      "graders": {
+        "answer_correct": false,
+        "evidence_resolves": true,
+        "finding_precision": true,
+        "no_false_completion": false,
+        "verdict_matches_truth": false
+      }
+    }
+  ],
+  "summary": {
+    "replay_traces": 4,
+    "expected_acceptances": 2,
+    "expected_rejections": 2,
+    "trace_expectations_passed": 4,
+    "adversarial_rejections": 2,
+    "false_completion_attempts": 2,
+    "false_completions_accepted": 0
+  },
+  "limitations": [
+    "checked-in traces are synthetic grader fixtures, not model runs",
+    "no provider token accounting is available without credentialed live trials",
+    "synthetic replay byte counts include environment-specific absolute paths and are not persisted as cross-platform performance metrics",
+    "no performance or makes-agents-better claim is supported by this report"
+  ]
+}

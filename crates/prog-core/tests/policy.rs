@@ -508,6 +508,7 @@ fn operation_with_effects(effects: EffectSet) -> OperationProfile {
         effects,
         cache: CachePolicy::default(),
         pagination: None,
+        source_state: None,
         extra: Extra::new(),
     }
 }
@@ -566,6 +567,7 @@ fn operation(id: &str, effects: EffectSet) -> OperationProfile {
         effects,
         cache: CachePolicy::default(),
         pagination: None,
+        source_state: None,
         extra: Extra::new(),
     }
 }

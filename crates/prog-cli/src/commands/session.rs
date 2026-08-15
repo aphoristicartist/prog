@@ -119,3 +119,64 @@ pub(crate) fn readiness_report(store: &Store, session_id: Option<&str>) -> Resul
         extra: Extra::new(),
     })
 }
+
+/// Bound model-visible readiness data while preserving the full report's
+/// conservative `configured` and `ready` decisions. Tail evaluations are
+/// deterministic because obligations are stored in stable id order.
+pub(crate) fn bound_readiness_report(
+    report: &mut ReadinessReport,
+    max_envelope_bytes: usize,
+) -> Result<()> {
+    let content_budget = max_envelope_bytes.saturating_sub(1_024);
+    let total_evaluations = report.evaluations.len();
+    let total_blockers = report.blockers.len();
+    let mut shortened_blockers = false;
+    for blocker in &mut report.blockers {
+        if blocker.chars().count() > 512 {
+            let prefix = blocker.chars().take(512).collect::<String>();
+            *blocker = format!("{prefix}…");
+            shortened_blockers = true;
+        }
+    }
+    while serde_json::to_vec(report)?.len() > content_budget && !report.evaluations.is_empty() {
+        report.evaluations.pop();
+    }
+    while serde_json::to_vec(report)?.len() > content_budget && !report.blockers.is_empty() {
+        report.blockers.pop();
+    }
+    if shortened_blockers
+        || report.evaluations.len() < total_evaluations
+        || report.blockers.len() < total_blockers
+    {
+        report.extra.insert(
+            "compaction".to_string(),
+            json!({
+                "reason": "disclosure_budget",
+                "retained_evaluations": report.evaluations.len(),
+                "total_evaluations": total_evaluations,
+                "retained_blockers": report.blockers.len(),
+                "total_blockers": total_blockers,
+                "decisions_are_complete": true,
+                "blocker_text_shortened": shortened_blockers
+            }),
+        );
+    }
+    while serde_json::to_vec(report)?.len() > content_budget && !report.evaluations.is_empty() {
+        report.evaluations.pop();
+        update_readiness_compaction(report);
+    }
+    while serde_json::to_vec(report)?.len() > content_budget && !report.blockers.is_empty() {
+        report.blockers.pop();
+        update_readiness_compaction(report);
+    }
+    Ok(())
+}
+
+fn update_readiness_compaction(report: &mut ReadinessReport) {
+    let retained_evaluations = report.evaluations.len();
+    let retained_blockers = report.blockers.len();
+    if let Some(compaction) = report.extra.get_mut("compaction") {
+        compaction["retained_evaluations"] = json!(retained_evaluations);
+        compaction["retained_blockers"] = json!(retained_blockers);
+    }
+}
