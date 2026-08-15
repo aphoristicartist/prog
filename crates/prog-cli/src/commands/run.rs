@@ -1472,8 +1472,11 @@ pub(crate) fn redact_run_argv(argv: &[String]) -> Vec<String> {
 }
 
 fn is_sensitive_flag(arg: &str) -> bool {
-    let trimmed = arg.trim_start_matches('-');
-    prog_core::is_sensitive_name(trimmed)
+    let Some(trimmed) = arg.strip_prefix('-') else {
+        return false;
+    };
+    let trimmed = trimmed.trim_start_matches('-');
+    !trimmed.is_empty() && prog_core::is_sensitive_name(trimmed)
 }
 
 /// If `arg` is an inline `name<sep>value` whose name is sensitive, return the

@@ -1127,7 +1127,11 @@ fn cargo_recipe_centers_evidence_on_the_strongest_diagnostic_without_duplicate_f
 
     let dir = tempfile::tempdir().unwrap();
     let lens_dir = first_party_lens_dir();
-    let cargo = dir.path().join("cargo");
+    // The executable path intentionally contains a secret-looking substring.
+    // Only option-like argv elements may mark the next argument as sensitive.
+    let cargo_dir = dir.path().join("pwd-in-path");
+    fs::create_dir(&cargo_dir).unwrap();
+    let cargo = cargo_dir.join("cargo");
     let script = r#"#!/usr/bin/env python3
 import sys
 print('running 1 test')
