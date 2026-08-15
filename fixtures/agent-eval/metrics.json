@@ -39,8 +39,8 @@
       "source": "synthetic_grader_fixture",
       "accepted": true,
       "expected_accepted": true,
-      "model_visible_tool_response_bytes": 26029,
-      "estimated_tool_response_tokens": 6508,
+      "model_visible_tool_response_bytes": null,
+      "estimated_tool_response_tokens": null,
       "graders": {
         "answer_correct": true,
         "evidence_resolves": true,
@@ -56,8 +56,8 @@
       "source": "synthetic_grader_fixture",
       "accepted": false,
       "expected_accepted": false,
-      "model_visible_tool_response_bytes": 26029,
-      "estimated_tool_response_tokens": 6508,
+      "model_visible_tool_response_bytes": null,
+      "estimated_tool_response_tokens": null,
       "graders": {
         "answer_correct": false,
         "evidence_resolves": true,
@@ -73,8 +73,8 @@
       "source": "synthetic_grader_fixture",
       "accepted": true,
       "expected_accepted": true,
-      "model_visible_tool_response_bytes": 5773,
-      "estimated_tool_response_tokens": 1444,
+      "model_visible_tool_response_bytes": null,
+      "estimated_tool_response_tokens": null,
       "graders": {
         "answer_correct": true,
         "evidence_resolves": true,
@@ -90,8 +90,8 @@
       "source": "synthetic_grader_fixture",
       "accepted": false,
       "expected_accepted": false,
-      "model_visible_tool_response_bytes": 5773,
-      "estimated_tool_response_tokens": 1444,
+      "model_visible_tool_response_bytes": null,
+      "estimated_tool_response_tokens": null,
       "graders": {
         "answer_correct": false,
         "evidence_resolves": true,
@@ -113,6 +113,7 @@
   "limitations": [
     "checked-in traces are synthetic grader fixtures, not model runs",
     "no provider token accounting is available without credentialed live trials",
+    "synthetic replay byte counts include environment-specific absolute paths and are not persisted as cross-platform performance metrics",
     "no performance or makes-agents-better claim is supported by this report"
   ]
 }

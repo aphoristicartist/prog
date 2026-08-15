@@ -24,7 +24,7 @@ fn observation_record(dir: &str, observation_id: &str) -> Value {
 }
 
 #[test]
-fn pytest_provider_is_persisted_expandable_and_stable_across_line_shifts() {
+fn pytest_provider_is_persisted_and_compatible_across_text_and_json() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
     let state = dir.path().join("state.txt");
@@ -33,13 +33,22 @@ fn pytest_provider_is_persisted_expandable_and_stable_across_line_shifts() {
         &pytest,
         r#"#!/usr/bin/env python3
 from pathlib import Path
+import json
 import sys
-shifted = Path(sys.argv[1]).read_text().strip() == "shifted"
-if shifted:
-    print("collection noise")
-    print("setup noise")
-print("FAILED tests/test_api.py::test_total[€] - AssertionError: wrong total")
-print("================ 1 failed in 0.01s ================")
+mode = Path(sys.argv[1]).read_text().strip()
+if mode == "structured":
+    print(json.dumps({
+        "exitcode": 1,
+        "summary": {"failed": 1, "total": 1},
+        "tests": [{
+            "nodeid": "tests/test_api.py::test_total[€]",
+            "outcome": "failed",
+            "call": {"crash": {"message": "AssertionError: wrong total"}}
+        }]
+    }))
+else:
+    print("FAILED tests/test_api.py::test_total[€] - AssertionError: wrong total")
+    print("================ 1 failed in 0.01s ================")
 sys.exit(1)
 "#,
     )
@@ -63,7 +72,7 @@ sys.exit(1)
     let first: Value = serde_json::from_slice(&first.stdout).unwrap();
     let first_record = observation_record(dir_arg, observation_id(&first));
     assert_eq!(first_record["provider"], "pytest.v1");
-    assert_eq!(first_record["parser"], "pytest_text");
+    assert_eq!(first_record["parser"], "pytest.v1");
     assert_eq!(first_record["selection"]["scopes"][0], "pytest:all");
     assert_eq!(first_record["capture"]["can_prove_absence"], true);
 
@@ -83,7 +92,7 @@ sys.exit(1)
         "tests/test_api.py::test_total[€]"
     );
 
-    fs::write(&state, "shifted").unwrap();
+    fs::write(&state, "structured").unwrap();
     let second = prog(&[
         "--dir",
         dir_arg,
@@ -96,6 +105,14 @@ sys.exit(1)
     ]);
     assert!(second.status.success(), "{}", stdout(&second));
     let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    let second_record = observation_record(dir_arg, observation_id(&second));
+    assert_eq!(second_record["provider"], "pytest.v1");
+    assert_eq!(second_record["parser"], "pytest.v1");
+    assert_eq!(second_record["capture"]["can_prove_absence"], true);
+    assert_eq!(
+        second["data_preview"]["provider"]["input_format"],
+        "pytest_json_report"
+    );
 
     let delta = prog(&[
         "--dir",
