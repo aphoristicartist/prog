@@ -18,6 +18,122 @@ mod support;
 use support::*;
 
 #[test]
+fn harness_install_and_doctor_prove_a_portable_agent_extension() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().to_str().unwrap();
+    let dry_run = prog(&[
+        "harness",
+        "install",
+        "--host",
+        "agent-skills",
+        "--dry-run",
+        "--root",
+        root,
+    ]);
+    assert!(dry_run.status.success(), "{}", stdout(&dry_run));
+    let dry_run: Value = serde_json::from_slice(&dry_run.stdout).unwrap();
+    assert_eq!(dry_run["schema"], "prog.harness.install");
+    assert_eq!(dry_run["mode"], "explicit");
+    assert_eq!(dry_run["hosts"], serde_json::json!(["agent-skills"]));
+    assert!(
+        dry_run["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|file| file["action"] == "would_create")
+    );
+    assert!(!project.path().join(".agents").exists());
+
+    let installed = prog(&[
+        "harness",
+        "install",
+        "--host",
+        "agent-skills",
+        "--root",
+        root,
+    ]);
+    assert!(installed.status.success(), "{}", stdout(&installed));
+    assert!(project.path().join(".agents/skills/prog/SKILL.md").exists());
+    assert!(
+        project
+            .path()
+            .join(".agents/prog-hooks/prog-run.sh")
+            .exists()
+    );
+
+    let doctor = prog(&[
+        "harness",
+        "doctor",
+        "--host",
+        "agent-skills",
+        "--root",
+        root,
+    ]);
+    assert!(doctor.status.success(), "{}", stdout(&doctor));
+    let doctor: Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    assert_eq!(doctor["schema"], "prog.harness.doctor");
+    assert_eq!(doctor["ready"], true);
+    assert!(doctor["blockers"].as_array().unwrap().is_empty());
+
+    fs::write(
+        project.path().join(".agents/prog-hooks/prog-run.sh"),
+        "modified",
+    )
+    .unwrap();
+    let stale = prog(&[
+        "harness",
+        "doctor",
+        "--host",
+        "agent-skills",
+        "--root",
+        root,
+    ]);
+    assert!(!stale.status.success());
+    let stale: Value = serde_json::from_slice(&stale.stdout).unwrap();
+    assert_eq!(stale["ready"], false);
+    assert!(
+        stale["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|blocker| blocker.as_str().unwrap().contains("unverified"))
+    );
+}
+
+#[test]
+fn harness_install_deduplicates_the_shared_agent_skill_across_hosts() {
+    let project = tempfile::tempdir().unwrap();
+    let output = prog(&[
+        "harness",
+        "install",
+        "--host",
+        "agent-skills",
+        "--host",
+        "codex",
+        "--dry-run",
+        "--root",
+        project.path().to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let paths = report["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths
+            .iter()
+            .filter(|path| **path == ".agents/skills/prog/SKILL.md")
+            .count(),
+        1
+    );
+    assert!(paths.contains(&".agents/prog-hooks/prog-run.sh"));
+    assert!(paths.contains(&".codex/prog-hooks/prog-run.sh"));
+}
+
+#[test]
 fn init_codex_project_dry_run_reports_reviewable_files_without_writing() {
     let project = tempfile::tempdir().unwrap();
     let root = project.path().to_str().unwrap();
@@ -41,7 +157,7 @@ fn init_codex_project_dry_run_reports_reviewable_files_without_writing() {
     assert_eq!(files.len(), 5);
     assert!(files.iter().all(|file| file["action"] == "would_create"));
     assert!(files.iter().any(|file| {
-        file["path"] == ".codex/skills/prog/SKILL.md" && file["executable"] == false
+        file["path"] == ".agents/skills/prog/SKILL.md" && file["executable"] == false
     }));
     assert!(
         files
@@ -81,7 +197,7 @@ fn init_codex_project_creates_hook_skill_manifest_and_preserves_existing_files()
             .all(|file| file["action"] == "created")
     );
 
-    let skill = project.path().join(".codex/skills/prog/SKILL.md");
+    let skill = project.path().join(".agents/skills/prog/SKILL.md");
     let hook = project.path().join(".codex/prog-hooks/prog-run.sh");
     let manifest = project.path().join(".codex/prog-hooks/manifest.json");
     let uninstall = project.path().join(".codex/prog-hooks/uninstall.sh");

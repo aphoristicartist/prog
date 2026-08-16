@@ -1,15 +1,15 @@
 {
   "schema": "prog.integration_target",
-  "agent": "codex",
+  "agent": "agent-skills",
   "skill_path": ".agents/skills/prog/SKILL.md",
-  "hook_dir": ".codex/prog-hooks",
+  "hook_dir": ".agents/prog-hooks",
   "frontmatter": "yaml",
   "write_mode": "create",
   "capabilities": {
     "instruction_discovery": "agent_skills",
-    "command_input": "shell_string",
-    "post_result": "additional_context_or_block",
+    "command_input": "agent_authored_argv",
+    "post_result": "none",
     "can_replace_result": false,
-    "native_package": "plugins/prog"
+    "native_package": null
   }
 }

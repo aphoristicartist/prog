@@ -258,6 +258,7 @@ pub(crate) struct RunPayloadInput<'a> {
     pub(crate) out: Option<&'a PathBuf>,
 }
 
+#[derive(Clone)]
 pub(crate) struct InitFileSpec {
     pub(crate) relative_path: String,
     pub(crate) content: String,
@@ -370,7 +371,7 @@ pub(crate) struct InitReport {
     pub(crate) warnings: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct InitFileReport {
     pub(crate) path: String,
     pub(crate) full_path: String,
@@ -378,6 +379,36 @@ pub(crate) struct InitFileReport {
     pub(crate) executable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct HarnessInstallReport {
+    pub(crate) schema: &'static str,
+    pub(crate) root: String,
+    pub(crate) dry_run: bool,
+    pub(crate) mode: &'static str,
+    pub(crate) hosts: Vec<String>,
+    pub(crate) files: Vec<InitFileReport>,
+    pub(crate) next_steps: Vec<String>,
+    pub(crate) warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct HarnessDoctorReport {
+    pub(crate) schema: &'static str,
+    pub(crate) root: String,
+    pub(crate) ready: bool,
+    pub(crate) hosts: Vec<String>,
+    pub(crate) checks: Vec<HarnessDoctorCheck>,
+    pub(crate) blockers: Vec<String>,
+    pub(crate) warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct HarnessDoctorCheck {
+    pub(crate) name: String,
+    pub(crate) status: &'static str,
+    pub(crate) detail: String,
 }
 
 #[derive(Debug, Serialize)]

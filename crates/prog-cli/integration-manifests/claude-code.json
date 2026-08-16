@@ -4,5 +4,12 @@
   "skill_path": ".claude/skills/prog/SKILL.md",
   "hook_dir": ".claude/prog-hooks",
   "frontmatter": "yaml",
-  "write_mode": "create"
+  "write_mode": "create",
+  "capabilities": {
+    "instruction_discovery": "claude_skill",
+    "command_input": "shell_string",
+    "post_result": "additional_context_or_block",
+    "can_replace_result": false,
+    "native_package": null
+  }
 }

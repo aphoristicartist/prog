@@ -1,6 +1,6 @@
 [package]
 name = "prog-cli"
-description = "prog: a universal progressive-disclosure gateway for HTTP APIs, CLIs, and MCP servers"
+description = "prog: an agent-harness extension for bounded, cursor-backed tool results"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

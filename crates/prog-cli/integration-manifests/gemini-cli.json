@@ -4,5 +4,12 @@
   "skill_path": ".gemini/skills/prog/SKILL.md",
   "hook_dir": ".gemini/prog-hooks",
   "frontmatter": "yaml",
-  "write_mode": "create"
+  "write_mode": "create",
+  "capabilities": {
+    "instruction_discovery": "gemini_skill",
+    "command_input": "shell_string",
+    "post_result": "tail_tool_call_unproven",
+    "can_replace_result": false,
+    "native_package": null
+  }
 }

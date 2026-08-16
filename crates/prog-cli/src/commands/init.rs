@@ -28,6 +28,19 @@ struct IntegrationTarget {
     hook_dir: Option<String>,
     frontmatter: FrontmatterFlavor,
     write_mode: IntegrationWriteMode,
+    #[serde(default)]
+    capabilities: IntegrationCapabilities,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IntegrationCapabilities {
+    instruction_discovery: Option<String>,
+    command_input: Option<String>,
+    post_result: Option<String>,
+    #[serde(default)]
+    can_replace_result: bool,
+    native_package: Option<String>,
 }
 
 pub(crate) fn init_integration(args: &InitArgs) -> Result<InitReport> {
@@ -125,6 +138,269 @@ pub(crate) fn init_integration(args: &InitArgs) -> Result<InitReport> {
         next_steps: agent_init_next_steps(target),
         warnings,
     })
+}
+
+pub(crate) fn install_harness(args: &HarnessInstallArgs) -> Result<HarnessInstallReport> {
+    let root = project_root(&args.root)?;
+    let targets = integration_targets(args.manifest_dir.as_deref())?;
+    let selected = select_harness_targets(&root, &targets, &args.hosts)?;
+    let specs = merged_target_specs(&selected)?;
+    let (files, warnings) = install_project_specs(&root, specs, args.dry_run)?;
+    Ok(HarnessInstallReport {
+        schema: "prog.harness.install",
+        root: root.to_string_lossy().to_string(),
+        dry_run: args.dry_run,
+        mode: if args.auto || args.hosts.is_empty() {
+            "auto"
+        } else {
+            "explicit"
+        },
+        hosts: selected.iter().map(|target| target.agent.clone()).collect(),
+        files,
+        next_steps: vec![
+            "Run prog harness doctor to verify the installed extension files".to_string(),
+            "Let the harness invoke prog for noisy tool results; use prog evidence for exact cached paths"
+                .to_string(),
+        ],
+        warnings,
+    })
+}
+
+pub(crate) fn doctor_harness(args: &HarnessDoctorArgs) -> Result<HarnessDoctorReport> {
+    let root = project_root(&args.root)?;
+    let targets = integration_targets(args.manifest_dir.as_deref())?;
+    let selected = select_harness_targets(&root, &targets, &args.hosts)?;
+    let specs = merged_target_specs(&selected)?;
+    let mut checks = vec![HarnessDoctorCheck {
+        name: "binary".to_string(),
+        status: "ok",
+        detail: format!(
+            "running {}",
+            std::env::current_exe()
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "prog".to_string())
+        ),
+    }];
+    let mut blockers = Vec::new();
+
+    for spec in specs {
+        let full_path = root.join(&spec.relative_path);
+        if !full_path.exists() {
+            blockers.push(format!("missing {}", spec.relative_path));
+            checks.push(HarnessDoctorCheck {
+                name: spec.relative_path,
+                status: "missing",
+                detail: "run prog harness install to create it".to_string(),
+            });
+            continue;
+        }
+        let content = std::fs::read_to_string(&full_path)?;
+        let content_matches = if spec.append_marker {
+            content.contains(AGENTS_MARKER_START) && content.contains(AGENTS_MARKER_END)
+        } else {
+            content == spec.content
+        };
+        if !content_matches {
+            blockers.push(format!(
+                "unverified integration content in {}",
+                spec.relative_path
+            ));
+            checks.push(HarnessDoctorCheck {
+                name: spec.relative_path,
+                status: "mismatch",
+                detail:
+                    "the installed file differs from this prog version; review before regenerating"
+                        .to_string(),
+            });
+            continue;
+        }
+        #[cfg(unix)]
+        if spec.executable {
+            use std::os::unix::fs::PermissionsExt;
+            if std::fs::metadata(&full_path)?.permissions().mode() & 0o111 == 0 {
+                blockers.push(format!("{} is not executable", spec.relative_path));
+                checks.push(HarnessDoctorCheck {
+                    name: spec.relative_path,
+                    status: "not_executable",
+                    detail: "restore executable permissions before the harness uses this adapter"
+                        .to_string(),
+                });
+                continue;
+            }
+        }
+        checks.push(HarnessDoctorCheck {
+            name: spec.relative_path,
+            status: "ok",
+            detail: "content and permissions match this prog version".to_string(),
+        });
+    }
+
+    Ok(HarnessDoctorReport {
+        schema: "prog.harness.doctor",
+        root: root.to_string_lossy().to_string(),
+        ready: blockers.is_empty(),
+        hosts: selected.iter().map(|target| target.agent.clone()).collect(),
+        checks,
+        blockers,
+        warnings: Vec::new(),
+    })
+}
+
+fn select_harness_targets<'a>(
+    root: &Path,
+    targets: &'a [IntegrationTarget],
+    requested: &[String],
+) -> Result<Vec<&'a IntegrationTarget>> {
+    let names = if requested.is_empty() {
+        auto_harness_target_names(root, targets)
+    } else {
+        requested
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    };
+    let mut selected = Vec::new();
+    for name in names {
+        let target = targets
+            .iter()
+            .find(|target| target.agent == name)
+            .ok_or_else(|| CoreError::BadArgs {
+                operation: "harness".to_string(),
+                reason: format!(
+                    "unknown harness host '{name}'; available hosts: {}",
+                    targets
+                        .iter()
+                        .map(|target| target.agent.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            })?;
+        selected.push(target);
+    }
+    Ok(selected)
+}
+
+fn auto_harness_target_names(root: &Path, targets: &[IntegrationTarget]) -> Vec<String> {
+    let available = targets
+        .iter()
+        .map(|target| target.agent.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut names = BTreeSet::new();
+    if available.contains("agent-skills") {
+        names.insert("agent-skills".to_string());
+    }
+    for (target, dirs, commands) in [
+        ("codex", &[".codex"][..], &["codex"][..]),
+        ("claude-code", &[".claude"][..], &["claude"][..]),
+        ("cursor", &[".cursor"][..], &["cursor", "cursor-agent"][..]),
+        ("gemini-cli", &[".gemini"][..], &["gemini"][..]),
+    ] {
+        if available.contains(target)
+            && (dirs.iter().any(|dir| root.join(dir).exists())
+                || commands.iter().any(|command| command_on_path(command)))
+        {
+            names.insert(target.to_string());
+        }
+    }
+    names.into_iter().collect()
+}
+
+fn command_on_path(command: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|dir| {
+            let candidate = dir.join(command);
+            candidate.is_file()
+        })
+    })
+}
+
+fn merged_target_specs(targets: &[&IntegrationTarget]) -> Result<Vec<InitFileSpec>> {
+    let mut specs = BTreeMap::<String, InitFileSpec>::new();
+    for target in targets {
+        for spec in agent_project_init_files(target) {
+            if let Some(existing) = specs.get(&spec.relative_path) {
+                if existing.content != spec.content
+                    || existing.executable != spec.executable
+                    || existing.append_marker != spec.append_marker
+                {
+                    return Err(CoreError::BadArgs {
+                        operation: "harness".to_string(),
+                        reason: format!(
+                            "selected harness manifests disagree about generated path '{}'",
+                            spec.relative_path
+                        ),
+                    });
+                }
+            } else {
+                specs.insert(spec.relative_path.clone(), spec);
+            }
+        }
+    }
+    Ok(specs.into_values().collect())
+}
+
+fn install_project_specs(
+    root: &Path,
+    specs: Vec<InitFileSpec>,
+    dry_run: bool,
+) -> Result<(Vec<InitFileReport>, Vec<String>)> {
+    let mut files = Vec::new();
+    let mut skipped = 0usize;
+    for spec in specs {
+        let full_path = root.join(&spec.relative_path);
+        let exists = full_path.exists();
+        let (action, reason) = if spec.append_marker {
+            if exists && std::fs::read_to_string(&full_path)?.contains(AGENTS_MARKER_START) {
+                skipped = skipped.saturating_add(1);
+                (
+                    "exists",
+                    Some("existing prog marker section was left unchanged".to_string()),
+                )
+            } else if dry_run {
+                (
+                    if exists {
+                        "would_append"
+                    } else {
+                        "would_create"
+                    },
+                    None,
+                )
+            } else {
+                append_marked_init_file(&full_path, &spec.content)?;
+                (if exists { "appended" } else { "created" }, None)
+            }
+        } else if exists {
+            skipped = skipped.saturating_add(1);
+            (
+                "exists",
+                Some("left existing file unchanged; remove it first to regenerate".to_string()),
+            )
+        } else if dry_run {
+            ("would_create", None)
+        } else {
+            write_init_file(&full_path, &spec.content, spec.executable)?;
+            ("created", None)
+        };
+        files.push(InitFileReport {
+            path: spec.relative_path,
+            full_path: full_path.to_string_lossy().to_string(),
+            action,
+            executable: spec.executable,
+            reason,
+        });
+    }
+    let mut warnings = Vec::new();
+    if skipped > 0 {
+        warnings.push(format!(
+            "{skipped} existing integration file(s) were left unchanged"
+        ));
+    }
+    if dry_run {
+        warnings.push("dry-run only; no files were written".to_string());
+    }
+    Ok((files, warnings))
 }
 
 pub(crate) fn print_skill_content(frontmatter: FrontmatterFlavor) -> String {
@@ -322,14 +598,23 @@ fn agent_project_init_files(target: &IntegrationTarget) -> Vec<InitFileSpec> {
         },
         "uninstall": format!("sh {uninstall_path}")
     });
+    manifest["host_contract"] = json!({
+        "host": target.agent,
+        "instruction_discovery": target.capabilities.instruction_discovery.as_deref().unwrap_or("manifest_declared"),
+        "command_input": target.capabilities.command_input.as_deref().unwrap_or("unknown"),
+        "post_result": target.capabilities.post_result.as_deref().unwrap_or("unproven"),
+        "can_replace_result": target.capabilities.can_replace_result,
+        "native_package": target.capabilities.native_package.as_deref(),
+        "integration": "skill_and_explicit_argv_wrapper",
+        "semantic_substitution_allowed": false
+    });
     if target.agent == "codex" {
-        manifest["host_contract"] = json!({
-            "host": "codex",
-            "integration": "skill_and_explicit_argv_wrapper",
-            "native_pre_tool_rewrite_installed": false,
-            "reason": "Codex PreToolUse exposes Bash input as a shell command string; prog does not reparse it into argv",
-            "official_contract": "https://learn.chatgpt.com/docs/hooks"
-        });
+        manifest["host_contract"]["native_pre_tool_rewrite_installed"] = json!(false);
+        manifest["host_contract"]["reason"] = json!(
+            "Codex PreToolUse exposes Bash input as a shell command string; prog does not reparse it into argv"
+        );
+        manifest["host_contract"]["official_contract"] =
+            json!("https://learn.chatgpt.com/docs/hooks");
     }
     vec![
         InitFileSpec {

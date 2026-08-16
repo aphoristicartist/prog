@@ -1,0 +1,36 @@
+{
+  "name": "prog",
+  "version": "0.1.1",
+  "description": "Agent-harness extension for bounded, cursor-backed tool results",
+  "author": {
+    "name": "aphoristicartist",
+    "url": "https://github.com/aphoristicartist"
+  },
+  "homepage": "https://github.com/aphoristicartist/prog",
+  "repository": "https://github.com/aphoristicartist/prog",
+  "license": "MIT",
+  "keywords": [
+    "agent-harness",
+    "progressive-disclosure",
+    "tool-results",
+    "evidence"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "prog",
+    "shortDescription": "Bound noisy tool results before reasoning over them.",
+    "longDescription": "prog is a local agent-harness extension that captures oversized tool results, redacts them before persistence, and exposes exact cursor-backed evidence without rerunning the source.",
+    "developerName": "aphoristicartist",
+    "category": "Productivity",
+    "capabilities": [
+      "Local",
+      "Read"
+    ],
+    "websiteURL": "https://github.com/aphoristicartist/prog",
+    "defaultPrompt": [
+      "Use prog for noisy tests and inspect exact failure evidence.",
+      "Capture this large result with prog before reasoning over it.",
+      "Verify the fix conservatively with prog delta and status."
+    ]
+  }
+}
