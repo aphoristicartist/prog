@@ -5,7 +5,11 @@
 [![Rust 1.89+](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](https://www.rust-lang.org)
 [![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS-lightgrey.svg)](#supported-platforms)
 
-**Bounded, inspectable tool output for AI agents and loop engineering.**
+**An agent-harness extension for bounded, inspectable tool results.**
+
+`prog` is built for agents and harnesses to invoke inside a tool loop. The CLI
+is its local JSON transport and recovery surface, not a terminal application a
+human is expected to operate interactively.
 
 Your agent runs `cargo test`. The output is 130,000 tokens. It needs one error
 line — but it can't know which line until it has read them all.
@@ -46,7 +50,7 @@ Nothing was truncated away. The full redacted payload is still on disk.
 - [Why prog](#why-prog) · [Built for loop engineering](#built-for-loop-engineering)
 - [Verifying what changed](#verifying-what-changed) — the part most tools skip
 - [The disclosure envelope](#the-disclosure-envelope) · [Inputs and adapters](#inputs-and-adapters)
-- [Agent integration](#agent-integration) · [Command map](#command-map)
+- [Harness extensions and plugins](#harness-extensions-and-plugins) · [Command map](#command-map)
 - [Safety and storage](#safety-and-storage) · [Measured results](#measured-results)
 - [When not to use prog](#when-not-to-use-prog) · [Documentation](#documentation)
 
@@ -65,11 +69,19 @@ attestation, and only then atomically places `prog` in `~/.local/bin`. Override
 the destination with `PROG_INSTALL_DIR`. It refuses unsupported platforms,
 checksum mismatches, missing attestations, and missing verification tools. If
 the install directory is not already on `PATH`, it adds one idempotent entry to
-the detected zsh, bash, or POSIX-shell profile. Open a new terminal, then run:
+the detected zsh, bash, or POSIX-shell profile. Open a new terminal, then
+install the harness extension into a project:
 
 ```sh
-prog --help
+prog harness install --root /path/to/project
+prog harness doctor --root /path/to/project
 ```
+
+`harness install` places the portable Agent Skill and detected host adapters in
+the project without overwriting existing files. `harness doctor` is the
+machine-readable readiness gate; the integration is usable only when it returns
+`"ready": true`. `prog --help` remains available for harness discovery and
+debugging.
 
 Set `PROG_MODIFY_PATH=0` to leave shell startup files unchanged. Unknown shells
 are never guessed; the installer keeps the verified installation and prints a
@@ -403,9 +415,53 @@ NDJSON records, and generic JSON item triage. Lens manifests can select fields,
 declare omissions and next actions, and contribute bounded finding rules. They
 cannot execute code.
 
-## Agent integration
+## Harness extensions and plugins
 
-Install a project-local skill and explicit hook wrapper for a supported agent:
+The preferred installation unit is a harness plugin or extension. Every format
+derives from the same disclosure, redaction, persistence, evidence, and
+verification contract in
+[`docs/harness-extension-protocol.md`](docs/harness-extension-protocol.md).
+Wrappers are discovery mechanisms, not independent implementations.
+
+Install every detected project adapter in one operation:
+
+```sh
+prog harness install --dry-run --root /path/to/project
+prog harness install --root /path/to/project
+prog harness doctor --root /path/to/project
+```
+
+The universal `.agents/skills/prog` target is always installed. Codex, Claude
+Code, Gemini CLI, and Cursor adapters are added when their executable or project
+directory is detected. Repeat `--host` for an explicit deployment instead of
+detection.
+
+### Codex plugin
+
+This repository is a Codex marketplace root and ships `plugins/prog`. From a
+checkout:
+
+```sh
+codex plugin marketplace add /path/to/prog
+codex plugin add prog@personal
+```
+
+The plugin includes the canonical Agent Skill, dependency doctor, and exact-
+argv wrapper. It deliberately does not parse Codex shell-command strings.
+
+### DeepSeek Harness plugin
+
+`extensions/deepseek-harness` is a native `tools/post-execute` plugin. It
+captures the accepted immutable tool result, never reruns the tool, and replaces
+the result only when the `prog` envelope is cheaper or redaction requires it.
+
+```sh
+dsh plugin --profile web add ./extensions/deepseek-harness
+```
+
+### Generated project adapters
+
+The legacy single-host command remains available for compatibility:
 
 ```sh
 prog init --agent codex --project --dry-run
@@ -414,23 +470,22 @@ prog init --agent agents-md --project
 prog init --print-skill --frontmatter yaml
 ```
 
-Built-in values are `agents-md`, `codex`, `claude-code`, `cursor`, and
-`gemini-cli`. Additional targets come from validated JSON passed with
-`--manifest-dir`, so they do not require a `prog` release. The installer reports
-every planned file and does not silently overwrite existing files; hook-based
-targets include a generated uninstall script. `--print-skill` writes only the
-chosen `yaml`, `mdc`, or frontmatter-free skill to stdout. See
+Built-in values are `agent-skills`, `agents-md`, `codex`, `claude-code`,
+`cursor`, and `gemini-cli`. Additional targets come from validated JSON passed
+with `--manifest-dir`, so they do not require a `prog` release. Existing files
+are never silently overwritten. See
 [`docs/integrations.md`](docs/integrations.md) for the exact paths.
 
 `prog` can consume MCP as an upstream source, but **prog itself does not expose
-an MCP server mode**. The measured facade remains CLI-native pending the actual
-agent evaluation; today the durable integration surface is CLI + agent skill +
-explicit project wrappers.
+an MCP server mode**. The durable integration surface is a native result plugin
+when the host provides a lossless replacement boundary, otherwise the portable
+Agent Skill plus explicit wrapper, all backed by the same local CLI transport.
 
 ## Command map
 
 | Workflow | Commands |
 | --- | --- |
+| Install and verify the harness extension | `harness install`, `harness doctor` |
 | Capture one command or artifact | `run`, `observe` |
 | Classify exact argv without executing it | `route` |
 | Register and understand sources | `source add-http`, `source add-cli`, `source add-mcp`, `discover`, `hints` |
@@ -444,11 +499,11 @@ explicit project wrappers.
 | Gate on verification criteria | `verification begin`, `verification readback`, `session obligation-add`, `session obligation-list`, `session show --readiness` |
 | Inspect storage and economics | `cache`, `cost` |
 | Inspect public contracts | `meta` |
-| Install agent integration | `init` |
+| Install one legacy host adapter | `init` |
 | Update a curl-managed binary | `update --yes` |
 
-Run `prog <command> --help` for the complete argument surface; every command and
-subcommand self-describes. Global options are `--dir <DIR>` (`PROG_DIR`, default
+Harnesses can run `prog <command> --help` for the complete argument surface;
+every command and subcommand self-describes. Global options are `--dir <DIR>` (`PROG_DIR`, default
 `./.prog`), `--lens-dir <DIR>` (`PROG_LENS_DIR`, default `./lenses`),
 `--budget-bytes <N>` (`PROG_BUDGET_BYTES`), `--budget-tokens <N>`
 (`PROG_BUDGET_TOKENS`), and `--pretty`. The byte budget is authoritative; when

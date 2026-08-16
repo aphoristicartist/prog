@@ -414,6 +414,21 @@ fn documented_command_help_surface_stays_real() {
         );
     }
 
+    let harness_install_help = stdout(&prog(&root, &["harness", "install", "--help"]));
+    for expected in ["--host", "--auto", "--dry-run", "--root", "--manifest-dir"] {
+        assert!(
+            harness_install_help.contains(expected),
+            "harness install help should contain {expected}"
+        );
+    }
+    let harness_doctor_help = stdout(&prog(&root, &["harness", "doctor", "--help"]));
+    for expected in ["--host", "--root", "--manifest-dir"] {
+        assert!(
+            harness_doctor_help.contains(expected),
+            "harness doctor help should contain {expected}"
+        );
+    }
+
     let source_http_help = stdout(&prog(&root, &["source", "add-http", "--help"]));
     for expected in ["--operation", "--url", "--method", "--probe"] {
         assert!(
@@ -514,6 +529,7 @@ fn docs_keep_acceptance_topics_visible() {
         "docs/lens-packs.md",
         "docs/observe.md",
         "docs/run.md",
+        "docs/harness-extension-protocol.md",
         "docs/integrations.md",
         "docs/evidence.md",
         "docs/evidence-navigation.md",

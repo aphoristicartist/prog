@@ -1,10 +1,14 @@
-# Agent integrations
+# Harness extensions and plugins
 
-`prog` is designed to stay useful without MCP server mode. The durable V1
-surface is:
+`prog` is an agent-harness extension. The CLI is its local JSON transport and
+debugging surface; agents and harnesses are the intended callers. Every host
+format derives from the normative
+[`harness-extension-protocol.md`](harness-extension-protocol.md).
+
+The preferred surface is:
 
 ```text
-CLI + agent skill + explicit project hooks
+native post-result plugin -> portable Agent Skill -> explicit argv wrapper
 ```
 
 MCP tools and resources can already be consumed as upstream sources through the
@@ -16,7 +20,12 @@ measured three-operation facade; an MCP-only host is unsupported today.
 
 | Surface | Status | Command | Writes |
 |---|---|---|---|
-| Codex project skill and hooks | implemented | `prog init --agent codex --project` | `.codex/skills/prog/SKILL.md`, `.codex/prog-hooks/*` |
+| Auto-detected harness extension | implemented | `prog harness install` | portable skill plus detected adapters |
+| Harness readiness | implemented | `prog harness doctor` | nothing |
+| Codex marketplace plugin | implemented | `codex plugin add prog@personal` after adding this checkout as a marketplace | Codex plugin cache |
+| DeepSeek Harness result plugin | implemented | `dsh plugin --profile web add ./extensions/deepseek-harness` | profile dependency and bundle layer |
+| Portable Agent Skills target | implemented | `prog harness install --host agent-skills` | `.agents/skills/prog/SKILL.md`, `.agents/prog-hooks/*` |
+| Codex project skill and hooks | implemented | `prog init --agent codex --project` | `.agents/skills/prog/SKILL.md`, `.codex/prog-hooks/*` |
 | Codex dry run | implemented | `prog init --agent codex --project --dry-run` | nothing |
 | Claude Code project skill and hooks | implemented | `prog init --agent claude-code --project` | `.claude/skills/prog/SKILL.md`, `.claude/prog-hooks/*` |
 | Cursor project rule and hooks | implemented | `prog init --agent cursor --project` | `.cursor/rules/prog.mdc`, `.cursor/prog-hooks/*` |
@@ -29,9 +38,22 @@ measured three-operation facade; an MCP-only host is unsupported today.
 
 ## Generated Files
 
+The normal entry point is:
+
+```sh
+prog harness install --dry-run
+prog harness install
+prog harness doctor
+```
+
+The installer always selects the portable `agent-skills` target and detects
+Codex, Claude Code, Cursor, and Gemini CLI from project directories or commands
+on `PATH`. Repeat `--host` to select an explicit set. Shared output paths are
+deduplicated and conflicting manifests fail closed.
+
 `prog init --agent codex --project` creates reviewable, reversible files:
 
-- `.codex/skills/prog/SKILL.md`
+- `.agents/skills/prog/SKILL.md`
 - `.codex/prog-hooks/prog-run.sh`
 - `.codex/prog-hooks/README.md`
 - `.codex/prog-hooks/manifest.json`

@@ -1,8 +1,9 @@
 # Positioning
 
-`prog` is not a generic compressor and should not be sold as smarter
-truncation. It is useful when an agent has a large or messy tool result before
-it knows which parts matter.
+`prog` is an agent-harness extension, not a human terminal product, generic
+compressor, or smarter truncation. A host plugin invokes its local CLI transport
+when an agent has a large or messy tool result before it knows which parts
+matter.
 
 The core bet is:
 
@@ -44,7 +45,7 @@ observations where conclusions need cursor/path-backed evidence.
 | Domain-specific CLI commands | The tool has a precise subcommand for the task | Often still emits huge logs/errors around the useful part | Prefer precise commands; wrap noisy results with `prog run` when output is still large |
 | Simple truncation | A rough first glance is enough | Drops data without a recoverable path to exact evidence | `prog` bounds the first view but keeps cursor-backed expansion |
 | RTK-style command interception | Low-friction terminal adoption is the main goal | Filters can be command-specific and lossy unless backed by recoverable storage | `prog route` may wrap identical argv for capture; semantic substitution is prohibited and redacted payloads stay expandable |
-| MCP gateways/proxies | The host agent already speaks MCP and needs tool-catalog integration | MCP does not guarantee result-side progressive disclosure | `prog` consumes MCP tools and resources as upstream sources; CLI + skill + hooks remain the durable agent-facing contract |
+| MCP gateways/proxies | The host agent already speaks MCP and needs tool-catalog integration | MCP does not guarantee result-side progressive disclosure | `prog` consumes MCP upstream; native result plugins or Agent Skill + wrapper are the durable integration |
 | Terse-output prompting | Assistant responses are too verbose | Does not reduce oversized tool-result input | Use terse responses on top of `prog`, not instead of result-side disclosure |
 | Large context windows | Raw completeness matters more than cost/privacy/noise | Cost and attention still scale with raw input | Use raw context when it is worth it; use `prog cost` to quantify the tradeoff |
 

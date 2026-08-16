@@ -14,7 +14,7 @@ use serde::Deserialize;
 #[command(
     name = "prog",
     version,
-    about = "Progressive-disclosure gateway for APIs, CLIs, and MCP servers"
+    about = "Agent-harness extension for bounded, cursor-backed tool results"
 )]
 pub(crate) struct Cli {
     #[arg(long, env = "PROG_DIR", default_value = "./.prog", global = true)]
@@ -40,6 +40,11 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
+    /// Install and verify prog as an extension of the current agent harness.
+    Harness {
+        #[command(subcommand)]
+        command: HarnessCommand,
+    },
     /// Infer a source profile from an OpenAPI spec, JSON Schema, or CLI help text.
     Discover(DiscoverArgs),
     /// Register and manage reusable HTTP, CLI, and MCP source profiles.
@@ -59,7 +64,7 @@ pub(crate) enum Command {
     Run(RunArgs),
     /// Run a first-party workflow that composes capture, a domain lens, and inspection.
     Recipe(RecipeArgs),
-    /// Install a project-local agent skill and explicit hook wrappers.
+    /// Install a project-local agent skill and wrappers (legacy alias for harness install).
     Init(InitArgs),
     /// Replace a curl-managed prog binary with a verified release.
     Update(UpdateArgs),
@@ -103,6 +108,49 @@ pub(crate) enum Command {
     },
     /// Print prog's own public contract schemas through the same envelope.
     Meta(MetaArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum HarnessCommand {
+    /// Install portable skills and detected host adapters into a project.
+    Install(HarnessInstallArgs),
+    /// Verify that the binary and selected project adapters are ready for an agent loop.
+    Doctor(HarnessDoctorArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct HarnessInstallArgs {
+    /// Install only these host adapters; repeat for more than one host.
+    #[arg(long = "host", conflicts_with = "auto")]
+    pub(crate) hosts: Vec<String>,
+
+    /// Detect installed harnesses; this is also the default when --host is omitted.
+    #[arg(long)]
+    pub(crate) auto: bool,
+
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+
+    #[arg(long, default_value = ".")]
+    pub(crate) root: PathBuf,
+
+    /// Load additional integration-target JSON manifests from this directory.
+    #[arg(long)]
+    pub(crate) manifest_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct HarnessDoctorArgs {
+    /// Check only these host adapters; repeat for more than one host.
+    #[arg(long = "host")]
+    pub(crate) hosts: Vec<String>,
+
+    #[arg(long, default_value = ".")]
+    pub(crate) root: PathBuf,
+
+    /// Load additional integration-target JSON manifests from this directory.
+    #[arg(long)]
+    pub(crate) manifest_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

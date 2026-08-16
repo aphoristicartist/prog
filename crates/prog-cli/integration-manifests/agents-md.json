@@ -4,5 +4,12 @@
   "skill_path": "AGENTS.md",
   "hook_dir": null,
   "frontmatter": "none",
-  "write_mode": "append_marker"
+  "write_mode": "append_marker",
+  "capabilities": {
+    "instruction_discovery": "agents_md",
+    "command_input": "agent_authored",
+    "post_result": "none",
+    "can_replace_result": false,
+    "native_package": null
+  }
 }

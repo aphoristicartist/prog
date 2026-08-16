@@ -4,5 +4,12 @@
   "skill_path": ".cursor/rules/prog.mdc",
   "hook_dir": ".cursor/prog-hooks",
   "frontmatter": "mdc",
-  "write_mode": "create"
+  "write_mode": "create",
+  "capabilities": {
+    "instruction_discovery": "cursor_mdc_rule",
+    "command_input": "shell_string",
+    "post_result": "unproven",
+    "can_replace_result": false,
+    "native_package": null
+  }
 }

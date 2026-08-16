@@ -1,0 +1,9 @@
+# Install prog as a post-tool-result policy in a DeepSeek Harness profile.
+# The plugin delegates first, then bounds the accepted immutable text result.
+- insert:
+    - id: prog-disclosure
+      name: '@aphoristicartist/dsh-prog'
+      config:
+        minBytes: 16384
+        budgetBytes: 16384
+        timeoutMs: 30000

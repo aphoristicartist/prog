@@ -4,6 +4,7 @@ Cargo.toml
 Cargo.toml.orig
 LICENSE
 build.rs
+integration-manifests/agent-skills.json
 integration-manifests/agents-md.json
 integration-manifests/claude-code.json
 integration-manifests/codex.json

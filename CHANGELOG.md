@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Repositioned `prog` as an agent-harness extension and added an end-to-end
+  integration surface: auto-detected `prog harness install`/`doctor`, a portable
+  Agent Skill target, a Codex marketplace plugin, and a native DeepSeek Harness
+  `tools/post-execute` package that bounds accepted results without rerunning
+  tools. Host capabilities are declared conservatively, package contracts are
+  checked in CI, and the local CLI remains the single JSON transport for
+  disclosure, evidence, and status.
+
 ## 0.1.1 - 2026-08-16
 
 - Added safe, idempotent PATH setup to the verified curl installer for zsh,

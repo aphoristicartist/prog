@@ -70,7 +70,7 @@ use commands::{
     },
     expand::expand_cursor,
     hints::hints_source,
-    init::{init_integration, print_skill_content},
+    init::{doctor_harness, init_integration, install_harness, print_skill_content},
     lenses::{
         load_lens, parse_json_argument, parse_view, validate_lens_matches_call,
         validate_lens_matches_observe, validate_lens_matches_run,
@@ -306,6 +306,23 @@ fn init_tracing() {
 
 async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
     match &cli.command {
+        Command::Harness { command } => match command {
+            HarnessCommand::Install(args) => {
+                let report = install_harness(args)?;
+                write_success(&report, cli.pretty, ctx)?;
+                Ok(ExitCode::SUCCESS)
+            }
+            HarnessCommand::Doctor(args) => {
+                let report = doctor_harness(args)?;
+                let exit = if report.ready {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                };
+                write_success(&report, cli.pretty, ctx)?;
+                Ok(exit)
+            }
+        },
         Command::Discover(args) => {
             let store = open_store(&cli.dir, ctx)?;
             let report = discover_source(&store, args).await?;
