@@ -57,14 +57,23 @@ Install the latest verified binary with `curl` (requires
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/releases/latest/download/install.sh | sh
-prog --help
 ```
 
 The installer selects the supported target, downloads into a temporary
 directory, verifies both `SHA256SUMS` and the GitHub build-provenance
 attestation, and only then atomically places `prog` in `~/.local/bin`. Override
 the destination with `PROG_INSTALL_DIR`. It refuses unsupported platforms,
-checksum mismatches, missing attestations, and missing verification tools.
+checksum mismatches, missing attestations, and missing verification tools. If
+the install directory is not already on `PATH`, it adds one idempotent entry to
+the detected zsh, bash, or POSIX-shell profile. Open a new terminal, then run:
+
+```sh
+prog --help
+```
+
+Set `PROG_MODIFY_PATH=0` to leave shell startup files unchanged. Unknown shells
+are never guessed; the installer keeps the verified installation and prints a
+manual PATH instruction instead.
 
 Update a curl-managed installation to the latest verified release explicitly:
 
@@ -75,8 +84,8 @@ prog update --yes
 `prog update` never runs in the background. Without `--yes` it fails closed
 before network access or filesystem mutation; package-manager installations
 are not overwritten unless an explicit `--install-dir` is supplied. See
-[`docs/install.md`](docs/install.md) for exact-version installs, manual
-verification, PATH setup, and the updater trust model.
+[`docs/install.md`](docs/install.md) for exact-version installs, profile
+selection, manual verification, and the updater trust model.
 
 For development from a checkout:
 

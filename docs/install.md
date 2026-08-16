@@ -18,16 +18,38 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/r
   | PROG_INSTALL_DIR="$HOME/bin" sh
 ```
 
-If the chosen directory is not already on `PATH`, add it using your shell's
-normal profile mechanism. The installer never edits shell startup files.
+If the chosen directory is not already on `PATH`, the installer appends one
+idempotent entry to the detected startup file:
+
+| Login shell | Startup file |
+|---|---|
+| zsh | `~/.zshrc` |
+| bash on macOS | `~/.bash_profile` |
+| bash on Linux | `~/.bashrc` |
+| sh, dash, or ksh | `~/.profile` |
+
+Open a new terminal after installation; a script executed through `curl | sh`
+cannot modify the environment of the parent shell that launched it. If the
+install directory is already present in the current `PATH`, no startup file is
+changed. To opt out explicitly:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/releases/latest/download/install.sh \
+  | PROG_MODIFY_PATH=0 sh
+```
+
+`PROG_MODIFY_PATH` accepts only `0` or `1`. For an unknown login shell, an
+unavailable profile writer, or an unsafe multiline install path, installation
+still succeeds but the profile is left untouched and a manual instruction is
+printed.
 
 ## Exact release
 
 Use the installer attached to that release and bind the expected version:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/releases/download/v0.1.0/install.sh \
-  | PROG_VERSION=v0.1.0 sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/releases/download/v0.1.1/install.sh \
+  | PROG_VERSION=v0.1.1 sh
 ```
 
 The installation fails unless the archive's embedded `VERSION` and `TARGET`
@@ -67,7 +89,7 @@ installer verifies the archive checksum and build attestation before an atomic
 replacement. To install a specific version:
 
 ```sh
-prog update --yes --target-version v0.1.0
+prog update --yes --target-version v0.1.1
 ```
 
 There is deliberately no hidden background update. A self-update is a networked
@@ -99,6 +121,6 @@ Developers with Rust 1.89 or newer can install from a checkout:
 cargo install --path crates/prog-cli
 ```
 
-There is no crates.io publication in v0.1.0. The package name is `prog-cli`
+There is no crates.io publication in v0.1.1. The package name is `prog-cli`
 while the installed binary name is `prog`; publishing that package remains an
 explicit future owner decision rather than an automated release side effect.

@@ -20,6 +20,7 @@ struct ReleaseFixture {
     _root: tempfile::TempDir,
     release_dir: PathBuf,
     fake_bin: PathBuf,
+    home_dir: PathBuf,
     install_dir: PathBuf,
     target: &'static str,
     archive: PathBuf,
@@ -31,9 +32,11 @@ impl ReleaseFixture {
         let release_dir = root.path().join("release");
         let staging = release_dir.join(format!("prog-{}", target()));
         let fake_bin = root.path().join("fake-bin");
+        let home_dir = root.path().join("home");
         let install_dir = root.path().join("installed");
         fs::create_dir_all(&staging).unwrap();
         fs::create_dir_all(&fake_bin).unwrap();
+        fs::create_dir_all(&home_dir).unwrap();
 
         let fake_prog = staging.join("prog");
         fs::write(
@@ -80,6 +83,7 @@ impl ReleaseFixture {
             _root: root,
             release_dir,
             fake_bin,
+            home_dir,
             install_dir,
             target: target(),
             archive,
@@ -94,6 +98,8 @@ impl ReleaseFixture {
             .env("PROG_ALLOW_FILE_URL", "1")
             .env("PROG_TARGET", self.target)
             .env("PROG_INSTALL_DIR", &self.install_dir)
+            .env("HOME", &self.home_dir)
+            .env("SHELL", "/bin/sh")
             .env("PATH", path_with(&self.fake_bin));
         command
     }
@@ -116,6 +122,8 @@ impl ReleaseFixture {
             .env("PROG_RELEASE_URL", file_url(&self.release_dir))
             .env("PROG_ALLOW_FILE_URL", "1")
             .env("PROG_TARGET", self.target)
+            .env("HOME", &self.home_dir)
+            .env("SHELL", "/bin/sh")
             .env("PATH", path_with(&self.fake_bin));
         command
     }
@@ -136,6 +144,115 @@ fn curl_installer_verifies_and_installs_a_supported_release() {
         )
     );
     assert!(stderr(&output).contains("checksum and GitHub attestation verified"));
+    assert_eq!(
+        fs::read_to_string(fixture.home_dir.join(".profile")).unwrap(),
+        format!(
+            "# Added by the prog installer.\nexport PATH='{}':\"$PATH\"\n",
+            fixture.install_dir.display()
+        )
+    );
+    assert!(stderr(&output).contains("Open a new terminal to use prog by name"));
+}
+
+#[test]
+fn curl_installer_adds_quoted_path_to_shell_profile_only_once() {
+    let fixture = ReleaseFixture::new();
+    let install_dir = fixture._root.path().join("installed dir's bin");
+    let run = || {
+        fixture
+            .installer()
+            .env("PROG_INSTALL_DIR", &install_dir)
+            .env("SHELL", "/bin/zsh")
+            .output()
+            .unwrap()
+    };
+
+    let first = run();
+    assert!(first.status.success(), "{}", stderr(&first));
+    let second = run();
+    assert!(second.status.success(), "{}", stderr(&second));
+
+    let profile = fs::read_to_string(fixture.home_dir.join(".zshrc")).unwrap();
+    let quoted = install_dir.to_string_lossy().replace('\'', "'\\''");
+    let path_line = format!("export PATH='{quoted}':\"$PATH\"");
+    assert_eq!(
+        profile.lines().filter(|line| *line == path_line).count(),
+        1,
+        "the PATH entry must be idempotent: {profile}"
+    );
+    assert!(stderr(&second).contains("already configured"));
+}
+
+#[test]
+fn curl_installer_path_setup_can_be_disabled() {
+    let fixture = ReleaseFixture::new();
+    let output = fixture
+        .installer()
+        .env("PROG_MODIFY_PATH", "0")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!fixture.home_dir.join(".profile").exists());
+    assert!(stderr(&output).contains("PROG_MODIFY_PATH=0"));
+}
+
+#[test]
+fn curl_installer_does_not_edit_a_profile_when_install_dir_is_already_on_path() {
+    let fixture = ReleaseFixture::new();
+    let path = format!(
+        "{}:{}",
+        fixture.install_dir.display(),
+        path_with(&fixture.fake_bin)
+    );
+    let output = fixture.installer().env("PATH", path).output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!fixture.home_dir.join(".profile").exists());
+    assert!(stderr(&output).contains("already on PATH"));
+}
+
+#[test]
+fn curl_installer_keeps_the_install_when_login_shell_is_unsupported() {
+    let fixture = ReleaseFixture::new();
+    let output = fixture
+        .installer()
+        .env("SHELL", "/bin/fish")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(fixture.install_dir.join("prog").is_file());
+    assert!(!fixture.home_dir.join(".profile").exists());
+    assert!(stderr(&output).contains("unsupported login shell /bin/fish"));
+}
+
+#[test]
+fn curl_installer_selects_the_platform_bash_profile() {
+    let fixture = ReleaseFixture::new();
+    let output = fixture
+        .installer()
+        .env("SHELL", "/bin/bash")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let profile = if cfg!(target_os = "macos") {
+        ".bash_profile"
+    } else {
+        ".bashrc"
+    };
+    assert!(fixture.home_dir.join(profile).is_file());
+    assert!(stderr(&output).contains(profile));
+}
+
+#[test]
+fn curl_installer_rejects_invalid_path_setup_mode_before_installing() {
+    let fixture = ReleaseFixture::new();
+    let output = fixture
+        .installer()
+        .env("PROG_MODIFY_PATH", "sometimes")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!fixture.install_dir.join("prog").exists());
+    assert!(stderr(&output).contains("invalid PROG_MODIFY_PATH"));
 }
 
 #[test]

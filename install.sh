@@ -14,6 +14,7 @@ requested_version="${PROG_VERSION:-}"
 requested_target="${PROG_TARGET:-}"
 release_url="${PROG_RELEASE_URL:-}"
 allow_file_url="${PROG_ALLOW_FILE_URL:-0}"
+modify_path="${PROG_MODIFY_PATH:-1}"
 
 fail() {
   printf 'prog installer: %s\n' "$*" >&2
@@ -69,6 +70,106 @@ download() {
   curl --proto "$allowed_protocol" --proto-redir "$allowed_protocol" --tlsv1.2 -fsSL "$url" -o "$output"
 }
 
+path_contains_install_dir() {
+  remaining_path="${PATH:-}"
+  while :; do
+    path_entry="${remaining_path%%:*}"
+    [ "$path_entry" = "$install_dir" ] && return 0
+    case "$remaining_path" in
+      *:*) remaining_path="${remaining_path#*:}" ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
+shell_profile() {
+  [ -n "${HOME:-}" ] || return 1
+  shell_value="${SHELL:-}"
+  shell_name="${shell_value##*/}"
+  case "$shell_name" in
+    zsh)
+      printf '%s\n' "$HOME/.zshrc"
+      ;;
+    bash)
+      if [ "$(uname -s)" = "Darwin" ]; then
+        printf '%s\n' "$HOME/.bash_profile"
+      else
+        printf '%s\n' "$HOME/.bashrc"
+      fi
+      ;;
+    sh|dash|ksh)
+      printf '%s\n' "$HOME/.profile"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+profile_contains_line() {
+  profile="$1"
+  expected_line="$2"
+  [ -f "$profile" ] || return 1
+  while IFS= read -r profile_line || [ -n "$profile_line" ]; do
+    [ "$profile_line" = "$expected_line" ] && return 0
+  done < "$profile"
+  return 1
+}
+
+configure_path() {
+  if [ "$modify_path" = "0" ]; then
+    printf 'PATH setup skipped because PROG_MODIFY_PATH=0. Add %s manually if needed.\n' \
+      "$install_dir" >&2
+    return 0
+  fi
+  if path_contains_install_dir; then
+    printf '%s is already on PATH; shell profile unchanged.\n' "$install_dir" >&2
+    return 0
+  fi
+  case "$install_dir" in
+    *'
+'*)
+      printf 'PATH not modified: the install directory contains a newline. Add it manually.\n' >&2
+      return 0
+      ;;
+  esac
+  if ! profile="$(shell_profile)"; then
+    printf 'PATH not modified: unsupported login shell %s. Add %s to its startup file.\n' \
+      "${SHELL:-unknown}" "$install_dir" >&2
+    return 0
+  fi
+  if ! command -v sed >/dev/null 2>&1; then
+    printf 'PATH not modified: sed is unavailable. Add %s to %s manually.\n' \
+      "$install_dir" "$profile" >&2
+    return 0
+  fi
+
+  if ! quoted_install_dir="$(printf '%s' "$install_dir" | sed "s/'/'\\\\''/g")"; then
+    printf 'PATH not modified: could not quote %s safely. Add it to %s manually.\n' \
+      "$install_dir" "$profile" >&2
+    return 0
+  fi
+  path_line="export PATH='${quoted_install_dir}':\"\$PATH\""
+  if profile_contains_line "$profile" "$path_line"; then
+    printf '%s is already configured in %s.\n' "$install_dir" "$profile" >&2
+    return 0
+  fi
+
+  if [ -s "$profile" ]; then
+    profile_prefix='\n'
+  else
+    profile_prefix=''
+  fi
+  if printf '%b# Added by the prog installer.\n%s\n' "$profile_prefix" "$path_line" >> "$profile"; then
+    printf 'Added %s to PATH in %s. Open a new terminal to use prog by name.\n' \
+      "$install_dir" "$profile" >&2
+  else
+    printf 'PATH not modified: could not write %s. Add %s manually.\n' \
+      "$profile" "$install_dir" >&2
+  fi
+  return 0
+}
+
 validate_version() {
   case "$1" in
     v*) version_body="${1#v}" ;;
@@ -100,6 +201,11 @@ need tar
 need awk
 need uname
 need mktemp
+
+case "$modify_path" in
+  0|1) ;;
+  *) fail "invalid PROG_MODIFY_PATH: $modify_path (expected 0 or 1)" ;;
+esac
 
 target="${requested_target:-$(detect_target)}"
 case "$target" in
@@ -163,3 +269,4 @@ mv -f "$marker_tmp" "$install_dir/.prog-install"
 
 printf 'prog %s installed to %s/prog (%s; checksum and GitHub attestation verified)\n' \
   "$installed_version" "$install_dir" "$installed_target" >&2
+configure_path
