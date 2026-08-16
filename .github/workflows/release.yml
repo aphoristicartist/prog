@@ -133,7 +133,9 @@ jobs:
         run: cargo install cargo-cyclonedx --version 0.5.9 --locked
 
       - name: Generate SBOM
-        run: cargo cyclonedx --workspace --format json --output-pattern package
+        # cargo-cyclonedx 0.5.9 discovers every workspace member through the
+        # root Cargo.toml and writes <crate>.cdx.json beside each manifest.
+        run: cargo cyclonedx --format json
 
       - name: Collect SBOM files
         run: |

@@ -51,14 +51,48 @@ fn assert_sizes_are_monotonic(label: &str, observations: &[(u32, usize)]) {
 fn normalized_run_envelope_bytes(mut envelope: Value) -> usize {
     // Every budget executes the command independently. `duration_ms` is real
     // provenance, but its decimal width varies with runner scheduling and is
-    // unrelated to disclosure-policy selection. Canonicalize that one value
-    // while retaining the field and every budget-dependent byte. Without this,
-    // a 99 ms versus 101 ms execution can fabricate a two-byte monotonicity
-    // failure even when both envelopes selected the identical policy.
-    if let Some(duration_ms) = envelope.pointer_mut("/provenance/duration_ms") {
-        *duration_ms = json!(1_000);
+    // unrelated to disclosure-policy selection. It appears both in the outer
+    // envelope provenance and in the projected run payload. Canonicalize those
+    // two exact values while retaining the fields and every budget-dependent
+    // byte. Without this, a 99 ms versus 101 ms execution can fabricate a
+    // monotonicity failure even when both envelopes selected the same policy.
+    for pointer in [
+        "/provenance/duration_ms",
+        "/data_preview/command/duration_ms",
+    ] {
+        if let Some(duration_ms) = envelope.pointer_mut(pointer) {
+            *duration_ms = json!(1_000);
+        }
     }
     serde_json::to_vec(&envelope).unwrap().len()
+}
+
+#[test]
+fn run_envelope_size_normalization_ignores_only_duplicate_duration_values() {
+    let short_duration = json!({
+        "provenance": { "duration_ms": 9 },
+        "data_preview": { "command": { "duration_ms": 10 } },
+        "findings": []
+    });
+    let mut long_duration = json!({
+        "provenance": { "duration_ms": 999 },
+        "data_preview": { "command": { "duration_ms": 1_000 } },
+        "findings": []
+    });
+    assert_eq!(
+        normalized_run_envelope_bytes(short_duration),
+        normalized_run_envelope_bytes(long_duration.clone())
+    );
+
+    long_duration["findings"] = json!([{"kind": "compile_error"}]);
+    assert_ne!(
+        normalized_run_envelope_bytes(json!({
+            "provenance": { "duration_ms": 999 },
+            "data_preview": { "command": { "duration_ms": 1_000 } },
+            "findings": []
+        })),
+        normalized_run_envelope_bytes(long_duration)
+    );
 }
 
 /// Surfaced findings must be non-decreasing in the budget. A larger budget may
