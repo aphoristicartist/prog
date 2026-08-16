@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.1 - 2026-08-16
+
+- Added safe, idempotent PATH setup to the verified curl installer for zsh,
+  bash, sh, dash, and ksh profiles. Existing PATH entries are preserved without
+  startup-file edits, `PROG_MODIFY_PATH=0` opts out, and unknown shells fall
+  back to a manual instruction without undoing a verified installation.
+
 ## 0.1.0 - 2026-08-15
 
 - Added non-coding read-back verification for externally executed mutations:

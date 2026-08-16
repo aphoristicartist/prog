@@ -41,6 +41,10 @@ and will be called out in the CHANGELOG.
   release step.
 - **Verified installer and explicit self-update.** `install.sh` requires both a
   SHA-256 match and a GitHub build-provenance attestation before extraction.
+  It idempotently adds its destination to supported shell profiles unless
+  `PROG_MODIFY_PATH=0` is set; unknown shells are left unchanged with a manual
+  instruction. Profile changes apply to newly opened shells, never the parent
+  of a `curl | sh` pipeline.
   `prog update --yes` verifies the release installer and archive before atomic
   replacement. There is no hidden background update.
 - **Exact crate manifests are pinned.** CI fails when any packaged file is
