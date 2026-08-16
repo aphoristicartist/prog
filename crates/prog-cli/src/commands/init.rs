@@ -1,6 +1,6 @@
 //! Project-local agent integration command.
 
-use std::path::Component;
+use std::{io::Write, path::Component};
 
 use serde::Deserialize;
 
@@ -72,6 +72,9 @@ pub(crate) fn init_integration(args: &InitArgs) -> Result<InitReport> {
             ),
         })?;
     let specs = agent_project_init_files(target);
+    for spec in &specs {
+        reject_symlink_components(&root, &spec.relative_path, "init")?;
+    }
     let mut files = Vec::new();
     let mut skipped = 0usize;
     for spec in specs {
@@ -106,7 +109,7 @@ pub(crate) fn init_integration(args: &InitArgs) -> Result<InitReport> {
         } else if args.dry_run {
             ("would_create", None)
         } else {
-            write_init_file(&full_path, &spec.content, spec.executable)?;
+            write_new_init_file(&full_path, &spec.content, spec.executable)?;
             ("created", None)
         };
         files.push(InitFileReport {
@@ -184,6 +187,7 @@ pub(crate) fn doctor_harness(args: &HarnessDoctorArgs) -> Result<HarnessDoctorRe
     let mut blockers = Vec::new();
 
     for spec in specs {
+        reject_symlink_components(&root, &spec.relative_path, "harness")?;
         let full_path = root.join(&spec.relative_path);
         if !full_path.exists() {
             blockers.push(format!("missing {}", spec.relative_path));
@@ -196,7 +200,7 @@ pub(crate) fn doctor_harness(args: &HarnessDoctorArgs) -> Result<HarnessDoctorRe
         }
         let content = std::fs::read_to_string(&full_path)?;
         let content_matches = if spec.append_marker {
-            content.contains(AGENTS_MARKER_START) && content.contains(AGENTS_MARKER_END)
+            content.contains(&spec.content)
         } else {
             content == spec.content
         };
@@ -346,6 +350,9 @@ fn install_project_specs(
     specs: Vec<InitFileSpec>,
     dry_run: bool,
 ) -> Result<(Vec<InitFileReport>, Vec<String>)> {
+    for spec in &specs {
+        reject_symlink_components(root, &spec.relative_path, "harness")?;
+    }
     let mut files = Vec::new();
     let mut skipped = 0usize;
     for spec in specs {
@@ -380,7 +387,7 @@ fn install_project_specs(
         } else if dry_run {
             ("would_create", None)
         } else {
-            write_init_file(&full_path, &spec.content, spec.executable)?;
+            write_new_init_file(&full_path, &spec.content, spec.executable)?;
             ("created", None)
         };
         files.push(InitFileReport {
@@ -517,6 +524,36 @@ fn validate_relative_target_path(value: &str, field: &str, origin: &str) -> Resu
                 "invalid integration target in {origin}: {field} must be a normalized project-relative path"
             ),
         });
+    }
+    Ok(())
+}
+
+fn reject_symlink_components(root: &Path, relative_path: &str, operation: &str) -> Result<()> {
+    let mut current = root.to_path_buf();
+    for component in Path::new(relative_path).components() {
+        let Component::Normal(part) = component else {
+            return Err(CoreError::BadArgs {
+                operation: operation.to_string(),
+                reason: format!(
+                    "generated path '{relative_path}' is not a normalized project-relative path"
+                ),
+            });
+        };
+        current.push(part);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(CoreError::BadArgs {
+                    operation: operation.to_string(),
+                    reason: format!(
+                        "generated path '{relative_path}' crosses symbolic link '{}'",
+                        current.display()
+                    ),
+                });
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error.into()),
+        }
     }
     Ok(())
 }
@@ -801,26 +838,29 @@ fn uninstall_hook(files: &[String]) -> String {
     script
 }
 
-fn write_init_file(path: &Path, content: &str, executable: bool) -> Result<()> {
+fn write_new_init_file(path: &Path, content: &str, executable: bool) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, content)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(content.as_bytes())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = if executable { 0o755 } else { 0o644 };
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+        file.set_permissions(std::fs::Permissions::from_mode(mode))?;
     }
     Ok(())
 }
 
 fn append_marked_init_file(path: &Path, content: &str) -> Result<()> {
-    let existing = if path.exists() {
-        std::fs::read_to_string(path)?
-    } else {
-        String::new()
-    };
+    if !path.exists() {
+        return write_new_init_file(path, content, false);
+    }
+    let existing = std::fs::read_to_string(path)?;
     let separator = if existing.is_empty() || existing.ends_with("\n\n") {
         ""
     } else if existing.ends_with('\n') {
@@ -828,5 +868,7 @@ fn append_marked_init_file(path: &Path, content: &str) -> Result<()> {
     } else {
         "\n\n"
     };
-    write_init_file(path, &format!("{existing}{separator}{content}"), false)
+    let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
+    file.write_all(format!("{separator}{content}").as_bytes())?;
+    Ok(())
 }

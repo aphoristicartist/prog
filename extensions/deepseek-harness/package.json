@@ -3,6 +3,9 @@
   "version": "0.1.1",
   "description": "prog tool-result disclosure plugin for DeepSeek Harness",
   "type": "module",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
   "main": "./index.js",
   "exports": {
     ".": "./index.js",
@@ -12,7 +15,8 @@
   "files": [
     "index.js",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "node --test"
@@ -35,7 +39,7 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "*",
-    "@deepseek-ai/dsh-tools": "*"
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
   }
 }

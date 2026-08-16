@@ -134,6 +134,32 @@ fn harness_install_deduplicates_the_shared_agent_skill_across_hosts() {
 }
 
 #[test]
+fn harness_install_refuses_project_symlink_escape() {
+    let project = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), project.path().join(".agents")).unwrap();
+
+    let output = prog(&[
+        "harness",
+        "install",
+        "--host",
+        "agent-skills",
+        "--root",
+        project.path().to_str().unwrap(),
+    ]);
+    assert!(!output.status.success());
+    let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("crosses symbolic link")
+    );
+    assert!(!outside.path().join("prog-hooks").exists());
+    assert!(!outside.path().join("skills").exists());
+}
+
+#[test]
 fn init_codex_project_dry_run_reports_reviewable_files_without_writing() {
     let project = tempfile::tempdir().unwrap();
     let root = project.path().to_str().unwrap();
@@ -561,6 +587,7 @@ fn agents_md_target_appends_one_marked_section_without_overwriting() {
     let project = tempfile::tempdir().unwrap();
     let agents = project.path().join("AGENTS.md");
     fs::write(&agents, "# Owner instructions\n\nKeep this text.\n").unwrap();
+    fs::set_permissions(&agents, fs::Permissions::from_mode(0o600)).unwrap();
     let args = [
         "init",
         "--agent",
@@ -578,6 +605,10 @@ fn agents_md_target_appends_one_marked_section_without_overwriting() {
     assert_eq!(installed.matches("<!-- prog:skill:start -->").count(), 1);
     assert_eq!(installed.matches("<!-- prog:skill:end -->").count(), 1);
     assert!(installed.contains("prog evidence"));
+    assert_eq!(
+        fs::metadata(&agents).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
     assert!(!project.path().join(".prog").exists());
 
     let second = prog(&args);
@@ -585,6 +616,25 @@ fn agents_md_target_appends_one_marked_section_without_overwriting() {
     let second_report: Value = serde_json::from_slice(&second.stdout).unwrap();
     assert_eq!(second_report["files"][0]["action"], "exists");
     assert_eq!(fs::read_to_string(&agents).unwrap(), installed);
+
+    fs::write(
+        &agents,
+        installed.replace("prog evidence", "prog changed-evidence"),
+    )
+    .unwrap();
+    let doctor = prog(&[
+        "harness",
+        "doctor",
+        "--host",
+        "agents-md",
+        "--root",
+        project.path().to_str().unwrap(),
+    ]);
+    assert!(!doctor.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&doctor.stdout).unwrap()["ready"],
+        false
+    );
 }
 
 #[test]

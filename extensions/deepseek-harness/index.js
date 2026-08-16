@@ -7,6 +7,7 @@ const DEFAULT_MIN_BYTES = 16 * 1024
 const DEFAULT_BUDGET_BYTES = 16 * 1024
 const DEFAULT_TIMEOUT_MS = 30_000
 const MAX_CHILD_OUTPUT_BYTES = 256 * 1024
+const VERDICT_RESULTS = new Set(['raw_cheaper', 'neutral', 'bounded_win'])
 
 function plainText(content) {
   let text = ''
@@ -113,8 +114,14 @@ async function capture(text, exec, config) {
     signal: exec.signal,
   })
   const envelope = JSON.parse(output)
-  if (envelope?.schema !== 'prog.disclosure' || typeof envelope?.cursor !== 'string') {
+  if (envelope?.schema !== 'prog.disclosure'
+    || typeof envelope?.cursor !== 'string'
+    || !envelope.cursor.startsWith('pc1_')
+    || !VERDICT_RESULTS.has(envelope?.disclosure_verdict?.result)) {
     throw new Error('prog returned no reusable disclosure cursor')
+  }
+  if (Buffer.byteLength(JSON.stringify(envelope), 'utf8') > budgetBytes) {
+    throw new Error('prog returned an envelope larger than the configured budget')
   }
   return envelope
 }

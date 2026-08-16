@@ -81,7 +81,7 @@ advanced commands remain available to agents for debugging and recovery.
 ## Installation contract
 
 `prog harness install` always installs the portable `agent-skills` target and
-adds native host adapters detected from project directories or executables.
+adds host adapters detected from project directories or executables.
 `--host` selects an explicit repeatable set. Generated paths are deduplicated,
 existing files are not overwritten, and conflicting manifests fail closed.
 

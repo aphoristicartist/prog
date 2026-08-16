@@ -44,6 +44,10 @@ fn codex_plugin_and_marketplace_are_self_consistent() {
     let canonical_skill = fs::read_to_string(root.join("skills/prog/SKILL.md")).unwrap();
     let plugin_skill = fs::read_to_string(plugin_root.join("skills/prog/SKILL.md")).unwrap();
     assert_eq!(plugin_skill, canonical_skill);
+    assert_eq!(
+        fs::read_to_string(plugin_root.join("LICENSE")).unwrap(),
+        fs::read_to_string(root.join("LICENSE")).unwrap()
+    );
 
     for relative in ["scripts/prog-run.sh", "scripts/doctor.sh"] {
         let path = plugin_root.join(relative);
@@ -75,10 +79,18 @@ fn deepseek_harness_package_declares_a_native_bundle() {
     assert_eq!(package["name"], "@aphoristicartist/dsh-prog");
     assert_eq!(package["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(package["type"], "module");
+    assert_eq!(package["engines"]["node"], "^22.19.0 || >=24.0.0");
     assert_eq!(package["main"], "./index.js");
     assert_eq!(package["dsh"]["bundle"]["patch"], "./cordis.patch.yml");
-    assert!(package["peerDependencies"]["@deepseek-ai/cordis"].is_string());
-    assert!(package["peerDependencies"]["@deepseek-ai/dsh-tools"].is_string());
+    assert_eq!(package["peerDependencies"]["@deepseek-ai/cordis"], "^4.0.1");
+    assert_eq!(
+        package["peerDependencies"]["@deepseek-ai/dsh-tools"],
+        "^0.1.0-rc.6"
+    );
+    assert_eq!(
+        fs::read_to_string(extension_root.join("LICENSE")).unwrap(),
+        fs::read_to_string(root.join("LICENSE")).unwrap()
+    );
 
     let patch = fs::read_to_string(extension_root.join("cordis.patch.yml")).unwrap();
     assert!(patch.contains("name: '@aphoristicartist/dsh-prog'"));

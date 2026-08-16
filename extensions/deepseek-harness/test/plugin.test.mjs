@@ -131,9 +131,11 @@ test('raw-cheaper results and adapter failures fail open to the original result'
   }
   const script = await mockProg(rawEnvelope)
   const invalidScript = await mockProg({ schema: 'unexpected.result' })
+  const incompleteScript = await mockProg({ schema: 'prog.disclosure', cursor: 'pc1_incomplete' })
   for (const config of [
     { progCommand: process.execPath, progArgs: [script] },
     { progCommand: process.execPath, progArgs: [invalidScript] },
+    { progCommand: process.execPath, progArgs: [incompleteScript] },
     { progCommand: '/definitely/missing/prog' },
   ]) {
     const harness = context()
