@@ -238,7 +238,8 @@ fn record_mcp_task_observation_with_availability(
     parent_id: Option<String>,
     unavailable: bool,
 ) -> Result<McpTaskCommandOutput> {
-    let redacted = RawPayload::new(value).redact(&resolve_redaction(Some(profile)));
+    let redaction = resolve_redaction(Some(profile));
+    let redacted = RawPayload::new(value).redact(&redaction);
     let payload = redacted.payload;
     let payload_bytes = json_len_u64(payload.as_value())?;
     let payload_hash = store.put_payload(&payload)?;
@@ -293,6 +294,7 @@ fn record_mcp_task_observation_with_availability(
                 None,
                 duration_ms,
                 json!({"kind": "mcp_task", "task_ref": task_ref}),
+                &redaction,
             )),
             provider: Some(source_kind_provider(profile.kind)),
             ..NewObservation::default()

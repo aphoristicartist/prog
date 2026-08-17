@@ -38,7 +38,19 @@ pub(crate) async fn call_source(
     let root_path = view.path.clone().unwrap_or_default();
     let effective_cache = effective_cache_policy(&profile, &operation);
     let may_cache = !args.no_cache && cache_allowed(&operation, &effective_cache);
-    let cache_key = Store::cache_key(&args.source_id, &args.operation, &call_args)?;
+    let redaction = resolve_redaction(Some(&profile));
+    // Construct and validate the effective adapter before consulting cache.
+    // A stale cache entry must never make a malformed or changed source
+    // configuration appear executable.
+    let source = callable_source_from_profile(&profile)?;
+    let cache_key = source_call_cache_key(
+        &profile,
+        &operation,
+        &source,
+        &call_args,
+        &redaction,
+        &effective_cache,
+    )?;
 
     let cached_entry = if may_cache {
         store.get_entry(&cache_key)?
@@ -132,7 +144,6 @@ pub(crate) async fn call_source(
         }
     }
 
-    let source = callable_source_from_profile(&profile)?;
     let revalidation = if args.refresh {
         match cached_entry
             .as_ref()
@@ -182,6 +193,7 @@ pub(crate) async fn call_source(
             adapter_call.status.clone(),
             adapter_call.duration_ms,
             adapter_call.provenance,
+            &redaction,
         );
         let observation_id = store
             .record_observation(NewObservation {
@@ -302,6 +314,7 @@ pub(crate) async fn call_source(
         adapter_call.status,
         adapter_call.duration_ms,
         adapter_call.provenance,
+        &redaction,
     );
     let mut source_state_capture = source_state_from_response(
         profile.kind,
@@ -313,7 +326,6 @@ pub(crate) async fn call_source(
         &provenance,
     )?;
     stamp_source_state_policy(&mut source_state_capture, &state_policy_scope);
-    let redaction = resolve_redaction(Some(&profile));
     let redacted = RawPayload::new(adapter_call.data).redact(&redaction);
     let redacted_paths = redacted.redacted_paths;
     let value_scan = redacted.value_scan;
@@ -362,13 +374,16 @@ pub(crate) async fn call_source(
             "refresh failed; retained the prior cache entry and stored this error as a separate observation"
                 .to_string(),
         );
-        Store::cache_key(
-            &args.source_id,
-            &args.operation,
+        source_call_cache_key(
+            &profile,
+            &operation,
+            &source,
             &json!({
                 "call_args": call_args,
                 "refresh_error_at": provenance.captured_at
             }),
+            &redaction,
+            &effective_cache,
         )?
     } else {
         cache_key.clone()
@@ -622,13 +637,20 @@ pub(crate) async fn call_source(
                         }
                     }
                 };
-                let page_cache_key =
-                    Store::cache_key(&args.source_id, &args.operation, &page_key_args)?;
+                let page_cache_key = source_call_cache_key(
+                    &profile,
+                    &operation,
+                    &source,
+                    &page_key_args,
+                    &redaction,
+                    &effective_cache,
+                )?;
                 let page_provenance = call_provenance(
                     &page_cache_key,
                     page_call.status.clone(),
                     page_call.duration_ms,
                     page_call.provenance.clone(),
+                    &redaction,
                 );
                 let mut page_source_state = source_state_from_response(
                     profile.kind,
@@ -902,27 +924,13 @@ fn source_state_policy_scope(
     operation: &OperationProfile,
     effective_effects: &EffectSet,
 ) -> Result<String> {
-    let auth = profile
-        .auth
-        .iter()
-        .map(|auth| {
-            json!({
-                "name": auth.name,
-                "env": auth.env,
-                "header": auth.header,
-                "format": auth.format,
-                // Credential values are present only in this transient hash
-                // input. Neither the value nor a separately reusable digest
-                // is persisted.
-                "credential": std::env::var(&auth.env).ok()
-            })
-        })
-        .collect::<Vec<_>>();
     prog_core::invocation_scope(&json!({
         "source_id": profile.id,
         "source_kind": profile.kind,
         "operation": operation.id,
-        "auth": auth,
+        // Credential values are present only in this transient hash input.
+        // Neither the value nor a separately reusable digest is persisted.
+        "auth": resolved_auth_scope(profile),
         "effects": effective_effects
     }))
 }
