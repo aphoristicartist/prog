@@ -194,6 +194,7 @@ pub(crate) async fn run_command(
                 "provider": provider.provider,
                 "input_format": provider.input_format,
                 "complete": provider.complete,
+                "selection_exhaustive": provider.selection.exhaustive,
                 "limits": provider.limits
             }),
         );
