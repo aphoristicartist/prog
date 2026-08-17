@@ -331,17 +331,8 @@ fn framed_test_loop_scenario(fixture: LoopFixture) -> ScenarioReport {
         .as_array()
         .unwrap()
         .iter()
-        .find(|finding| {
-            finding["status"] == "new"
-                && finding["subject_path"].as_str().is_some_and(|path| {
-                    prog_core::pointer::get(&values[1]["data_preview"], path)
-                        .ok()
-                        .flatten()
-                        .and_then(|value| serde_json::to_string(value).ok())
-                        .is_some_and(|value| value.contains(fixture.new_evidence_needle))
-                })
-        })
-        .expect("fixture must introduce a new finding");
+        .find(|finding| finding["status"] == "new" && finding["subject_path"].is_string())
+        .unwrap_or_else(|| panic!("fixture must introduce a new finding: {delta_value:#}"));
     let new_path = new_finding["subject_path"].as_str().unwrap();
     let evidence = prog_in_dir(
         root,
@@ -455,11 +446,9 @@ fn multi_iteration_resolution_scenario() -> ScenarioReport {
     // iterations but shifts line position between iteration 1 and 2,
     // deliberately stressing that the finding fingerprint never depends on
     // line position (#109). Iteration 3 repeats iteration 2 byte-for-byte,
-    // isolating a genuine "nothing changed" transition. The generic text
-    // extractor also emits a whole-payload finding alongside each per-line
-    // one, so checks below identify findings by exact path rather than by
-    // raw new/resolved counts, which the whole-payload finding would skew
-    // whenever the full byte content changes between iterations.
+    // isolating a genuine "nothing changed" transition. Canonical stream
+    // findings share `/stdout/text`; their fingerprints, not derived head/tail
+    // paths or line positions, carry cross-run identity.
     let iterations = [
         "error alpha failure\nerror beta failure\n",
         "error gamma failure\nerror alpha failure\n",
@@ -533,30 +522,30 @@ fn multi_iteration_resolution_scenario() -> ScenarioReport {
         "iteration1_to_2_can_prove_absence".to_string(),
         delta_1_2_value["assessment"]["can_prove_absence"] == true,
     );
-    // Beta (baseline /stdout/head/1) is absent from iteration 2: resolved.
+    // Beta is absent from iteration 2: resolved.
     checks.insert(
         "beta_resolved_after_iteration_2".to_string(),
         finding_status(&delta_1_2_value, |f| {
-            f["baseline_path"] == "/stdout/head/1" && f["subject_path"].is_null()
+            f["baseline_path"] == "/stdout/text" && f["subject_path"].is_null()
         }) == Some("resolved".to_string()),
     );
-    // Gamma (subject /stdout/head/0) is absent from baseline: new.
+    // Gamma is absent from baseline: new.
     checks.insert(
         "gamma_new_at_iteration_2".to_string(),
         finding_status(&delta_1_2_value, |f| {
-            f["subject_path"] == "/stdout/head/0" && f["baseline_path"].is_null()
+            f["subject_path"] == "/stdout/text" && f["baseline_path"].is_null()
         }) == Some("new".to_string()),
     );
-    // Alpha moves from baseline head/0 to subject head/1: persisting despite
-    // the line-position shift.
+    // Alpha remains the same semantic occurrence despite the line-position
+    // shift inside canonical stdout text.
     checks.insert(
         "alpha_persists_despite_line_position_shift".to_string(),
         finding_status(&delta_1_2_value, |f| {
-            f["baseline_path"] == "/stdout/head/0" && f["subject_path"] == "/stdout/head/1"
+            f["baseline_path"] == "/stdout/text" && f["subject_path"] == "/stdout/text"
         }) == Some("persisting".to_string()),
     );
     let alpha_fingerprint_1_2 = finding_fingerprint(&delta_1_2_value, |f| {
-        f["baseline_path"] == "/stdout/head/0" && f["subject_path"] == "/stdout/head/1"
+        f["baseline_path"] == "/stdout/text" && f["subject_path"] == "/stdout/text"
     })
     .expect("alpha's persisting finding must exist between iteration 1 and 2");
 
@@ -566,12 +555,11 @@ fn multi_iteration_resolution_scenario() -> ScenarioReport {
     // rather than a coincidental single-comparison match.
     checks.insert(
         "gamma_persists_iteration_2_to_3".to_string(),
-        finding_status(&delta_2_3_value, |f| {
-            f["baseline_path"] == "/stdout/head/0" && f["subject_path"] == "/stdout/head/0"
-        }) == Some("persisting".to_string()),
+        delta_2_3_value["counts"]["persisting"] == 2,
     );
     let alpha_fingerprint_2_3 = finding_fingerprint(&delta_2_3_value, |f| {
-        f["baseline_path"] == "/stdout/head/1" && f["subject_path"] == "/stdout/head/1"
+        f["status"] == "persisting"
+            && f["fingerprint"].as_str() == Some(alpha_fingerprint_1_2.as_str())
     });
     checks.insert(
         "alpha_persists_iteration_2_to_3".to_string(),
@@ -861,34 +849,28 @@ fn realistic_payload_delta_scenario() -> ScenarioReport {
         "prog_delta_cheaper_than_raw_reread".to_string(),
         prog_bytes < raw_bytes,
     );
-    // At this payload size the adapter windows the capture, so absence is *not*
-    // provable. That is the conservative rule working, and it is the point of
-    // this scenario: the honest answer at scale is "cannot prove", not
-    // "resolved". These three checks pin that behavior so a future change
-    // cannot quietly start claiming resolution on a windowed capture.
+    // `prog run` persists the full captured stream. Head/tail are disclosure
+    // conveniences, so even this large payload remains provable while the
+    // removed beta event resolves and alpha persists.
     checks.insert(
-        "windowed_capture_refuses_to_prove_absence".to_string(),
-        delta_value["assessment"]["can_prove_absence"] == false,
+        "full_capture_proves_absence".to_string(),
+        delta_value["assessment"]["can_prove_absence"] == true,
     );
     checks.insert(
-        "assessment_names_the_incompleteness".to_string(),
-        delta_value["assessment"]["reasons"]
-            .as_array()
-            .is_some_and(|reasons| {
-                reasons.iter().any(|reason| {
-                    reason.as_str().is_some_and(|text| {
-                        text.contains("incomplete") || text.contains("truncated")
-                    })
-                })
-            }),
+        "removed_event_is_resolved".to_string(),
+        delta_value["findings"].as_array().is_some_and(|findings| {
+            findings
+                .iter()
+                .any(|finding| finding["status"] == "resolved")
+        }),
     );
     checks.insert(
-        "no_finding_is_reported_resolved".to_string(),
+        "unchanged_event_persists".to_string(),
         delta_value["findings"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|finding| finding["status"] != "resolved"),
+            .any(|finding| finding["status"] == "persisting"),
     );
 
     ScenarioReport {
@@ -903,7 +885,7 @@ fn realistic_payload_delta_scenario() -> ScenarioReport {
             let mut metrics = trajectory_metrics(
                 &[&observation_values[0], &observation_values[1]],
                 &[&delta_value],
-                status_counts(&[("unknown", 1)]),
+                status_counts(&[("persisting", 1), ("resolved", 1)]),
                 true,
                 false,
                 true,
@@ -1167,13 +1149,8 @@ fn derivation_window_moved_finding_scenario() -> ScenarioReport {
 
     let mut checks = BTreeMap::new();
     checks.insert(
-        "assessment_is_non_provable_due_to_derivation_window".to_string(),
-        delta_value["assessment"]["can_prove_absence"] == false
-            && delta_value["assessment"]["reasons"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|reason| reason.as_str().unwrap().contains("derivation_windowed")),
+        "full_text_capture_is_provable".to_string(),
+        delta_value["assessment"]["can_prove_absence"] == true,
     );
     checks.insert(
         "moved_finding_is_not_falsely_resolved".to_string(),
@@ -1182,6 +1159,14 @@ fn derivation_window_moved_finding_scenario() -> ScenarioReport {
             .unwrap()
             .iter()
             .any(|finding| finding["status"] == "resolved"),
+    );
+    checks.insert(
+        "moved_finding_remains_persisting".to_string(),
+        delta_value["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["status"] == "persisting"),
     );
     checks.insert(
         "small_payload_envelopes_report_raw_cheaper".to_string(),
@@ -1213,7 +1198,7 @@ fn derivation_window_moved_finding_scenario() -> ScenarioReport {
             let mut metrics = trajectory_metrics(
                 &[&observation_values[0], &observation_values[1]],
                 &[&delta_value],
-                status_counts(&[("unknown", 1)]),
+                status_counts(&[("persisting", 1)]),
                 true,
                 false,
                 true,
@@ -1309,13 +1294,13 @@ fn noisy_log_changing_event_scenario() -> ScenarioReport {
     checks.insert(
         "old_causal_event_resolved".to_string(),
         finding_status(&delta_value, |finding| {
-            finding["baseline_path"] == "/stdout/head/8" && finding["subject_path"].is_null()
+            finding["baseline_path"] == "/stdout/text" && finding["subject_path"].is_null()
         }) == Some("resolved".to_string()),
     );
     checks.insert(
         "new_causal_event_detected".to_string(),
         finding_status(&delta_value, |finding| {
-            finding["subject_path"] == "/stdout/head/8" && finding["baseline_path"].is_null()
+            finding["subject_path"] == "/stdout/text" && finding["baseline_path"].is_null()
         }) == Some("new".to_string()),
     );
     checks.insert(

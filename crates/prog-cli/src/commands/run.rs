@@ -207,16 +207,12 @@ pub(crate) async fn run_command(
         ttl,
     );
     entry.provenance = Some(provenance.clone());
-    let stdout_windowed = stdout_text.line_count > stdout_text.head.len() + stdout_text.tail.len();
-    let stderr_windowed = stderr_text.line_count > stderr_text.head.len() + stderr_text.tail.len();
     let (availability, mut capture) = run_capture_completeness(
         &run.stdout,
         &run.stderr,
         payload_bytes,
         !policy_redactions.is_empty(),
         &run.status,
-        stdout_windowed,
-        stderr_windowed,
     );
     capture.budget = capture_budget_for_run(args);
     ctx.set_capture(capture.budget.clone());
@@ -447,7 +443,7 @@ async fn interrupted_run_result(
     rx: &mut mpsc::UnboundedReceiver<RunChunk>,
     status: RunProcessStatus,
 ) -> Result<RunProcessResult> {
-    let _ = tokio::join!(
+    let (stdout, stderr) = tokio::join!(
         finish_run_reader_or_abort(stdout_task),
         finish_run_reader_or_abort(stderr_task)
     );
@@ -455,9 +451,11 @@ async fn interrupted_run_result(
     while let Ok(chunk) = rx.try_recv() {
         combined.push(chunk);
     }
+    let stdout = stdout.unwrap_or_else(|| capture_from_chunks("stdout", &combined));
+    let stderr = stderr.unwrap_or_else(|| capture_from_chunks("stderr", &combined));
     Ok(RunProcessResult {
-        stdout: empty_run_capture("stdout"),
-        stderr: empty_run_capture("stderr"),
+        stdout,
+        stderr,
         combined: coalesce_run_chunks(combined),
         status,
     })
@@ -497,6 +495,20 @@ fn coalesce_run_chunks(chunks: Vec<RunChunk>) -> Vec<RunChunk> {
     coalesced
 }
 
+fn capture_from_chunks(stream: &'static str, chunks: &[RunChunk]) -> RunCapture {
+    let bytes = chunks
+        .iter()
+        .filter(|chunk| chunk.stream == stream)
+        .flat_map(|chunk| chunk.bytes.iter().copied())
+        .collect::<Vec<_>>();
+    RunCapture {
+        stream,
+        total_bytes: bytes.len(),
+        bytes,
+        truncated: false,
+    }
+}
+
 #[cfg(unix)]
 fn configure_run_process_group(command: &mut TokioCommand) {
     command.process_group(0);
@@ -516,12 +528,15 @@ async fn kill_run_process_group(child: &mut tokio::process::Child) {
     let _ = tokio::time::timeout(Duration::from_millis(100), child.wait()).await;
 }
 
-async fn finish_run_reader_or_abort(mut task: JoinHandle<std::io::Result<RunCapture>>) {
+async fn finish_run_reader_or_abort(
+    mut task: JoinHandle<std::io::Result<RunCapture>>,
+) -> Option<RunCapture> {
     tokio::select! {
-        _ = &mut task => {}
+        result = &mut task => result.ok().and_then(std::result::Result::ok),
         _ = tokio::time::sleep(Duration::from_millis(25)) => {
             task.abort();
             let _ = task.await;
+            None
         }
     }
 }

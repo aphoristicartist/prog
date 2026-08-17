@@ -31,12 +31,16 @@
     "fingerprint": "sha256:3633d4d3deab9662e06f520542e2a1a57443eecdeaef3aa58982c749b24a2897",
     "rank": 2,
     "kind": "test_failure",
-    "path": "/failure_sections/0/lines/3",
+    "path": "/stderr/text",
     "confidence": 0.8,
     "reason": "string contains an assertion failure marker",
     "title": "assertion failure",
     "severity": "error",
     "source": "generic.string_pattern",
+    "line_range": {
+      "start": 4,
+      "end": 4
+    },
     "commands": {
       "available": [
         "inspect",
@@ -51,12 +55,16 @@
     "fingerprint": "sha256:ca2cb7403a17b3823027a4a14eacc190acaed7de8080829d0a8bdb04b40690ef",
     "rank": 3,
     "kind": "stack_trace",
-    "path": "/failure_sections/0/lines/0",
+    "path": "/stderr/text",
     "confidence": 0.84,
     "reason": "string contains a traceback marker",
     "title": "stack trace",
     "severity": "error",
     "source": "generic.string_pattern",
+    "line_range": {
+      "start": 1,
+      "end": 1
+    },
     "commands": {
       "available": [
         "inspect",
@@ -68,27 +76,7 @@
   },
   {
     "occurrence_id": "fo_00000004",
-    "fingerprint": "sha256:044a67efb1fc8e33a13fc1ec984d0e142fe5f645dfd96c48d0038013d6fdb6a9",
     "rank": 4,
-    "kind": "stack_trace",
-    "path": "/stderr/text",
-    "confidence": 0.84,
-    "reason": "string contains a traceback marker",
-    "title": "stack trace",
-    "severity": "error",
-    "source": "generic.string_pattern",
-    "commands": {
-      "available": [
-        "inspect",
-        "expand",
-        "evidence",
-        "search"
-      ]
-    }
-  },
-  {
-    "occurrence_id": "fo_00000005",
-    "rank": 5,
     "kind": "nonzero_exit",
     "path": "/command",
     "confidence": 0.72,

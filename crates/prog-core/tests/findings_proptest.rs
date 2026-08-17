@@ -186,8 +186,16 @@ proptest! {
                 "confidence {} out of [0, 1]",
                 finding.confidence
             );
-            let key = (finding.path.clone(), finding.kind.clone());
-            prop_assert!(seen.insert(key.clone()), "duplicate (path, kind): {:?}", key);
+            let key = (
+                finding.path.clone(),
+                finding.kind.clone(),
+                finding.fingerprint.clone(),
+            );
+            prop_assert!(
+                seen.insert(key.clone()),
+                "duplicate semantic occurrence: {:?}",
+                key
+            );
             let occurrence_id = finding
                 .occurrence_id
                 .as_ref()

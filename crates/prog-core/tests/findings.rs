@@ -1010,6 +1010,95 @@ fn generic_fingerprints_preserve_values_but_normalize_whitespace() {
 }
 
 #[test]
+fn canonical_run_text_identity_survives_line_movement_without_derived_duplicates() {
+    fn payload(error_index: usize) -> Value {
+        let lines = (0..30)
+            .map(|index| {
+                if index == error_index {
+                    "ERROR alpha failure".to_string()
+                } else {
+                    format!("line {index:02} ok")
+                }
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "format": "run",
+            "stdout": {
+                "format": "text",
+                "text": lines.join("\n"),
+                "head": lines.iter().take(10).collect::<Vec<_>>(),
+                "tail": lines.iter().skip(20).collect::<Vec<_>>(),
+                "line_count": 30
+            },
+            "combined": [{"stream": "stdout", "text": lines.join("\n")}],
+            "failure_sections": []
+        })
+    }
+
+    let baseline = ranked_findings(&payload(5), &FindingOptions::default()).unwrap();
+    let subject = ranked_findings(&payload(15), &FindingOptions::default()).unwrap();
+    let baseline_error = baseline
+        .iter()
+        .find(|finding| finding.kind == "log_error")
+        .expect("baseline log error");
+    let subject_error = subject
+        .iter()
+        .find(|finding| finding.kind == "log_error")
+        .expect("subject log error");
+
+    assert_eq!(baseline_error.path, "/stdout/text");
+    assert_eq!(subject_error.path, "/stdout/text");
+    assert_eq!(baseline_error.fingerprint, subject_error.fingerprint);
+    assert_eq!(
+        baseline
+            .iter()
+            .filter(|finding| finding.kind == "log_error")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn canonical_text_emits_one_semantic_occurrence_per_distinct_error_line() {
+    let findings = ranked_findings(
+        &json!({
+            "format": "text",
+            "text": "ERROR alpha failure\nERROR beta failure",
+            "head": ["ERROR alpha failure", "ERROR beta failure"],
+            "tail": [],
+            "line_count": 2
+        }),
+        &FindingOptions::default(),
+    )
+    .unwrap();
+    let errors = findings
+        .iter()
+        .filter(|finding| finding.kind == "log_error")
+        .collect::<Vec<_>>();
+
+    assert_eq!(errors.len(), 2);
+    assert_ne!(errors[0].fingerprint, errors[1].fingerprint);
+    assert!(errors.iter().all(|finding| finding.path == "/text"));
+}
+
+#[test]
+fn a_string_classified_by_its_field_is_not_emitted_twice() {
+    let findings = ranked_findings(
+        &json!({"review": {"patch": "@@ -1 +1 @@\n-old\n+new"}}),
+        &FindingOptions::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|finding| finding.kind == "diff_hunk" && finding.path == "/review/patch")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn canonical_fingerprint_uses_stable_components_not_key_or_location_order() {
     let first = json!({
         "message": " error[E0308]: expected u32, found String ",

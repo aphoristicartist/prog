@@ -22,12 +22,12 @@
   ],
   "summary": {
     "scenario_count": 12,
-    "checks_total": 56,
-    "checks_passed": 56,
+    "checks_total": 57,
+    "checks_passed": 57,
     "comparison_pairs_total": 11,
-    "comparison_pairs_provable": 5,
-    "findings_considered": 49,
-    "findings_fingerprinted": 48,
+    "comparison_pairs_provable": 7,
+    "findings_considered": 35,
+    "findings_fingerprinted": 34,
     "false_decisions": 0,
     "budget_compliant_scenarios": 12,
     "redaction_compliant_scenarios": 12
@@ -42,8 +42,8 @@
         "first_view_hit": true,
         "comparison_pairs_total": 2,
         "comparison_pairs_provable": 2,
-        "findings_considered": 9,
-        "findings_fingerprinted": 9,
+        "findings_considered": 6,
+        "findings_fingerprinted": 6,
         "delta_expected": {
           "new": 1,
           "persisting": 3,
@@ -244,8 +244,8 @@
         "first_view_hit": true,
         "comparison_pairs_total": 1,
         "comparison_pairs_provable": 0,
-        "findings_considered": 6,
-        "findings_fingerprinted": 6,
+        "findings_considered": 3,
+        "findings_fingerprinted": 3,
         "delta_expected": {
           "not_observed": 1
         },
@@ -278,14 +278,16 @@
         "required_evidence_available": true,
         "first_view_hit": false,
         "comparison_pairs_total": 1,
-        "comparison_pairs_provable": 0,
-        "findings_considered": 4,
-        "findings_fingerprinted": 4,
+        "comparison_pairs_provable": 1,
+        "findings_considered": 3,
+        "findings_fingerprinted": 3,
         "delta_expected": {
-          "unknown": 1
+          "persisting": 1,
+          "resolved": 1
         },
         "delta_correct": {
-          "unknown": 1
+          "persisting": 1,
+          "resolved": 1
         },
         "false_decisions": 0,
         "disclosure_budget_compliant": true,
@@ -304,10 +306,10 @@
         }
       ],
       "checks": [
-        "assessment_names_the_incompleteness",
-        "no_finding_is_reported_resolved",
+        "full_capture_proves_absence",
         "prog_delta_cheaper_than_raw_reread",
-        "windowed_capture_refuses_to_prove_absence"
+        "removed_event_is_resolved",
+        "unchanged_event_persists"
       ]
     },
     {
@@ -382,14 +384,14 @@
         "required_evidence_available": true,
         "first_view_hit": false,
         "comparison_pairs_total": 1,
-        "comparison_pairs_provable": 0,
-        "findings_considered": 5,
-        "findings_fingerprinted": 5,
+        "comparison_pairs_provable": 1,
+        "findings_considered": 2,
+        "findings_fingerprinted": 2,
         "delta_expected": {
-          "unknown": 1
+          "persisting": 1
         },
         "delta_correct": {
-          "unknown": 1
+          "persisting": 1
         },
         "false_decisions": 0,
         "disclosure_budget_compliant": true,
@@ -428,8 +430,9 @@
         }
       ],
       "checks": [
-        "assessment_is_non_provable_due_to_derivation_window",
+        "full_text_capture_is_provable",
         "moved_finding_is_not_falsely_resolved",
+        "moved_finding_remains_persisting",
         "small_payload_envelopes_report_raw_cheaper"
       ]
     },
@@ -442,8 +445,8 @@
         "first_view_hit": true,
         "comparison_pairs_total": 1,
         "comparison_pairs_provable": 1,
-        "findings_considered": 6,
-        "findings_fingerprinted": 6,
+        "findings_considered": 2,
+        "findings_fingerprinted": 2,
         "delta_expected": {
           "new": 1,
           "resolved": 1
