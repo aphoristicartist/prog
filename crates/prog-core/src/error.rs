@@ -51,6 +51,11 @@ pub enum CoreError {
     ShellNotTrusted { operation: String },
 
     #[error(
+        "operation '{operation}' is network-backed and the source profile does not set trust.allow_network — edit the profile to allow it explicitly"
+    )]
+    NetworkNotTrusted { operation: String },
+
+    #[error(
         "discovery may only invoke read-only operations; '{operation}' is not marked read-only (effects: {effects})"
     )]
     DiscoveryNotReadOnly { operation: String, effects: String },
@@ -158,6 +163,7 @@ impl CoreError {
             CoreError::CacheMiss(_) => "cache_miss",
             CoreError::RequiresConfirmation { .. } => "requires_confirmation",
             CoreError::ShellNotTrusted { .. } => "shell_not_trusted",
+            CoreError::NetworkNotTrusted { .. } => "network_not_trusted",
             CoreError::DiscoveryNotReadOnly { .. } => "discovery_not_read_only",
             CoreError::DiscoveryMutating { .. } => "discovery_mutating",
             CoreError::DiscoveryRequiresConfirmation { .. } => "discovery_requires_confirmation",
@@ -216,6 +222,10 @@ impl CoreError {
             }
             CoreError::ShellNotTrusted { .. } => {
                 "Set trust.allow_shell in the source profile only if this command is trusted."
+                    .to_string()
+            }
+            CoreError::NetworkNotTrusted { .. } => {
+                "Set trust.allow_network in the source profile only if this network source is trusted."
                     .to_string()
             }
             CoreError::DiscoveryNotReadOnly { .. } => {

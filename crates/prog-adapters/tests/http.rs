@@ -23,6 +23,88 @@ fn http_source_deserialization_uses_the_public_default_response_limit() {
 }
 
 #[tokio::test]
+async fn redirects_are_same_origin_and_provenance_records_the_final_url() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/same"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", "/final?access_token=ordinary-redirect-secret"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/final"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let same_origin = source(
+        &server,
+        HttpOperation {
+            id: "same".to_string(),
+            method: "GET".to_string(),
+            path: "/same".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: Some(2_000),
+            max_response_bytes: Some(64 * 1024),
+            sensitive_args: Vec::new(),
+        },
+    );
+    let result = same_origin.execute("same", &json!({})).await.unwrap();
+    assert_eq!(result.data["ok"], true);
+    assert!(
+        !result
+            .provenance
+            .final_url
+            .contains("ordinary-redirect-secret")
+    );
+    assert!(
+        result
+            .provenance
+            .final_url
+            .contains("[REDACTED:observed_text_secret]")
+    );
+
+    let foreign = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"leaked": true})))
+        .expect(0)
+        .mount(&foreign)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/cross"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", format!("{}/secret", foreign.uri())),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let cross_origin = source(
+        &server,
+        HttpOperation {
+            id: "cross".to_string(),
+            method: "GET".to_string(),
+            path: "/cross".to_string(),
+            query: BTreeMap::new(),
+            headers: BTreeMap::new(),
+            json_body: None,
+            timeout_ms: Some(2_000),
+            max_response_bytes: Some(64 * 1024),
+            sensitive_args: Vec::new(),
+        },
+    );
+    let error = cross_origin.execute("cross", &json!({})).await.unwrap_err();
+    assert_eq!(error.kind(), "http_transport");
+    assert!(foreign.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn executes_json_request_with_encoded_path_query_and_body_template() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

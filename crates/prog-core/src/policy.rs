@@ -14,9 +14,9 @@ pub struct CallFlags {
 /// auto-upgrade). Under default `trust.auto_upgrade=true`, a *proven*
 /// read-only operation may be probed (its confirmation is relaxed at discovery
 /// time); flipping `trust.auto_upgrade=false` re-gates it and the operation is
-/// skipped with the I6 warning. Mutating, non-read-only, shell-backed, and
-/// sensitive operations are refused regardless of grade or trust (I6
-/// preserved).
+/// skipped with the I6 warning. Mutating and non-read-only operations are
+/// refused regardless of grade, and network effects require explicit source
+/// trust (I6 preserved).
 pub fn check_discovery(operation: &OperationProfile, trust: &TrustSettings) -> Result<()> {
     let (effects, _audit) = effective_effects(&operation.effects, trust);
     if !effects.read_only {
@@ -35,6 +35,11 @@ pub fn check_discovery(operation: &OperationProfile, trust: &TrustSettings) -> R
         return Err(CoreError::DiscoveryRequiresConfirmation {
             operation: operation.id.clone(),
             effects: describe_effects(&effects),
+        });
+    }
+    if effects.network && !trust.allow_network {
+        return Err(CoreError::NetworkNotTrusted {
+            operation: operation.id.clone(),
         });
     }
     Ok(())
@@ -130,8 +135,8 @@ pub fn effective_effects(
 /// auto-upgrade) and return the relaxed effects plus the audit note so the
 /// caller can surface the upgrade in observation metadata without re-evaluating.
 /// I7 is preserved: mutating/confirmation-gated ops still require `--yes` unless
-/// they were *proven* read-only and relaxed, and shell-backed ops still require
-/// `trust.allow_shell`.
+/// they were *proven* read-only and relaxed, while shell- and network-backed
+/// ops require their explicit source trust.
 pub fn check_call(
     operation: &OperationProfile,
     flags: CallFlags,
@@ -147,6 +152,11 @@ pub fn check_call(
     }
     if effects.shell && !trust.allow_shell {
         return Err(CoreError::ShellNotTrusted {
+            operation: operation.id.clone(),
+        });
+    }
+    if effects.network && !trust.allow_network {
+        return Err(CoreError::NetworkNotTrusted {
             operation: operation.id.clone(),
         });
     }

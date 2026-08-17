@@ -133,8 +133,7 @@ impl HttpSource {
             .unwrap_or(self.max_response_bytes);
         let sensitive_names = sensitive_arg_names(operation, args);
         let url = build_url(self, operation, args)?;
-        let redacted_url = redact_url(url.as_str(), args, &sensitive_names);
-        let client = http_client(&operation.id)?;
+        let client = http_client(&operation.id, &url)?;
         let method = Method::from_bytes(operation.method.as_bytes()).map_err(|error| {
             CoreError::BadArgs {
                 operation: operation.id.clone(),
@@ -176,6 +175,7 @@ impl HttpSource {
             })?;
 
         let status = response.status();
+        let final_url = redact_url(response.url().as_str(), args, &sensitive_names);
         let selected_headers = selected_headers(response.headers(), self);
         let content_type = response
             .headers()
@@ -206,7 +206,7 @@ impl HttpSource {
             source_id: self.id.clone(),
             operation: operation.id.clone(),
             method: operation.method.to_uppercase(),
-            final_url: redacted_url,
+            final_url,
             status: status.as_u16(),
             selected_headers,
             duration_ms,
@@ -240,9 +240,9 @@ impl HttpSource {
     /// SSRF guard (I10): the target URL's scheme + host + port MUST match the
     /// source's `base_url`. An attacker-controlled `Link: rel="next"` header
     /// cannot redirect page chasing to an internal or third-party host. The
-    /// redirect policy stays reqwest's `limited(10)`, so a same-origin
-    /// redirect chain still resolves but a cross-origin one is refused here
-    /// before any connection.
+    /// Every redirect in the chain is independently constrained to that same
+    /// origin, so neither the supplied continuation nor a later 3xx response
+    /// can move the authenticated request to another host.
     pub async fn execute_url(
         &self,
         base_operation_id: &str,
@@ -276,10 +276,7 @@ impl HttpSource {
             reason: format!("invalid base_url: {url} {error}"),
         })?;
         // Same-origin guard: scheme + host + port must all match the base.
-        let same_origin = target.scheme() == base.scheme()
-            && target.host_str() == base.host_str()
-            && target.port_or_known_default() == base.port_or_known_default();
-        if !same_origin {
+        if !same_origin(&target, &base) {
             return Err(CoreError::BadArgs {
                 operation: operation.id.clone(),
                 reason:
@@ -289,7 +286,7 @@ impl HttpSource {
         }
 
         let sensitive_names = sensitive_arg_names(operation, &args);
-        let client = http_client(&operation.id)?;
+        let client = http_client(&operation.id, &base)?;
 
         // Forced GET: URL continuation never carries the base operation's
         // request body, even if the base operation was POST.
@@ -321,6 +318,7 @@ impl HttpSource {
             })?;
 
         let status = response.status();
+        let final_url = redact_url(response.url().as_str(), &args, &sensitive_names);
         let selected_headers = selected_headers(response.headers(), self);
         let content_type = response
             .headers()
@@ -344,12 +342,11 @@ impl HttpSource {
             ));
         }
 
-        let redacted_target = redact_url(url, &args, &sensitive_names);
         let provenance = HttpProvenance {
             source_id: self.id.clone(),
             operation: operation.id.clone(),
             method: "GET".to_string(),
-            final_url: redacted_target,
+            final_url,
             status: status.as_u16(),
             selected_headers,
             duration_ms,
@@ -376,15 +373,31 @@ impl HttpSource {
     }
 }
 
-fn http_client(operation: &str) -> Result<reqwest::Client> {
+fn http_client(operation: &str, origin: &reqwest::Url) -> Result<reqwest::Client> {
+    let origin = origin.clone();
+    let redirects = reqwest::redirect::Policy::custom(move |attempt| {
+        if !same_origin(&origin, attempt.url()) {
+            attempt.error("cross-origin redirect refused")
+        } else if attempt.previous().len() > 10 {
+            attempt.error("too many redirects")
+        } else {
+            attempt.follow()
+        }
+    });
     reqwest::Client::builder()
         .user_agent(DEFAULT_USER_AGENT)
-        .redirect(reqwest::redirect::Policy::limited(10))
+        .redirect(redirects)
         .build()
         .map_err(|error| CoreError::HttpTransport {
             operation: operation.to_string(),
             message: error.to_string(),
         })
+}
+
+fn same_origin(left: &reqwest::Url, right: &reqwest::Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host_str() == right.host_str()
+        && left.port_or_known_default() == right.port_or_known_default()
 }
 
 fn args_object<'a>(operation: &HttpOperation, args: &'a Value) -> Result<&'a Map<String, Value>> {
@@ -776,7 +789,7 @@ fn redact_url(url: &str, args: &Map<String, Value>, sensitive_names: &BTreeSet<S
             output = output.replace(&percent_encode(&value), "[REDACTED]");
         }
     }
-    output
+    redact_sensitive_text(&output).0
 }
 
 fn redaction_value(value: Option<&Value>) -> Option<String> {
