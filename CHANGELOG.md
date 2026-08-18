@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added the conservative live-trial accounting and claim-gate contract for the
+  actual-agent evaluation: provider/model metadata, all fixed and provider
+  token fields, calls/reruns/latency, dropouts, per-trial graders, and ordered
+  uncertainty intervals. Missing provider fields remain unavailable, and the
+  report cannot become claim-eligible without complete multi-trial evidence
+  (#139).
 - Repositioned `prog` as an agent-harness extension and added an end-to-end
   integration surface: auto-detected `prog harness install`/`doctor`, a portable
   Agent Skill target, a Codex marketplace plugin, and a native DeepSeek Harness
