@@ -9,6 +9,8 @@
     "prog_skill_estimated_tokens": 1914,
     "tool_schema_tokens": null
   },
+  "live_trials": [],
+  "uncertainty": null,
   "strategy_status": [
     {
       "strategy": "raw",

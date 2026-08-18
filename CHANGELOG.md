@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added the conservative live-trial accounting and claim-gate contract for the
+  actual-agent evaluation: provider/model metadata, all fixed and provider
+  token fields, calls/reruns/latency, dropouts, per-trial graders, and ordered
+  uncertainty intervals. Missing provider fields remain unavailable, and the
+  report cannot become claim-eligible without complete multi-trial evidence
+  (#139).
 - Added a CI-gated budget for the fixed agent integration surface: top-level
   help, immediate command help, and the portable skill must remain within
   34,000 bytes before any task work begins (#120).
