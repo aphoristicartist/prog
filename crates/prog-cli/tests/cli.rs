@@ -4755,6 +4755,9 @@ async fn http_call_requires_live_network_trust_before_transport() {
     let profile_path = dir.path().join("profiles/network-trust.json");
     let mut profile: Value = serde_json::from_slice(&fs::read(&profile_path).unwrap()).unwrap();
     profile["trust"]["allow_network"] = json!(false);
+    // Policy is grounded in the configured HTTP adapter, even if editable
+    // profile metadata tries to understate the operation's network effect.
+    profile["operations"][0]["effects"]["network"] = json!(false);
     fs::write(&profile_path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
 
     let called = prog(&[
@@ -5333,6 +5336,10 @@ fn call_validates_args_and_enforces_effect_policy() {
         "{}",
         stdout(&discover_shell)
     );
+    let profile_path = dir.path().join("profiles/shells.json");
+    let mut profile: Value = serde_json::from_slice(&fs::read(&profile_path).unwrap()).unwrap();
+    profile["operations"][0]["effects"]["shell"] = json!(false);
+    fs::write(&profile_path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
     let shell = prog(&[
         "--dir", dir_arg, "call", "shells", "shell", "--args", "{}", "--yes",
     ]);

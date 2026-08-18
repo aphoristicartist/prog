@@ -13,6 +13,8 @@ pub(crate) async fn call_source(
         .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
     ctx.apply_profile_disclosure(&profile)?;
     let operation = profile_operation(&profile, &args.operation)?.clone();
+    let source = callable_source_from_profile(&profile)?;
+    let operation = harden_operation_for_callable(&operation, &source)?;
     let call_args = parse_json_argument(&args.args, "call --args")?;
     validate_call_args(&operation, &call_args)?;
     // check_call runs trust auto-upgrade internally and returns the EFFECTIVE
@@ -132,7 +134,6 @@ pub(crate) async fn call_source(
         }
     }
 
-    let source = callable_source_from_profile(&profile)?;
     let revalidation = if args.refresh {
         match cached_entry
             .as_ref()
