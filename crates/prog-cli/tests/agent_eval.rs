@@ -6,6 +6,7 @@
 //! real agents perform better.
 
 use std::{
+    cmp::Ordering,
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
@@ -60,7 +61,7 @@ struct WorkflowOracle {
     _fixture: tempfile::TempDir,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct AgentEvalReport {
     schema: String,
     harness_version: String,
@@ -68,10 +69,85 @@ struct AgentEvalReport {
     actual_agent_trials: u64,
     claim_eligible: bool,
     fixed_context: FixedContext,
+    live_trials: Vec<LiveTrial>,
+    uncertainty: Option<UncertaintyReport>,
     strategy_status: Vec<StrategyStatus>,
     trace_results: Vec<TraceResult>,
     summary: AgentEvalSummary,
     limitations: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LiveTrial {
+    trial_id: String,
+    workflow_id: String,
+    arm: String,
+    provider: String,
+    model: String,
+    model_version: Option<String>,
+    harness_version: String,
+    started_at: String,
+    region: Option<String>,
+    trial_seed: Option<String>,
+    settings: BTreeMap<String, String>,
+    dropout: Option<String>,
+    graders: BTreeMap<String, bool>,
+    token_usage: LiveTokenUsage,
+    tool_calls: u64,
+    navigation_calls: u64,
+    upstream_reruns: u64,
+    model_visible_tool_response_bytes: u64,
+    latency_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct LiveTokenUsage {
+    system_prompt_tokens: Option<u64>,
+    tool_schema_tokens: Option<u64>,
+    skill_tokens: Option<u64>,
+    model_visible_tool_response_tokens: Option<u64>,
+    provider_input_tokens: Option<u64>,
+    provider_output_tokens: Option<u64>,
+    provider_cached_input_tokens: Option<u64>,
+    provider_reasoning_tokens: Option<u64>,
+}
+
+impl LiveTokenUsage {
+    fn provider_total_tokens(&self) -> Option<u64> {
+        self.provider_input_tokens?
+            .checked_add(self.provider_output_tokens?)
+    }
+
+    fn required_fields_available(&self) -> bool {
+        [
+            self.system_prompt_tokens,
+            self.tool_schema_tokens,
+            self.skill_tokens,
+            self.model_visible_tool_response_tokens,
+            self.provider_input_tokens,
+            self.provider_output_tokens,
+        ]
+        .iter()
+        .all(Option::is_some)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct UncertaintyReport {
+    method: String,
+    confidence_level: u64,
+    intervals: Vec<UncertaintyInterval>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct UncertaintyInterval {
+    workflow_id: String,
+    arm: String,
+    metric: String,
+    trials: u64,
+    lower: f64,
+    median: f64,
+    upper: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -495,25 +571,24 @@ fn build_report(root: &Path, trace_results: Vec<TraceResult>) -> AgentEvalReport
         }
     }
 
+    let live_trials = Vec::new();
+    let uncertainty = None;
+    let claim_eligible = live_claim_eligible(&live_trials, uncertainty.as_ref());
+    let strategy_status = strategy_status(&live_trials);
     AgentEvalReport {
         schema: "prog.agent_eval.metrics".to_string(),
         harness_version: "1".to_string(),
         estimator: "bytes_div_4_approximate".to_string(),
-        actual_agent_trials: 0,
-        claim_eligible: false,
+        actual_agent_trials: live_trials.len() as u64,
+        claim_eligible,
         fixed_context: FixedContext {
             prog_skill_bytes: skill_bytes,
             prog_skill_estimated_tokens: div_ceil_four(skill_bytes),
             tool_schema_tokens: None,
         },
-        strategy_status: ["raw", "equal_budget_truncation", "native_selector", "prog"]
-            .into_iter()
-            .map(|strategy| StrategyStatus {
-                strategy: strategy.to_string(),
-                live_trials: 0,
-                performance_available: false,
-            })
-            .collect(),
+        live_trials,
+        uncertainty,
+        strategy_status,
         trace_results,
         summary,
         limitations: vec![
@@ -528,7 +603,7 @@ fn build_report(root: &Path, trace_results: Vec<TraceResult>) -> AgentEvalReport
 }
 
 fn markdown_report(report: &AgentEvalReport) -> String {
-    format!(
+    let report = format!(
         "# Actual-agent evaluation\n\n\
          Current status: **not claim-eligible**. This checked-in replay validates the graders; it is not an actual-agent A/B result.\n\n\
          Regenerate with {BLESS_COMMAND}.\n\n\
@@ -546,13 +621,289 @@ fn markdown_report(report: &AgentEvalReport) -> String {
         report.summary.false_completions_accepted,
         report.fixed_context.prog_skill_bytes,
         report.fixed_context.prog_skill_estimated_tokens,
-    )
+    );
+    format!("{report}\n{}\n", live_claim_contract_markdown())
+}
+
+fn live_claim_contract_markdown() -> &'static str {
+    r#"## Live-trial claim gate
+
+`fixtures/agent-eval/metrics.json` reserves the live-trial contract without
+inventing results:
+
+- every `live_trials` record identifies workflow, arm, provider, model/version,
+  harness version, timestamp, region when relevant, trial seed when supported,
+  settings, calls, upstream reruns, response bytes, and latency;
+- token accounting keeps provider-reported input/output tokens separate from
+  fixed system-prompt, tool-schema, skill, and model-visible tool-response token
+  fields. Missing provider fields remain `null`;
+- cached-input and reasoning-token fields are optional because providers do not
+  expose them uniformly. Their absence does not cause an estimate to be
+  fabricated;
+- dropouts and all five replay graders, including `no_false_completion`, remain
+  explicit per trial;
+- `uncertainty` records its method, confidence level, trial count, and ordered
+  intervals per workflow/arm/metric.
+
+A report can set `claim_eligible: true` only when all raw,
+equal-budget-truncation, native-selector, and prog cells for both reference
+workflows have more than one completed trial; provider/model/harness/time
+metadata and required token fields are present; no trial claims a false
+completion; and uncertainty covers both the north-star efficiency metric and
+false-completion count for every cell. Negative or mixed outcomes can still be
+claim-eligible when their accounting and uncertainty are complete."#
 }
 
 fn observation_id(value: &Value) -> &str {
     value["observation"]["observation_id"].as_str().unwrap()
 }
 
+const LIVE_STRATEGIES: [&str; 4] = ["raw", "equal_budget_truncation", "native_selector", "prog"];
+const LIVE_WORKFLOWS: [&str; 2] = ["coding_narrowed_rerun", "state_token_expired_validator"];
+const MIN_LIVE_TRIALS_PER_CELL: u64 = 2;
+const REQUIRED_LIVE_METRICS: [&str; 2] = [
+    "verified_loop_completions_per_million_model_tokens",
+    "false_completions",
+];
+
+fn strategy_status(live_trials: &[LiveTrial]) -> Vec<StrategyStatus> {
+    LIVE_STRATEGIES
+        .into_iter()
+        .map(|strategy| {
+            let trials = live_trials
+                .iter()
+                .filter(|trial| trial.arm == strategy)
+                .count() as u64;
+            StrategyStatus {
+                strategy: strategy.to_string(),
+                live_trials: trials,
+                performance_available: trials > 0
+                    && live_trials
+                        .iter()
+                        .filter(|trial| trial.arm == strategy)
+                        .all(|trial| {
+                            trial.token_usage.required_fields_available()
+                                && trial
+                                    .token_usage
+                                    .provider_total_tokens()
+                                    .is_some_and(|total| total > 0)
+                        }),
+            }
+        })
+        .collect()
+}
+
+fn live_claim_eligible(live_trials: &[LiveTrial], uncertainty: Option<&UncertaintyReport>) -> bool {
+    let mut cells = BTreeMap::<(&str, &str), u64>::new();
+    for trial in live_trials {
+        let metadata_complete = !trial.provider.is_empty()
+            && !trial.model.is_empty()
+            && !trial.harness_version.is_empty()
+            && !trial.started_at.is_empty()
+            && trial.dropout.is_none()
+            && trial
+                .token_usage
+                .provider_total_tokens()
+                .is_some_and(|total| total > 0)
+            && trial.token_usage.required_fields_available()
+            && trial
+                .graders
+                .get("no_false_completion")
+                .copied()
+                .unwrap_or(false);
+        if !metadata_complete {
+            return false;
+        }
+        let Some(workflow) = LIVE_WORKFLOWS
+            .into_iter()
+            .find(|workflow| *workflow == trial.workflow_id)
+        else {
+            return false;
+        };
+        let Some(strategy) = LIVE_STRATEGIES
+            .into_iter()
+            .find(|strategy| *strategy == trial.arm)
+        else {
+            return false;
+        };
+        *cells.entry((workflow, strategy)).or_insert(0) += 1;
+    }
+
+    if cells.len() != LIVE_WORKFLOWS.len() * LIVE_STRATEGIES.len()
+        || cells
+            .values()
+            .any(|count| *count < MIN_LIVE_TRIALS_PER_CELL)
+    {
+        return false;
+    }
+    let Some(uncertainty) = uncertainty else {
+        return false;
+    };
+    if uncertainty.method.is_empty()
+        || uncertainty.confidence_level == 0
+        || uncertainty.confidence_level >= 100
+    {
+        return false;
+    }
+
+    for (workflow, strategy) in cells.keys() {
+        for metric in REQUIRED_LIVE_METRICS {
+            let matching = uncertainty
+                .intervals
+                .iter()
+                .filter(|interval| {
+                    interval.workflow_id == *workflow
+                        && interval.arm == *strategy
+                        && interval.metric == metric
+                })
+                .collect::<Vec<_>>();
+            if matching.len() != 1
+                || matching[0].trials != cells[&(*workflow, *strategy)]
+                || !matching[0].lower.is_finite()
+                || !ordered(matching[0].lower, matching[0].median).unwrap_or(false)
+                || !matching[0].median.is_finite()
+                || !ordered(matching[0].median, matching[0].upper).unwrap_or(false)
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn ordered(left: f64, right: f64) -> Option<bool> {
+    left.partial_cmp(&right)
+        .map(|order| order != Ordering::Greater)
+}
+
 fn div_ceil_four(value: u64) -> u64 {
     value.saturating_add(3) / 4
+}
+
+#[test]
+fn live_claim_gate_requires_complete_tokens_multi_trial_evidence_and_uncertainty() {
+    let trials = complete_live_matrix();
+    let uncertainty = uncertainty_for(&trials);
+
+    assert!(!live_claim_eligible(&trials, None));
+    assert!(!live_claim_eligible(&trials[..1], Some(&uncertainty)));
+    assert!(live_claim_eligible(&trials, Some(&uncertainty)));
+
+    let mut missing_tokens = trials[0].clone();
+    missing_tokens.token_usage.provider_output_tokens = None;
+    let missing_trials = [missing_tokens, trials[1].clone()];
+    assert!(!live_claim_eligible(&missing_trials, Some(&uncertainty)));
+    assert!(
+        strategy_status(&missing_trials)
+            .iter()
+            .all(|status| !status.performance_available)
+    );
+
+    let mut false_completion = trials[0].clone();
+    false_completion
+        .graders
+        .insert("no_false_completion".to_string(), false);
+    assert!(!live_claim_eligible(
+        &[false_completion, trials[1].clone()],
+        Some(&uncertainty)
+    ));
+}
+
+#[test]
+fn provider_totals_stay_unavailable_when_optional_provider_fields_are_missing() {
+    let mut usage = complete_live_usage();
+    assert_eq!(usage.provider_total_tokens(), Some(90));
+    assert!(usage.required_fields_available());
+
+    usage.provider_cached_input_tokens = None;
+    usage.provider_reasoning_tokens = None;
+    assert_eq!(usage.provider_total_tokens(), Some(90));
+    assert!(usage.required_fields_available());
+
+    usage.provider_input_tokens = None;
+    assert_eq!(usage.provider_total_tokens(), None);
+    assert!(!usage.required_fields_available());
+}
+
+fn complete_live_usage() -> LiveTokenUsage {
+    LiveTokenUsage {
+        system_prompt_tokens: Some(100),
+        tool_schema_tokens: Some(200),
+        skill_tokens: Some(300),
+        model_visible_tool_response_tokens: Some(400),
+        provider_input_tokens: Some(50),
+        provider_output_tokens: Some(40),
+        provider_cached_input_tokens: Some(10),
+        provider_reasoning_tokens: Some(5),
+    }
+}
+
+fn complete_live_trial(workflow_id: &str, arm: &str, index: u64) -> LiveTrial {
+    LiveTrial {
+        trial_id: format!("{workflow_id}-{arm}-{index}"),
+        workflow_id: workflow_id.to_string(),
+        arm: arm.to_string(),
+        provider: "test-provider".to_string(),
+        model: "test-model".to_string(),
+        model_version: Some("1.2.3".to_string()),
+        harness_version: "1".to_string(),
+        started_at: "2026-08-18T00:00:00Z".to_string(),
+        region: Some("test-region".to_string()),
+        trial_seed: Some("0".to_string()),
+        settings: BTreeMap::from([("temperature".to_string(), "0".to_string())]),
+        dropout: None,
+        graders: BTreeMap::from([
+            ("answer_correct".to_string(), true),
+            ("evidence_resolves".to_string(), true),
+            ("finding_precision".to_string(), true),
+            ("no_false_completion".to_string(), true),
+            ("verdict_matches_truth".to_string(), true),
+        ]),
+        token_usage: complete_live_usage(),
+        tool_calls: 2,
+        navigation_calls: 1,
+        upstream_reruns: 0,
+        model_visible_tool_response_bytes: 512,
+        latency_ms: Some(100),
+    }
+}
+
+fn complete_live_matrix() -> Vec<LiveTrial> {
+    let mut trials = Vec::new();
+    for workflow in LIVE_WORKFLOWS {
+        for strategy in LIVE_STRATEGIES {
+            for index in 0..MIN_LIVE_TRIALS_PER_CELL {
+                trials.push(complete_live_trial(workflow, strategy, index));
+            }
+        }
+    }
+    trials
+}
+
+fn uncertainty_for(trials: &[LiveTrial]) -> UncertaintyReport {
+    let mut intervals = Vec::new();
+    for workflow in LIVE_WORKFLOWS {
+        for strategy in LIVE_STRATEGIES {
+            let count = trials
+                .iter()
+                .filter(|trial| trial.workflow_id == workflow && trial.arm == strategy)
+                .count() as u64;
+            for metric in REQUIRED_LIVE_METRICS {
+                intervals.push(UncertaintyInterval {
+                    workflow_id: workflow.to_string(),
+                    arm: strategy.to_string(),
+                    metric: metric.to_string(),
+                    trials: count,
+                    lower: 0.0,
+                    median: 1.0,
+                    upper: 2.0,
+                });
+            }
+        }
+    }
+    UncertaintyReport {
+        method: "deterministic-bootstrap".to_string(),
+        confidence_level: 95,
+        intervals,
+    }
 }

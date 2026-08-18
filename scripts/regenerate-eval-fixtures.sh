@@ -8,3 +8,4 @@ set -eu
 # cannot be blessed away — a failing one means fix the regression first.
 PROG_BLESS=1 cargo test -p prog-cli --test evidence_acquisition
 PROG_REPLAY_EVAL_BLESS=1 cargo test -p prog-cli --test replay_eval
+PROG_AGENT_EVAL_BLESS=1 cargo test -p prog-cli --test agent_eval
