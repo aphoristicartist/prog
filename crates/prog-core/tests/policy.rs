@@ -164,6 +164,41 @@ fn call_policy_requires_confirmation_and_shell_trust() {
         )
         .is_ok()
     );
+
+    let network = operation(
+        "network",
+        EffectSet {
+            read_only: true,
+            mutating: false,
+            network: true,
+            shell: false,
+            sensitive: false,
+            cacheable: true,
+            requires_confirmation: false,
+            extra: Extra::new(),
+        },
+    );
+    let error =
+        check_call(&network, CallFlags { yes: true }, &TrustSettings::default()).unwrap_err();
+    assert_eq!(error.kind(), "network_not_trusted");
+    assert!(error.hint().contains("allow_network"));
+    assert!(
+        check_call(
+            &network,
+            CallFlags { yes: true },
+            &TrustSettings {
+                allow_network: true,
+                ..TrustSettings::default()
+            }
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        check_discovery(&network, &TrustSettings::default())
+            .unwrap_err()
+            .kind(),
+        "network_not_trusted"
+    );
 }
 
 #[test]
@@ -362,14 +397,11 @@ fn check_call_skips_confirmation_for_proven_read_only_under_auto_upgrade() {
         .extra
         .insert("evidence_grade".to_string(), json!("proven"));
     let operation = operation_with_effects(effects);
-    assert!(
-        check_call(
-            &operation,
-            CallFlags { yes: false },
-            &TrustSettings::default()
-        )
-        .is_ok()
-    );
+    let trust = TrustSettings {
+        allow_network: true,
+        ..TrustSettings::default()
+    };
+    assert!(check_call(&operation, CallFlags { yes: false }, &trust).is_ok());
 }
 
 #[test]
@@ -395,6 +427,7 @@ fn auto_upgrade_escape_hatch_re_gates_proven_read_only() {
     let operation = operation_with_effects(effects);
     let strict = TrustSettings {
         auto_upgrade: false,
+        allow_network: true,
         ..TrustSettings::default()
     };
     // Call requires --yes again.
@@ -405,15 +438,12 @@ fn auto_upgrade_escape_hatch_re_gates_proven_read_only() {
         "discovery_requires_confirmation"
     );
     // Under default trust the same op is probeable and callable without --yes.
-    assert!(check_discovery(&operation, &TrustSettings::default()).is_ok());
-    assert!(
-        check_call(
-            &operation,
-            CallFlags { yes: false },
-            &TrustSettings::default()
-        )
-        .is_ok()
-    );
+    let default = TrustSettings {
+        allow_network: true,
+        ..TrustSettings::default()
+    };
+    assert!(check_discovery(&operation, &default).is_ok());
+    assert!(check_call(&operation, CallFlags { yes: false }, &default).is_ok());
 }
 
 #[test]
@@ -421,12 +451,12 @@ fn check_call_surfaces_effective_effects_and_audit_for_proven_upgrade() {
     let mut effects = gated_read_only();
     stamp_evidence_grade(&mut effects, EvidenceGrade::Proven);
     let operation = operation_with_effects(effects);
-    let (effective, audit) = check_call(
-        &operation,
-        CallFlags { yes: false },
-        &TrustSettings::default(),
-    )
-    .expect("proven read-only call succeeds under default trust");
+    let trust = TrustSettings {
+        allow_network: true,
+        ..TrustSettings::default()
+    };
+    let (effective, audit) = check_call(&operation, CallFlags { yes: false }, &trust)
+        .expect("proven read-only call succeeds under default trust");
     assert!(!effective.requires_confirmation);
     assert!(audit.is_some());
     // The relaxed set carries its own auto_upgrade stamp.

@@ -4753,6 +4753,76 @@ fn disclosure_budget_rejects_zero_and_reports_the_minimum() {
 }
 
 #[tokio::test]
+async fn http_call_requires_live_network_trust_before_transport() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/record"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let seed = write_seed(
+        dir.path(),
+        "network-trust.json",
+        &json!({
+            "kind": "http",
+            "base_url": server.uri(),
+            "operations": [{
+                "name": "get",
+                "method": "GET",
+                "path": "/record",
+                "effect": {
+                    "read_only": true,
+                    "mutating": false,
+                    "network": true,
+                    "shell": false,
+                    "sensitive": false,
+                    "cacheable": true,
+                    "requires_confirmation": false
+                }
+            }]
+        })
+        .to_string(),
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "network-trust",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+
+    let profile_path = dir.path().join("profiles/network-trust.json");
+    let mut profile: Value = serde_json::from_slice(&fs::read(&profile_path).unwrap()).unwrap();
+    profile["trust"]["allow_network"] = json!(false);
+    // Policy is grounded in the configured HTTP adapter, even if editable
+    // profile metadata tries to understate the operation's network effect.
+    profile["operations"][0]["effects"]["network"] = json!(false);
+    fs::write(&profile_path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
+
+    let called = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "network-trust",
+        "get",
+        "--args",
+        "{}",
+        "--yes",
+    ]);
+    assert!(!called.status.success());
+    let called: Value = serde_json::from_slice(&called.stdout).unwrap();
+    assert_eq!(called["error"]["kind"], "network_not_trusted");
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn call_cache_tracks_execution_semantics_but_ignores_profile_learning() {
     let dir = tempfile::tempdir().unwrap();
     let server = MockServer::start().await;
@@ -5640,6 +5710,10 @@ fn call_validates_args_and_enforces_effect_policy() {
         "{}",
         stdout(&discover_shell)
     );
+    let profile_path = dir.path().join("profiles/shells.json");
+    let mut profile: Value = serde_json::from_slice(&fs::read(&profile_path).unwrap()).unwrap();
+    profile["operations"][0]["effects"]["shell"] = json!(false);
+    fs::write(&profile_path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
     let shell = prog(&[
         "--dir", dir_arg, "call", "shells", "shell", "--args", "{}", "--yes",
     ]);

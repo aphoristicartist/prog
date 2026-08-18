@@ -117,7 +117,7 @@ fn run_cli_matrix(root: &Path, cases_path: &Path) -> usize {
                     "{id}"
                 ],
                 "input_schema": id_schema(),
-                "effect": read_only_effect(true, false)
+                "effect": read_only_effect(false, false)
             }]
         }))
         .unwrap(),

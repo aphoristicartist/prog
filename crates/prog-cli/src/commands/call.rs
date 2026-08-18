@@ -13,6 +13,8 @@ pub(crate) async fn call_source(
         .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;
     ctx.apply_profile_disclosure(&profile)?;
     let operation = profile_operation(&profile, &args.operation)?.clone();
+    let source = callable_source_from_profile(&profile)?;
+    let operation = harden_operation_for_callable(&operation, &source)?;
     let call_args = parse_json_argument(&args.args, "call --args")?;
     validate_call_args(&operation, &call_args)?;
     // check_call runs trust auto-upgrade internally and returns the EFFECTIVE
@@ -39,10 +41,8 @@ pub(crate) async fn call_source(
     let effective_cache = effective_cache_policy(&profile, &operation);
     let may_cache = !args.no_cache && cache_allowed(&operation, &effective_cache);
     let redaction = resolve_redaction(Some(&profile));
-    // Construct and validate the effective adapter before consulting cache.
-    // A stale cache entry must never make a malformed or changed source
-    // configuration appear executable.
-    let source = callable_source_from_profile(&profile)?;
+    // Include the already-validated effective adapter in cache identity. A
+    // stale entry must never make changed execution semantics appear reusable.
     let cache_key = source_call_cache_key(
         &profile,
         &operation,

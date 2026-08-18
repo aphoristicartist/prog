@@ -115,6 +115,44 @@ pub(crate) fn callable_source_from_profile(profile: &SourceProfile) -> Result<Ca
     }
 }
 
+/// Tighten editable profile metadata with the effects implied by the adapter
+/// that will actually execute the call. A profile may be hand-authored or
+/// edited after discovery, so policy must not trust it to describe its own
+/// network or shell boundary accurately.
+pub(crate) fn harden_operation_for_callable(
+    operation: &OperationProfile,
+    source: &CallableSource,
+) -> Result<OperationProfile> {
+    let hardening = match source {
+        CallableSource::Http(source) => {
+            let configured = source
+                .operations
+                .iter()
+                .find(|configured| configured.id == operation.id)
+                .ok_or_else(|| CoreError::UnknownOperation {
+                    source_id: source.id.clone(),
+                    operation: operation.id.clone(),
+                })?;
+            http_hardening_effects(&configured.method)
+        }
+        CallableSource::Cli(source) => {
+            let configured = source
+                .operations
+                .iter()
+                .find(|configured| configured.id == operation.id)
+                .ok_or_else(|| CoreError::UnknownOperation {
+                    source_id: source.id.clone(),
+                    operation: operation.id.clone(),
+                })?;
+            cli_hardening_effects(configured.shell)
+        }
+        CallableSource::Mcp(_) => return Ok(operation.clone()),
+    };
+    let mut operation = operation.clone();
+    operation.effects = tighten_effects(&operation.effects, &hardening);
+    Ok(operation)
+}
+
 pub(crate) fn http_source_from_profile(profile: &SourceProfile) -> Result<HttpSource> {
     let adapter = adapter_config(profile, "http");
     let base_url = adapter
