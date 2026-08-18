@@ -88,8 +88,8 @@ fn fixture_matrix_matches_golden_provider_output() {
 }
 
 #[test]
-fn incomplete_provider_prevents_absence_proof_without_hiding_raw_evidence() {
-    let incomplete = normalize_coding_output(
+fn provider_normalization_and_selection_exhaustion_are_independent() {
+    let targeted = normalize_coding_output(
         &["pytest".to_string(), "-x".to_string()],
         "FAILED tests/test_api.py::test_one - AssertionError\n1 failed in 0.01s\n",
         "",
@@ -98,8 +98,10 @@ fn incomplete_provider_prevents_absence_proof_without_hiding_raw_evidence() {
     .unwrap();
     let payload = json!({
         "stdout": {"format": "text", "text": "raw retained evidence"},
-        "provider": incomplete
+        "provider": targeted
     });
     assert_eq!(payload["stdout"]["text"], "raw retained evidence");
-    assert!(!finding_derivation_is_complete(&payload));
+    assert_eq!(payload["provider"]["complete"], true);
+    assert_eq!(payload["provider"]["selection"]["exhaustive"], false);
+    assert!(finding_derivation_is_complete(&payload));
 }

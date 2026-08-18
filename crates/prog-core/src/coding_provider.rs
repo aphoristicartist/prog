@@ -37,6 +37,9 @@ pub struct CodingProviderResult {
     pub provider: String,
     pub input_format: String,
     pub match_confidence: f64,
+    /// Whether the provider normalized all captured input within its bounds.
+    /// This says nothing about whether the command selected every relevant
+    /// test; that proof belongs exclusively to `selection.exhaustive`.
     pub complete: bool,
     pub selection: SelectionCoverage,
     pub limits: CodingProviderLimits,
@@ -235,7 +238,7 @@ fn normalize_pytest(
     tests.sort();
     tests.dedup_by(|left, right| left.node_id == right.node_id && left.status == right.status);
     let targets = pytest_targets(args);
-    let complete = capture_complete && !bound_hit && summary_seen && !early_terminated;
+    let complete = capture_complete && !bound_hit;
     let selection = SelectionCoverage {
         scopes: if targets.is_empty() {
             vec!["pytest:all".to_string()]
@@ -245,12 +248,15 @@ fn normalize_pytest(
                 .map(|target| format!("pytest:{target}"))
                 .collect()
         },
-        exhaustive: complete,
+        exhaustive: complete && summary_seen && !early_terminated,
         ..SelectionCoverage::default()
     };
     let mut warnings = Vec::new();
     if !summary_seen {
-        warnings.push("pytest completion summary was not observed".to_string());
+        warnings.push(
+            "pytest completion summary was not observed; selection exhaustiveness is unproven"
+                .to_string(),
+        );
     }
     if early_terminated {
         warnings.push("pytest selection stopped early; broader absence is unprovable".to_string());
@@ -346,7 +352,7 @@ fn normalize_pytest_json(
     let normal_exit = matches!(exitcode, Some(0 | 1));
     let targets = pytest_targets(args);
     let early_terminated = pytest_early_stop_args(args) || deselected > 0;
-    let complete = capture_complete && !bound_hit && normal_exit && !early_terminated;
+    let complete = capture_complete && !bound_hit;
     let selection = SelectionCoverage {
         scopes: if targets.is_empty() {
             vec!["pytest:all".to_string()]
@@ -356,7 +362,7 @@ fn normalize_pytest_json(
                 .map(|target| format!("pytest:{target}"))
                 .collect()
         },
-        exhaustive: complete,
+        exhaustive: complete && normal_exit && !early_terminated,
         ..SelectionCoverage::default()
     };
     let mut warnings = Vec::new();
@@ -504,6 +510,7 @@ fn normalize_cargo_rust(
     let mut malformed_structured = false;
     let mut structured_seen = false;
     let mut test_summary_seen = false;
+    let mut test_failure_seen = false;
     for (index, line) in lines.iter().enumerate() {
         let trimmed = line.text.trim();
         if trimmed.starts_with('{') {
@@ -534,13 +541,17 @@ fn normalize_cargo_rust(
             }
         }
         if let Some(test) = libtest_line(trimmed, line) {
+            test_failure_seen |= test.status == "failed";
             if tests.len() < MAX_PROVIDER_ITEMS {
                 tests.push(test);
             } else {
                 bound_hit = true;
             }
         }
-        test_summary_seen |= trimmed.starts_with("test result:");
+        if let Some(summary) = trimmed.strip_prefix("test result:") {
+            test_summary_seen = true;
+            test_failure_seen |= summary.trim_start().starts_with("FAILED");
+        }
         if let Some(diagnostic) = rust_text_diagnostic(lines, index) {
             if diagnostics.len() < MAX_PROVIDER_ITEMS {
                 diagnostics.push(diagnostic);
@@ -556,16 +567,14 @@ fn normalize_cargo_rust(
 
     let test_invocation = program == "cargo"
         && cargo_subcommand(args).is_some_and(|(_, subcommand)| subcommand == "test");
-    let single_harness = program == "rustc"
-        || args
-            .iter()
-            .any(|arg| matches!(arg.as_str(), "--lib" | "--test" | "--bin"));
-    let parser_complete = if test_invocation {
-        !tests.is_empty() && test_summary_seen && single_harness
-    } else {
-        program == "rustc" || structured_seen || !diagnostics.is_empty()
-    };
-    let complete = capture_complete && !bound_hit && !malformed_structured && parser_complete;
+    let exact_harness = test_invocation && cargo_exact_test_harness(args);
+    let no_fail_fast = test_invocation && cargo_no_fail_fast(args);
+    let parser_recognized = program == "rustc"
+        || structured_seen
+        || !diagnostics.is_empty()
+        || !tests.is_empty()
+        || test_summary_seen;
+    let complete = capture_complete && !bound_hit && !malformed_structured && parser_recognized;
     let input_format = if structured_seen {
         "cargo_rustc_json"
     } else if !tests.is_empty() {
@@ -575,7 +584,9 @@ fn normalize_cargo_rust(
     };
     let selection = SelectionCoverage {
         scopes: cargo_rust_scopes(program, args),
-        exhaustive: complete,
+        exhaustive: complete
+            && (!test_invocation
+                || test_summary_seen && (!test_failure_seen || exact_harness || no_fail_fast)),
         ..SelectionCoverage::default()
     };
     let mut warnings = Vec::new();
@@ -585,9 +596,15 @@ fn normalize_cargo_rust(
                 .to_string(),
         );
     }
-    if !tests.is_empty() && !single_harness {
+    if test_invocation && !test_summary_seen {
         warnings.push(
-            "Cargo may run multiple test harnesses; broader absence is unprovable without an exact harness target"
+            "Cargo test completion summary was not observed; selection exhaustiveness is unproven"
+                .to_string(),
+        );
+    }
+    if test_failure_seen && !exact_harness && !no_fail_fast {
+        warnings.push(
+            "Cargo's default fail-fast may skip later test harnesses after a failure; use one exact package+harness target or --no-fail-fast to prove selection exhaustion"
                 .to_string(),
         );
     }
@@ -606,10 +623,82 @@ fn normalize_cargo_rust(
             "tests": tests,
             "structured_seen": structured_seen,
             "test_summary_seen": test_summary_seen,
-            "single_harness": single_harness
+            "test_failure_seen": test_failure_seen,
+            "exact_harness": exact_harness,
+            "no_fail_fast": no_fail_fast
         }),
         warnings,
     )
+}
+
+fn cargo_exact_test_harness(args: &[String]) -> bool {
+    let Some((subcommand_index, "test")) = cargo_subcommand(args) else {
+        return false;
+    };
+    let cargo_args = args[subcommand_index + 1..]
+        .split(|arg| arg == "--")
+        .next()
+        .unwrap_or_default();
+    let packages = cargo_option_values(cargo_args, &["-p", "--package"]);
+    if packages.len() != 1 || !is_exact_cargo_selector(&packages[0]) {
+        return false;
+    }
+    if cargo_args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--all-targets" | "--bins" | "--examples" | "--tests" | "--benches" | "--doc"
+        )
+    }) {
+        return false;
+    }
+
+    let mut harnesses = cargo_option_values(cargo_args, &["--test", "--bin", "--example"]);
+    if cargo_args.iter().any(|arg| arg == "--lib") {
+        harnesses.push("lib".to_string());
+    }
+    harnesses.len() == 1 && is_exact_cargo_selector(&harnesses[0])
+}
+
+fn cargo_no_fail_fast(args: &[String]) -> bool {
+    let Some((subcommand_index, "test")) = cargo_subcommand(args) else {
+        return false;
+    };
+    args[subcommand_index + 1..]
+        .split(|arg| arg == "--")
+        .next()
+        .unwrap_or_default()
+        .iter()
+        .any(|arg| arg == "--no-fail-fast")
+}
+
+fn cargo_option_values(args: &[String], names: &[&str]) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut index = 0usize;
+    while index < args.len() {
+        let arg = &args[index];
+        if names.iter().any(|name| arg == name)
+            && let Some(value) = args.get(index + 1)
+        {
+            values.push(value.clone());
+            index += 2;
+            continue;
+        }
+        if let Some((name, value)) = arg.split_once('=')
+            && names.contains(&name)
+        {
+            values.push(value.to_string());
+        }
+        index += 1;
+    }
+    values
+}
+
+fn is_exact_cargo_selector(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('-')
+        && !value
+            .chars()
+            .any(|character| matches!(character, '*' | '?' | '[' | ']'))
 }
 
 fn cargo_rust_scopes(program: &str, args: &[String]) -> Vec<String> {
@@ -621,19 +710,50 @@ fn cargo_rust_scopes(program: &str, args: &[String]) -> Vec<String> {
                 .map_or("invocation", String::as_str)
         )];
     }
-    let subcommand = cargo_subcommand(args).map_or("invocation", |(_, subcommand)| subcommand);
-    let mut targets = args
+    let (subcommand_index, subcommand) = cargo_subcommand(args).unwrap_or((0, "invocation"));
+    let cargo_args = args
+        .get(subcommand_index + 1..)
+        .unwrap_or_default()
+        .split(|arg| arg == "--")
+        .next()
+        .unwrap_or_default();
+    let mut targets = cargo_args
         .windows(2)
         .filter_map(|pair| match pair[0].as_str() {
-            "--bin" | "--example" | "--package" | "-p" | "--test" => {
-                Some(format!("{}={}", pair[0], bounded_text(&pair[1])))
-            }
+            "--bin" => Some(format!("bin={}", bounded_text(&pair[1]))),
+            "--example" => Some(format!("example={}", bounded_text(&pair[1]))),
+            "--package" | "-p" => Some(format!("package={}", bounded_text(&pair[1]))),
+            "--test" => Some(format!("test={}", bounded_text(&pair[1]))),
+            "--exclude" => Some(format!("exclude={}", bounded_text(&pair[1]))),
             _ => None,
         })
         .collect::<Vec<_>>();
-    for flag in ["--all-targets", "--bins", "--examples", "--lib", "--tests"] {
-        if args.iter().any(|arg| arg == flag) {
-            targets.push(flag.to_string());
+    for arg in cargo_args {
+        if let Some((name, value)) = arg.split_once('=') {
+            let name = match name {
+                "--bin" => Some("bin"),
+                "--example" => Some("example"),
+                "--package" => Some("package"),
+                "--test" => Some("test"),
+                "--exclude" => Some("exclude"),
+                _ => None,
+            };
+            if let Some(name) = name {
+                targets.push(format!("{name}={}", bounded_text(value)));
+            }
+        }
+    }
+    for (flag, scope) in [
+        ("--all-targets", "all-targets"),
+        ("--bins", "bins"),
+        ("--examples", "examples"),
+        ("--lib", "lib"),
+        ("--tests", "tests"),
+        ("--workspace", "workspace"),
+        ("--all", "workspace"),
+    ] {
+        if cargo_args.iter().any(|arg| arg == flag) {
+            targets.push(scope.to_string());
         }
     }
     targets.sort();
@@ -898,7 +1018,7 @@ mod tests {
     }
 
     #[test]
-    fn targeted_early_or_truncated_pytest_is_never_complete() {
+    fn targeted_early_or_truncated_pytest_tracks_both_completion_axes() {
         for (argv, capture_complete) in [
             (strings(&["pytest", "tests/test_api.py::test_total"]), true),
             (strings(&["pytest", "-x"]), true),
@@ -906,8 +1026,13 @@ mod tests {
         ] {
             let result =
                 normalize_coding_output(&argv, "1 passed in 0.1s\n", "", capture_complete).unwrap();
-            if argv.iter().any(|arg| arg == "-x") || !capture_complete {
+            if !capture_complete {
                 assert!(!result.complete);
+            } else {
+                assert!(result.complete);
+            }
+            if argv.iter().any(|arg| arg == "-x") || !capture_complete {
+                assert!(!result.selection.exhaustive);
             }
             if argv.iter().any(|arg| arg.contains("::")) {
                 assert_eq!(
@@ -916,6 +1041,69 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn cargo_failure_requires_proven_harness_exhaustion() {
+        let output = "test module::case ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n";
+        let broad =
+            normalize_coding_output(&strings(&["cargo", "test", "--lib"]), output, "", true)
+                .unwrap();
+        assert!(broad.complete);
+        assert!(!broad.selection.exhaustive);
+        assert_eq!(broad.normalized["exact_harness"], false);
+
+        let exact = normalize_coding_output(
+            &strings(&["cargo", "test", "-p", "fixture", "--lib"]),
+            output,
+            "",
+            true,
+        )
+        .unwrap();
+        assert!(exact.complete);
+        assert!(exact.selection.exhaustive);
+        assert_eq!(exact.normalized["exact_harness"], true);
+
+        let all_harnesses = normalize_coding_output(
+            &strings(&["cargo", "test", "--workspace", "--no-fail-fast"]),
+            output,
+            "",
+            true,
+        )
+        .unwrap();
+        assert!(all_harnesses.complete);
+        assert!(all_harnesses.selection.exhaustive);
+        assert_eq!(all_harnesses.normalized["no_fail_fast"], true);
+
+        let success = normalize_coding_output(
+            &strings(&["cargo", "test", "--workspace"]),
+            "test module::case ... ok\ntest result: ok. 1 passed; 0 failed\n",
+            "",
+            true,
+        )
+        .unwrap();
+        assert!(success.selection.exhaustive);
+        assert_eq!(success.normalized["test_failure_seen"], false);
+    }
+
+    #[test]
+    fn cargo_scopes_are_canonical_and_stop_at_harness_arguments() {
+        let args = strings(&[
+            "test",
+            "--package=fixture",
+            "--test=api",
+            "--",
+            "--test",
+            "not-a-cargo-target",
+        ]);
+        assert_eq!(
+            cargo_rust_scopes("cargo", &args),
+            strings(&["cargo:test:package=fixture", "cargo:test:test=api"])
+        );
+        assert!(cargo_exact_test_harness(&args));
+
+        let wildcard = strings(&["test", "-p", "fixture*", "--lib"]);
+        assert!(!cargo_exact_test_harness(&wildcard));
     }
 
     #[test]

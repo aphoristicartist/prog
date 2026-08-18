@@ -119,7 +119,7 @@
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_json_report",
-      "complete": false,
+      "complete": true,
       "selection": {"scopes": ["pytest:all"], "exhaustive": false},
       "normalized": {
         "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1}],
@@ -140,7 +140,7 @@
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_json_report",
-      "complete": false,
+      "complete": true,
       "selection": {"scopes": ["pytest:all"], "exhaustive": false},
       "normalized": {
         "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1}],
@@ -161,7 +161,7 @@
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_text",
-      "complete": false,
+      "complete": true,
       "selection": {"scopes": ["pytest:all"], "exhaustive": false},
       "normalized": {
         "tests": [{"node_id": "tests/test_api.py::test_one", "status": "failed", "message": "AssertionError", "evidence_stream": "stdout", "evidence_line": 1}],
@@ -207,7 +207,9 @@
         "tests": [],
         "structured_seen": true,
         "test_summary_seen": false,
-        "single_harness": false
+        "test_failure_seen": false,
+        "exact_harness": false,
+        "no_fail_fast": false
       }
     }
   },
@@ -227,7 +229,9 @@
         "tests": [],
         "structured_seen": true,
         "test_summary_seen": false,
-        "single_harness": false
+        "test_failure_seen": false,
+        "exact_harness": false,
+        "no_fail_fast": false
       }
     }
   },
@@ -248,7 +252,9 @@
         "tests": [],
         "structured_seen": false,
         "test_summary_seen": false,
-        "single_harness": true
+        "test_failure_seen": false,
+        "exact_harness": false,
+        "no_fail_fast": false
       }
     }
   },
@@ -262,13 +268,37 @@
       "provider": "cargo_rustc.v1",
       "input_format": "cargo_libtest_text",
       "complete": true,
-      "selection": {"scopes": ["cargo:test:--lib"], "exhaustive": true},
+      "selection": {"scopes": ["cargo:test:lib"], "exhaustive": false},
       "normalized": {
         "diagnostics": [],
         "tests": [{"node_id": "module::case", "status": "failed", "evidence_stream": "stdout", "evidence_line": 2}],
         "structured_seen": false,
         "test_summary_seen": true,
-        "single_harness": true
+        "test_failure_seen": true,
+        "exact_harness": false,
+        "no_fail_fast": false
+      }
+    }
+  },
+  {
+    "name": "cargo-exact-libtest-failure",
+    "argv": ["cargo", "test", "-p", "fixture", "--lib", "--message-format=json"],
+    "stdout": "running 1 test\ntest module::case ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n",
+    "stderr": "",
+    "capture_complete": true,
+    "expected": {
+      "provider": "cargo_rustc.v1",
+      "input_format": "cargo_libtest_text",
+      "complete": true,
+      "selection": {"scopes": ["cargo:test:lib", "cargo:test:package=fixture"], "exhaustive": true},
+      "normalized": {
+        "diagnostics": [],
+        "tests": [{"node_id": "module::case", "status": "failed", "evidence_stream": "stdout", "evidence_line": 2}],
+        "structured_seen": false,
+        "test_summary_seen": true,
+        "test_failure_seen": true,
+        "exact_harness": true,
+        "no_fail_fast": false
       }
     }
   },
@@ -282,13 +312,15 @@
       "provider": "cargo_rustc.v1",
       "input_format": "cargo_libtest_text",
       "complete": false,
-      "selection": {"scopes": ["cargo:test:--lib"], "exhaustive": false},
+      "selection": {"scopes": ["cargo:test:lib"], "exhaustive": false},
       "normalized": {
         "diagnostics": [],
         "tests": [{"node_id": "module::case", "status": "failed", "evidence_stream": "stdout", "evidence_line": 2}],
         "structured_seen": false,
         "test_summary_seen": true,
-        "single_harness": true
+        "test_failure_seen": true,
+        "exact_harness": false,
+        "no_fail_fast": false
       }
     }
   },

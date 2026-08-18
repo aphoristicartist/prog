@@ -1763,7 +1763,7 @@ fn run_timeout_and_missing_command_return_structured_envelopes() {
         dir_arg,
         "run",
         "--timeout-ms",
-        "50",
+        "500",
         "--max-stdout-bytes",
         "123",
         "--max-stderr-bytes",
@@ -1800,7 +1800,7 @@ fn run_timeout_and_missing_command_return_structured_envelopes() {
     );
     assert_eq!(
         value["observation"]["capture"]["budget"]["limits"][0]["max_duration_ms"],
-        50
+        500
     );
     assert_eq!(
         value["observation"]["capture"]["budget"]["limits"][1]["max_bytes"],
