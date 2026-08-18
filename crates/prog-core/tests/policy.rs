@@ -230,6 +230,14 @@ fn cache_policy_respects_enabled_cacheable_and_sensitive_flags() {
     operation.effects.sensitive = false;
     operation.effects.cacheable = false;
     assert!(!cache_allowed(&operation, &enabled));
+
+    operation.effects.cacheable = true;
+    operation.effects.read_only = false;
+    operation.effects.mutating = true;
+    assert!(!cache_allowed(&operation, &enabled));
+
+    operation.effects.mutating = false;
+    assert!(!cache_allowed(&operation, &enabled));
 }
 
 #[test]

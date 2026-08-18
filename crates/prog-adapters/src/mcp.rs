@@ -898,7 +898,14 @@ impl McpSource {
             source_id: self.id.clone(),
             operation: operation.to_string(),
             server_command: std::iter::once(self.command.clone())
-                .chain(self.args.clone())
+                // Source profiles own the exact configured argv. Repeating it
+                // in every retained observation creates a second secret
+                // channel, so provenance preserves only executable and arity.
+                .chain(
+                    self.args
+                        .iter()
+                        .map(|_| "[REDACTED:mcp_server_arg]".to_string()),
+                )
                 .collect(),
             protocol_version,
             duration_ms,

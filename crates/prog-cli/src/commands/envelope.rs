@@ -96,27 +96,39 @@ pub(crate) fn record_capture(
     source_state: Option<SourceStateToken>,
     source_validity: prog_core::SourceValidity,
 ) -> Result<String> {
-    if capture.can_prove_absence && availability == EvidenceAvailability::Recoverable {
-        let stop_reason = match store.get_payload(&payload_hash)? {
+    if availability != EvidenceAvailability::MetadataOnly {
+        match store.get_payload(&payload_hash)? {
             Some(payload) if !finding_derivation_is_complete(payload.as_value()) => {
-                Some(CaptureStopReason::DerivationWindowed)
+                capture.can_prove_absence = false;
+                if capture.stop_reason == CaptureStopReason::Complete {
+                    capture.stop_reason = CaptureStopReason::DerivationWindowed;
+                }
+                if !capture.affected.iter().any(|scope| {
+                    scope.scope == "payload"
+                        && scope.stop_reason == CaptureStopReason::DerivationWindowed
+                }) {
+                    capture.affected.push(CaptureScope {
+                        scope: "payload".to_string(),
+                        total_bytes: capture.total_bytes,
+                        captured_bytes: capture.captured_bytes,
+                        stop_reason: CaptureStopReason::DerivationWindowed,
+                        extra: Extra::new(),
+                    });
+                }
             }
-            Some(_) => None,
+            Some(_) => {}
             None => {
                 availability = EvidenceAvailability::Unavailable;
-                Some(CaptureStopReason::Unavailable)
+                capture.can_prove_absence = false;
+                capture.stop_reason = CaptureStopReason::Unavailable;
+                capture.affected.push(CaptureScope {
+                    scope: "payload".to_string(),
+                    total_bytes: capture.total_bytes,
+                    captured_bytes: capture.captured_bytes,
+                    stop_reason: CaptureStopReason::Unavailable,
+                    extra: Extra::new(),
+                });
             }
-        };
-        if let Some(stop_reason) = stop_reason {
-            capture.can_prove_absence = false;
-            capture.stop_reason = stop_reason;
-            capture.affected.push(CaptureScope {
-                scope: "payload".to_string(),
-                total_bytes: capture.total_bytes,
-                captured_bytes: capture.captured_bytes,
-                stop_reason,
-                extra: Extra::new(),
-            });
         }
     }
     let duration_ms = provenance.as_ref().and_then(|item| item.duration_ms);
@@ -343,19 +355,16 @@ pub(crate) fn cli_stream_captured_bytes(
         })
 }
 
-/// `stdout_windowed`/`stderr_windowed` signal that the caller's head/tail-of-N
-/// finding-derivation window didn't cover the full line count for that
-/// stream, so absence can't be proven for anything outside that window, even
-/// though every byte was captured and stored.
-#[allow(clippy::too_many_arguments)]
+/// Run payloads persist full captured stream text. Their head/tail fields are
+/// disclosure conveniences, not finding-derivation windows. The later
+/// `record_capture` guard still rejects proof when any persisted normalizer is
+/// genuinely incomplete.
 pub(crate) fn run_capture_completeness(
     stdout: &RunCapture,
     stderr: &RunCapture,
     stored_bytes: u64,
     redacted: bool,
     status: &RunProcessStatus,
-    stdout_windowed: bool,
-    stderr_windowed: bool,
 ) -> (EvidenceAvailability, CaptureCompleteness) {
     let truncated = stdout.truncated || stderr.truncated;
     let captured_bytes = stdout.bytes.len().saturating_add(stderr.bytes.len()) as u64;
@@ -397,8 +406,6 @@ pub(crate) fn run_capture_completeness(
                     captured_bytes: stdout.bytes.len() as u64,
                     stop_reason: if stdout.truncated {
                         CaptureStopReason::ByteLimit
-                    } else if stdout_windowed {
-                        CaptureStopReason::DerivationWindowed
                     } else {
                         CaptureStopReason::Complete
                     },
@@ -410,8 +417,6 @@ pub(crate) fn run_capture_completeness(
                     captured_bytes: stderr.bytes.len() as u64,
                     stop_reason: if stderr.truncated {
                         CaptureStopReason::ByteLimit
-                    } else if stderr_windowed {
-                        CaptureStopReason::DerivationWindowed
                     } else {
                         CaptureStopReason::Complete
                     },
@@ -422,9 +427,7 @@ pub(crate) fn run_capture_completeness(
                 status,
                 RunProcessStatus::TimedOut | RunProcessStatus::Cancelled { .. }
             ) && !truncated
-                && !redacted
-                && !stdout_windowed
-                && !stderr_windowed,
+                && !redacted,
             extra: Extra::new(),
         },
     )

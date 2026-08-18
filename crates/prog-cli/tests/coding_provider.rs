@@ -162,12 +162,75 @@ fn early_stopped_pytest_capture_cannot_prove_absence() {
     assert!(output.status.success(), "{}", stdout(&output));
     let output: Value = serde_json::from_slice(&output.stdout).unwrap();
     let record = observation_record(dir_arg, observation_id(&output));
-    assert_eq!(record["capture"]["can_prove_absence"], false, "{record:#}");
-    assert_eq!(
-        record["capture"]["stop_reason"], "derivation_windowed",
-        "{record:#}"
-    );
+    assert_eq!(record["capture"]["can_prove_absence"], true, "{record:#}");
+    assert_eq!(record["capture"]["stop_reason"], "complete", "{record:#}");
     assert_eq!(record["selection"]["exhaustive"], false, "{record:#}");
+}
+
+#[test]
+fn cargo_provider_separates_normalization_from_harness_exhaustion() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let cargo = dir.path().join("cargo");
+    fs::write(
+        &cargo,
+        "#!/bin/sh\nprintf '%s\\n' 'test module::case ... FAILED' 'test result: FAILED. 0 passed; 1 failed'\nexit 101\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&cargo).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&cargo, permissions).unwrap();
+
+    let broad = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        cargo.to_str().unwrap(),
+        "test",
+        "--lib",
+    ]);
+    assert!(broad.status.success(), "{}", stdout(&broad));
+    let broad: Value = serde_json::from_slice(&broad.stdout).unwrap();
+    let broad_record = observation_record(dir_arg, observation_id(&broad));
+    assert_eq!(broad_record["capture"]["can_prove_absence"], true);
+    assert_eq!(broad_record["selection"]["exhaustive"], false);
+    let broad_provider = prog(&[
+        "--dir",
+        dir_arg,
+        "expand",
+        broad["cursor"].as_str().unwrap(),
+        "--path",
+        "/provider",
+    ]);
+    assert!(
+        broad_provider.status.success(),
+        "{}",
+        stdout(&broad_provider)
+    );
+    let broad_provider: Value = serde_json::from_slice(&broad_provider.stdout).unwrap();
+    assert_eq!(broad_provider["data_preview"]["complete"], true);
+    assert_eq!(
+        broad_provider["data_preview"]["normalized"]["exact_harness"],
+        false
+    );
+
+    let exact = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        cargo.to_str().unwrap(),
+        "test",
+        "-p",
+        "fixture",
+        "--lib",
+    ]);
+    assert!(exact.status.success(), "{}", stdout(&exact));
+    let exact: Value = serde_json::from_slice(&exact.stdout).unwrap();
+    let exact_record = observation_record(dir_arg, observation_id(&exact));
+    assert_eq!(exact_record["capture"]["can_prove_absence"], true);
+    assert_eq!(exact_record["selection"]["exhaustive"], true);
 }
 
 #[test]

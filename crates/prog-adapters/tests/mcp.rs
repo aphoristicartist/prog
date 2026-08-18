@@ -283,6 +283,11 @@ async fn discovers_tools_resources_prompts_and_declared_output_schema() {
         discovery.provenance.protocol_version.as_deref(),
         Some("2025-11-25")
     );
+    assert_eq!(discovery.provenance.server_command[0], "python3");
+    assert_eq!(
+        &discovery.provenance.server_command[1..],
+        ["[REDACTED:mcp_server_arg]", "[REDACTED:mcp_server_arg]"]
+    );
 
     let search = operation(&discovery.profile, "search_docs");
     assert_eq!(search.input_schema["required"][0], "query");
@@ -380,6 +385,34 @@ async fn calls_tool_prefers_structured_content_and_can_project_large_result() {
         "",
     );
     assert!(!projection.omitted.is_empty());
+}
+
+#[tokio::test]
+async fn mcp_provenance_never_repeats_server_arguments() {
+    let mut fixture = fixture("normal");
+    fixture
+        .source
+        .args
+        .push("plain-positional-secret".to_string());
+
+    let result = fixture
+        .source
+        .call_tool("search_docs", &json!({"query": "rust"}))
+        .await
+        .unwrap();
+
+    let serialized = serde_json::to_string(&result.provenance).unwrap();
+    assert!(!serialized.contains("plain-positional-secret"));
+    assert_eq!(result.provenance.server_command[0], "python3");
+    assert!(
+        result.provenance.server_command[1..]
+            .iter()
+            .all(|arg| arg == "[REDACTED:mcp_server_arg]")
+    );
+    assert_eq!(
+        result.provenance.server_command.len(),
+        fixture.source.args.len() + 1
+    );
 }
 
 #[tokio::test]

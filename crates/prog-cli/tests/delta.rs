@@ -140,9 +140,8 @@ fn delta_output_obeys_the_requested_disclosure_budget() {
         .as_u64()
         .unwrap();
     assert!(actual_bytes <= 65_536);
-    // The generic text extractor emits a whole-payload finding alongside
-    // each per-line finding, so two fully-disjoint two-line iterations
-    // report 3 new/3 resolved (2 per-line + 1 whole-payload), not 2/2.
-    assert_eq!(generous_value["counts"]["new"], 3);
-    assert_eq!(generous_value["counts"]["resolved"], 3);
+    // Canonical stream text emits one semantic occurrence per distinct error
+    // line; derived head/tail/combined representations do not add duplicates.
+    assert_eq!(generous_value["counts"]["new"], 2);
+    assert_eq!(generous_value["counts"]["resolved"], 2);
 }
