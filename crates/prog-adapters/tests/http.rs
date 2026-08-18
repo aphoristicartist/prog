@@ -78,10 +78,13 @@ async fn redirects_are_same_origin_and_provenance_records_the_final_url() {
         .await;
     Mock::given(method("GET"))
         .and(path("/cross"))
-        .respond_with(
-            ResponseTemplate::new(302)
-                .insert_header("location", format!("{}/secret", foreign.uri())),
-        )
+        .respond_with(ResponseTemplate::new(302).insert_header(
+            "location",
+            format!(
+                "{}/secret?access_token=ordinary-cross-origin-secret",
+                foreign.uri()
+            ),
+        ))
         .expect(1)
         .mount(&server)
         .await;
@@ -101,6 +104,7 @@ async fn redirects_are_same_origin_and_provenance_records_the_final_url() {
     );
     let error = cross_origin.execute("cross", &json!({})).await.unwrap_err();
     assert_eq!(error.kind(), "http_transport");
+    assert!(!error.to_string().contains("ordinary-cross-origin-secret"));
     assert!(foreign.received_requests().await.unwrap().is_empty());
 }
 

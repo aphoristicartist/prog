@@ -169,10 +169,7 @@ impl HttpSource {
                 operation: operation.id.clone(),
                 timeout_ms,
             })?
-            .map_err(|error| CoreError::HttpTransport {
-                operation: operation.id.clone(),
-                message: error.to_string(),
-            })?;
+            .map_err(|error| http_transport_error(&operation.id, error))?;
 
         let status = response.status();
         let final_url = redact_url(response.url().as_str(), args, &sensitive_names);
@@ -312,10 +309,7 @@ impl HttpSource {
                 operation: operation.id.clone(),
                 timeout_ms,
             })?
-            .map_err(|error| CoreError::HttpTransport {
-                operation: operation.id.clone(),
-                message: error.to_string(),
-            })?;
+            .map_err(|error| http_transport_error(&operation.id, error))?;
 
         let status = response.status();
         let final_url = redact_url(response.url().as_str(), &args, &sensitive_names);
@@ -388,10 +382,20 @@ fn http_client(operation: &str, origin: &reqwest::Url) -> Result<reqwest::Client
         .user_agent(DEFAULT_USER_AGENT)
         .redirect(redirects)
         .build()
-        .map_err(|error| CoreError::HttpTransport {
-            operation: operation.to_string(),
-            message: error.to_string(),
-        })
+        .map_err(|error| http_transport_error(operation, error))
+}
+
+fn http_transport_error(operation: &str, error: reqwest::Error) -> CoreError {
+    // reqwest attaches the request or redirect URL to transport errors. That
+    // URL can contain templated credentials, so remove it before the error can
+    // reach the CLI's structured output. The text scan is a second boundary
+    // for secret-like fragments emitted by lower transport layers.
+    let message = error.without_url().to_string();
+    let (message, _) = redact_sensitive_text(&message);
+    CoreError::HttpTransport {
+        operation: operation.to_string(),
+        message,
+    }
 }
 
 fn same_origin(left: &reqwest::Url, right: &reqwest::Url) -> bool {
@@ -609,14 +613,10 @@ async fn read_bounded_body(
     tokio::time::timeout(Duration::from_millis(timeout_ms), async {
         let mut bytes = Vec::new();
         let mut truncated = false;
-        while let Some(chunk) =
-            response
-                .chunk()
-                .await
-                .map_err(|error| CoreError::HttpTransport {
-                    operation: operation.to_string(),
-                    message: error.to_string(),
-                })?
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| http_transport_error(operation, error))?
         {
             let remaining = max_response_bytes.saturating_sub(bytes.len());
             if remaining == 0 {
