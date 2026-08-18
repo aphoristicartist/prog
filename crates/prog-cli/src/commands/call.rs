@@ -188,17 +188,32 @@ pub(crate) async fn call_source(
             .get_payload(&prior.payload_hash)?
             .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
             .into_redacted();
-        let provenance = call_provenance(
+        let provenance_capture = call_provenance(
             &cache_key,
             adapter_call.status.clone(),
             adapter_call.duration_ms,
             adapter_call.provenance,
             &redaction,
         );
+        let provenance = provenance_capture.provenance;
+        let redacted_paths = provenance_capture
+            .redacted_paths
+            .saturating_add(usize::from(prior_observation.redacted));
+        let mut availability = prior_observation.availability;
+        let mut capture = prior_observation.capture.clone();
+        if provenance_capture.redacted_paths > 0 {
+            if availability == EvidenceAvailability::Recoverable {
+                availability = EvidenceAvailability::Redacted;
+            }
+            if capture.can_prove_absence {
+                capture.stop_reason = CaptureStopReason::Redacted;
+            }
+            capture.can_prove_absence = false;
+        }
         let observation_id = store
             .record_observation(NewObservation {
                 payload_hash: prior.payload_hash.clone(),
-                availability: prior_observation.availability,
+                availability,
                 invocation_fingerprint: cache_key.clone(),
                 source_id: args.source_id.clone(),
                 operation: args.operation.clone(),
@@ -207,8 +222,8 @@ pub(crate) async fn call_source(
                 captured_at: Some(provenance.captured_at.clone()),
                 duration_ms: provenance.duration_ms,
                 status: provenance.status.clone(),
-                capture: prior_observation.capture.clone(),
-                redacted: prior_observation.redacted,
+                capture,
+                redacted: redacted_paths > 0,
                 source_state: prior_observation.source_state.clone(),
                 // The adapter returned HTTP 304 Not Modified against a known
                 // validator: this is the one case where "unchanged" is
@@ -273,7 +288,7 @@ pub(crate) async fn call_source(
                 }),
                 effects: Some(effective_effects),
                 auto_upgrade_audit,
-                redacted_paths: 0,
+                redacted_paths,
                 cache_disabled_reason: (!cache_retained).then_some(retention_warning.clone()),
                 warnings: {
                     let mut warnings = vec![
@@ -309,13 +324,15 @@ pub(crate) async fn call_source(
     }
     let received_error = adapter_call.received_error;
     let first_pagination = adapter_call.pagination.clone();
-    let mut provenance = call_provenance(
+    let provenance_capture = call_provenance(
         &cache_key,
         adapter_call.status,
         adapter_call.duration_ms,
         adapter_call.provenance,
         &redaction,
     );
+    let provenance_redacted_paths = provenance_capture.redacted_paths;
+    let mut provenance = provenance_capture.provenance;
     let mut source_state_capture = source_state_from_response(
         profile.kind,
         &operation,
@@ -327,7 +344,11 @@ pub(crate) async fn call_source(
     )?;
     stamp_source_state_policy(&mut source_state_capture, &state_policy_scope);
     let redacted = RawPayload::new(adapter_call.data).redact(&redaction);
-    let redacted_paths = redacted.redacted_paths;
+    let redacted_path_count = redacted
+        .redacted_paths
+        .len()
+        .saturating_add(provenance_redacted_paths);
+    let had_redactions = redacted_path_count > 0;
     let value_scan = redacted.value_scan;
     let payload = redacted.payload;
     let payload_bytes = json_len_u64(payload.as_value())?;
@@ -355,10 +376,10 @@ pub(crate) async fn call_source(
             &observed,
         )?;
     }
-    if !redacted_paths.is_empty() {
+    if had_redactions {
         warnings.push(format!(
-            "redacted {} sensitive path(s) before inference and persistence",
-            redacted_paths.len()
+            "redacted {} sensitive path(s) before persistence",
+            redacted_path_count
         ));
     }
     if let Some(pagination) = adapter_call.pagination {
@@ -403,7 +424,7 @@ pub(crate) async fn call_source(
         payload.as_value(),
         payload_bytes,
         may_cache,
-        !redacted_paths.is_empty(),
+        had_redactions,
     );
     capture.budget = capture_budget_for_call(&profile, &operation);
     ctx.set_capture(capture.budget.clone());
@@ -435,7 +456,7 @@ pub(crate) async fn call_source(
         selection_coverage(&args.selection_scopes, args.selection_exhaustive),
         Some(provenance.clone()),
         may_cache.then(|| persistence_cache_key.clone()),
-        !redacted_paths.is_empty(),
+        had_redactions,
         Some(source_kind_provider(profile.kind)),
         None,
         lens.as_ref(),
@@ -521,7 +542,7 @@ pub(crate) async fn call_source(
             cache: cache_status,
             effects: Some(effective_effects),
             auto_upgrade_audit,
-            redacted_paths: redacted_paths.len(),
+            redacted_paths: redacted_path_count,
             cache_disabled_reason,
             warnings,
             schema_hints: render_hints(&observed, ""),
@@ -645,13 +666,15 @@ pub(crate) async fn call_source(
                     &redaction,
                     &effective_cache,
                 )?;
-                let page_provenance = call_provenance(
+                let page_provenance_capture = call_provenance(
                     &page_cache_key,
                     page_call.status.clone(),
                     page_call.duration_ms,
                     page_call.provenance.clone(),
                     &redaction,
                 );
+                let page_provenance_redacted_paths = page_provenance_capture.redacted_paths;
+                let page_provenance = page_provenance_capture.provenance;
                 let mut page_source_state = source_state_from_response(
                     profile.kind,
                     &operation,
@@ -664,7 +687,12 @@ pub(crate) async fn call_source(
                 stamp_source_state_policy(&mut page_source_state, &state_policy_scope);
                 prefetch_warnings.extend(page_source_state.warnings);
                 // redact -> infer -> store -> project, per page (I2/I8).
-                let page_payload = RawPayload::new(page_call.data).redact(&redaction).payload;
+                let page_redacted = RawPayload::new(page_call.data).redact(&redaction);
+                let page_redacted_paths = page_redacted
+                    .redacted_paths
+                    .len()
+                    .saturating_add(page_provenance_redacted_paths);
+                let page_payload = page_redacted.payload;
                 let page_bytes = json_len_u64(page_payload.as_value())?;
                 if total_bytes + page_bytes > caps.max_total_bytes {
                     stop = prog_core::StopReason::ByteCap;
@@ -700,7 +728,7 @@ pub(crate) async fn call_source(
                     page_payload.as_value(),
                     page_bytes,
                     may_cache,
-                    false,
+                    page_redacted_paths > 0,
                 );
                 capture.budget = capture_budget_for_call(&profile, &operation);
                 ctx.set_capture(capture.budget.clone());
@@ -716,7 +744,7 @@ pub(crate) async fn call_source(
                     selection_coverage(&args.selection_scopes, args.selection_exhaustive),
                     Some(page_provenance.clone()),
                     may_cache.then(|| page_cache_key.clone()),
-                    false,
+                    page_redacted_paths > 0,
                     Some(source_kind_provider(profile.kind)),
                     None,
                     lens.as_ref(),

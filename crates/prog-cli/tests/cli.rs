@@ -5033,6 +5033,14 @@ async fn adapter_provenance_is_redacted_before_observation_persistence() {
         called["provenance"]["adapter"]["selected_headers"]["x-debug"],
         "[REDACTED:secret_field]"
     );
+    assert_eq!(called["observation"]["availability"], "redacted");
+    assert_eq!(called["observation"]["capture"]["can_prove_absence"], false);
+    assert_eq!(called["observation"]["capture"]["stop_reason"], "redacted");
+    assert_eq!(
+        called["observation"]["safety"]["redacted_before_persistence"],
+        true
+    );
+    assert_eq!(called["observation"]["safety"]["redacted_paths"], 1);
 
     let observations = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "1"]);
     assert!(observations.status.success(), "{}", stdout(&observations));
@@ -5041,6 +5049,12 @@ async fn adapter_provenance_is_redacted_before_observation_persistence() {
     assert_eq!(
         observations["observations"][0]["provenance"]["adapter"]["selected_headers"]["x-debug"],
         "[REDACTED:secret_field]"
+    );
+    assert_eq!(observations["observations"][0]["availability"], "redacted");
+    assert_eq!(observations["observations"][0]["redacted"], true);
+    assert_eq!(
+        observations["observations"][0]["capture"]["can_prove_absence"],
+        false
     );
 }
 
@@ -6297,7 +6311,7 @@ async fn prog_call_pages_skipped_for_mutating_operation_emits_warning() {
     Mock::given(method("GET"))
         .and(path("/items"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [1]})))
-        .expect(1)
+        .expect(2)
         .mount(&server)
         .await;
     let dir = tempfile::tempdir().unwrap();
@@ -6347,6 +6361,90 @@ async fn prog_call_pages_skipped_for_mutating_operation_emits_warning() {
     );
     // No pagination block was added: a single page was fetched.
     assert!(envelope.get("pagination").is_none());
+    assert_eq!(envelope["cache"]["status"], "skipped");
+    assert!(
+        envelope["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap()
+                .contains("only proven non-mutating reads may be reused"))
+    );
+
+    let repeated = prog(&[
+        "--dir", dir_arg, "call", "api", "list", "--args", "{}", "--yes",
+    ]);
+    assert!(repeated.status.success(), "{}", stdout(&repeated));
+    let repeated: Value = serde_json::from_slice(&repeated.stdout).unwrap();
+    assert_eq!(repeated["cache"]["status"], "skipped");
+}
+
+#[tokio::test]
+async fn paginated_redaction_disables_absence_proof_for_the_affected_page() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page_token", "start"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "items": [{"id": 1}],
+            "next_cursor": "tok_2"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page_token", "tok_2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "items": [{"id": 2, "access_token": "page-secret"}],
+            "has_more": false
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let seed = write_seed(dir.path(), "http.json", &cursor_chain_seed(&server.uri()));
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+
+    let call = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "api",
+        "list",
+        "--args",
+        r#"{"page_token":"start"}"#,
+        "--pages",
+        "2",
+    ]);
+    assert!(call.status.success(), "{}", stdout(&call));
+
+    let observations = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "5"]);
+    assert!(observations.status.success(), "{}", stdout(&observations));
+    let observations: Value = serde_json::from_slice(&observations.stdout).unwrap();
+    let redacted_page = observations["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|observation| observation["redacted"] == true)
+        .expect("the redacted prefetched page is recorded");
+    assert_eq!(redacted_page["availability"], "redacted");
+    assert_eq!(redacted_page["capture"]["can_prove_absence"], false);
+    assert_eq!(redacted_page["capture"]["stop_reason"], "redacted");
 }
 
 #[tokio::test]

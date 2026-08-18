@@ -154,7 +154,11 @@ pub fn check_call(
 }
 
 pub fn cache_allowed(operation: &OperationProfile, policy: &CachePolicy) -> bool {
-    policy.enabled && operation.effects.cacheable && !operation.effects.sensitive
+    policy.enabled
+        && operation.effects.read_only
+        && !operation.effects.mutating
+        && operation.effects.cacheable
+        && !operation.effects.sensitive
 }
 
 pub fn call_effect_warnings(operation: &OperationProfile) -> Vec<String> {

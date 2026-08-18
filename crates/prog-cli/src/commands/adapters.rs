@@ -671,6 +671,8 @@ pub(crate) fn ttl_seconds(policy: &CachePolicy) -> i64 {
 pub(crate) fn cache_skip_warning(no_cache: bool, operation: &OperationProfile) -> String {
     if no_cache {
         "cache persistence skipped by --no-cache".to_string()
+    } else if !operation.effects.read_only || operation.effects.mutating {
+        "cache persistence skipped because only proven non-mutating reads may be reused".to_string()
     } else if operation.effects.sensitive {
         "cache persistence skipped because the operation may handle sensitive data".to_string()
     } else if !operation.effects.cacheable {
@@ -725,27 +727,35 @@ pub(crate) fn cached_pagination_satisfies(pagination: &Value, requested_pages: u
         || pages_fetched >= requested_pages
 }
 
+pub(crate) struct CallProvenanceCapture {
+    pub(crate) provenance: CallProvenance,
+    pub(crate) redacted_paths: usize,
+}
+
 pub(crate) fn call_provenance(
     cache_key: &str,
     status: Option<String>,
     duration_ms: Option<u64>,
     adapter_provenance: Value,
     redaction: &RedactionPolicy,
-) -> CallProvenance {
+) -> CallProvenanceCapture {
     let mut extra = Extra::new();
-    let (adapter_provenance, _) = redaction.apply_persistence(&adapter_provenance);
+    let (adapter_provenance, redacted_paths) = redaction.apply_persistence(&adapter_provenance);
     extra.insert("adapter".to_string(), adapter_provenance);
-    CallProvenance {
-        source_call_id: format!(
-            "call_{}",
-            Utc::now()
-                .timestamp_nanos_opt()
-                .unwrap_or_else(|| Utc::now().timestamp_micros())
-        ),
-        cache_key: Some(cache_key.to_string()),
-        captured_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-        status,
-        duration_ms,
-        extra,
+    CallProvenanceCapture {
+        provenance: CallProvenance {
+            source_call_id: format!(
+                "call_{}",
+                Utc::now()
+                    .timestamp_nanos_opt()
+                    .unwrap_or_else(|| Utc::now().timestamp_micros())
+            ),
+            cache_key: Some(cache_key.to_string()),
+            captured_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+            status,
+            duration_ms,
+            extra,
+        },
+        redacted_paths: redacted_paths.len(),
     }
 }
