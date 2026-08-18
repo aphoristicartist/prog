@@ -96,27 +96,39 @@ pub(crate) fn record_capture(
     source_state: Option<SourceStateToken>,
     source_validity: prog_core::SourceValidity,
 ) -> Result<String> {
-    if capture.can_prove_absence && availability == EvidenceAvailability::Recoverable {
-        let stop_reason = match store.get_payload(&payload_hash)? {
+    if availability != EvidenceAvailability::MetadataOnly {
+        match store.get_payload(&payload_hash)? {
             Some(payload) if !finding_derivation_is_complete(payload.as_value()) => {
-                Some(CaptureStopReason::DerivationWindowed)
+                capture.can_prove_absence = false;
+                if capture.stop_reason == CaptureStopReason::Complete {
+                    capture.stop_reason = CaptureStopReason::DerivationWindowed;
+                }
+                if !capture.affected.iter().any(|scope| {
+                    scope.scope == "payload"
+                        && scope.stop_reason == CaptureStopReason::DerivationWindowed
+                }) {
+                    capture.affected.push(CaptureScope {
+                        scope: "payload".to_string(),
+                        total_bytes: capture.total_bytes,
+                        captured_bytes: capture.captured_bytes,
+                        stop_reason: CaptureStopReason::DerivationWindowed,
+                        extra: Extra::new(),
+                    });
+                }
             }
-            Some(_) => None,
+            Some(_) => {}
             None => {
                 availability = EvidenceAvailability::Unavailable;
-                Some(CaptureStopReason::Unavailable)
+                capture.can_prove_absence = false;
+                capture.stop_reason = CaptureStopReason::Unavailable;
+                capture.affected.push(CaptureScope {
+                    scope: "payload".to_string(),
+                    total_bytes: capture.total_bytes,
+                    captured_bytes: capture.captured_bytes,
+                    stop_reason: CaptureStopReason::Unavailable,
+                    extra: Extra::new(),
+                });
             }
-        };
-        if let Some(stop_reason) = stop_reason {
-            capture.can_prove_absence = false;
-            capture.stop_reason = stop_reason;
-            capture.affected.push(CaptureScope {
-                scope: "payload".to_string(),
-                total_bytes: capture.total_bytes,
-                captured_bytes: capture.captured_bytes,
-                stop_reason,
-                extra: Extra::new(),
-            });
         }
     }
     let duration_ms = provenance.as_ref().and_then(|item| item.duration_ms);

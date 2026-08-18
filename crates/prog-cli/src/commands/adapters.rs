@@ -740,7 +740,8 @@ pub(crate) fn call_provenance(
     redaction: &RedactionPolicy,
 ) -> CallProvenanceCapture {
     let mut extra = Extra::new();
-    let (adapter_provenance, redacted_paths) = redaction.apply_persistence(&adapter_provenance);
+    let (adapter_provenance, _) = redaction.apply_persistence(&adapter_provenance);
+    let redacted_paths = redaction_marker_count(&adapter_provenance);
     extra.insert("adapter".to_string(), adapter_provenance);
     CallProvenanceCapture {
         provenance: CallProvenance {
@@ -756,6 +757,19 @@ pub(crate) fn call_provenance(
             duration_ms,
             extra,
         },
-        redacted_paths: redacted_paths.len(),
+        redacted_paths,
+    }
+}
+
+fn redaction_marker_count(value: &Value) -> usize {
+    match value {
+        Value::String(value) => value.match_indices("[REDACTED").count(),
+        Value::Array(values) => values.iter().fold(0usize, |count, value| {
+            count.saturating_add(redaction_marker_count(value))
+        }),
+        Value::Object(values) => values.values().fold(0usize, |count, value| {
+            count.saturating_add(redaction_marker_count(value))
+        }),
+        _ => 0,
     }
 }

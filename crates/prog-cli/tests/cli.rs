@@ -1659,6 +1659,16 @@ fn call_does_not_persist_raw_sensitive_args_in_profiles() {
         &json!({"service_key": learned_secret}).to_string(),
     ]);
     assert!(call.status.success(), "{}", stdout(&call));
+    let call_envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    assert_eq!(call_envelope["observation"]["availability"], "redacted");
+    assert_eq!(
+        call_envelope["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+    assert_eq!(
+        call_envelope["observation"]["safety"]["redacted_before_persistence"],
+        true
+    );
     let profile = fs::read_to_string(dir.path().join("profiles/local.json")).unwrap();
     assert!(!profile.contains(learned_secret));
     assert!(profile.contains("[REDACTED:declared_sensitive]"));
@@ -3512,7 +3522,19 @@ for line in sys.stdin:
     ]);
     assert!(called.status.success(), "{}", stdout(&called));
     let envelope: Value = serde_json::from_slice(&called.stdout).unwrap();
-    assert_derivation_windowed_capture(&envelope);
+    let capture = &envelope["observation"]["capture"];
+    assert_eq!(capture["can_prove_absence"], false, "{envelope:#}");
+    assert_eq!(capture["stop_reason"], "redacted", "{envelope:#}");
+    assert_eq!(envelope["observation"]["availability"], "redacted");
+    assert!(
+        capture["affected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|scope| scope["scope"] == "payload"
+                && scope["stop_reason"] == "derivation_windowed"),
+        "{envelope:#}"
+    );
 }
 
 #[test]
