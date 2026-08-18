@@ -292,9 +292,11 @@ prog call repository status --args '{}'
 
 The example marks `git status --short` read-only explicitly. HTTP `GET` source
 operations are read-only and cacheable; non-`GET` operations are
-confirmation-gated and non-cacheable. For read-only paginated operations,
-`prog call --pages N` follows supported continuation hints under page, byte,
-wall-time, and envelope caps.
+confirmation-gated and non-cacheable. Any network-backed operation also needs
+`trust.allow_network` in its profile before it can run, and HTTP redirects and
+pagination continuations stay within the source origin. For read-only paginated
+operations, `prog call --pages N` follows supported continuation hints under
+page, byte, wall-time, and envelope caps.
 
 ## Verifying what changed
 
@@ -524,8 +526,9 @@ The safety model is enforced in code and mapped to executable tests in
   cursors. A pre-release store-contract change resets the local store instead
   of interpreting stale cursor records.
 - Discovery probes only operations allowed by the read-only effect policy.
-- Mutating operations require `--yes`; shell-backed operations additionally
-  require source-profile trust.
+- Mutating operations require `--yes`; shell-backed and network-backed
+  operations additionally require their source-profile trust flag
+  (`trust.allow_shell`, `trust.allow_network`) even with `--yes`.
 - Traversal, search, findings, pagination, command capture, and envelopes have
   explicit bounds.
 - `cache retention` persists independent payload-byte and age limits which are

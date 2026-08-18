@@ -9,6 +9,34 @@
   tools. Host capabilities are declared conservatively, package contracts are
   checked in CI, and the local CLI remains the single JSON transport for
   disclosure, evidence, and status.
+- Made run completion evidence truthful (#228): incomplete, timed-out,
+  cancelled, or truncated execution can no longer masquerade as a complete
+  capture. Redaction of stdout, stderr, argv, or provenance forces
+  `capture.can_prove_absence: false`, so redacted evidence can never authorize
+  a `resolved` delta. The completeness preflight now counts virtual lines for
+  any exact `text` field, aligning the bound with the traversal that derives
+  findings.
+- Scoped call caches to source semantics (#229): the cache identity hashes the
+  configured adapter, the selected operation, the resolved auth principal,
+  redaction and cache policy, declared output schema, pagination, source-state,
+  and args. Rotating a credential or editing execution semantics produces a
+  different key; credential values exist only in the transient hash input.
+  Mutating operations are never served from cache, and redacted provenance or
+  prefetched pages mark the observation redacted and non-provable.
+- Separated provider and selection completeness (#230): `provider.complete`
+  now means bounded normalization of the captured diagnostics, while
+  `selection.exhaustive` remains the only authority for absence. A failing
+  Cargo run is selection-exhaustive only under exact package+harness
+  targeting or `--no-fail-fast`; pytest early-stop and failed name filters
+  stay non-exhaustive and cannot authorize `resolved`.
+- Enforced network trust boundaries (#231): `trust.allow_network` is required
+  before any network-backed call or discovery probe, even with `--yes`.
+  Effects are grounded in the configured adapter, so editable profile
+  metadata cannot understate a network or shell effect to bypass trust or
+  reuse cache under false semantics. HTTP redirects are limited to the
+  source origin, pagination continuations are same-origin forced GETs, and
+  transport errors are stripped of credential-bearing URLs before they can
+  reach structured output.
 
 ## 0.1.1 - 2026-08-16
 

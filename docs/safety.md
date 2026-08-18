@@ -18,27 +18,57 @@ Each operation has an `effects` set:
 
 HTTP `GET` defaults are hardened toward read-only network access. Non-GET HTTP operations become mutating and require confirmation. CLI operations without complete effect metadata are treated as unsafe. MCP tools use server annotations such as `readOnlyHint`, then harden conflicting or missing claims.
 
+Effects are grounded in the configured adapter, not only in profile metadata.
+An operation served by the HTTP adapter is always network-backed and an
+operation served by the shell-backed CLI adapter is always shell-backed, even
+if a hand-authored profile tries to understate those flags. Adapter facts are
+tightened into the effective effect set before policy, cache identity, or
+discovery see them.
+
 ## Fail-closed rules
 
 Discovery probing only invokes operations that are read-only, non-mutating, and do not require confirmation. Unsafe operations stay in the profile but are skipped during `--probe`.
-
-Calls enforce two gates:
+Calls enforce three gates:
 
 ```bash
 prog call <source-id> <operation> --args '<json>' --yes
 ```
 
-`--yes` is required for mutating operations or operations marked `requires_confirmation`. It is not enough for shell-backed operations.
+`--yes` is required for mutating operations or operations marked
+`requires_confirmation`. It is not enough for shell-backed or network-backed
+operations.
 
 ```json
 {
   "trust": {
-    "allow_shell": true
+    "allow_shell": true,
+    "allow_network": true
   }
 }
 ```
 
-`trust.allow_shell` must be present in the source profile before shell-backed operations can run. Set it only for profiles you are willing to execute locally.
+`trust.allow_shell` must be present in the source profile before shell-backed
+operations can run, and `trust.allow_network` must be present before
+network-backed operations can run. Both gates fire before transport — even
+`--yes` does not bypass them, and a missing flag is a `network_not_trusted` or
+`shell_not_trusted` error rather than a silent attempt. Set them only for
+profiles whose source you are willing to contact or execute.
+
+### Network boundary
+
+Once network access is trusted, it stays scoped to the declared source origin:
+
+- HTTP redirects are followed only within the source origin (scheme, host,
+  and port must match); a cross-origin redirect is refused before the foreign
+  server is contacted, and more than ten redirects are refused as well.
+- Pagination continuations (`Link rel="next"` or body cursor fields) must
+  target the same origin and are issued as forced GETs that never replay the
+  base operation's request body.
+- Transport error messages are stripped of request and redirect URLs and
+  scanned for secret-shaped text before they can reach structured output, so
+  a failed connection cannot leak a credential-bearing URL.
+- The final URL recorded in provenance is redacted of sensitive argument
+  values, including query parameters introduced by a redirect.
 
 ## Graded evidence and auto-upgrade
 
@@ -85,4 +115,6 @@ Profiles are committable when they describe stable sources and do not embed secr
 - A `POST` seed that claims `read_only: true` is hardened to mutating and requires `--yes`.
 - A CLI seed with only `read_only: true` still defaults missing flags to unsafe values and is skipped by discovery probing.
 - A shell-backed operation with `--yes` still fails unless the profile has `trust.allow_shell: true`.
+- A network-backed operation with `--yes` still fails before transport unless the profile has `trust.allow_network: true`, even when profile metadata claims `effects.network: false`.
+- An HTTP redirect to a different origin is refused before the foreign host is contacted, and the resulting error never includes the credential-bearing URL.
 - A response containing `token` is persisted with that value replaced by a redaction marker.

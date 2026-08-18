@@ -54,7 +54,14 @@ following hold:
 - **`subject_identity` is `same`** — same `source_id` and `operation`.
 - **`scope_relationship` is `equal` or `superset`** — the subject covered at
   least what the baseline covered.
-- **Both captures are complete** — neither was truncated or byte-capped.
+- **Both captures are complete** — neither was truncated, byte-capped, or
+  incompletely executed. A run that timed out or was cancelled records an
+  incomplete capture even if bytes were captured.
+- **Neither capture was redacted at a proof-bearing path** — redaction of
+  stdout, stderr, argv, or call provenance forces
+  `capture.can_prove_absence: false` with stop reason `redacted`. A secret
+  removed from the output could have masked the finding, so a redacted
+  capture is `unknown`/`not_observed`, never `resolved`.
 - **`normalization_compatible`** — same provider, parser, and lens. A payload
   read through a different lens is not directly comparable.
 - **`source_validity` is `confirmed_unchanged`.**
