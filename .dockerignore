@@ -1,0 +1,20 @@
+.git
+.github
+.agents
+.claude
+.codex
+.cursor
+.gemini
+.prog
+target
+musimath
+node_modules
+docs
+demos
+fixtures
+plugins
+extensions
+scripts
+lenses/fixtures
+# skills/ must remain in the build context: prog-cli embeds
+# skills/prog/SKILL.md via include_str! at compile time.

@@ -99,6 +99,10 @@ are not overwritten unless an explicit `--install-dir` is supplied. See
 [`docs/install.md`](docs/install.md) for exact-version installs, profile
 selection, manual verification, and the updater trust model.
 
+For sandboxes that cannot install to the host, every release tag also
+publishes a minimal Linux container image; see the container section in
+[`docs/install.md`](docs/install.md).
+
 For development from a checkout:
 
 ```sh

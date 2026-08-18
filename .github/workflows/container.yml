@@ -1,0 +1,49 @@
+name: container
+
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/container.yml
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# Minimal default permissions; the build job widens only what publishing needs.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up buildx
+        run: docker buildx create --use
+      - name: Build and smoke test the image
+        run: |
+          docker buildx build --platform linux/amd64 --provenance=mode=max --tag prog:ci --load .
+          docker run --rm prog:ci --help >/dev/null
+          docker run --rm prog:ci route -- git status --short | grep -q '"schema"'
+          docker run --rm \
+            -v "$PWD/fixtures:/work/fixtures" \
+            -w /work \
+            prog:ci observe --file fixtures/cli/list_items.py >/dev/null
+      - name: Log in to ghcr.io
+        if: startsWith(github.ref, 'refs/tags/')
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin
+      - name: Publish multi-arch tagged image
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --provenance=mode=max \
+            --tag "ghcr.io/aphoristicartist/prog:${GITHUB_REF_NAME}" \
+            --tag "ghcr.io/aphoristicartist/prog:${version}" \
+            --tag ghcr.io/aphoristicartist/prog:latest \
+            --push .
