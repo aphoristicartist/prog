@@ -185,6 +185,21 @@ pub fn finding_derivation_is_complete(payload: &Value) -> bool {
         }
         *visited += 1;
 
+        // Exact `text` fields are classified line-by-line so separate
+        // diagnostics keep separate semantic identities. Count those virtual
+        // derivation nodes in the same bound as structural JSON nodes.
+        if let Some(text) = value
+            .as_object()
+            .and_then(|map| map.get("text"))
+            .and_then(Value::as_str)
+        {
+            let additional_lines = text.lines().count().saturating_sub(1);
+            if visited.saturating_add(additional_lines) > MAX_FINDING_NODES {
+                return false;
+            }
+            *visited = visited.saturating_add(additional_lines);
+        }
+
         // CLI/MCP text normalizers retain only disjoint head/tail windows.
         // A full `text` scalar (prog run) or addressable `lines` array
         // (prog observe) makes the wrapper complete despite also carrying
@@ -269,19 +284,23 @@ pub fn ranked_findings(payload: &Value, options: &FindingOptions) -> Result<Vec<
         );
     }
 
-    let mut best_by_path_kind: BTreeMap<(String, String), Candidate> = BTreeMap::new();
+    let mut best_by_occurrence: BTreeMap<(String, String, String), Candidate> = BTreeMap::new();
     for mut candidate in candidates {
         candidate.score = score_candidate(&candidate, intent);
-        let key = (candidate.path.clone(), candidate.kind.clone());
-        match best_by_path_kind.get(&key) {
+        let key = (
+            candidate.path.clone(),
+            candidate.kind.clone(),
+            candidate.fingerprint.clone().unwrap_or_default(),
+        );
+        match best_by_occurrence.get(&key) {
             Some(existing) if compare_candidates(&candidate, existing) != Ordering::Less => {}
             _ => {
-                best_by_path_kind.insert(key, candidate);
+                best_by_occurrence.insert(key, candidate);
             }
         }
     }
 
-    let mut candidates = best_by_path_kind.into_values().collect::<Vec<_>>();
+    let mut candidates = best_by_occurrence.into_values().collect::<Vec<_>>();
     candidates.sort_by(compare_candidates);
     candidates.truncate(options.limit);
 
@@ -1588,23 +1607,44 @@ fn collect_generic_signals(
     match value {
         Value::Object(map) => {
             collect_object_level_signal(map, path, value, workspace_root, out);
+            let full_text_wrapper = map.get("format").and_then(Value::as_str) == Some("text")
+                && map.get("text").and_then(Value::as_str).is_some();
+            let run_payload = map.get("format").and_then(Value::as_str) == Some("run");
             for (key, child) in map {
+                // These are derived representations of evidence that is
+                // already traversed through the canonical stream text or the
+                // run-specific failure-section collector. Reclassifying them
+                // creates duplicate occurrences with path-dependent identity.
+                if (full_text_wrapper && matches!(key.as_str(), "head" | "tail"))
+                    || (run_payload && matches!(key.as_str(), "combined" | "failure_sections"))
+                {
+                    continue;
+                }
                 let child_path = pointer::push(path, key);
-                if let Some(signal) = key_signal(key, child) {
+                let key_signal = key_signal(key, child);
+                let key_already_classifies_string = key_signal.is_some_and(|key_signal| {
+                    child
+                        .as_str()
+                        .and_then(string_signal)
+                        .is_some_and(|string_signal| string_signal.kind == key_signal.kind)
+                });
+                if let Some(signal) = key_signal {
                     let mut candidate =
                         Candidate::from_signal(child_path.clone(), child, signal, workspace_root);
                     candidate.inherit_source_spans(value, workspace_root);
                     candidate.use_identity_context(value);
                     out.push(candidate);
                 }
-                collect_generic_signals(
-                    child,
-                    &child_path,
-                    workspace_root,
-                    out,
-                    depth + 1,
-                    visited,
-                );
+                if !key_already_classifies_string {
+                    collect_generic_signals(
+                        child,
+                        &child_path,
+                        workspace_root,
+                        out,
+                        depth + 1,
+                        visited,
+                    );
+                }
                 if *visited >= MAX_FINDING_NODES {
                     break;
                 }
@@ -1629,9 +1669,46 @@ fn collect_generic_signals(
             // Command argv is provenance, not observed output. Treating a
             // shell snippet containing words like "error" as causal evidence
             // creates false findings and can outrank the actual stream data.
-            if !is_command_argv_path(path)
-                && let Some(signal) = string_signal(text)
-            {
+            if is_command_argv_path(path) {
+                return;
+            }
+            if is_canonical_text_path(path) {
+                let mut emitted = false;
+                for (index, line) in text.lines().enumerate() {
+                    if index > 0 {
+                        if *visited >= MAX_FINDING_NODES {
+                            break;
+                        }
+                        *visited += 1;
+                    }
+                    if let Some(signal) = string_signal(line) {
+                        let line_value = Value::String(line.to_string());
+                        let mut candidate = Candidate::from_signal(
+                            path.to_string(),
+                            &line_value,
+                            signal,
+                            workspace_root,
+                        );
+                        candidate.line_range = Some(LineRange {
+                            start: index as u64 + 1,
+                            end: index as u64 + 1,
+                            extra: Extra::new(),
+                        });
+                        out.push(candidate);
+                        emitted = true;
+                    }
+                }
+                // Preserve markers that intentionally span lines, while the
+                // common case above gets stable per-line occurrence identity.
+                if !emitted && let Some(signal) = string_signal(text) {
+                    out.push(Candidate::from_signal(
+                        path.to_string(),
+                        value,
+                        signal,
+                        workspace_root,
+                    ));
+                }
+            } else if let Some(signal) = string_signal(text) {
                 out.push(Candidate::from_signal(
                     path.to_string(),
                     value,
@@ -1642,6 +1719,11 @@ fn collect_generic_signals(
         }
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
+}
+
+fn is_canonical_text_path(path: &str) -> bool {
+    pointer::parse(path)
+        .is_ok_and(|segments| segments.last().is_some_and(|segment| segment == "text"))
 }
 
 fn collect_object_level_signal(

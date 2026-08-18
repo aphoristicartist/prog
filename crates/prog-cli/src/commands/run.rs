@@ -119,6 +119,15 @@ pub(crate) async fn run_command(
         .unwrap_or(u64::MAX);
     let stdout_text = run_text_from_capture(&run.stdout);
     let stderr_text = run_text_from_capture(&run.stderr);
+    let text_redactions = stdout_text
+        .redactions
+        .saturating_add(stderr_text.redactions)
+        .saturating_add(
+            redacted_argv
+                .iter()
+                .filter(|arg| arg.contains("[REDACTED"))
+                .count(),
+        );
     let combined = run
         .combined
         .iter()
@@ -161,6 +170,7 @@ pub(crate) async fn run_command(
     let redaction = RedactionPolicy::default();
     let redacted = RawPayload::new(payload).redact(&redaction);
     let policy_redactions = redacted.redacted_paths;
+    let had_redactions = !policy_redactions.is_empty() || text_redactions > 0;
     let value_scan = redacted.value_scan;
     let redacted_payload = redacted.payload;
     if let Some(path) = &args.out {
@@ -194,6 +204,7 @@ pub(crate) async fn run_command(
                 "provider": provider.provider,
                 "input_format": provider.input_format,
                 "complete": provider.complete,
+                "selection_exhaustive": provider.selection.exhaustive,
                 "limits": provider.limits
             }),
         );
@@ -207,16 +218,12 @@ pub(crate) async fn run_command(
         ttl,
     );
     entry.provenance = Some(provenance.clone());
-    let stdout_windowed = stdout_text.line_count > stdout_text.head.len() + stdout_text.tail.len();
-    let stderr_windowed = stderr_text.line_count > stderr_text.head.len() + stderr_text.tail.len();
     let (availability, mut capture) = run_capture_completeness(
         &run.stdout,
         &run.stderr,
         payload_bytes,
-        !policy_redactions.is_empty(),
+        had_redactions,
         &run.status,
-        stdout_windowed,
-        stderr_windowed,
     );
     capture.budget = capture_budget_for_run(args);
     ctx.set_capture(capture.budget.clone());
@@ -240,7 +247,7 @@ pub(crate) async fn run_command(
         selection,
         Some(provenance.clone()),
         Some(cache_key.clone()),
-        !policy_redactions.is_empty(),
+        had_redactions,
         provider.as_ref().map_or_else(
             || Some("cli".to_string()),
             |provider| Some(provider.provider.clone()),
@@ -279,15 +286,6 @@ pub(crate) async fn run_command(
     if let Some(provider) = &provider {
         warnings.extend(provider.warnings.clone());
     }
-    let text_redactions = stdout_text
-        .redactions
-        .saturating_add(stderr_text.redactions)
-        .saturating_add(
-            redacted_argv
-                .iter()
-                .filter(|arg| arg.contains("[REDACTED"))
-                .count(),
-        );
     let redacted_paths = policy_redactions.len().saturating_add(text_redactions);
     if redacted_paths > 0 {
         warnings.push(format!(
@@ -447,7 +445,7 @@ async fn interrupted_run_result(
     rx: &mut mpsc::UnboundedReceiver<RunChunk>,
     status: RunProcessStatus,
 ) -> Result<RunProcessResult> {
-    let _ = tokio::join!(
+    let (stdout, stderr) = tokio::join!(
         finish_run_reader_or_abort(stdout_task),
         finish_run_reader_or_abort(stderr_task)
     );
@@ -455,9 +453,11 @@ async fn interrupted_run_result(
     while let Ok(chunk) = rx.try_recv() {
         combined.push(chunk);
     }
+    let stdout = stdout.unwrap_or_else(|| capture_from_chunks("stdout", &combined));
+    let stderr = stderr.unwrap_or_else(|| capture_from_chunks("stderr", &combined));
     Ok(RunProcessResult {
-        stdout: empty_run_capture("stdout"),
-        stderr: empty_run_capture("stderr"),
+        stdout,
+        stderr,
         combined: coalesce_run_chunks(combined),
         status,
     })
@@ -497,6 +497,20 @@ fn coalesce_run_chunks(chunks: Vec<RunChunk>) -> Vec<RunChunk> {
     coalesced
 }
 
+fn capture_from_chunks(stream: &'static str, chunks: &[RunChunk]) -> RunCapture {
+    let bytes = chunks
+        .iter()
+        .filter(|chunk| chunk.stream == stream)
+        .flat_map(|chunk| chunk.bytes.iter().copied())
+        .collect::<Vec<_>>();
+    RunCapture {
+        stream,
+        total_bytes: bytes.len(),
+        bytes,
+        truncated: false,
+    }
+}
+
 #[cfg(unix)]
 fn configure_run_process_group(command: &mut TokioCommand) {
     command.process_group(0);
@@ -516,12 +530,15 @@ async fn kill_run_process_group(child: &mut tokio::process::Child) {
     let _ = tokio::time::timeout(Duration::from_millis(100), child.wait()).await;
 }
 
-async fn finish_run_reader_or_abort(mut task: JoinHandle<std::io::Result<RunCapture>>) {
+async fn finish_run_reader_or_abort(
+    mut task: JoinHandle<std::io::Result<RunCapture>>,
+) -> Option<RunCapture> {
     tokio::select! {
-        _ = &mut task => {}
+        result = &mut task => result.ok().and_then(std::result::Result::ok),
         _ = tokio::time::sleep(Duration::from_millis(25)) => {
             task.abort();
             let _ = task.await;
+            None
         }
     }
 }
