@@ -185,14 +185,14 @@ pub fn finding_derivation_is_complete(payload: &Value) -> bool {
         }
         *visited += 1;
 
-        // Canonical text streams are classified line-by-line so separate
+        // Exact `text` fields are classified line-by-line so separate
         // diagnostics keep separate semantic identities. Count those virtual
         // derivation nodes in the same bound as structural JSON nodes.
-        if let Some(text) = value.as_object().and_then(|map| {
-            (map.get("format").and_then(Value::as_str) == Some("text"))
-                .then(|| map.get("text").and_then(Value::as_str))
-                .flatten()
-        }) {
+        if let Some(text) = value
+            .as_object()
+            .and_then(|map| map.get("text"))
+            .and_then(Value::as_str)
+        {
             let additional_lines = text.lines().count().saturating_sub(1);
             if visited.saturating_add(additional_lines) > MAX_FINDING_NODES {
                 return false;

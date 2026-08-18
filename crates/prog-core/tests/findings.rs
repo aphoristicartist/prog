@@ -450,6 +450,17 @@ fn finding_derivation_completeness_covers_windows_node_caps_and_depth_caps() {
         10_000
     ])));
 
+    let text_with_lines = |count: usize| {
+        json!({
+            "text": (0..count)
+                .map(|index| format!("ERROR failure {index}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+    };
+    assert!(finding_derivation_is_complete(&text_with_lines(9_999)));
+    assert!(!finding_derivation_is_complete(&text_with_lines(10_000)));
+
     let mut within_depth = Value::Null;
     for _ in 0..64 {
         within_depth = Value::Array(vec![within_depth]);

@@ -12,7 +12,7 @@ The fixture inventory distinguishes generated, recorded public-live, and optiona
 
 ## Summary
 
-12 scenarios, 57/57 correctness checks passing; 7/11 comparison pairs can prove absence; 34/35 compared findings have fingerprints; 0 false freshness/resolution/readiness decisions.
+12 scenarios, 57/57 correctness checks passing; 6/11 comparison pairs can prove absence; 34/35 compared findings have fingerprints; 0 false freshness/resolution/readiness decisions.
 
 ## Fixture sources
 
@@ -24,7 +24,7 @@ The fixture inventory distinguishes generated, recorded public-live, and optiona
 
 ## multi_iteration_resolution (`multi_iteration_resolution`)
 
-Fixture source: `generated`. Wall time: 1275 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 1393 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -56,7 +56,7 @@ Checks:
 
 ## pytest_multi_iteration_failure_loop (`pytest_loop`)
 
-Fixture source: `generated`. Wall time: 347 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 344 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -87,7 +87,7 @@ Checks:
 
 ## cargo_multi_iteration_failure_loop (`cargo_loop`)
 
-Fixture source: `generated`. Wall time: 351 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 354 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -118,7 +118,7 @@ Checks:
 
 ## narrowed_rerun_no_false_resolved (`narrowed_rerun`)
 
-Fixture source: `generated`. Wall time: 287 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 293 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -139,7 +139,7 @@ Checks:
 
 ## realistic_payload_delta (`correctness_and_cost`)
 
-Fixture source: `generated`. Wall time: 1663 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 1817 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -162,7 +162,7 @@ Checks:
 
 ## no_benefit_tiny_payload_control (`no_benefit_control`)
 
-Fixture source: `generated`. Wall time: 131 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 139 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -178,7 +178,7 @@ Checks:
 
 ## stale_evidence_readiness_after_workspace_touch (`stale_workspace_state`)
 
-Fixture source: `generated`. Wall time: 481 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 571 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -194,7 +194,7 @@ Checks:
 
 ## derivation_window_moved_finding (`derivation_window_moved_finding`)
 
-Fixture source: `generated`. Wall time: 287 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 299 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -220,34 +220,34 @@ Checks:
 
 ## noisy_log_one_changing_causal_event (`noisy_repeated_log`)
 
-Fixture source: `generated`. Wall time: 345 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 347 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 1526 | 382 | 2 |
 | simple_truncation | true | 1526 | 382 | 2 |
-| prog_envelope | true | 21924 | 5481 | 3 |
-| prog_delta | true | 10629 | 2658 | 3 |
+| prog_envelope | true | 22429 | 5608 | 3 |
+| prog_delta | true | 11138 | 2785 | 3 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
 
-Evidence available: true; first-view hit: true; comparison coverage: 1/1; fingerprint coverage: 2/2; budget compliant: true; redaction compliant: true; false decisions: 0.
+Evidence available: true; first-view hit: true; comparison coverage: 0/1; fingerprint coverage: 2/2; budget compliant: true; redaction compliant: true; false decisions: 0.
 
 | Delta status | Expected | Correct |
 |---|---:|---:|
 | new | 1 | 1 |
-| resolved | 1 | 1 |
+| unknown | 1 | 1 |
 
 Checks:
 
 - `new_causal_event_detected`: pass
-- `old_causal_event_resolved`: pass
 - `only_causal_event_changes_in_fixture`: pass
+- `redacted_capture_withholds_resolution`: pass
 - `secret_is_redacted_from_initial_views_and_evidence`: pass
 
 ## compiler_diagnostics_reordered_and_shifted (`compiler_static_analysis`)
 
-Fixture source: `generated`. Wall time: 242 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 235 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -273,7 +273,7 @@ Checks:
 
 ## http_error_and_repeated_public_entity (`http_api_snapshot`)
 
-Fixture source: `recorded_public_live`. Wall time: 410 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `recorded_public_live`. Wall time: 409 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -296,7 +296,7 @@ Checks:
 
 ## paginated_api_unchanged_and_changed_pages (`paginated_api`)
 
-Fixture source: `generated`. Wall time: 470 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 453 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|

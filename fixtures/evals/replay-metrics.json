@@ -25,7 +25,7 @@
     "checks_total": 57,
     "checks_passed": 57,
     "comparison_pairs_total": 11,
-    "comparison_pairs_provable": 7,
+    "comparison_pairs_provable": 6,
     "findings_considered": 35,
     "findings_fingerprinted": 34,
     "false_decisions": 0,
@@ -444,16 +444,16 @@
         "required_evidence_available": true,
         "first_view_hit": true,
         "comparison_pairs_total": 1,
-        "comparison_pairs_provable": 1,
+        "comparison_pairs_provable": 0,
         "findings_considered": 2,
         "findings_fingerprinted": 2,
         "delta_expected": {
           "new": 1,
-          "resolved": 1
+          "unknown": 1
         },
         "delta_correct": {
           "new": 1,
-          "resolved": 1
+          "unknown": 1
         },
         "false_decisions": 0,
         "disclosure_budget_compliant": true,
@@ -493,8 +493,8 @@
       ],
       "checks": [
         "new_causal_event_detected",
-        "old_causal_event_resolved",
         "only_causal_event_changes_in_fixture",
+        "redacted_capture_withholds_resolution",
         "secret_is_redacted_from_initial_views_and_evidence"
       ]
     },

@@ -1481,6 +1481,20 @@ fn run_can_apply_first_party_failure_lens_and_expand_redacted_capture() {
     assert!(output.status.success(), "{}", stdout(&output));
     assert!(!stdout(&output).contains("plain-secret"));
     let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["observation"]["availability"], "redacted");
+    assert_eq!(
+        envelope["observation"]["capture"]["stop_reason"],
+        "redacted"
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+    assert_eq!(envelope["observation"]["completeness"]["redacted"], true);
+    assert_eq!(
+        envelope["observation"]["safety"]["redacted_before_persistence"],
+        true
+    );
     assert_eq!(envelope["lens"]["id"], "run.failures");
     assert_eq!(envelope["data_preview"]["success"], false);
     assert_eq!(envelope["data_preview"]["exit_code"], 2);
@@ -1552,6 +1566,12 @@ fn run_redacts_compound_secret_flags_in_recorded_argv() {
     // compound flags like --access-token and the missing --passwd token were
     // not recognized, so their values were persisted raw in command.argv.
     let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["observation"]["availability"], "redacted");
+    assert_eq!(
+        envelope["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+    assert_eq!(envelope["observation"]["completeness"]["redacted"], true);
     let cursor = envelope["cursor"].as_str().unwrap();
     let expanded = prog(&[
         "--dir",

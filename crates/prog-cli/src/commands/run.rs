@@ -119,6 +119,15 @@ pub(crate) async fn run_command(
         .unwrap_or(u64::MAX);
     let stdout_text = run_text_from_capture(&run.stdout);
     let stderr_text = run_text_from_capture(&run.stderr);
+    let text_redactions = stdout_text
+        .redactions
+        .saturating_add(stderr_text.redactions)
+        .saturating_add(
+            redacted_argv
+                .iter()
+                .filter(|arg| arg.contains("[REDACTED"))
+                .count(),
+        );
     let combined = run
         .combined
         .iter()
@@ -161,6 +170,7 @@ pub(crate) async fn run_command(
     let redaction = RedactionPolicy::default();
     let redacted = RawPayload::new(payload).redact(&redaction);
     let policy_redactions = redacted.redacted_paths;
+    let had_redactions = !policy_redactions.is_empty() || text_redactions > 0;
     let value_scan = redacted.value_scan;
     let redacted_payload = redacted.payload;
     if let Some(path) = &args.out {
@@ -211,7 +221,7 @@ pub(crate) async fn run_command(
         &run.stdout,
         &run.stderr,
         payload_bytes,
-        !policy_redactions.is_empty(),
+        had_redactions,
         &run.status,
     );
     capture.budget = capture_budget_for_run(args);
@@ -236,7 +246,7 @@ pub(crate) async fn run_command(
         selection,
         Some(provenance.clone()),
         Some(cache_key.clone()),
-        !policy_redactions.is_empty(),
+        had_redactions,
         provider.as_ref().map_or_else(
             || Some("cli".to_string()),
             |provider| Some(provider.provider.clone()),
@@ -275,15 +285,6 @@ pub(crate) async fn run_command(
     if let Some(provider) = &provider {
         warnings.extend(provider.warnings.clone());
     }
-    let text_redactions = stdout_text
-        .redactions
-        .saturating_add(stderr_text.redactions)
-        .saturating_add(
-            redacted_argv
-                .iter()
-                .filter(|arg| arg.contains("[REDACTED"))
-                .count(),
-        );
     let redacted_paths = policy_redactions.len().saturating_add(text_redactions);
     if redacted_paths > 0 {
         warnings.push(format!(

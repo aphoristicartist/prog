@@ -327,12 +327,29 @@ fn framed_test_loop_scenario(fixture: LoopFixture) -> ScenarioReport {
     );
     assert!(delta.status.success(), "{}", stdout(&delta));
     let delta_value: Value = serde_json::from_slice(&delta.stdout).unwrap();
+    let new_fingerprint = observation_finding_fingerprint_for_line(
+        &values[1],
+        fixture.subject,
+        fixture.new_evidence_needle,
+    )
+    .unwrap_or_else(|| {
+        panic!(
+            "fixture's new evidence must have a fingerprinted subject finding: {:#}",
+            values[1]
+        )
+    });
     let new_finding = delta_value["findings"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|finding| finding["status"] == "new" && finding["subject_path"].is_string())
-        .unwrap_or_else(|| panic!("fixture must introduce a new finding: {delta_value:#}"));
+        .find(|finding| {
+            finding["status"] == "new"
+                && finding["fingerprint"].as_str() == Some(new_fingerprint.as_str())
+                && finding["subject_path"].is_string()
+        })
+        .unwrap_or_else(|| {
+            panic!("fixture must introduce the expected new finding: {delta_value:#}")
+        });
     let new_path = new_finding["subject_path"].as_str().unwrap();
     let evidence = prog_in_dir(
         root,
@@ -517,6 +534,19 @@ fn multi_iteration_resolution_scenario() -> ScenarioReport {
     assert!(delta_2_3.status.success(), "{}", stdout(&delta_2_3));
     let delta_2_3_value: Value = serde_json::from_slice(&delta_2_3.stdout).unwrap();
 
+    let alpha_fingerprint_1 =
+        observation_finding_fingerprint_for_line(&observation_values[0], iterations[0], "alpha")
+            .expect("iteration 1 must find alpha");
+    let beta_fingerprint =
+        observation_finding_fingerprint_for_line(&observation_values[0], iterations[0], "beta")
+            .expect("iteration 1 must find beta");
+    let alpha_fingerprint_2 =
+        observation_finding_fingerprint_for_line(&observation_values[1], iterations[1], "alpha")
+            .expect("iteration 2 must find alpha");
+    let gamma_fingerprint =
+        observation_finding_fingerprint_for_line(&observation_values[1], iterations[1], "gamma")
+            .expect("iteration 2 must find gamma");
+
     let mut checks = BTreeMap::new();
     checks.insert(
         "iteration1_to_2_can_prove_absence".to_string(),
@@ -526,14 +556,14 @@ fn multi_iteration_resolution_scenario() -> ScenarioReport {
     checks.insert(
         "beta_resolved_after_iteration_2".to_string(),
         finding_status(&delta_1_2_value, |f| {
-            f["baseline_path"] == "/stdout/text" && f["subject_path"].is_null()
+            f["fingerprint"].as_str() == Some(beta_fingerprint.as_str())
         }) == Some("resolved".to_string()),
     );
     // Gamma is absent from baseline: new.
     checks.insert(
         "gamma_new_at_iteration_2".to_string(),
         finding_status(&delta_1_2_value, |f| {
-            f["subject_path"] == "/stdout/text" && f["baseline_path"].is_null()
+            f["fingerprint"].as_str() == Some(gamma_fingerprint.as_str())
         }) == Some("new".to_string()),
     );
     // Alpha remains the same semantic occurrence despite the line-position
@@ -541,11 +571,11 @@ fn multi_iteration_resolution_scenario() -> ScenarioReport {
     checks.insert(
         "alpha_persists_despite_line_position_shift".to_string(),
         finding_status(&delta_1_2_value, |f| {
-            f["baseline_path"] == "/stdout/text" && f["subject_path"] == "/stdout/text"
+            f["fingerprint"].as_str() == Some(alpha_fingerprint_1.as_str())
         }) == Some("persisting".to_string()),
     );
     let alpha_fingerprint_1_2 = finding_fingerprint(&delta_1_2_value, |f| {
-        f["baseline_path"] == "/stdout/text" && f["subject_path"] == "/stdout/text"
+        f["fingerprint"].as_str() == Some(alpha_fingerprint_1.as_str())
     })
     .expect("alpha's persisting finding must exist between iteration 1 and 2");
 
@@ -555,7 +585,9 @@ fn multi_iteration_resolution_scenario() -> ScenarioReport {
     // rather than a coincidental single-comparison match.
     checks.insert(
         "gamma_persists_iteration_2_to_3".to_string(),
-        delta_2_3_value["counts"]["persisting"] == 2,
+        finding_status(&delta_2_3_value, |f| {
+            f["fingerprint"].as_str() == Some(gamma_fingerprint.as_str())
+        }) == Some("persisting".to_string()),
     );
     let alpha_fingerprint_2_3 = finding_fingerprint(&delta_2_3_value, |f| {
         f["status"] == "persisting"
@@ -567,7 +599,8 @@ fn multi_iteration_resolution_scenario() -> ScenarioReport {
     );
     checks.insert(
         "fingerprint_stable_across_three_iterations".to_string(),
-        alpha_fingerprint_2_3.as_deref() == Some(alpha_fingerprint_1_2.as_str()),
+        alpha_fingerprint_1 == alpha_fingerprint_2
+            && alpha_fingerprint_2_3.as_deref() == Some(alpha_fingerprint_1_2.as_str()),
     );
     checks.insert(
         "small_payload_envelopes_report_raw_cheaper".to_string(),
@@ -1267,6 +1300,12 @@ fn noisy_log_changing_event_scenario() -> ScenarioReport {
     );
     assert!(delta.status.success(), "{}", stdout(&delta));
     let delta_value: Value = serde_json::from_slice(&delta.stdout).unwrap();
+    let old_causal_fingerprint =
+        observation_finding_fingerprint_for_line(&values[0], &iterations[0], "inventory-timeout")
+            .expect("baseline must find the old causal event");
+    let new_causal_fingerprint =
+        observation_finding_fingerprint_for_line(&values[1], &iterations[1], "payment-timeout")
+            .expect("subject must find the new causal event");
     let evidence = prog_in_dir(
         root,
         &[
@@ -1292,15 +1331,16 @@ fn noisy_log_changing_event_scenario() -> ScenarioReport {
             == 1,
     );
     checks.insert(
-        "old_causal_event_resolved".to_string(),
+        "redacted_capture_withholds_resolution".to_string(),
         finding_status(&delta_value, |finding| {
-            finding["baseline_path"] == "/stdout/text" && finding["subject_path"].is_null()
-        }) == Some("resolved".to_string()),
+            finding["fingerprint"].as_str() == Some(old_causal_fingerprint.as_str())
+        }) == Some("unknown".to_string())
+            && delta_value["assessment"]["can_prove_absence"] == false,
     );
     checks.insert(
         "new_causal_event_detected".to_string(),
         finding_status(&delta_value, |finding| {
-            finding["subject_path"] == "/stdout/text" && finding["baseline_path"].is_null()
+            finding["fingerprint"].as_str() == Some(new_causal_fingerprint.as_str())
         }) == Some("new".to_string()),
     );
     checks.insert(
@@ -1330,7 +1370,7 @@ fn noisy_log_changing_event_scenario() -> ScenarioReport {
     let mut metrics = trajectory_metrics(
         &[&values[0], &values[1]],
         &[&delta_value],
-        status_counts(&[("new", 1), ("resolved", 1)]),
+        status_counts(&[("new", 1), ("unknown", 1)]),
         !evidence.stdout.is_empty(),
         true,
         redaction_compliant,
@@ -2057,11 +2097,25 @@ fn unavailable_strategy(strategy: &str) -> StrategyMetric {
     }
 }
 
-/// Locate the one delta finding matching `predicate` (by `baseline_path`/
-/// `subject_path` identity) and return its `status` field. Identifying
-/// findings by exact path is robust against the generic text extractor's
-/// incidental whole-payload finding, which would otherwise skew raw
-/// new/resolved counts whenever full byte content changes between runs.
+fn observation_finding_fingerprint_for_line(
+    observation: &Value,
+    source: &str,
+    needle: &str,
+) -> Option<String> {
+    observation["findings"]
+        .as_array()?
+        .iter()
+        .find_map(|finding| {
+            let start = finding["line_range"]["start"].as_u64()?;
+            let line = source
+                .lines()
+                .nth(usize::try_from(start.saturating_sub(1)).ok()?)?;
+            (finding["path"] == "/stdout/text" && line.contains(needle))
+                .then(|| finding["fingerprint"].as_str().map(str::to_string))
+                .flatten()
+        })
+}
+
 fn finding_status(delta: &Value, predicate: impl Fn(&Value) -> bool) -> Option<String> {
     delta["findings"]
         .as_array()
