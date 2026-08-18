@@ -2,6 +2,30 @@
 
 `prog call` stores read-only, cacheable, non-sensitive responses in the local store under `--dir`. `prog expand` reads those cached payloads by cursor and never contacts the upstream source.
 
+## Cache identity and isolation
+
+Every cache entry is keyed by a SHA-256 hash of everything that can change
+either the upstream execution or the retained evidence: the configured
+adapter and the selected operation's execution semantics, the resolved auth
+principal, the redaction and cache policy, the declared output schema,
+pagination and source-state configuration, and the call arguments.
+
+Consequences:
+
+- Rotating a credential produces a different key, so evidence captured under
+  one principal is never served to another. Resolved credential values exist
+  only in the transient hash input; no credential value or reusable digest is
+  persisted.
+- Editing the adapter configuration or the operation's execution semantics
+  produces a different key, so a stale entry can never make changed execution
+  appear reusable under a false cache identity.
+- Mutating operations are never served from cache and never persist one:
+  reuse requires `read_only`, non-`mutating`, non-`sensitive`, and
+  `cacheable` effects, enforced on both the lookup and the write.
+- Redacted provenance and prefetched pagination pages carry their own
+  redaction truth; an observation whose provenance was redacted is recorded
+  as redacted and cannot prove absence.
+
 ## Parallel agents and worktrees
 
 Multiple `prog` processes can share a store. Database ownership is released
