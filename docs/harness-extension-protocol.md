@@ -78,6 +78,18 @@ The stable agent-facing workflow has three conceptual operations:
 These compose the existing CLI contracts. They are not a second engine. The
 advanced commands remain available to agents for debugging and recovery.
 
+## Integration context budget
+
+CI gates the fixed pre-work integration surface: the top-level help, one help
+response for every immediate command, and the portable Agent Skill. The
+current reviewed ceiling is 34,000 bytes. Nested recovery-command help and
+model-visible tool responses are not hidden from accounting; they occur only
+when invoked and are measured by the actual-agent evaluation instead.
+
+A proposed facade must report its fixed schema/instruction cost against this
+same denominator. Replacing three existing commands with three differently
+named wrappers is not, by itself, an integration win.
+
 ## Installation contract
 
 `prog harness install` always installs the portable `agent-skills` target and

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a CI-gated budget for the fixed agent integration surface: top-level
+  help, immediate command help, and the portable skill must remain within
+  34,000 bytes before any task work begins (#120).
 - Repositioned `prog` as an agent-harness extension and added an end-to-end
   integration surface: auto-detected `prog harness install`/`doctor`, a portable
   Agent Skill target, a Codex marketplace plugin, and a native DeepSeek Harness
