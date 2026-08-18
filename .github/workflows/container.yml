@@ -26,7 +26,10 @@ jobs:
         run: docker buildx create --use
       - name: Build and smoke test the image
         run: |
-          docker buildx build --platform linux/amd64 --provenance=mode=max --tag prog:ci --load .
+          # A local docker exporter cannot load the provenance manifest list.
+          # Tag builds still exercise the same Dockerfile; tag publishing below
+          # retains SLSA provenance on the multi-arch GHCR manifests.
+          docker buildx build --platform linux/amd64 --provenance=false --tag prog:ci --load .
           docker run --rm prog:ci --help >/dev/null
           docker run --rm prog:ci route -- git status --short | grep -q '"schema"'
           docker run --rm \
