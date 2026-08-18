@@ -343,19 +343,16 @@ pub(crate) fn cli_stream_captured_bytes(
         })
 }
 
-/// `stdout_windowed`/`stderr_windowed` signal that the caller's head/tail-of-N
-/// finding-derivation window didn't cover the full line count for that
-/// stream, so absence can't be proven for anything outside that window, even
-/// though every byte was captured and stored.
-#[allow(clippy::too_many_arguments)]
+/// Run payloads persist full captured stream text. Their head/tail fields are
+/// disclosure conveniences, not finding-derivation windows. The later
+/// `record_capture` guard still rejects proof when any persisted normalizer is
+/// genuinely incomplete.
 pub(crate) fn run_capture_completeness(
     stdout: &RunCapture,
     stderr: &RunCapture,
     stored_bytes: u64,
     redacted: bool,
     status: &RunProcessStatus,
-    stdout_windowed: bool,
-    stderr_windowed: bool,
 ) -> (EvidenceAvailability, CaptureCompleteness) {
     let truncated = stdout.truncated || stderr.truncated;
     let captured_bytes = stdout.bytes.len().saturating_add(stderr.bytes.len()) as u64;
@@ -397,8 +394,6 @@ pub(crate) fn run_capture_completeness(
                     captured_bytes: stdout.bytes.len() as u64,
                     stop_reason: if stdout.truncated {
                         CaptureStopReason::ByteLimit
-                    } else if stdout_windowed {
-                        CaptureStopReason::DerivationWindowed
                     } else {
                         CaptureStopReason::Complete
                     },
@@ -410,8 +405,6 @@ pub(crate) fn run_capture_completeness(
                     captured_bytes: stderr.bytes.len() as u64,
                     stop_reason: if stderr.truncated {
                         CaptureStopReason::ByteLimit
-                    } else if stderr_windowed {
-                        CaptureStopReason::DerivationWindowed
                     } else {
                         CaptureStopReason::Complete
                     },
@@ -422,9 +415,7 @@ pub(crate) fn run_capture_completeness(
                 status,
                 RunProcessStatus::TimedOut | RunProcessStatus::Cancelled { .. }
             ) && !truncated
-                && !redacted
-                && !stdout_windowed
-                && !stderr_windowed,
+                && !redacted,
             extra: Extra::new(),
         },
     )

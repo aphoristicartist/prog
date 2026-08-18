@@ -1481,6 +1481,20 @@ fn run_can_apply_first_party_failure_lens_and_expand_redacted_capture() {
     assert!(output.status.success(), "{}", stdout(&output));
     assert!(!stdout(&output).contains("plain-secret"));
     let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["observation"]["availability"], "redacted");
+    assert_eq!(
+        envelope["observation"]["capture"]["stop_reason"],
+        "redacted"
+    );
+    assert_eq!(
+        envelope["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+    assert_eq!(envelope["observation"]["completeness"]["redacted"], true);
+    assert_eq!(
+        envelope["observation"]["safety"]["redacted_before_persistence"],
+        true
+    );
     assert_eq!(envelope["lens"]["id"], "run.failures");
     assert_eq!(envelope["data_preview"]["success"], false);
     assert_eq!(envelope["data_preview"]["exit_code"], 2);
@@ -1552,6 +1566,12 @@ fn run_redacts_compound_secret_flags_in_recorded_argv() {
     // compound flags like --access-token and the missing --passwd token were
     // not recognized, so their values were persisted raw in command.argv.
     let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["observation"]["availability"], "redacted");
+    assert_eq!(
+        envelope["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+    assert_eq!(envelope["observation"]["completeness"]["redacted"], true);
     let cursor = envelope["cursor"].as_str().unwrap();
     let expanded = prog(&[
         "--dir",
@@ -1751,11 +1771,19 @@ fn run_timeout_and_missing_command_return_structured_envelopes() {
         "--",
         "python3",
         "-c",
-        "import time; time.sleep(5)",
+        "import sys, time; print('stdout before timeout', flush=True); print('stderr before timeout', file=sys.stderr, flush=True); time.sleep(5)",
     ]);
     assert!(timeout.status.success(), "{}", stdout(&timeout));
     let value: Value = serde_json::from_slice(&timeout.stdout).unwrap();
     assert_eq!(value["data_preview"]["command"]["timed_out"], true);
+    assert_eq!(
+        value["data_preview"]["stdout"]["text"],
+        "stdout before timeout"
+    );
+    assert_eq!(
+        value["data_preview"]["stderr"]["text"],
+        "stderr before timeout"
+    );
     assert_eq!(
         value["data_preview"]["failure_sections"][0]["kind"],
         "timeout"
@@ -3268,7 +3296,7 @@ fn assert_derivation_windowed_capture(envelope: &Value) {
 }
 
 #[test]
-fn delta_never_reports_resolved_for_a_finding_that_moved_into_the_derivation_window() {
+fn full_run_text_keeps_a_moved_finding_persisting_and_provable() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
     let state = dir.path().join("state.txt");
@@ -3295,6 +3323,10 @@ fn delta_never_reports_resolved_for_a_finding_that_moved_into_the_derivation_win
     ]);
     assert!(first.status.success(), "{}", stdout(&first));
     let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(
+        first["observation"]["capture"]["can_prove_absence"], true,
+        "{first:#}"
+    );
     let first_id = first["observation"]["observation_id"]
         .as_str()
         .unwrap()
@@ -3317,6 +3349,10 @@ fn delta_never_reports_resolved_for_a_finding_that_moved_into_the_derivation_win
     ]);
     assert!(second.status.success(), "{}", stdout(&second));
     let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(
+        second["observation"]["capture"]["can_prove_absence"], true,
+        "{second:#}"
+    );
     let second_id = second["observation"]["observation_id"]
         .as_str()
         .unwrap()
@@ -3326,38 +3362,26 @@ fn delta_never_reports_resolved_for_a_finding_that_moved_into_the_derivation_win
     assert!(delta.status.success(), "{}", stdout(&delta));
     let delta: Value = serde_json::from_slice(&delta.stdout).unwrap();
 
-    // Before the fix, capture completeness only tracked byte capture, so
-    // `can_prove_absence` came back `true` even though only the head/tail
-    // window was ever examined for findings.
+    // `run` stores and derives from the full stream text. Head/tail are only
+    // bounded disclosure fields, so line movement does not make the capture
+    // incomplete or change the finding's semantic identity.
     assert_eq!(
         delta["assessment"]["can_prove_absence"],
-        json!(false),
+        json!(true),
         "{delta:#}"
     );
-    assert!(
-        delta["assessment"]["reasons"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|reason| reason.as_str().unwrap().contains("derivation_windowed")),
-        "expected a reason mentioning derivation_windowed: {delta:#}"
-    );
-
-    // Before the fix, the baseline's `/stdout/head/5` finding (moved out of
-    // the subject's derivation window, not actually absent from the
-    // subject's captured output) was falsely reported `resolved`.
     let findings = delta["findings"].as_array().unwrap();
     assert!(
         !findings
             .iter()
-            .any(|finding| finding["status"] == "resolved"),
-        "no finding should be resolved when absence cannot be proven: {delta:#}"
+            .any(|finding| matches!(finding["status"].as_str(), Some("new" | "resolved"))),
+        "moving unchanged evidence must not create a new/resolved pair: {delta:#}"
     );
     let moved_finding = findings
         .iter()
-        .find(|finding| finding["baseline_path"] == "/stdout/head/5")
-        .expect("baseline finding at /stdout/head/5 should still appear in the delta");
-    assert_eq!(moved_finding["status"], json!("unknown"), "{delta:#}");
+        .find(|finding| finding["baseline_path"] == "/stdout/text")
+        .expect("canonical stdout finding should appear in the delta");
+    assert_eq!(moved_finding["status"], json!("persisting"), "{delta:#}");
 }
 
 #[test]
