@@ -55,47 +55,7 @@
   },
   {
     "occurrence_id": "fo_00000003",
-    "fingerprint": "sha256:3410b0fedfa6216935c2cf38361e3ba712f72b072bc10c007fe9a85783a493d1",
     "rank": 3,
-    "kind": "rust_compile_error",
-    "path": "/failure_sections/0/lines/0",
-    "confidence": 0.86,
-    "reason": "string contains a Rust compiler diagnostic marker",
-    "title": "Rust compiler diagnostic",
-    "severity": "error",
-    "source": "generic.string_pattern",
-    "commands": {
-      "available": [
-        "inspect",
-        "expand",
-        "evidence",
-        "search"
-      ]
-    }
-  },
-  {
-    "occurrence_id": "fo_00000004",
-    "fingerprint": "sha256:330831ff86abf66189eed5a844deaa13e39decb87a9b1322b9dd5fd7269b682a",
-    "rank": 4,
-    "kind": "compile_error",
-    "path": "/failure_sections/1/lines/0",
-    "confidence": 0.82,
-    "reason": "string contains a build or compile error marker",
-    "title": "compile error",
-    "severity": "error",
-    "source": "generic.string_pattern",
-    "commands": {
-      "available": [
-        "inspect",
-        "expand",
-        "evidence",
-        "search"
-      ]
-    }
-  },
-  {
-    "occurrence_id": "fo_00000005",
-    "rank": 5,
     "kind": "nonzero_exit",
     "path": "/command",
     "confidence": 0.72,

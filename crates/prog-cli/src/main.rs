@@ -533,7 +533,6 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
                     let exit = if matches!(
                         receipt.status,
                         prog_core::ReadbackVerificationStatus::Verified
-                            | prog_core::ReadbackVerificationStatus::Pending
                     ) {
                         ExitCode::SUCCESS
                     } else {
@@ -1126,7 +1125,7 @@ mod capture_lifecycle_tests {
     }
 
     #[test]
-    fn byte_limit_precedes_derivation_window_for_a_truncated_run_stream() {
+    fn byte_limit_marks_a_truncated_run_stream_incomplete() {
         let stdout = RunCapture {
             stream: "stdout",
             bytes: vec![b'x'; 64],
@@ -1149,8 +1148,6 @@ mod capture_lifecycle_tests {
                 code: Some(0),
                 signal: None,
             },
-            true,
-            false,
         );
 
         assert_eq!(availability, EvidenceAvailability::CaptureTruncated);

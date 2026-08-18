@@ -28,28 +28,8 @@
   },
   {
     "occurrence_id": "fo_00000002",
-    "fingerprint": "sha256:febf352ef2b355a73611c1c4c02c0e5134e56cc872c9f577eac2ed8988e2ffbc",
-    "rank": 2,
-    "kind": "test_name",
-    "path": "/failure_sections/0/lines/0",
-    "confidence": 0.74,
-    "reason": "string references a failing test",
-    "title": "failing test",
-    "severity": "error",
-    "source": "generic.string_pattern",
-    "commands": {
-      "available": [
-        "inspect",
-        "expand",
-        "evidence",
-        "search"
-      ]
-    }
-  },
-  {
-    "occurrence_id": "fo_00000003",
     "fingerprint": "sha256:e7819aa9cd53f4f46608e76113cfd9efd804b93e75ae6416fc3dce98afb75bdd",
-    "rank": 3,
+    "rank": 2,
     "kind": "test_name",
     "path": "/summary",
     "confidence": 0.74,
@@ -67,8 +47,8 @@
     }
   },
   {
-    "occurrence_id": "fo_00000004",
-    "rank": 4,
+    "occurrence_id": "fo_00000003",
+    "rank": 3,
     "kind": "nonzero_exit",
     "path": "/command",
     "confidence": 0.72,

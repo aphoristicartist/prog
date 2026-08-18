@@ -237,7 +237,7 @@ async fn mismatches_are_failed_or_pending_only_inside_declared_window() {
         "readback",
         pending["intent_id"].as_str().unwrap(),
     ]);
-    assert!(output.status.success(), "{}", stdout(&output));
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
     let receipt: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(receipt["status"], "pending");
 }
