@@ -113,6 +113,24 @@ done
 
 Linux users may use `sha256sum -c SHA256SUMS --ignore-missing` instead.
 
+## Container image
+
+Each release tag publishes a minimal Linux image to
+`ghcr.io/aphoristicartist/prog` for harness sandboxes that cannot install to
+the host at all. Replace `<tag>` with a release tag:
+
+```sh
+docker pull ghcr.io/aphoristicartist/prog:<tag>
+docker run --rm -v "$PWD:/work" ghcr.io/aphoristicartist/prog:<tag> --help
+```
+
+The image runs as an unprivileged `prog` user, keeps only the release binary
+and CA certificates, and defaults the store to `/work/.prog`. Mount the
+directory you want `prog` to observe onto `/work`. Images are built from the
+tagged commit and carry SLSA build-provenance attestations, inspectable with
+`docker buildx imagetools inspect ghcr.io/aphoristicartist/prog:<tag>`.
+`prog update` never replaces a container image; pull the next tag instead.
+
 ## Source build
 
 Developers with Rust 1.89 or newer can install from a checkout:

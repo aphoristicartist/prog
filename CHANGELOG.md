@@ -38,6 +38,13 @@
   transport errors are stripped of credential-bearing URLs before they can
   reach structured output.
 
+- Added a release-published container image (#214): a multi-stage Dockerfile
+  pinned to the Rust 1.89 MSRV builds an unprivileged, CA-carrying
+  `ghcr.io/aphoristicartist/prog` image; CI smokes the image (`--help`,
+  `route`, `observe`) on every Dockerfile change and publishes multi-arch
+  (amd64 + arm64) SLSA-attested tags on release tags. Homebrew tap and
+  crates.io publication remain deliberate owner decisions.
+
 ## 0.1.1 - 2026-08-16
 
 - Added safe, idempotent PATH setup to the verified curl installer for zsh,
