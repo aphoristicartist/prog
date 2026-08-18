@@ -30,15 +30,24 @@ Structured and text encodings retain distinct `input_format` values inside
 `/provider`, but share one stable observation parser identity per provider.
 Equivalent evidence therefore remains comparable across a format transition.
 
-## Completeness
+## Completeness and selection
 
-Provider completeness is narrower than process completion. A complete capture
-can still be marked incomplete when, for example, pytest stopped early, a
-capture was truncated, a pytest JSON report omitted `exitcode` or reported
-deselected tests, Cargo JSON was malformed, or a Cargo test invocation does
-not identify one exact harness. Incomplete provider output changes the
-observation's capture stop reason to `derivation_windowed`; it cannot prove a
-finding resolved.
+Two independent axes are recorded per observation, and only the combination
+permits absence claims:
+
+- `provider.complete` — whether the captured input was fully normalized
+  within provider bounds. It is `false` when the capture itself was
+  truncated, a provider bound (items, lines, bytes, spans, string length)
+  was hit, or Cargo/rustc structured output was malformed. Incomplete
+  provider output changes the observation's capture stop reason to
+  `derivation_windowed`; it cannot prove a finding resolved.
+- `selection.exhaustive` — whether the executed command plausibly covered
+  the whole selected test universe. A pytest run that stopped early, a JSON
+  report without `exitcode` or with deselected tests, or a failing Cargo
+  test invocation without one exact package+harness target or
+  `--no-fail-fast` keep normalization complete but mark selection
+  non-exhaustive. Non-exhaustive selection cannot authorize `resolved`
+  either; the warning names the unproven side.
 
 Targets become explicit selection scopes. A targeted pytest run is exhaustive
 only for that target, never for a broader suite. Cargo target flags likewise
