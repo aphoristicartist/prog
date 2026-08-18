@@ -564,6 +564,102 @@ pub(crate) fn effective_cache_policy(
     policy
 }
 
+/// Hash every input that can change either upstream execution or the retained
+/// evidence for one source call. Learned examples, descriptions, and profile
+/// revisions are deliberately absent: they do not change the call and must not
+/// turn a stable cache entry into a miss.
+///
+/// Resolved credential values exist only in the transient hash input. The
+/// resulting cache key scopes reuse to one credential set without persisting a
+/// credential value or a separately reusable credential digest.
+pub(crate) fn source_call_cache_key(
+    profile: &SourceProfile,
+    operation: &OperationProfile,
+    source: &CallableSource,
+    args: &Value,
+    redaction: &RedactionPolicy,
+    cache: &CachePolicy,
+) -> Result<String> {
+    let execution = callable_source_semantics(source, operation)?;
+    Store::cache_key(
+        &profile.id,
+        &operation.id,
+        &json!({
+            "contract": "source_call_cache_v2",
+            "execution": execution,
+            "auth": resolved_auth_scope(profile),
+            "redaction": redaction,
+            "cache": cache,
+            "declared_output_schema": operation.declared_output_schema,
+            "pagination": operation.pagination,
+            "source_state": operation.source_state,
+            "args": args
+        }),
+    )
+}
+
+fn callable_source_semantics(
+    source: &CallableSource,
+    operation: &OperationProfile,
+) -> Result<Value> {
+    match source {
+        CallableSource::Http(source) => {
+            let mut source = serde_json::to_value(source)?;
+            retain_selected_operation(&mut source, &operation.id)?;
+            Ok(source)
+        }
+        CallableSource::Cli(source) => {
+            let mut source = serde_json::to_value(source)?;
+            retain_selected_operation(&mut source, &operation.id)?;
+            Ok(source)
+        }
+        CallableSource::Mcp(source) => Ok(json!({
+            "source": source,
+            "invocation": invocation_config(operation, "mcp")?
+        })),
+    }
+}
+
+fn retain_selected_operation(source: &mut Value, operation_id: &str) -> Result<()> {
+    let source_id = source
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let operations = source
+        .get_mut("operations")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| CoreError::UnknownOperation {
+            source_id: source_id.clone(),
+            operation: operation_id.to_string(),
+        })?;
+    operations
+        .retain(|candidate| candidate.get("id").and_then(Value::as_str) == Some(operation_id));
+    if operations.len() != 1 {
+        return Err(CoreError::UnknownOperation {
+            source_id,
+            operation: operation_id.to_string(),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn resolved_auth_scope(profile: &SourceProfile) -> Vec<Value> {
+    profile
+        .auth
+        .iter()
+        .map(|auth| {
+            json!({
+                "name": auth.name,
+                "env": auth.env,
+                "header": auth.header,
+                "format": auth.format,
+                "credential": std::env::var(&auth.env).ok()
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn ttl_seconds(policy: &CachePolicy) -> i64 {
     policy
         .ttl_seconds
@@ -575,6 +671,8 @@ pub(crate) fn ttl_seconds(policy: &CachePolicy) -> i64 {
 pub(crate) fn cache_skip_warning(no_cache: bool, operation: &OperationProfile) -> String {
     if no_cache {
         "cache persistence skipped by --no-cache".to_string()
+    } else if !operation.effects.read_only || operation.effects.mutating {
+        "cache persistence skipped because only proven non-mutating reads may be reused".to_string()
     } else if operation.effects.sensitive {
         "cache persistence skipped because the operation may handle sensitive data".to_string()
     } else if !operation.effects.cacheable {
@@ -629,25 +727,49 @@ pub(crate) fn cached_pagination_satisfies(pagination: &Value, requested_pages: u
         || pages_fetched >= requested_pages
 }
 
+pub(crate) struct CallProvenanceCapture {
+    pub(crate) provenance: CallProvenance,
+    pub(crate) redacted_paths: usize,
+}
+
 pub(crate) fn call_provenance(
     cache_key: &str,
     status: Option<String>,
     duration_ms: Option<u64>,
     adapter_provenance: Value,
-) -> CallProvenance {
+    redaction: &RedactionPolicy,
+) -> CallProvenanceCapture {
     let mut extra = Extra::new();
+    let (adapter_provenance, _) = redaction.apply_persistence(&adapter_provenance);
+    let redacted_paths = redaction_marker_count(&adapter_provenance);
     extra.insert("adapter".to_string(), adapter_provenance);
-    CallProvenance {
-        source_call_id: format!(
-            "call_{}",
-            Utc::now()
-                .timestamp_nanos_opt()
-                .unwrap_or_else(|| Utc::now().timestamp_micros())
-        ),
-        cache_key: Some(cache_key.to_string()),
-        captured_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-        status,
-        duration_ms,
-        extra,
+    CallProvenanceCapture {
+        provenance: CallProvenance {
+            source_call_id: format!(
+                "call_{}",
+                Utc::now()
+                    .timestamp_nanos_opt()
+                    .unwrap_or_else(|| Utc::now().timestamp_micros())
+            ),
+            cache_key: Some(cache_key.to_string()),
+            captured_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+            status,
+            duration_ms,
+            extra,
+        },
+        redacted_paths,
+    }
+}
+
+fn redaction_marker_count(value: &Value) -> usize {
+    match value {
+        Value::String(value) => value.match_indices("[REDACTED").count(),
+        Value::Array(values) => values.iter().fold(0usize, |count, value| {
+            count.saturating_add(redaction_marker_count(value))
+        }),
+        Value::Object(values) => values.values().fold(0usize, |count, value| {
+            count.saturating_add(redaction_marker_count(value))
+        }),
+        _ => 0,
     }
 }

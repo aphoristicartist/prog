@@ -238,21 +238,12 @@ fn record_mcp_task_observation_with_availability(
     parent_id: Option<String>,
     unavailable: bool,
 ) -> Result<McpTaskCommandOutput> {
-    let redacted = RawPayload::new(value).redact(&resolve_redaction(Some(profile)));
+    let redaction = resolve_redaction(Some(profile));
+    let redacted = RawPayload::new(value).redact(&redaction);
+    let payload_redacted_paths = redacted.redacted_paths.len();
     let payload = redacted.payload;
     let payload_bytes = json_len_u64(payload.as_value())?;
     let payload_hash = store.put_payload(&payload)?;
-    let (availability, mut capture) = if unavailable {
-        (
-            EvidenceAvailability::Unavailable,
-            CaptureCompleteness::unavailable(payload_bytes),
-        )
-    } else {
-        complete_capture(payload_bytes, true, !redacted.redacted_paths.is_empty())
-    };
-    if !unavailable {
-        capture.budget = CaptureBudget::default();
-    }
     let task_ref = task_id
         .map(|task_id| {
             Store::cache_key(
@@ -276,6 +267,26 @@ fn record_mcp_task_observation_with_availability(
             .extra
             .insert("mcp_task_ref".to_string(), json!(task_ref));
     }
+    let provenance_capture = call_provenance(
+        "mcp-task",
+        None,
+        duration_ms,
+        json!({"kind": "mcp_task", "task_ref": task_ref}),
+        &redaction,
+    );
+    let had_redactions =
+        payload_redacted_paths.saturating_add(provenance_capture.redacted_paths) > 0;
+    let (availability, mut capture) = if unavailable {
+        (
+            EvidenceAvailability::Unavailable,
+            CaptureCompleteness::unavailable(payload_bytes),
+        )
+    } else {
+        complete_capture(payload_bytes, true, had_redactions)
+    };
+    if !unavailable {
+        capture.budget = CaptureBudget::default();
+    }
     let observation_id = store
         .record_observation(NewObservation {
             payload_hash,
@@ -286,14 +297,9 @@ fn record_mcp_task_observation_with_availability(
             duration_ms,
             status,
             capture,
-            redacted: !redacted.redacted_paths.is_empty(),
+            redacted: had_redactions,
             lineage,
-            provenance: Some(call_provenance(
-                "mcp-task",
-                None,
-                duration_ms,
-                json!({"kind": "mcp_task", "task_ref": task_ref}),
-            )),
+            provenance: Some(provenance_capture.provenance),
             provider: Some(source_kind_provider(profile.kind)),
             ..NewObservation::default()
         })?

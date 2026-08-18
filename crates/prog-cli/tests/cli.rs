@@ -10,7 +10,7 @@ use proptest::prelude::*;
 use serde_json::{Value, json};
 use wiremock::{
     Mock, MockServer, Request, Respond, ResponseTemplate,
-    matchers::{method, path, query_param},
+    matchers::{header, method, path, query_param},
 };
 
 mod support;
@@ -1659,6 +1659,16 @@ fn call_does_not_persist_raw_sensitive_args_in_profiles() {
         &json!({"service_key": learned_secret}).to_string(),
     ]);
     assert!(call.status.success(), "{}", stdout(&call));
+    let call_envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
+    assert_eq!(call_envelope["observation"]["availability"], "redacted");
+    assert_eq!(
+        call_envelope["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+    assert_eq!(
+        call_envelope["observation"]["safety"]["redacted_before_persistence"],
+        true
+    );
     let profile = fs::read_to_string(dir.path().join("profiles/local.json")).unwrap();
     assert!(!profile.contains(learned_secret));
     assert!(profile.contains("[REDACTED:declared_sensitive]"));
@@ -3512,7 +3522,19 @@ for line in sys.stdin:
     ]);
     assert!(called.status.success(), "{}", stdout(&called));
     let envelope: Value = serde_json::from_slice(&called.stdout).unwrap();
-    assert_derivation_windowed_capture(&envelope);
+    let capture = &envelope["observation"]["capture"];
+    assert_eq!(capture["can_prove_absence"], false, "{envelope:#}");
+    assert_eq!(capture["stop_reason"], "redacted", "{envelope:#}");
+    assert_eq!(envelope["observation"]["availability"], "redacted");
+    assert!(
+        capture["affected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|scope| scope["scope"] == "payload"
+                && scope["stop_reason"] == "derivation_windowed"),
+        "{envelope:#}"
+    );
 }
 
 #[test]
@@ -4727,6 +4749,334 @@ fn disclosure_budget_rejects_zero_and_reports_the_minimum() {
             .as_str()
             .unwrap()
             .contains("at least 512 bytes")
+    );
+}
+
+#[tokio::test]
+async fn call_cache_tracks_execution_semantics_but_ignores_profile_learning() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"version": 1})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"version": 2})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let seed = write_seed(
+        dir.path(),
+        "cache-semantics.json",
+        &json!({
+            "kind": "http",
+            "base_url": server.uri(),
+            "operations": [{
+                "name": "get",
+                "method": "GET",
+                "path": "/v1",
+                "effect": {
+                    "read_only": true,
+                    "mutating": false,
+                    "network": true,
+                    "shell": false,
+                    "sensitive": false,
+                    "cacheable": true,
+                    "requires_confirmation": false
+                }
+            }]
+        })
+        .to_string(),
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "cache-semantics",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+
+    let first = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "cache-semantics",
+        "get",
+        "--args",
+        "{}",
+    ]);
+    assert!(first.status.success(), "{}", stdout(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(first["cache"]["status"], "stored");
+    assert_eq!(first["data_preview"]["version"], 1);
+
+    // The first call learns an output shape and example, which must not churn
+    // a cache key because neither changes execution.
+    let learned_hit = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "cache-semantics",
+        "get",
+        "--args",
+        "{}",
+    ]);
+    assert!(learned_hit.status.success(), "{}", stdout(&learned_hit));
+    let learned_hit: Value = serde_json::from_slice(&learned_hit.stdout).unwrap();
+    assert_eq!(learned_hit["cache"]["status"], "hit");
+    assert_eq!(
+        learned_hit["provenance"]["cache_key"],
+        first["provenance"]["cache_key"]
+    );
+
+    // Changing the effective request path must make the old payload foreign,
+    // even though source id, operation id, and call args are identical.
+    let profile_path = dir.path().join("profiles/cache-semantics.json");
+    let mut profile: Value = serde_json::from_slice(&fs::read(&profile_path).unwrap()).unwrap();
+    profile["operations"][0]["invocation"]["http"]["path"] = json!("/v2");
+    fs::write(&profile_path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
+
+    let changed = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "cache-semantics",
+        "get",
+        "--args",
+        "{}",
+    ]);
+    assert!(changed.status.success(), "{}", stdout(&changed));
+    let changed: Value = serde_json::from_slice(&changed.stdout).unwrap();
+    assert_eq!(changed["cache"]["status"], "stored");
+    assert_eq!(changed["data_preview"]["version"], 2);
+    assert_ne!(
+        changed["provenance"]["cache_key"],
+        first["provenance"]["cache_key"]
+    );
+}
+
+#[tokio::test]
+async fn call_cache_is_scoped_to_the_resolved_auth_principal() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/whoami"))
+        .and(header("authorization", "Bearer principal-one"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"principal": "one"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/whoami"))
+        .and(header("authorization", "Bearer principal-two"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"principal": "two"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let seed = write_seed(
+        dir.path(),
+        "auth-cache.json",
+        &json!({
+            "kind": "http",
+            "base_url": server.uri(),
+            "auth": [{
+                "name": "api",
+                "env": "PROG_TEST_CACHE_PRINCIPAL",
+                "header": "authorization",
+                "format": "Bearer {value}"
+            }],
+            "operations": [{
+                "name": "whoami",
+                "method": "GET",
+                "path": "/whoami",
+                "effect": {
+                    "read_only": true,
+                    "mutating": false,
+                    "network": true,
+                    "shell": false,
+                    "sensitive": false,
+                    "cacheable": true,
+                    "requires_confirmation": false
+                }
+            }]
+        })
+        .to_string(),
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discovered = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "discover",
+            "auth-cache",
+            "--kind",
+            "http",
+            "--seed",
+            seed.to_str().unwrap(),
+        ],
+        &[("PROG_TEST_CACHE_PRINCIPAL", "principal-one")],
+    );
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+
+    let first = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "call",
+            "auth-cache",
+            "whoami",
+            "--args",
+            "{}",
+        ],
+        &[("PROG_TEST_CACHE_PRINCIPAL", "principal-one")],
+    );
+    assert!(first.status.success(), "{}", stdout(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(first["data_preview"]["principal"], "one");
+    assert_eq!(first["cache"]["status"], "stored");
+
+    let rotated = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "call",
+            "auth-cache",
+            "whoami",
+            "--args",
+            "{}",
+        ],
+        &[("PROG_TEST_CACHE_PRINCIPAL", "principal-two")],
+    );
+    assert!(rotated.status.success(), "{}", stdout(&rotated));
+    let rotated: Value = serde_json::from_slice(&rotated.stdout).unwrap();
+    assert_eq!(rotated["data_preview"]["principal"], "two");
+    assert_eq!(rotated["cache"]["status"], "stored");
+    assert_ne!(
+        rotated["provenance"]["cache_key"],
+        first["provenance"]["cache_key"]
+    );
+
+    let rotated_hit = prog_with_env(
+        &[
+            "--dir",
+            dir_arg,
+            "call",
+            "auth-cache",
+            "whoami",
+            "--args",
+            "{}",
+        ],
+        &[("PROG_TEST_CACHE_PRINCIPAL", "principal-two")],
+    );
+    assert!(rotated_hit.status.success(), "{}", stdout(&rotated_hit));
+    let rotated_hit: Value = serde_json::from_slice(&rotated_hit.stdout).unwrap();
+    assert_eq!(rotated_hit["cache"]["status"], "hit");
+    assert_eq!(rotated_hit["data_preview"]["principal"], "two");
+}
+
+#[tokio::test]
+async fn adapter_provenance_is_redacted_before_observation_persistence() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    let provenance_secret = "ordinary-plaintext-provenance-value";
+    Mock::given(method("GET"))
+        .and(path("/record"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-debug", provenance_secret)
+                .set_body_json(json!({"ok": true})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let seed = write_seed(
+        dir.path(),
+        "provenance-redaction.json",
+        &json!({
+            "kind": "http",
+            "base_url": server.uri(),
+            "operations": [{
+                "name": "get",
+                "method": "GET",
+                "path": "/record",
+                "effect": {
+                    "read_only": true,
+                    "mutating": false,
+                    "network": true,
+                    "shell": false,
+                    "sensitive": false,
+                    "cacheable": true,
+                    "requires_confirmation": false
+                }
+            }]
+        })
+        .to_string(),
+    );
+    let dir_arg = dir.path().to_str().unwrap();
+    let discovered = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "provenance-redaction",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discovered.status.success(), "{}", stdout(&discovered));
+
+    let profile_path = dir.path().join("profiles/provenance-redaction.json");
+    let mut profile: Value = serde_json::from_slice(&fs::read(&profile_path).unwrap()).unwrap();
+    profile["adapter"]["http"]["response_header_allowlist"] = json!(["x-debug"]);
+    profile["redaction"]["extra_keywords"] = json!(["x-debug"]);
+    fs::write(&profile_path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
+
+    let called = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "provenance-redaction",
+        "get",
+        "--args",
+        "{}",
+    ]);
+    assert!(called.status.success(), "{}", stdout(&called));
+    assert!(!stdout(&called).contains(provenance_secret));
+    let called: Value = serde_json::from_slice(&called.stdout).unwrap();
+    assert_eq!(
+        called["provenance"]["adapter"]["selected_headers"]["x-debug"],
+        "[REDACTED:secret_field]"
+    );
+    assert_eq!(called["observation"]["availability"], "redacted");
+    assert_eq!(called["observation"]["capture"]["can_prove_absence"], false);
+    assert_eq!(called["observation"]["capture"]["stop_reason"], "redacted");
+    assert_eq!(
+        called["observation"]["safety"]["redacted_before_persistence"],
+        true
+    );
+    assert_eq!(called["observation"]["safety"]["redacted_paths"], 1);
+
+    let observations = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "1"]);
+    assert!(observations.status.success(), "{}", stdout(&observations));
+    assert!(!stdout(&observations).contains(provenance_secret));
+    let observations: Value = serde_json::from_slice(&observations.stdout).unwrap();
+    assert_eq!(
+        observations["observations"][0]["provenance"]["adapter"]["selected_headers"]["x-debug"],
+        "[REDACTED:secret_field]"
+    );
+    assert_eq!(observations["observations"][0]["availability"], "redacted");
+    assert_eq!(observations["observations"][0]["redacted"], true);
+    assert_eq!(
+        observations["observations"][0]["capture"]["can_prove_absence"],
+        false
     );
 }
 
@@ -5983,7 +6333,7 @@ async fn prog_call_pages_skipped_for_mutating_operation_emits_warning() {
     Mock::given(method("GET"))
         .and(path("/items"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [1]})))
-        .expect(1)
+        .expect(2)
         .mount(&server)
         .await;
     let dir = tempfile::tempdir().unwrap();
@@ -6033,6 +6383,90 @@ async fn prog_call_pages_skipped_for_mutating_operation_emits_warning() {
     );
     // No pagination block was added: a single page was fetched.
     assert!(envelope.get("pagination").is_none());
+    assert_eq!(envelope["cache"]["status"], "skipped");
+    assert!(
+        envelope["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap()
+                .contains("only proven non-mutating reads may be reused"))
+    );
+
+    let repeated = prog(&[
+        "--dir", dir_arg, "call", "api", "list", "--args", "{}", "--yes",
+    ]);
+    assert!(repeated.status.success(), "{}", stdout(&repeated));
+    let repeated: Value = serde_json::from_slice(&repeated.stdout).unwrap();
+    assert_eq!(repeated["cache"]["status"], "skipped");
+}
+
+#[tokio::test]
+async fn paginated_redaction_disables_absence_proof_for_the_affected_page() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page_token", "start"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "items": [{"id": 1}],
+            "next_cursor": "tok_2"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page_token", "tok_2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "items": [{"id": 2, "access_token": "page-secret"}],
+            "has_more": false
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let seed = write_seed(dir.path(), "http.json", &cursor_chain_seed(&server.uri()));
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+
+    let call = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "api",
+        "list",
+        "--args",
+        r#"{"page_token":"start"}"#,
+        "--pages",
+        "2",
+    ]);
+    assert!(call.status.success(), "{}", stdout(&call));
+
+    let observations = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "5"]);
+    assert!(observations.status.success(), "{}", stdout(&observations));
+    let observations: Value = serde_json::from_slice(&observations.stdout).unwrap();
+    let redacted_page = observations["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|observation| observation["redacted"] == true)
+        .expect("the redacted prefetched page is recorded");
+    assert_eq!(redacted_page["availability"], "redacted");
+    assert_eq!(redacted_page["capture"]["can_prove_absence"], false);
+    assert_eq!(redacted_page["capture"]["stop_reason"], "redacted");
 }
 
 #[tokio::test]
