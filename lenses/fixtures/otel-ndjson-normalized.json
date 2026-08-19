@@ -1,0 +1,274 @@
+{
+  "format": "ndjson",
+  "record_count": 14,
+  "line_count": 14,
+  "byte_count": 10797,
+  "records": [
+    {
+      "time": "2026-08-18T09:00:01:01Z",
+      "severityText": "INFO",
+      "severityNumber": 9,
+      "body": "workspace compilation started",
+      "traceId": "00000000000000000000000000000001",
+      "spanId": "0000000000000001",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 1,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:00:02:02Z",
+      "severityText": "INFO",
+      "severityNumber": 9,
+      "body": "compiling prog-core",
+      "traceId": "00000000000000000000000000000002",
+      "spanId": "0000000000000002",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 2,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:00:03:03Z",
+      "severityText": "INFO",
+      "severityNumber": 9,
+      "body": "compiling prog-adapters",
+      "traceId": "00000000000000000000000000000003",
+      "spanId": "0000000000000003",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 0,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:00:04:04Z",
+      "severityText": "WARN",
+      "severityNumber": 13,
+      "body": "deprecated api usage in adapter",
+      "traceId": "00000000000000000000000000000004",
+      "spanId": "0000000000000004",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 1,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:00:05:00Z",
+      "severityText": "INFO",
+      "severityNumber": 9,
+      "body": "running 450 tests",
+      "traceId": "00000000000000000000000000000005",
+      "spanId": "0000000000000005",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 2,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:00:06:01Z",
+      "severityText": "ERROR",
+      "severityNumber": 17,
+      "body": "test lens::cases::rejected_payload panicked",
+      "traceId": "00000000000000000000000000000006",
+      "spanId": "0000000000000006",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 0,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:00:07:02Z",
+      "severityText": "ERROR",
+      "severityNumber": 17,
+      "body": "assertion failed: projection bytes",
+      "traceId": "00000000000000000000000000000007",
+      "spanId": "0000000000000007",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 1,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:00:08:03Z",
+      "severityText": "WARN",
+      "severityNumber": 13,
+      "body": "retrying flaky process spawn",
+      "traceId": "00000000000000000000000000000008",
+      "spanId": "0000000000000008",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 2,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:00:09:04Z",
+      "severityText": "INFO",
+      "severityNumber": 9,
+      "body": "test run continuing",
+      "traceId": "00000000000000000000000000000009",
+      "spanId": "0000000000000009",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 0,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:01:00:00Z",
+      "severityText": "ERROR",
+      "severityNumber": 17,
+      "body": "store lock acquisition timed out",
+      "traceId": "0000000000000000000000000000000a",
+      "spanId": "000000000000000a",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 1,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:01:01:01Z",
+      "severityText": "FATAL",
+      "severityNumber": 17,
+      "body": "worker aborted after timeout",
+      "traceId": "0000000000000000000000000000000b",
+      "spanId": "000000000000000b",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 2,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:01:02:02Z",
+      "severityText": "INFO",
+      "severityNumber": 9,
+      "body": "shutdown began",
+      "traceId": "0000000000000000000000000000000c",
+      "spanId": "000000000000000c",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 0,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:01:03:03Z",
+      "severityText": "INFO",
+      "severityNumber": 9,
+      "body": "flushed observation store",
+      "traceId": "0000000000000000000000000000000d",
+      "spanId": "000000000000000d",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 1,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    },
+    {
+      "time": "2026-08-18T09:01:04:04Z",
+      "severityText": "INFO",
+      "severityNumber": 9,
+      "body": "exit code 101",
+      "traceId": "0000000000000000000000000000000e",
+      "spanId": "000000000000000e",
+      "scopeName": "prog.observe",
+      "attributes": {
+        "service.name": "prog-cli",
+        "command": "cargo test",
+        "attempt": 2,
+        "note": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+      },
+      "scope": {
+        "name": "prog.observe",
+        "version": "0.1.1"
+      }
+    }
+  ]
+}

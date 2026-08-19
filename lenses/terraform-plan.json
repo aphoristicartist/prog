@@ -1,0 +1,29 @@
+{
+  "schema": "prog.lens_manifest",
+  "id": "terraform-plan",
+  "match": {"source_id": "observe", "artifact_kind": "json"},
+  "view": {
+    "root": "/resource_changes",
+    "limit": 6,
+    "depth": 3,
+    "fields": {
+      "address": "/address",
+      "type": "/type",
+      "name": "/name",
+      "actions": "/change/actions",
+      "replace_paths": "/change/replace_paths",
+      "replacing_reason": "/change/replacing_reason"
+    }
+  },
+  "omit": [
+    {"path": "/resource_changes/*/change/before", "reason": "deep_object", "detail": "prior resource state remains cursor-expandable", "expandable": true},
+    {"path": "/resource_changes/*/change/after", "reason": "deep_object", "detail": "planned resource state remains cursor-expandable", "expandable": true},
+    {"path": "/resource_changes/*/change/after_unknown", "reason": "deep_object", "detail": "unknown planned values remain cursor-expandable", "expandable": true}
+  ],
+  "findings": [
+    {"kind": "destructive_plan_change", "path": "/resource_changes/*/change/actions", "confidence": 0.96, "reason": "planned action list destroys, replaces, or recreates an existing resource", "title": "destructive Terraform change", "severity": "error", "contains_any": ["delete", "destroy", "replace", "recreate"]}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/resource_changes/{index}", "reason": "cite the exact resource change before applying it"}],
+  "invariants": ["destructive_actions_come_from_the_plan_action_list", "prior_and_planned_state_remain_expandable", "missing_change_fields_are_not_fabricated"],
+  "fixtures": {"positive": ["fixtures/terraform-plan.json"], "negative": ["fixtures/counterexamples/json-items.json"]}
+}
