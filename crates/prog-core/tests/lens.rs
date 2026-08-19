@@ -298,6 +298,152 @@ fn first_party_lens_pack_is_valid_unique_fixture_backed_and_token_efficient() {
     );
 }
 
+#[test]
+fn lens_readme_documents_exactly_the_shipped_manifest_set() {
+    let lens_dir = repo_root().join("lenses");
+    let readme = std::fs::read_to_string(lens_dir.join("README.md")).unwrap();
+    let in_section = readme
+        .lines()
+        .skip_while(|line| *line != "Included lenses:")
+        .take_while(|line| !line.starts_with("Each manifest includes"));
+    let documented = in_section
+        .filter_map(|line| line.trim().strip_prefix("- `"))
+        .filter_map(|line| line.split('`').next())
+        .collect::<BTreeSet<_>>();
+    let shipped = std::fs::read_dir(&lens_dir)
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            (path.extension().and_then(|e| e.to_str()) == Some("json")).then_some(path)
+        })
+        .map(|path| {
+            let lens: LensManifest =
+                serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            lens.id
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        documented,
+        shipped.iter().map(String::as_str).collect::<BTreeSet<_>>(),
+        "lenses/README.md must document exactly the manifests shipped on disk"
+    );
+}
+
+fn lens_from_pack(id: &str) -> LensManifest {
+    let path = repo_root().join("lenses").join(format!("{id}.json"));
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+fn pack_fixture_bytes(relative: &str) -> Value {
+    serde_json::from_str(
+        &std::fs::read_to_string(repo_root().join("lenses").join(relative)).unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn modern_lens_pack_classifies_real_evidence_without_inventing_findings() {
+    let cases = [
+        (
+            "gh-actions-log",
+            "fixtures/gh-actions-log-normalized.json",
+            vec!["ci_error", "ci_failed_step", "ci_warning"],
+        ),
+        (
+            "terraform-plan",
+            "fixtures/terraform-plan.json",
+            vec!["destructive_plan_change"],
+        ),
+        (
+            "trivy",
+            "fixtures/trivy.json",
+            vec!["critical_vulnerability", "high_vulnerability"],
+        ),
+        (
+            "mcp-jsonrpc-error",
+            "fixtures/mcp-jsonrpc-error.json",
+            vec!["mcp_error"],
+        ),
+        (
+            "llm-api-error",
+            "fixtures/llm-api-error-openai.json",
+            vec!["llm_api_error"],
+        ),
+        (
+            "llm-api-error",
+            "fixtures/llm-api-error-anthropic.json",
+            vec!["llm_api_error"],
+        ),
+        (
+            "otel-ndjson",
+            "fixtures/otel-ndjson-normalized.json",
+            vec!["otel_error", "otel_warning"],
+        ),
+    ];
+    for (lens_id, fixture, expected_kinds) in cases {
+        let lens = lens_from_pack(lens_id);
+        let payload = redacted(pack_fixture_bytes(fixture));
+        let findings =
+            ranked_findings_with_lens(payload.as_value(), &FindingOptions::default(), Some(&lens))
+                .unwrap();
+        let kinds = findings
+            .iter()
+            .map(|finding| finding.kind.as_str())
+            .collect::<Vec<_>>();
+        for expected in &expected_kinds {
+            assert!(
+                kinds.contains(expected),
+                "{lens_id} should classify {fixture} with {expected}; got {kinds:?}"
+            );
+        }
+        for expected in &expected_kinds {
+            assert!(
+                findings.iter().any(|finding| finding.kind == *expected
+                    && finding.source.as_deref() == Some("lens.finding_provider")),
+                "{lens_id} {expected} findings must identify the lens provider"
+            );
+        }
+    }
+
+    let terraform = lens_from_pack("terraform-plan");
+    let payload = redacted(pack_fixture_bytes("fixtures/terraform-plan.json"));
+    let findings = ranked_findings_with_lens(
+        payload.as_value(),
+        &FindingOptions::default(),
+        Some(&terraform),
+    )
+    .unwrap();
+    let destructive = findings
+        .iter()
+        .filter(|finding| finding.kind == "destructive_plan_change")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        destructive.len(),
+        3,
+        "exactly delete/delete-create/replace changes are destructive"
+    );
+    assert!(
+        destructive
+            .iter()
+            .all(|finding| finding.path.ends_with("/change/actions")
+                && finding.severity.as_deref() == Some("error"))
+    );
+
+    let mcp = lens_from_pack("mcp-jsonrpc-error");
+    let success = redacted(pack_fixture_bytes(
+        "fixtures/counterexamples/mcp-jsonrpc-success.json",
+    ));
+    let success_findings =
+        ranked_findings_with_lens(success.as_value(), &FindingOptions::default(), Some(&mcp))
+            .unwrap();
+    assert!(
+        success_findings
+            .iter()
+            .all(|finding| finding.kind != "mcp_error"),
+        "a JSON-RPC success response must not produce an MCP error finding"
+    );
+}
+
 /// A wildcard lens rule must select by *content*, not by position in the
 /// payload. Candidate paths used to be resolved in document order up to a fixed
 /// cap and only then tested against `contains_any`, which made a rule over

@@ -1,0 +1,132 @@
+{
+  "format": "text",
+  "head": [
+    "2026-08-18T14:02:11.1234560Z ##[group]Run actions/checkout@v5",
+    "2026-08-18T14:02:11.1234560Z with:",
+    "2026-08-18T14:02:11.1234560Z   fetch-depth: 0",
+    "2026-08-18T14:02:11.1234560Z ##[endgroup]",
+    "2026-08-18T14:02:12.8810210Z ##[group]Run make test",
+    "2026-08-18T14:02:12.8810210Z make test",
+    "2026-08-18T14:02:12.8810210Z ##[endgroup]",
+    "2026-08-18T14:02:13.0011220Z cargo test --workspace --all-features",
+    "2026-08-18T14:02:14.7701030Z    Compiling prog-core v0.1.1",
+    "2026-08-18T14:02:15.2201100Z    Compiling prog-adapters v0.1.1"
+  ],
+  "tail": [
+    "2026-08-18T14:02:21.2201040Z ##[warning]profile `ci` is not defined; using default",
+    "2026-08-18T14:02:22.3310050Z ##[warning]cache entry expired early; rebuilding crates",
+    "2026-08-18T14:02:23.4420060Z token=[REDACTED:observed_text_secret]",
+    "2026-08-18T14:02:24.5530070Z error: could not compile `prog-cli` due to 2 previous errors",
+    "2026-08-18T14:02:25.6640080Z ##[error]make test exited with 2",
+    "2026-08-18T14:02:25.6640090Z Process completed with exit code 2",
+    "2026-08-18T14:02:25.6640100Z ##[error]Process completed with exit code 2",
+    "2026-08-18T14:02:25.6640110Z Post Run actions/checkout@v5",
+    "2026-08-18T14:02:25.6640120Z Post job cleanup",
+    "2026-08-18T14:02:25.6640130Z Cleaning up orphan processes"
+  ],
+  "lines": [
+    {
+      "number": 1,
+      "text": "2026-08-18T14:02:11.1234560Z ##[group]Run actions/checkout@v5"
+    },
+    {
+      "number": 2,
+      "text": "2026-08-18T14:02:11.1234560Z with:"
+    },
+    {
+      "number": 3,
+      "text": "2026-08-18T14:02:11.1234560Z   fetch-depth: 0"
+    },
+    {
+      "number": 4,
+      "text": "2026-08-18T14:02:11.1234560Z ##[endgroup]"
+    },
+    {
+      "number": 5,
+      "text": "2026-08-18T14:02:12.8810210Z ##[group]Run make test"
+    },
+    {
+      "number": 6,
+      "text": "2026-08-18T14:02:12.8810210Z make test"
+    },
+    {
+      "number": 7,
+      "text": "2026-08-18T14:02:12.8810210Z ##[endgroup]"
+    },
+    {
+      "number": 8,
+      "text": "2026-08-18T14:02:13.0011220Z cargo test --workspace --all-features"
+    },
+    {
+      "number": 9,
+      "text": "2026-08-18T14:02:14.7701030Z    Compiling prog-core v0.1.1"
+    },
+    {
+      "number": 10,
+      "text": "2026-08-18T14:02:15.2201100Z    Compiling prog-adapters v0.1.1"
+    },
+    {
+      "number": 11,
+      "text": "2026-08-18T14:02:16.9033110Z aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "number": 12,
+      "text": "2026-08-18T14:02:17.4420000Z bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "number": 13,
+      "text": "2026-08-18T14:02:18.1002010Z cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "number": 14,
+      "text": "2026-08-18T14:02:19.0114020Z dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "number": 15,
+      "text": "2026-08-18T14:02:20.1020030Z eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    {
+      "number": 16,
+      "text": "2026-08-18T14:02:21.2201040Z ##[warning]profile `ci` is not defined; using default"
+    },
+    {
+      "number": 17,
+      "text": "2026-08-18T14:02:22.3310050Z ##[warning]cache entry expired early; rebuilding crates"
+    },
+    {
+      "number": 18,
+      "text": "2026-08-18T14:02:23.4420060Z token=[REDACTED:observed_text_secret]"
+    },
+    {
+      "number": 19,
+      "text": "2026-08-18T14:02:24.5530070Z error: could not compile `prog-cli` due to 2 previous errors"
+    },
+    {
+      "number": 20,
+      "text": "2026-08-18T14:02:25.6640080Z ##[error]make test exited with 2"
+    },
+    {
+      "number": 21,
+      "text": "2026-08-18T14:02:25.6640090Z Process completed with exit code 2"
+    },
+    {
+      "number": 22,
+      "text": "2026-08-18T14:02:25.6640100Z ##[error]Process completed with exit code 2"
+    },
+    {
+      "number": 23,
+      "text": "2026-08-18T14:02:25.6640110Z Post Run actions/checkout@v5"
+    },
+    {
+      "number": 24,
+      "text": "2026-08-18T14:02:25.6640120Z Post job cleanup"
+    },
+    {
+      "number": 25,
+      "text": "2026-08-18T14:02:25.6640130Z Cleaning up orphan processes"
+    }
+  ],
+  "line_count": 25,
+  "byte_count": 1663,
+  "utf8_valid": true
+}

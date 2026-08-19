@@ -1,0 +1,16 @@
+{
+  "schema": "prog.lens_manifest",
+  "id": "llm-api-error",
+  "match": {"source_id": "observe", "artifact_kind": "json"},
+  "view": {"limit": 4, "depth": 3, "fields": {"message": "/error/message", "type": "/error/type", "code": "/error/code", "status": "/status", "request_id": "/request_id"}},
+  "omit": [
+    {"path": "/request", "reason": "deep_object", "detail": "the failed request echo remains cursor-expandable", "expandable": true},
+    {"path": "/error/param", "reason": "large_string", "detail": "the failing parameter remains cursor-expandable", "expandable": true}
+  ],
+  "findings": [
+    {"kind": "llm_api_error", "path": "/error", "confidence": 0.97, "reason": "provider response carries an API error envelope with message, type, or code", "title": "LLM API error", "severity": "error", "contains_any": ["message", "type", "code"]}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/error", "reason": "cite the exact provider error envelope"}],
+  "invariants": ["provider_error_envelope_is_not_reinterpreted", "request_echo_is_omitted_until_selected", "redaction_precedes_lens_projection"],
+  "fixtures": {"positive": ["fixtures/llm-api-error-openai.json", "fixtures/llm-api-error-anthropic.json"], "negative": ["fixtures/counterexamples/json-items.json"]}
+}

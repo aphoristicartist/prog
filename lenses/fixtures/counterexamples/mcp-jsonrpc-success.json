@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "prog repo has 3 open issues"
+      }
+    ],
+    "isError": false
+  }
+}
