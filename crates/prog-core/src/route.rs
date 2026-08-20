@@ -123,19 +123,43 @@ fn shell_structure_is_opaque(program: &str, args: &[String]) -> bool {
 fn noisy_command(program: &str, args: &[String]) -> bool {
     let first = args.first().map(String::as_str);
     match program {
-        "pytest" | "py.test" | "rustc" => true,
+        "pytest" | "py.test" | "rustc" | "jest" => true,
+        "tsc" | "trivy" | "semgrep" => !version_or_help_query(args),
         "cargo" => first.is_some_and(|arg| {
             matches!(arg, "test" | "check" | "clippy" | "build" | "bench" | "run")
         }),
         "go" => first == Some("test"),
+        "deno" => first.is_some_and(|arg| matches!(arg, "test" | "lint" | "check")),
         "npm" | "pnpm" | "yarn" | "bun" => {
             first.is_some_and(|arg| matches!(arg, "test" | "run" | "audit"))
         }
         "git" => first.is_some_and(|arg| matches!(arg, "diff" | "log" | "show")),
         "docker" | "podman" => first == Some("logs"),
         "kubectl" => first.is_some_and(|arg| matches!(arg, "get" | "logs" | "describe")),
+        "vitest" => first == Some("run"),
+        "playwright" => first == Some("test"),
+        "uv" => first == Some("run"),
+        "ruff" => first == Some("check"),
+        "biome" => first.is_some_and(|arg| matches!(arg, "check" | "ci" | "lint")),
+        "terraform" | "tofu" => first.is_some_and(|arg| matches!(arg, "plan" | "show")),
+        "gh" => {
+            (first == Some("api"))
+                || (first == Some("run")
+                    && args
+                        .iter()
+                        .any(|arg| matches!(arg.as_str(), "--log" | "--log-failed")))
+        }
         _ => false,
     }
+}
+
+fn version_or_help_query(args: &[String]) -> bool {
+    args.iter().take(2).any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--version" | "-v" | "-V" | "--help" | "-h" | "help" | "version"
+        )
+    })
 }
 
 fn tiny_command(program: &str, args: &[String]) -> bool {
@@ -149,7 +173,7 @@ fn tiny_command(program: &str, args: &[String]) -> bool {
         (program, args.first().map(String::as_str)),
         ("git", Some("status" | "rev-parse" | "branch"))
             | (
-                "cargo" | "rustc" | "python" | "python3" | "node",
+                "cargo" | "rustc" | "python" | "python3" | "node" | "tsc" | "trivy" | "semgrep",
                 Some("--version" | "-V")
             )
     )
@@ -197,6 +221,46 @@ mod tests {
                 RouteGuidance::Passthrough,
             ),
             (argv(&["custom-tool", "scan"]), RouteGuidance::Unknown),
+            // 2026 toolchain families use exact program + first-argument
+            // matches only, so unknown commands stay unknown.
+            (argv(&["vitest", "run"]), RouteGuidance::Progressive),
+            (argv(&["playwright", "test"]), RouteGuidance::Progressive),
+            (argv(&["deno", "test"]), RouteGuidance::Progressive),
+            (argv(&["uv", "run", "pytest"]), RouteGuidance::Progressive),
+            (argv(&["ruff", "check", "."]), RouteGuidance::Progressive),
+            (argv(&["biome", "check", "."]), RouteGuidance::Progressive),
+            (argv(&["tsc", "--noEmit"]), RouteGuidance::Progressive),
+            (argv(&["jest", "--ci"]), RouteGuidance::Progressive),
+            (argv(&["terraform", "plan"]), RouteGuidance::Progressive),
+            (
+                argv(&["tofu", "show", "plan.out"]),
+                RouteGuidance::Progressive,
+            ),
+            (argv(&["trivy", "fs", "."]), RouteGuidance::Progressive),
+            (
+                argv(&["semgrep", "--config", "auto", "."]),
+                RouteGuidance::Progressive,
+            ),
+            (
+                argv(&["gh", "run", "view", "--log-failed"]),
+                RouteGuidance::Progressive,
+            ),
+            (
+                argv(&["gh", "api", "/repos/prog/prog/issues"]),
+                RouteGuidance::Progressive,
+            ),
+            // Conservative boundaries: watch modes, adjacent subcommands, and
+            // version queries never inherit a family classification.
+            (argv(&["vitest"]), RouteGuidance::Unknown),
+            (argv(&["vitest", "--watch"]), RouteGuidance::Unknown),
+            (argv(&["deno", "fmt"]), RouteGuidance::Unknown),
+            (argv(&["uv", "sync"]), RouteGuidance::Unknown),
+            (argv(&["terraform", "validate"]), RouteGuidance::Unknown),
+            (argv(&["gh", "run", "list"]), RouteGuidance::Unknown),
+            (argv(&["gh", "issue", "list"]), RouteGuidance::Unknown),
+            (argv(&["tsc", "--version"]), RouteGuidance::Raw),
+            (argv(&["trivy", "--version"]), RouteGuidance::Raw),
+            (argv(&["semgrep", "--version"]), RouteGuidance::Raw),
         ];
         for (command, expected) in cases {
             let first = classify_route(&command, &RoutePolicy::default());
