@@ -5,8 +5,8 @@
   "actual_agent_trials": 0,
   "claim_eligible": false,
   "fixed_context": {
-    "prog_skill_bytes": 7654,
-    "prog_skill_estimated_tokens": 1914,
+    "prog_skill_bytes": 7824,
+    "prog_skill_estimated_tokens": 1956,
     "tool_schema_tokens": null
   },
   "live_trials": [],

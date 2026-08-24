@@ -10,7 +10,7 @@ Regenerate with PROG_AGENT_EVAL_BLESS=1 cargo test -p prog-cli --test agent_eval
 | Synthetic replay traces | 4 |
 | Adversarial false claims rejected | 2 |
 | False completions accepted | 0 |
-| prog skill bytes / estimated tokens | 7654 / 1914 |
+| prog skill bytes / estimated tokens | 7824 / 1956 |
 
 The replay executes a narrowed coding rerun and an expired-validator entity read-back through the real CLI. Evidence citations are resolved from retained cursors and their redacted-slice SHA-256 values are checked. Deliberately false verified decisions are hard failures.
 

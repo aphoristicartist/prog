@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use prog_core::{ObligationDeclarer, VerificationStateRelationship};
 use serde::Deserialize;
+use serde_json::Value;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -394,6 +395,11 @@ pub(crate) struct ObserveArgs {
 
     #[arg(long, default_value_t = 86_400)]
     pub(crate) ttl_seconds: u64,
+
+    /// Internal stable identity for generated artifacts whose temporary path
+    /// must not make otherwise identical observations incomparable.
+    #[arg(skip)]
+    pub(crate) invocation_identity: Option<Value>,
 }
 
 #[derive(Debug, Args)]
@@ -441,6 +447,13 @@ pub(crate) enum RecipeKind {
     Pytest,
     NpmTest,
     GoTest,
+    Vitest,
+    Playwright,
+    BunTest,
+    DenoTest,
+    Ruff,
+    Biome,
+    Semgrep,
     GhIssues,
     DiffReview,
     LogsRootCause,
@@ -453,6 +466,13 @@ impl RecipeKind {
             Self::Pytest => "pytest",
             Self::NpmTest => "npm-test",
             Self::GoTest => "go-test",
+            Self::Vitest => "vitest",
+            Self::Playwright => "playwright",
+            Self::BunTest => "bun-test",
+            Self::DenoTest => "deno-test",
+            Self::Ruff => "ruff",
+            Self::Biome => "biome",
+            Self::Semgrep => "semgrep",
             Self::GhIssues => "gh-issues",
             Self::DiffReview => "diff-review",
             Self::LogsRootCause => "logs-root-cause",
@@ -461,8 +481,16 @@ impl RecipeKind {
 
     pub(crate) fn default_goal(self) -> &'static str {
         match self {
-            Self::CargoTest | Self::Pytest | Self::NpmTest | Self::GoTest => {
-                "find the first causal test failure"
+            Self::CargoTest
+            | Self::Pytest
+            | Self::NpmTest
+            | Self::GoTest
+            | Self::Vitest
+            | Self::Playwright
+            | Self::BunTest
+            | Self::DenoTest => "find the first causal test failure",
+            Self::Ruff | Self::Biome | Self::Semgrep => {
+                "find the highest-severity static-analysis diagnostic"
             }
             Self::GhIssues => "triage the most important issue evidence",
             Self::DiffReview => "find risky changed hunks",

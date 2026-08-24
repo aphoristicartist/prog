@@ -16,6 +16,7 @@ overview and quickstart; contributors and coding agents should read
 | [paths.md](paths.md) | Listing addressable JSON Pointer paths. |
 | [findings.md](findings.md) | How deterministic findings are produced and ranked. |
 | [coding-providers.md](coding-providers.md) | Bounded pytest and Cargo/rustc normalization. |
+| [modern-toolchain-recipes.md](modern-toolchain-recipes.md) | JUnit/SARIF recipes for current test runners and static analyzers. |
 | [harness-extension-protocol.md](harness-extension-protocol.md) | Normative plugin/result lifecycle and adapter requirements. |
 | [integrations.md](integrations.md) | Shipped harness plugins, Agent Skills, wrappers, and MCP stance. |
 | [install.md](install.md) | Verified curl install, manual verification, and explicit self-update. |

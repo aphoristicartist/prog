@@ -7,6 +7,11 @@
   false-completion/dropout accounting, and the SWE-bench contamination caveat.
   A checked-in synthetic dry run proves incomplete usage stays claim-ineligible
   before any credentialed benchmark spend (#238).
+- Added JUnit report recipes for Vitest, Playwright, Bun, and Deno plus SARIF
+  recipes for Ruff, Biome, and Semgrep. Each recipe exposes the exact argv,
+  records the child status, observes one private temporary report through the
+  existing `junit`/`sarif` lens, and removes the temporary artifact afterward
+  (#241).
 - Preregistered the Terminal-Bench 2.0 paired public pilot before any live
   model spend: the benchmark, harness, model, resource-bounded seeded subset,
   raw/prog arm order, stopping rule, analysis, and falsification conditions are
