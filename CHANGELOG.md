@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed the `prog-cli` crate tarball so its embedded agent skill is packaged
+  inside the crate and verified by the release dry-run build.
 - Routed public-benchmark A/B records through the existing actual-agent claim
   gate, with generated Wilson intervals, exact paired McNemar results, explicit
   false-completion/dropout accounting, and the SWE-bench contamination caveat.

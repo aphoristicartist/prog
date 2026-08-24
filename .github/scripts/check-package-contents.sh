@@ -11,7 +11,9 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 cd "$repo_root"
-cargo package --workspace --locked --no-verify --allow-dirty
+# Compile each generated tarball as well as checking its contents. This catches
+# workspace-relative include paths that work from a checkout but not a package.
+cargo package --workspace --locked --allow-dirty
 
 version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
 [[ -n "$version" ]] || { echo "could not read workspace version" >&2; exit 1; }
