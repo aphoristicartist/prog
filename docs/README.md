@@ -51,6 +51,7 @@ overview and quickstart; contributors and coding agents should read
 | [task-success-eval.md](task-success-eval.md) | Task-success evaluation. |
 | [replay-eval.md](replay-eval.md) | Multi-iteration replay oracle for delta and readiness correctness. |
 | [agent-eval.md](agent-eval.md) | Actual-agent claim gate status and false-completion grader replay. |
+| [terminal-bench-eval.md](terminal-bench-eval.md) | Preregistered Terminal-Bench 2.0 paired public pilot. |
 | [competitive-baselines.md](competitive-baselines.md) | Comparisons, including cases prog loses. |
 | [real-world-demos.md](real-world-demos.md) | Real-world-shaped local demos. |
 | [positioning.md](positioning.md) | When to use prog and when not to. |

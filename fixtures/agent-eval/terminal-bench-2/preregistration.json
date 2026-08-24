@@ -1,0 +1,125 @@
+{
+  "schema": "prog.agent_eval.public_benchmark_preregistration",
+  "issue": 236,
+  "status": "preregistered_no_live_trials",
+  "benchmark": {
+    "name": "terminal-bench-2.0",
+    "dataset": "terminal-bench/terminal-bench-2",
+    "source_repository": "https://github.com/harbor-framework/terminal-bench-2",
+    "source_commit": "2fd12b88aafdd04a52c298e3940bcb189f9766d6",
+    "source_task_count": 89,
+    "harbor_version": "0.22.0"
+  },
+  "harness": {
+    "agent": "claude-code",
+    "agent_version": "2.1.241",
+    "provider": "anthropic",
+    "model": "claude-fable-5",
+    "model_version": "claude-fable-5",
+    "region": "provider-managed-not-exposed",
+    "reasoning_effort": "high",
+    "max_turns": 100,
+    "max_budget_usd_per_trial": "10.00",
+    "prog_version": "0.1.1",
+    "prog_target": "x86_64-unknown-linux-gnu",
+    "prog_install_surface": "prog harness install --root /app --host agent-skills --host claude-code"
+  },
+  "selection": {
+    "seed": "prog-terminal-bench-2-cpu-pilot-v1",
+    "eligibility": {
+      "agent_timeout_sec_max": 1200,
+      "verifier_timeout_sec_max": 1200,
+      "memory_mb_max": 4096,
+      "gpus": 0
+    },
+    "eligible_task_count": 54,
+    "selection_algorithm": "sort eligible task ids by sha256(seed || NUL || task_id), take 10",
+    "task_ids": [
+      {
+        "id": "large-scale-text-editing",
+        "selection_sha256": "04873cd12ee90376f6503f2b3e2d4bbf33d04064d7ece9e06e55d86df5275502"
+      },
+      {
+        "id": "kv-store-grpc",
+        "selection_sha256": "0a617d52360e3aa37147fc735b1418ec9c491ca31dfa03fb49b00cb83e96a07b"
+      },
+      {
+        "id": "overfull-hbox",
+        "selection_sha256": "0d0d0cfb067a1f1f681ca39809d3c4959085feee014230e290a507278ff73335"
+      },
+      {
+        "id": "db-wal-recovery",
+        "selection_sha256": "124ba8d5a123ccbcdd75598884a7b15a971246e37e956cf3b253edb58d70fbd2"
+      },
+      {
+        "id": "sqlite-db-truncate",
+        "selection_sha256": "16c81c0cc6f253ffaba9449efe583cf090c1b8d1d93a00c8f6eda553cf028293"
+      },
+      {
+        "id": "caffe-cifar-10",
+        "selection_sha256": "19c951c99110ca52c685809e6914c67edfd6c9f08949451614c7009ab45045cf"
+      },
+      {
+        "id": "multi-source-data-merger",
+        "selection_sha256": "1e075ba0cf1150b6317b0bfcc9d5765639d1ba23306aa0a311ea4d24720d5359"
+      },
+      {
+        "id": "raman-fitting",
+        "selection_sha256": "213d4bb23c8db4e49c2f55aab94e2c5ec6435fa00ed8381358df5c9c76c6e551"
+      },
+      {
+        "id": "model-extraction-relu-logits",
+        "selection_sha256": "30e9dc79caa4832f771f8f66602e770dba6173d763296ebbaa65d60911c24d36"
+      },
+      {
+        "id": "torch-tensor-parallelism",
+        "selection_sha256": "31d30329cdb0519943e9bab21ddee2ea1ff4938b17d5a9e80b3191454384cb9a"
+      }
+    ]
+  },
+  "design": {
+    "arms": [
+      "raw",
+      "prog"
+    ],
+    "instructions": "terminal-bench-native-unmodified",
+    "attempts_per_task_arm": 1,
+    "trials_per_arm": 10,
+    "pair_order": "five tasks raw-first and five tasks prog-first; arms remain adjacent for each task",
+    "n_concurrent_trials": 1,
+    "run_window": "one contiguous window of at most seven calendar days beginning with the first accepted trial",
+    "outcome_retries": "none; infrastructure dropouts remain dropouts",
+    "token_budget": "same pinned model limits, max_turns, and USD ceiling in both arms; Harbor exposes no independent total-token stop for Claude Code",
+    "fixed_context_accounting": "count the complete installed prog skill and all model-visible tool responses"
+  },
+  "hypotheses": {
+    "primary": "the prog arm improves paired Terminal-Bench resolution without increasing false completion",
+    "secondary": "when both arms expose complete provider usage, the prog arm improves verified completions per million provider tokens"
+  },
+  "metrics": {
+    "primary": [
+      "official_resolved",
+      "false_completion"
+    ],
+    "conditional": [
+      "provider_input_tokens",
+      "provider_output_tokens",
+      "cost_usd",
+      "tool_calls",
+      "wall_time"
+    ],
+    "analysis": "McNemar paired test for resolved status and Wilson 95% confidence interval per arm"
+  },
+  "stopping_rule": {
+    "pilot": "attempt every one of the 20 preregistered task-arm trials exactly once",
+    "powered_run": "do not choose sample size or start a powered run until pilot cost and dropout rates are published",
+    "result_independence": "a null result, prog loss, refusal, timeout, or dropout cannot trigger replacement tasks or outcome-driven reruns"
+  },
+  "falsification": [
+    "no paired resolution signal",
+    "prog false-completion rate is not lower than raw",
+    "no token saving when provider usage is complete for both arms"
+  ],
+  "outcomes_path": "fixtures/agent-eval/terminal-bench-2/pilot-outcomes.json",
+  "reporting_issue": 238
+}
