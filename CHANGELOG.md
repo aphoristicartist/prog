@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Routed public-benchmark A/B records through the existing actual-agent claim
+  gate, with generated Wilson intervals, exact paired McNemar results, explicit
+  false-completion/dropout accounting, and the SWE-bench contamination caveat.
+  A checked-in synthetic dry run proves incomplete usage stays claim-ineligible
+  before any credentialed benchmark spend (#238).
 - Preregistered the Terminal-Bench 2.0 paired public pilot before any live
   model spend: the benchmark, harness, model, resource-bounded seeded subset,
   raw/prog arm order, stopping rule, analysis, and falsification conditions are

@@ -11,6 +11,587 @@
   },
   "live_trials": [],
   "uncertainty": null,
+  "public_benchmarks": [
+    {
+      "benchmark": "terminal-bench-2.0",
+      "synthetic": true,
+      "harness": "harbor",
+      "harness_version": "0.22.0",
+      "provider": "synthetic-provider",
+      "model": "synthetic-model",
+      "model_version": "fixture-v1",
+      "date": "2026-08-24",
+      "subset": "3 synthetic task pairs",
+      "seed": "reporting-dry-run-terminal-v1",
+      "n_per_arm": {
+        "prog": 3,
+        "raw": 3
+      },
+      "trials": [
+        {
+          "trial_id": "tb-a-raw",
+          "benchmark": "terminal-bench-2.0",
+          "task_id": "synthetic-terminal-a",
+          "arm": "raw",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "model_version": "fixture-v1",
+          "harness_version": "0.22.0",
+          "started_at": "2026-08-24T12:00:00Z",
+          "region": "synthetic",
+          "trial_seed": "reporting-dry-run-terminal-v1",
+          "settings": {
+            "max_turns": "100",
+            "reasoning_effort": "high"
+          },
+          "dropout": null,
+          "timed_out": false,
+          "resolved": true,
+          "claimed_success": true,
+          "graders": {
+            "answer_correct": true,
+            "evidence_resolves": true,
+            "finding_precision": true,
+            "no_false_completion": true,
+            "verdict_matches_truth": true
+          },
+          "token_usage": {
+            "system_prompt_tokens": 1000,
+            "tool_schema_tokens": 200,
+            "skill_tokens": 0,
+            "model_visible_tool_response_tokens": 500,
+            "provider_input_tokens": 4000,
+            "provider_output_tokens": null,
+            "provider_cached_input_tokens": null,
+            "provider_reasoning_tokens": null
+          },
+          "tool_calls": 8,
+          "navigation_calls": 0,
+          "upstream_reruns": 1,
+          "model_visible_tool_response_bytes": 2000,
+          "latency_ms": 120000
+        },
+        {
+          "trial_id": "tb-a-prog",
+          "benchmark": "terminal-bench-2.0",
+          "task_id": "synthetic-terminal-a",
+          "arm": "prog",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "model_version": "fixture-v1",
+          "harness_version": "0.22.0",
+          "started_at": "2026-08-24T12:05:00Z",
+          "region": "synthetic",
+          "trial_seed": "reporting-dry-run-terminal-v1",
+          "settings": {
+            "max_turns": "100",
+            "reasoning_effort": "high"
+          },
+          "dropout": null,
+          "timed_out": false,
+          "resolved": true,
+          "claimed_success": true,
+          "graders": {
+            "answer_correct": true,
+            "evidence_resolves": true,
+            "finding_precision": true,
+            "no_false_completion": true,
+            "verdict_matches_truth": true
+          },
+          "token_usage": {
+            "system_prompt_tokens": 1000,
+            "tool_schema_tokens": 200,
+            "skill_tokens": 1914,
+            "model_visible_tool_response_tokens": 320,
+            "provider_input_tokens": 3600,
+            "provider_output_tokens": 800,
+            "provider_cached_input_tokens": null,
+            "provider_reasoning_tokens": null
+          },
+          "tool_calls": 6,
+          "navigation_calls": 3,
+          "upstream_reruns": 0,
+          "model_visible_tool_response_bytes": 1280,
+          "latency_ms": 110000
+        },
+        {
+          "trial_id": "tb-b-raw",
+          "benchmark": "terminal-bench-2.0",
+          "task_id": "synthetic-terminal-b",
+          "arm": "raw",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "model_version": "fixture-v1",
+          "harness_version": "0.22.0",
+          "started_at": "2026-08-24T12:10:00Z",
+          "region": "synthetic",
+          "trial_seed": "reporting-dry-run-terminal-v1",
+          "settings": {
+            "max_turns": "100",
+            "reasoning_effort": "high"
+          },
+          "dropout": null,
+          "timed_out": false,
+          "resolved": true,
+          "claimed_success": true,
+          "graders": {
+            "answer_correct": true,
+            "evidence_resolves": true,
+            "finding_precision": true,
+            "no_false_completion": true,
+            "verdict_matches_truth": true
+          },
+          "token_usage": {
+            "system_prompt_tokens": 1000,
+            "tool_schema_tokens": 200,
+            "skill_tokens": 0,
+            "model_visible_tool_response_tokens": 600,
+            "provider_input_tokens": 4300,
+            "provider_output_tokens": 900,
+            "provider_cached_input_tokens": null,
+            "provider_reasoning_tokens": null
+          },
+          "tool_calls": 9,
+          "navigation_calls": 0,
+          "upstream_reruns": 2,
+          "model_visible_tool_response_bytes": 2400,
+          "latency_ms": 130000
+        },
+        {
+          "trial_id": "tb-b-prog",
+          "benchmark": "terminal-bench-2.0",
+          "task_id": "synthetic-terminal-b",
+          "arm": "prog",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "model_version": "fixture-v1",
+          "harness_version": "0.22.0",
+          "started_at": "2026-08-24T12:15:00Z",
+          "region": "synthetic",
+          "trial_seed": "reporting-dry-run-terminal-v1",
+          "settings": {
+            "max_turns": "100",
+            "reasoning_effort": "high"
+          },
+          "dropout": null,
+          "timed_out": false,
+          "resolved": false,
+          "claimed_success": true,
+          "graders": {
+            "answer_correct": false,
+            "evidence_resolves": true,
+            "finding_precision": true,
+            "no_false_completion": false,
+            "verdict_matches_truth": false
+          },
+          "token_usage": {
+            "system_prompt_tokens": 1000,
+            "tool_schema_tokens": 200,
+            "skill_tokens": 1914,
+            "model_visible_tool_response_tokens": 400,
+            "provider_input_tokens": 3900,
+            "provider_output_tokens": 850,
+            "provider_cached_input_tokens": null,
+            "provider_reasoning_tokens": null
+          },
+          "tool_calls": 7,
+          "navigation_calls": 2,
+          "upstream_reruns": 1,
+          "model_visible_tool_response_bytes": 1600,
+          "latency_ms": 125000
+        },
+        {
+          "trial_id": "tb-c-raw",
+          "benchmark": "terminal-bench-2.0",
+          "task_id": "synthetic-terminal-c",
+          "arm": "raw",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "model_version": "fixture-v1",
+          "harness_version": "0.22.0",
+          "started_at": "2026-08-24T12:20:00Z",
+          "region": "synthetic",
+          "trial_seed": "reporting-dry-run-terminal-v1",
+          "settings": {
+            "max_turns": "100",
+            "reasoning_effort": "high"
+          },
+          "dropout": "timeout",
+          "timed_out": true,
+          "claimed_success": false,
+          "graders": {
+            "answer_correct": false,
+            "evidence_resolves": false,
+            "finding_precision": false,
+            "no_false_completion": false,
+            "verdict_matches_truth": false
+          },
+          "token_usage": {
+            "system_prompt_tokens": 1000,
+            "tool_schema_tokens": 200,
+            "skill_tokens": 0,
+            "model_visible_tool_response_tokens": 200,
+            "provider_input_tokens": null,
+            "provider_output_tokens": null,
+            "provider_cached_input_tokens": null,
+            "provider_reasoning_tokens": null
+          },
+          "tool_calls": 4,
+          "navigation_calls": 0,
+          "upstream_reruns": 0,
+          "model_visible_tool_response_bytes": 800,
+          "latency_ms": null
+        },
+        {
+          "trial_id": "tb-c-prog",
+          "benchmark": "terminal-bench-2.0",
+          "task_id": "synthetic-terminal-c",
+          "arm": "prog",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "model_version": "fixture-v1",
+          "harness_version": "0.22.0",
+          "started_at": "2026-08-24T12:25:00Z",
+          "region": "synthetic",
+          "trial_seed": "reporting-dry-run-terminal-v1",
+          "settings": {
+            "max_turns": "100",
+            "reasoning_effort": "high"
+          },
+          "dropout": null,
+          "timed_out": false,
+          "resolved": true,
+          "claimed_success": true,
+          "graders": {
+            "answer_correct": true,
+            "evidence_resolves": true,
+            "finding_precision": true,
+            "no_false_completion": true,
+            "verdict_matches_truth": true
+          },
+          "token_usage": {
+            "system_prompt_tokens": 1000,
+            "tool_schema_tokens": 200,
+            "skill_tokens": 1914,
+            "model_visible_tool_response_tokens": 300,
+            "provider_input_tokens": 3500,
+            "provider_output_tokens": 750,
+            "provider_cached_input_tokens": null,
+            "provider_reasoning_tokens": null
+          },
+          "tool_calls": 6,
+          "navigation_calls": 3,
+          "upstream_reruns": 0,
+          "model_visible_tool_response_bytes": 1200,
+          "latency_ms": 105000
+        }
+      ],
+      "wilson_95": [
+        {
+          "arm": "raw",
+          "metric": "resolved_rate",
+          "successes": 2,
+          "trials": 2,
+          "estimate": 1.0,
+          "lower": 0.34238,
+          "upper": 1.0
+        },
+        {
+          "arm": "raw",
+          "metric": "false_completion_rate",
+          "successes": 0,
+          "trials": 2,
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.65762
+        },
+        {
+          "arm": "prog",
+          "metric": "resolved_rate",
+          "successes": 2,
+          "trials": 3,
+          "estimate": 0.666667,
+          "lower": 0.20766,
+          "upper": 0.938508
+        },
+        {
+          "arm": "prog",
+          "metric": "false_completion_rate",
+          "successes": 1,
+          "trials": 3,
+          "estimate": 0.333333,
+          "lower": 0.061492,
+          "upper": 0.79234
+        }
+      ],
+      "mcnemar": {
+        "method": "exact-binomial-two-sided",
+        "complete_pairs": 2,
+        "raw_only": 1,
+        "prog_only": 0,
+        "exact_two_sided_p": 1.0
+      },
+      "false_completion_counts": {
+        "prog": 1,
+        "raw": 0
+      },
+      "dropout_counts": {
+        "prog": 0,
+        "raw": 1
+      },
+      "claim_eligible": false,
+      "relative_effect_only": false,
+      "contamination_caveat": null,
+      "interpretation": "negative paired result for prog"
+    },
+    {
+      "benchmark": "swe-bench-verified",
+      "synthetic": true,
+      "harness": "official-swebench-harness",
+      "harness_version": "synthetic-fixture-v1",
+      "provider": "synthetic-provider",
+      "model": "synthetic-model",
+      "model_version": "fixture-v1",
+      "date": "2026-08-24",
+      "subset": "2 synthetic instance pairs",
+      "seed": "reporting-dry-run-swebench-v1",
+      "n_per_arm": {
+        "prog": 2,
+        "raw": 2
+      },
+      "trials": [
+        {
+          "trial_id": "swe-a-raw",
+          "benchmark": "swe-bench-verified",
+          "task_id": "synthetic-swe-a",
+          "arm": "raw",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "model_version": "fixture-v1",
+          "harness_version": "synthetic-fixture-v1",
+          "started_at": "2026-08-24T13:00:00Z",
+          "region": "synthetic",
+          "trial_seed": "reporting-dry-run-swebench-v1",
+          "settings": {
+            "max_turns": "100",
+            "reasoning_effort": "high"
+          },
+          "dropout": null,
+          "timed_out": false,
+          "resolved": false,
+          "claimed_success": false,
+          "graders": {
+            "answer_correct": false,
+            "evidence_resolves": true,
+            "finding_precision": true,
+            "no_false_completion": true,
+            "verdict_matches_truth": true
+          },
+          "token_usage": {
+            "system_prompt_tokens": 1000,
+            "tool_schema_tokens": 200,
+            "skill_tokens": 0,
+            "model_visible_tool_response_tokens": 700,
+            "provider_input_tokens": 5000,
+            "provider_output_tokens": 1000,
+            "provider_cached_input_tokens": null,
+            "provider_reasoning_tokens": null
+          },
+          "tool_calls": 10,
+          "navigation_calls": 0,
+          "upstream_reruns": 2,
+          "model_visible_tool_response_bytes": 2800,
+          "latency_ms": 180000
+        },
+        {
+          "trial_id": "swe-a-prog",
+          "benchmark": "swe-bench-verified",
+          "task_id": "synthetic-swe-a",
+          "arm": "prog",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "model_version": "fixture-v1",
+          "harness_version": "synthetic-fixture-v1",
+          "started_at": "2026-08-24T13:05:00Z",
+          "region": "synthetic",
+          "trial_seed": "reporting-dry-run-swebench-v1",
+          "settings": {
+            "max_turns": "100",
+            "reasoning_effort": "high"
+          },
+          "dropout": null,
+          "timed_out": false,
+          "resolved": true,
+          "claimed_success": true,
+          "graders": {
+            "answer_correct": true,
+            "evidence_resolves": true,
+            "finding_precision": true,
+            "no_false_completion": true,
+            "verdict_matches_truth": true
+          },
+          "token_usage": {
+            "system_prompt_tokens": 1000,
+            "tool_schema_tokens": 200,
+            "skill_tokens": 1914,
+            "model_visible_tool_response_tokens": 450,
+            "provider_input_tokens": 4600,
+            "provider_output_tokens": 950,
+            "provider_cached_input_tokens": null,
+            "provider_reasoning_tokens": null
+          },
+          "tool_calls": 8,
+          "navigation_calls": 4,
+          "upstream_reruns": 1,
+          "model_visible_tool_response_bytes": 1800,
+          "latency_ms": 170000
+        },
+        {
+          "trial_id": "swe-b-raw",
+          "benchmark": "swe-bench-verified",
+          "task_id": "synthetic-swe-b",
+          "arm": "raw",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "model_version": "fixture-v1",
+          "harness_version": "synthetic-fixture-v1",
+          "started_at": "2026-08-24T13:10:00Z",
+          "region": "synthetic",
+          "trial_seed": "reporting-dry-run-swebench-v1",
+          "settings": {
+            "max_turns": "100",
+            "reasoning_effort": "high"
+          },
+          "dropout": null,
+          "timed_out": false,
+          "resolved": true,
+          "claimed_success": true,
+          "graders": {
+            "answer_correct": true,
+            "evidence_resolves": true,
+            "finding_precision": true,
+            "no_false_completion": true,
+            "verdict_matches_truth": true
+          },
+          "token_usage": {
+            "system_prompt_tokens": 1000,
+            "tool_schema_tokens": 200,
+            "skill_tokens": 0,
+            "model_visible_tool_response_tokens": 650,
+            "provider_input_tokens": 4900,
+            "provider_output_tokens": 980,
+            "provider_cached_input_tokens": null,
+            "provider_reasoning_tokens": null
+          },
+          "tool_calls": 9,
+          "navigation_calls": 0,
+          "upstream_reruns": 1,
+          "model_visible_tool_response_bytes": 2600,
+          "latency_ms": 175000
+        },
+        {
+          "trial_id": "swe-b-prog",
+          "benchmark": "swe-bench-verified",
+          "task_id": "synthetic-swe-b",
+          "arm": "prog",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "model_version": "fixture-v1",
+          "harness_version": "synthetic-fixture-v1",
+          "started_at": "2026-08-24T13:15:00Z",
+          "region": "synthetic",
+          "trial_seed": "reporting-dry-run-swebench-v1",
+          "settings": {
+            "max_turns": "100",
+            "reasoning_effort": "high"
+          },
+          "dropout": null,
+          "timed_out": false,
+          "resolved": false,
+          "claimed_success": false,
+          "graders": {
+            "answer_correct": false,
+            "evidence_resolves": true,
+            "finding_precision": true,
+            "no_false_completion": true,
+            "verdict_matches_truth": true
+          },
+          "token_usage": {
+            "system_prompt_tokens": 1000,
+            "tool_schema_tokens": 200,
+            "skill_tokens": 1914,
+            "model_visible_tool_response_tokens": 500,
+            "provider_input_tokens": 4550,
+            "provider_output_tokens": 900,
+            "provider_cached_input_tokens": null,
+            "provider_reasoning_tokens": null
+          },
+          "tool_calls": 8,
+          "navigation_calls": 3,
+          "upstream_reruns": 1,
+          "model_visible_tool_response_bytes": 2000,
+          "latency_ms": 168000
+        }
+      ],
+      "wilson_95": [
+        {
+          "arm": "raw",
+          "metric": "resolved_rate",
+          "successes": 1,
+          "trials": 2,
+          "estimate": 0.5,
+          "lower": 0.094531,
+          "upper": 0.905469
+        },
+        {
+          "arm": "raw",
+          "metric": "false_completion_rate",
+          "successes": 0,
+          "trials": 2,
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.65762
+        },
+        {
+          "arm": "prog",
+          "metric": "resolved_rate",
+          "successes": 1,
+          "trials": 2,
+          "estimate": 0.5,
+          "lower": 0.094531,
+          "upper": 0.905469
+        },
+        {
+          "arm": "prog",
+          "metric": "false_completion_rate",
+          "successes": 0,
+          "trials": 2,
+          "estimate": 0.0,
+          "lower": 0.0,
+          "upper": 0.65762
+        }
+      ],
+      "mcnemar": {
+        "method": "exact-binomial-two-sided",
+        "complete_pairs": 2,
+        "raw_only": 1,
+        "prog_only": 1,
+        "exact_two_sided_p": 1.0
+      },
+      "false_completion_counts": {
+        "prog": 0,
+        "raw": 0
+      },
+      "dropout_counts": {
+        "prog": 0,
+        "raw": 0
+      },
+      "claim_eligible": false,
+      "relative_effect_only": true,
+      "contamination_caveat": "SWE-bench Verified is likely represented in model training data; only same-instance relative arm effects may be interpreted.",
+      "interpretation": "null paired result"
+    }
+  ],
   "strategy_status": [
     {
       "strategy": "raw",
@@ -114,6 +695,7 @@
   },
   "limitations": [
     "checked-in traces are synthetic grader fixtures, not model runs",
+    "checked-in public-benchmark trials are a synthetic reporting dry run, not model runs",
     "no provider token accounting is available without credentialed live trials",
     "synthetic replay byte counts include environment-specific absolute paths and are not persisted as cross-platform performance metrics",
     "no performance or makes-agents-better claim is supported by this report"
