@@ -7,7 +7,8 @@
 
 use std::{
     cmp::Ordering,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -71,6 +72,7 @@ struct AgentEvalReport {
     fixed_context: FixedContext,
     live_trials: Vec<LiveTrial>,
     uncertainty: Option<UncertaintyReport>,
+    public_benchmarks: Vec<PublicBenchmarkReport>,
     strategy_status: Vec<StrategyStatus>,
     trace_results: Vec<TraceResult>,
     summary: AgentEvalSummary,
@@ -80,7 +82,12 @@ struct AgentEvalReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct LiveTrial {
     trial_id: String,
-    workflow_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    workflow_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    benchmark: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task_id: Option<String>,
     arm: String,
     provider: String,
     model: String,
@@ -91,6 +98,12 @@ struct LiveTrial {
     trial_seed: Option<String>,
     settings: BTreeMap<String, String>,
     dropout: Option<String>,
+    #[serde(default)]
+    timed_out: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resolved: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claimed_success: Option<bool>,
     graders: BTreeMap<String, bool>,
     token_usage: LiveTokenUsage,
     tool_calls: u64,
@@ -98,6 +111,70 @@ struct LiveTrial {
     upstream_reruns: u64,
     model_visible_tool_response_bytes: u64,
     latency_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct PublicBenchmarkReport {
+    benchmark: String,
+    synthetic: bool,
+    harness: String,
+    harness_version: String,
+    provider: String,
+    model: String,
+    model_version: Option<String>,
+    date: String,
+    subset: String,
+    seed: String,
+    n_per_arm: BTreeMap<String, u64>,
+    trials: Vec<LiveTrial>,
+    wilson_95: Vec<ProportionInterval>,
+    mcnemar: McNemarReport,
+    false_completion_counts: BTreeMap<String, u64>,
+    dropout_counts: BTreeMap<String, u64>,
+    claim_eligible: bool,
+    relative_effect_only: bool,
+    contamination_caveat: Option<String>,
+    interpretation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct ProportionInterval {
+    arm: String,
+    metric: String,
+    successes: u64,
+    trials: u64,
+    estimate: f64,
+    lower: f64,
+    upper: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct McNemarReport {
+    method: String,
+    complete_pairs: u64,
+    raw_only: u64,
+    prog_only: u64,
+    exact_two_sided_p: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct PublicBenchmarkDryRun {
+    schema: String,
+    synthetic: bool,
+    benchmarks: Vec<PublicBenchmarkFixture>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PublicBenchmarkFixture {
+    benchmark: String,
+    harness: String,
+    harness_version: String,
+    date: String,
+    subset: String,
+    seed: String,
+    relative_effect_only: bool,
+    contamination_caveat: Option<String>,
+    trials: Vec<LiveTrial>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,7 +218,10 @@ struct UncertaintyReport {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct UncertaintyInterval {
-    workflow_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    workflow_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    benchmark: Option<String>,
     arm: String,
     metric: String,
     trials: u64,
@@ -239,6 +319,40 @@ async fn agent_eval_replay_rejects_false_coding_and_state_completions() {
         report.summary.trace_expectations_passed,
         report.summary.replay_traces
     );
+    assert_eq!(report.public_benchmarks.len(), 2);
+    let terminal_bench = report
+        .public_benchmarks
+        .iter()
+        .find(|benchmark| benchmark.benchmark == "terminal-bench-2.0")
+        .unwrap();
+    assert!(terminal_bench.synthetic);
+    assert!(!terminal_bench.claim_eligible);
+    assert_eq!(
+        terminal_bench.interpretation,
+        "negative paired result for prog"
+    );
+    assert!(
+        terminal_bench.trials.iter().any(|trial| {
+            trial.arm == "raw" && trial.token_usage.provider_output_tokens.is_none()
+        })
+    );
+    assert!(!public_benchmark_claim_eligible(
+        &terminal_bench.trials,
+        &terminal_bench.benchmark,
+        Some(&public_uncertainty(
+            &terminal_bench.benchmark,
+            &terminal_bench.wilson_95,
+        )),
+    ));
+    let swe_bench = report
+        .public_benchmarks
+        .iter()
+        .find(|benchmark| benchmark.benchmark == "swe-bench-verified")
+        .unwrap();
+    assert_eq!(swe_bench.interpretation, "null paired result");
+    assert!(!swe_bench.claim_eligible);
+    assert!(swe_bench.relative_effect_only);
+    assert!(swe_bench.contamination_caveat.is_some());
 
     let metrics_path = root.join("fixtures/agent-eval/metrics.json");
     let docs_path = root.join("docs/agent-eval.md");
@@ -571,6 +685,17 @@ fn build_report(root: &Path, trace_results: Vec<TraceResult>) -> AgentEvalReport
         }
     }
 
+    let dry_run: PublicBenchmarkDryRun = serde_json::from_slice(
+        &fs::read(root.join("fixtures/agent-eval/public-benchmark-dry-run.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(dry_run.schema, "prog.agent_eval.public_benchmark_dry_run");
+    assert!(dry_run.synthetic);
+    let public_benchmarks = dry_run
+        .benchmarks
+        .into_iter()
+        .map(|fixture| public_benchmark_report(fixture, dry_run.synthetic))
+        .collect::<Vec<_>>();
     let live_trials = Vec::new();
     let uncertainty = None;
     let claim_eligible = live_claim_eligible(&live_trials, uncertainty.as_ref());
@@ -588,11 +713,14 @@ fn build_report(root: &Path, trace_results: Vec<TraceResult>) -> AgentEvalReport
         },
         live_trials,
         uncertainty,
+        public_benchmarks,
         strategy_status,
         trace_results,
         summary,
         limitations: vec![
             "checked-in traces are synthetic grader fixtures, not model runs".to_string(),
+            "checked-in public-benchmark trials are a synthetic reporting dry run, not model runs"
+                .to_string(),
             "no provider token accounting is available without credentialed live trials"
                 .to_string(),
             "synthetic replay byte counts include environment-specific absolute paths and are not persisted as cross-platform performance metrics"
@@ -602,8 +730,234 @@ fn build_report(root: &Path, trace_results: Vec<TraceResult>) -> AgentEvalReport
     }
 }
 
+fn public_benchmark_report(
+    fixture: PublicBenchmarkFixture,
+    synthetic: bool,
+) -> PublicBenchmarkReport {
+    assert!(!fixture.trials.is_empty());
+    let first = &fixture.trials[0];
+    let provider = first.provider.clone();
+    let model = first.model.clone();
+    let model_version = first.model_version.clone();
+    for trial in &fixture.trials {
+        assert_eq!(trial.benchmark.as_deref(), Some(fixture.benchmark.as_str()));
+        assert!(trial.workflow_id.is_none());
+        assert!(
+            trial
+                .task_id
+                .as_deref()
+                .is_some_and(|task| !task.is_empty())
+        );
+        assert!(PUBLIC_BENCHMARK_ARMS.contains(&trial.arm.as_str()));
+        assert_eq!(trial.provider, provider);
+        assert_eq!(trial.model, model);
+        assert_eq!(trial.model_version, model_version);
+        assert_eq!(trial.harness_version, fixture.harness_version);
+        assert!(trial.started_at.starts_with(&fixture.date));
+        assert_eq!(trial.timed_out, trial.dropout.as_deref() == Some("timeout"));
+    }
+
+    let mut task_arms = BTreeSet::new();
+    for trial in &fixture.trials {
+        assert!(task_arms.insert((trial.task_id.as_deref().unwrap(), trial.arm.as_str())));
+    }
+
+    let n_per_arm = PUBLIC_BENCHMARK_ARMS
+        .into_iter()
+        .map(|arm| {
+            (
+                arm.to_string(),
+                fixture
+                    .trials
+                    .iter()
+                    .filter(|trial| trial.arm == arm)
+                    .count() as u64,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(n_per_arm["raw"], n_per_arm["prog"]);
+
+    let mut wilson_95 = Vec::new();
+    let mut false_completion_counts = BTreeMap::new();
+    let mut dropout_counts = BTreeMap::new();
+    for arm in PUBLIC_BENCHMARK_ARMS {
+        let trials = fixture
+            .trials
+            .iter()
+            .filter(|trial| trial.arm == arm)
+            .collect::<Vec<_>>();
+        let evaluable = trials
+            .iter()
+            .filter(|trial| trial.dropout.is_none() && trial.resolved.is_some())
+            .copied()
+            .collect::<Vec<_>>();
+        let resolved = evaluable
+            .iter()
+            .filter(|trial| trial.resolved == Some(true))
+            .count() as u64;
+        let false_completions = evaluable
+            .iter()
+            .filter(|trial| trial.claimed_success == Some(true) && trial.resolved == Some(false))
+            .count() as u64;
+        wilson_95.push(wilson_interval(
+            arm,
+            "resolved_rate",
+            resolved,
+            evaluable.len() as u64,
+        ));
+        wilson_95.push(wilson_interval(
+            arm,
+            "false_completion_rate",
+            false_completions,
+            evaluable.len() as u64,
+        ));
+        false_completion_counts.insert(arm.to_string(), false_completions);
+        dropout_counts.insert(
+            arm.to_string(),
+            trials
+                .iter()
+                .filter(|trial| trial.dropout.is_some())
+                .count() as u64,
+        );
+    }
+
+    let mcnemar = mcnemar_report(&fixture.trials);
+    let uncertainty = public_uncertainty(&fixture.benchmark, &wilson_95);
+    let claim_eligible = !synthetic
+        && public_benchmark_claim_eligible(&fixture.trials, &fixture.benchmark, Some(&uncertainty));
+    let interpretation = match mcnemar.prog_only.cmp(&mcnemar.raw_only) {
+        Ordering::Greater => "positive paired result for prog".to_string(),
+        Ordering::Less => "negative paired result for prog".to_string(),
+        Ordering::Equal => "null paired result".to_string(),
+    };
+
+    PublicBenchmarkReport {
+        benchmark: fixture.benchmark,
+        synthetic,
+        harness: fixture.harness,
+        harness_version: fixture.harness_version,
+        provider,
+        model,
+        model_version,
+        date: fixture.date,
+        subset: fixture.subset,
+        seed: fixture.seed,
+        n_per_arm,
+        trials: fixture.trials,
+        wilson_95,
+        mcnemar,
+        false_completion_counts,
+        dropout_counts,
+        claim_eligible,
+        relative_effect_only: fixture.relative_effect_only,
+        contamination_caveat: fixture.contamination_caveat,
+        interpretation,
+    }
+}
+
+fn public_uncertainty(benchmark: &str, intervals: &[ProportionInterval]) -> UncertaintyReport {
+    UncertaintyReport {
+        method: "wilson-score-95".to_string(),
+        confidence_level: 95,
+        intervals: intervals
+            .iter()
+            .map(|interval| UncertaintyInterval {
+                workflow_id: None,
+                benchmark: Some(benchmark.to_string()),
+                arm: interval.arm.clone(),
+                metric: interval.metric.clone(),
+                trials: interval.trials,
+                lower: interval.lower,
+                median: interval.estimate,
+                upper: interval.upper,
+            })
+            .collect(),
+    }
+}
+
+fn wilson_interval(arm: &str, metric: &str, successes: u64, trials: u64) -> ProportionInterval {
+    assert!(trials > 0);
+    assert!(successes <= trials);
+    let n = trials as f64;
+    let estimate = successes as f64 / n;
+    let z = 1.959_963_984_540_054_f64;
+    let z_squared = z * z;
+    let denominator = 1.0 + z_squared / n;
+    let center = (estimate + z_squared / (2.0 * n)) / denominator;
+    let radius =
+        z * ((estimate * (1.0 - estimate) / n + z_squared / (4.0 * n * n)).sqrt()) / denominator;
+    ProportionInterval {
+        arm: arm.to_string(),
+        metric: metric.to_string(),
+        successes,
+        trials,
+        estimate: round_six(estimate),
+        lower: round_six((center - radius).max(0.0)),
+        upper: round_six((center + radius).min(1.0)),
+    }
+}
+
+fn mcnemar_report(trials: &[LiveTrial]) -> McNemarReport {
+    let mut outcomes = BTreeMap::<&str, BTreeMap<&str, bool>>::new();
+    for trial in trials {
+        if trial.dropout.is_none()
+            && let (Some(task), Some(resolved)) = (trial.task_id.as_deref(), trial.resolved)
+        {
+            assert!(
+                outcomes
+                    .entry(task)
+                    .or_default()
+                    .insert(&trial.arm, resolved)
+                    .is_none()
+            );
+        }
+    }
+    let mut complete_pairs = 0_u64;
+    let mut raw_only = 0_u64;
+    let mut prog_only = 0_u64;
+    for pair in outcomes.values() {
+        let (Some(raw), Some(prog)) = (pair.get("raw"), pair.get("prog")) else {
+            continue;
+        };
+        complete_pairs += 1;
+        match (*raw, *prog) {
+            (true, false) => raw_only += 1,
+            (false, true) => prog_only += 1,
+            _ => {}
+        }
+    }
+    McNemarReport {
+        method: "exact-binomial-two-sided".to_string(),
+        complete_pairs,
+        raw_only,
+        prog_only,
+        exact_two_sided_p: round_six(exact_mcnemar_p(raw_only, prog_only)),
+    }
+}
+
+fn exact_mcnemar_p(raw_only: u64, prog_only: u64) -> f64 {
+    let discordant = raw_only + prog_only;
+    if discordant == 0 {
+        return 1.0;
+    }
+    let tail = raw_only.min(prog_only);
+    let mut combination = 1.0_f64;
+    let mut cumulative = 0.0_f64;
+    for successes in 0..=tail {
+        if successes > 0 {
+            combination *= (discordant - successes + 1) as f64 / successes as f64;
+        }
+        cumulative += combination * 0.5_f64.powf(discordant as f64);
+    }
+    (2.0 * cumulative).min(1.0)
+}
+
+fn round_six(value: f64) -> f64 {
+    (value * 1_000_000.0).round() / 1_000_000.0
+}
+
 fn markdown_report(report: &AgentEvalReport) -> String {
-    let report = format!(
+    let preamble = format!(
         "# Actual-agent evaluation\n\n\
          Current status: **not claim-eligible**. This checked-in replay validates the graders; it is not an actual-agent A/B result.\n\n\
          Regenerate with {BLESS_COMMAND}.\n\n\
@@ -622,7 +976,83 @@ fn markdown_report(report: &AgentEvalReport) -> String {
         report.fixed_context.prog_skill_bytes,
         report.fixed_context.prog_skill_estimated_tokens,
     );
-    format!("{report}\n{}\n", live_claim_contract_markdown())
+    format!(
+        "{preamble}\n{}\n\n{}\n",
+        public_benchmark_markdown(&report.public_benchmarks),
+        live_claim_contract_markdown()
+    )
+}
+
+fn public_benchmark_markdown(reports: &[PublicBenchmarkReport]) -> String {
+    let mut output = String::from(
+        "## Public-benchmark reporting dry run\n\n\
+         Every result in this section is synthetic and exists only to exercise the reporting and claim-gate path before credentialed spend. The per-trial source is [`fixtures/agent-eval/public-benchmark-dry-run.json`](../fixtures/agent-eval/public-benchmark-dry-run.json). These values are not performance evidence. Wilson denominators include only trials with an official result; attempted N and dropouts are shown separately.\n",
+    );
+    for report in reports {
+        writeln!(output, "\n### {} (synthetic)\n", report.benchmark).unwrap();
+        writeln!(
+            output,
+            "Harness: {} {}. Model: {}/{} {}. Date: {}. Subset: {}. Seed: `{}`. N per arm: raw {}, prog {}.",
+            report.harness,
+            report.harness_version,
+            report.provider,
+            report.model,
+            report.model_version.as_deref().unwrap_or("version unavailable"),
+            report.date,
+            report.subset,
+            report.seed,
+            report.n_per_arm["raw"],
+            report.n_per_arm["prog"],
+        )
+        .unwrap();
+        output.push('\n');
+        output.push_str("| Arm | Resolved (Wilson 95% CI) | False completion (Wilson 95% CI) | Dropouts |\n|---|---:|---:|---:|\n");
+        for arm in PUBLIC_BENCHMARK_ARMS {
+            let resolved = report
+                .wilson_95
+                .iter()
+                .find(|interval| interval.arm == arm && interval.metric == "resolved_rate")
+                .unwrap();
+            let false_completion = report
+                .wilson_95
+                .iter()
+                .find(|interval| interval.arm == arm && interval.metric == "false_completion_rate")
+                .unwrap();
+            writeln!(
+                output,
+                "| {arm} | {}/{} ({:.3}–{:.3}) | {}/{} ({:.3}–{:.3}) | {} |",
+                resolved.successes,
+                resolved.trials,
+                resolved.lower,
+                resolved.upper,
+                false_completion.successes,
+                false_completion.trials,
+                false_completion.lower,
+                false_completion.upper,
+                report.dropout_counts[arm],
+            )
+            .unwrap();
+        }
+        write!(
+            output,
+            "\nMcNemar exact two-sided result: {} complete pairs, raw-only {}, prog-only {}, p = {:.3}. Interpretation: **{}**. Claim eligible: **{}**.",
+            report.mcnemar.complete_pairs,
+            report.mcnemar.raw_only,
+            report.mcnemar.prog_only,
+            report.mcnemar.exact_two_sided_p,
+            report.interpretation,
+            report.claim_eligible,
+        )
+        .unwrap();
+        if report.relative_effect_only {
+            output.push_str(" Only a relative arm effect may be interpreted; this report does not support an absolute or SOTA claim.");
+        }
+        if let Some(caveat) = &report.contamination_caveat {
+            write!(output, " Contamination caveat: {caveat}").unwrap();
+        }
+        output.push('\n');
+    }
+    output
 }
 
 fn live_claim_contract_markdown() -> &'static str {
@@ -642,6 +1072,8 @@ inventing results:
   fabricated;
 - dropouts and all five replay graders, including `no_false_completion`, remain
   explicit per trial;
+- public-benchmark trials use the same `LiveTrial` contract and gate, adding
+  only benchmark, task, resolved, claimed-success, and timeout fields;
 - `uncertainty` records its method, confidence level, trial count, and ordered
   intervals per workflow/arm/metric.
 
@@ -651,7 +1083,10 @@ workflows have more than one completed trial; provider/model/harness/time
 metadata and required token fields are present; no trial claims a false
 completion; and uncertainty covers both the north-star efficiency metric and
 false-completion count for every cell. Negative or mixed outcomes can still be
-claim-eligible when their accounting and uncertainty are complete."#
+claim-eligible when their accounting and uncertainty are complete. Public
+benchmark cells apply the same checks to raw/prog arms with Wilson resolved and
+false-completion intervals; incomplete usage in either arm keeps the report
+claim-ineligible."#
 }
 
 fn observation_id(value: &Value) -> &str {
@@ -665,6 +1100,16 @@ const REQUIRED_LIVE_METRICS: [&str; 2] = [
     "verified_loop_completions_per_million_model_tokens",
     "false_completions",
 ];
+const PUBLIC_BENCHMARK_ARMS: [&str; 2] = ["raw", "prog"];
+const REQUIRED_PUBLIC_BENCHMARK_METRICS: [&str; 2] = ["resolved_rate", "false_completion_rate"];
+
+struct ClaimGateSpec<'a> {
+    subjects: &'a [&'a str],
+    arms: &'a [&'a str],
+    minimum_trials_per_cell: u64,
+    required_metrics: &'a [&'a str],
+    requires_task_outcomes: bool,
+}
 
 fn strategy_status(live_trials: &[LiveTrial]) -> Vec<StrategyStatus> {
     LIVE_STRATEGIES
@@ -694,13 +1139,55 @@ fn strategy_status(live_trials: &[LiveTrial]) -> Vec<StrategyStatus> {
 }
 
 fn live_claim_eligible(live_trials: &[LiveTrial], uncertainty: Option<&UncertaintyReport>) -> bool {
+    claim_gate_eligible(
+        live_trials,
+        uncertainty,
+        &ClaimGateSpec {
+            subjects: &LIVE_WORKFLOWS,
+            arms: &LIVE_STRATEGIES,
+            minimum_trials_per_cell: MIN_LIVE_TRIALS_PER_CELL,
+            required_metrics: &REQUIRED_LIVE_METRICS,
+            requires_task_outcomes: false,
+        },
+    )
+}
+
+fn public_benchmark_claim_eligible(
+    trials: &[LiveTrial],
+    benchmark: &str,
+    uncertainty: Option<&UncertaintyReport>,
+) -> bool {
+    claim_gate_eligible(
+        trials,
+        uncertainty,
+        &ClaimGateSpec {
+            subjects: &[benchmark],
+            arms: &PUBLIC_BENCHMARK_ARMS,
+            minimum_trials_per_cell: MIN_LIVE_TRIALS_PER_CELL,
+            required_metrics: &REQUIRED_PUBLIC_BENCHMARK_METRICS,
+            requires_task_outcomes: true,
+        },
+    )
+}
+
+fn claim_gate_eligible(
+    live_trials: &[LiveTrial],
+    uncertainty: Option<&UncertaintyReport>,
+    spec: &ClaimGateSpec<'_>,
+) -> bool {
     let mut cells = BTreeMap::<(&str, &str), u64>::new();
     for trial in live_trials {
         let metadata_complete = !trial.provider.is_empty()
             && !trial.model.is_empty()
+            && trial
+                .model_version
+                .as_deref()
+                .is_some_and(|version| !version.is_empty())
             && !trial.harness_version.is_empty()
             && !trial.started_at.is_empty()
+            && !trial.settings.is_empty()
             && trial.dropout.is_none()
+            && !trial.timed_out
             && trial
                 .token_usage
                 .provider_total_tokens()
@@ -711,28 +1198,44 @@ fn live_claim_eligible(live_trials: &[LiveTrial], uncertainty: Option<&Uncertain
                 .get("no_false_completion")
                 .copied()
                 .unwrap_or(false);
-        if !metadata_complete {
+        let task_outcomes_complete = !spec.requires_task_outcomes
+            || (trial
+                .task_id
+                .as_deref()
+                .is_some_and(|task_id| !task_id.is_empty())
+                && trial.resolved.is_some()
+                && trial.claimed_success.is_some());
+        if !metadata_complete || !task_outcomes_complete {
             return false;
         }
-        let Some(workflow) = LIVE_WORKFLOWS
-            .into_iter()
-            .find(|workflow| *workflow == trial.workflow_id)
+        let subject = match (trial.workflow_id.as_deref(), trial.benchmark.as_deref()) {
+            (Some(workflow), None) => workflow,
+            (None, Some(benchmark)) => benchmark,
+            _ => return false,
+        };
+        let Some(subject) = spec
+            .subjects
+            .iter()
+            .copied()
+            .find(|allowed| *allowed == subject)
         else {
             return false;
         };
-        let Some(strategy) = LIVE_STRATEGIES
-            .into_iter()
-            .find(|strategy| *strategy == trial.arm)
+        let Some(strategy) = spec
+            .arms
+            .iter()
+            .copied()
+            .find(|allowed| *allowed == trial.arm)
         else {
             return false;
         };
-        *cells.entry((workflow, strategy)).or_insert(0) += 1;
+        *cells.entry((subject, strategy)).or_insert(0) += 1;
     }
 
-    if cells.len() != LIVE_WORKFLOWS.len() * LIVE_STRATEGIES.len()
+    if cells.len() != spec.subjects.len() * spec.arms.len()
         || cells
             .values()
-            .any(|count| *count < MIN_LIVE_TRIALS_PER_CELL)
+            .any(|count| *count < spec.minimum_trials_per_cell)
     {
         return false;
     }
@@ -746,19 +1249,19 @@ fn live_claim_eligible(live_trials: &[LiveTrial], uncertainty: Option<&Uncertain
         return false;
     }
 
-    for (workflow, strategy) in cells.keys() {
-        for metric in REQUIRED_LIVE_METRICS {
+    for (subject, strategy) in cells.keys() {
+        for metric in spec.required_metrics {
             let matching = uncertainty
                 .intervals
                 .iter()
                 .filter(|interval| {
-                    interval.workflow_id == *workflow
+                    interval_subject(interval) == Some(*subject)
                         && interval.arm == *strategy
-                        && interval.metric == metric
+                        && interval.metric == *metric
                 })
                 .collect::<Vec<_>>();
             if matching.len() != 1
-                || matching[0].trials != cells[&(*workflow, *strategy)]
+                || matching[0].trials != cells[&(*subject, *strategy)]
                 || !matching[0].lower.is_finite()
                 || !ordered(matching[0].lower, matching[0].median).unwrap_or(false)
                 || !matching[0].median.is_finite()
@@ -769,6 +1272,17 @@ fn live_claim_eligible(live_trials: &[LiveTrial], uncertainty: Option<&Uncertain
         }
     }
     true
+}
+
+fn interval_subject(interval: &UncertaintyInterval) -> Option<&str> {
+    match (
+        interval.workflow_id.as_deref(),
+        interval.benchmark.as_deref(),
+    ) {
+        (Some(workflow), None) => Some(workflow),
+        (None, Some(benchmark)) => Some(benchmark),
+        _ => None,
+    }
 }
 
 fn ordered(left: f64, right: f64) -> Option<bool> {
@@ -810,6 +1324,47 @@ fn live_claim_gate_requires_complete_tokens_multi_trial_evidence_and_uncertainty
 }
 
 #[test]
+fn public_benchmark_uses_the_shared_gate_and_rejects_incomplete_raw_usage() {
+    let benchmark = "synthetic-public-benchmark";
+    let mut trials = Vec::new();
+    for arm in PUBLIC_BENCHMARK_ARMS {
+        for index in 0..MIN_LIVE_TRIALS_PER_CELL {
+            let mut trial = complete_live_trial("unused", arm, index);
+            trial.trial_id = format!("{benchmark}-{arm}-{index}");
+            trial.workflow_id = None;
+            trial.benchmark = Some(benchmark.to_string());
+            trial.task_id = Some(format!("task-{index}"));
+            trial.resolved = Some(index == 0);
+            trial.claimed_success = Some(index == 0);
+            trials.push(trial);
+        }
+    }
+    let intervals = PUBLIC_BENCHMARK_ARMS
+        .into_iter()
+        .flat_map(|arm| {
+            [
+                wilson_interval(arm, "resolved_rate", 1, 2),
+                wilson_interval(arm, "false_completion_rate", 0, 2),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let uncertainty = public_uncertainty(benchmark, &intervals);
+    assert!(public_benchmark_claim_eligible(
+        &trials,
+        benchmark,
+        Some(&uncertainty)
+    ));
+
+    let raw_trial = trials.iter_mut().find(|trial| trial.arm == "raw").unwrap();
+    raw_trial.token_usage.provider_output_tokens = None;
+    assert!(!public_benchmark_claim_eligible(
+        &trials,
+        benchmark,
+        Some(&uncertainty)
+    ));
+}
+
+#[test]
 fn provider_totals_stay_unavailable_when_optional_provider_fields_are_missing() {
     let mut usage = complete_live_usage();
     assert_eq!(usage.provider_total_tokens(), Some(90));
@@ -841,7 +1396,9 @@ fn complete_live_usage() -> LiveTokenUsage {
 fn complete_live_trial(workflow_id: &str, arm: &str, index: u64) -> LiveTrial {
     LiveTrial {
         trial_id: format!("{workflow_id}-{arm}-{index}"),
-        workflow_id: workflow_id.to_string(),
+        workflow_id: Some(workflow_id.to_string()),
+        benchmark: None,
+        task_id: None,
         arm: arm.to_string(),
         provider: "test-provider".to_string(),
         model: "test-model".to_string(),
@@ -852,6 +1409,9 @@ fn complete_live_trial(workflow_id: &str, arm: &str, index: u64) -> LiveTrial {
         trial_seed: Some("0".to_string()),
         settings: BTreeMap::from([("temperature".to_string(), "0".to_string())]),
         dropout: None,
+        timed_out: false,
+        resolved: None,
+        claimed_success: None,
         graders: BTreeMap::from([
             ("answer_correct".to_string(), true),
             ("evidence_resolves".to_string(), true),
@@ -886,11 +1446,14 @@ fn uncertainty_for(trials: &[LiveTrial]) -> UncertaintyReport {
         for strategy in LIVE_STRATEGIES {
             let count = trials
                 .iter()
-                .filter(|trial| trial.workflow_id == workflow && trial.arm == strategy)
+                .filter(|trial| {
+                    trial.workflow_id.as_deref() == Some(workflow) && trial.arm == strategy
+                })
                 .count() as u64;
             for metric in REQUIRED_LIVE_METRICS {
                 intervals.push(UncertaintyInterval {
-                    workflow_id: workflow.to_string(),
+                    workflow_id: Some(workflow.to_string()),
+                    benchmark: None,
                     arm: strategy.to_string(),
                     metric: metric.to_string(),
                     trials: count,
