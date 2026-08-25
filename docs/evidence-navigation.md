@@ -34,6 +34,11 @@ Recipes compose these primitives without becoming an agent runtime:
 ```bash
 prog recipe cargo-test -- cargo test
 prog recipe pytest -- pytest -q
+prog recipe vitest -- vitest run
+prog recipe playwright -- playwright test
+prog recipe ruff -- ruff check .
+prog recipe biome -- biome check .
+prog recipe semgrep -- semgrep scan --config p/default .
 prog recipe diff-review --file change.diff
 prog recipe logs-root-cause --file service.log
 ```
@@ -45,6 +50,18 @@ The Cargo recipe prefers compiler JSON without hiding the argv change. For
 example, `prog recipe cargo-test -- cargo test` records and executes
 `["cargo", "test", "--message-format=json"]`; explicit existing
 `--message-format` options are preserved.
+
+Vitest, Playwright, Bun, and Deno recipes configure the runner's JUnit output
+to a private temporary file, then observe that file once with the `junit` lens.
+Ruff, Biome, and Semgrep do the same with SARIF and the `sarif` lens. The recipe
+envelope records the exact runner argv, the report-observation step, and the
+child exit status. A failing tool can therefore return ranked,
+cursor-backed diagnostics without claiming the command succeeded. Conflicting
+user-supplied reporter destinations are rejected instead of silently selecting
+an arbitrary report.
+
+See [modern-toolchain-recipes.md](modern-toolchain-recipes.md) for the exact
+flags, compatibility notes, and the checked-in raw-output comparison.
 
 ```bash
 prog session start --goal "debug checkout failure"

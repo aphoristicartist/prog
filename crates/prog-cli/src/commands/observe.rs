@@ -39,11 +39,12 @@ pub(crate) fn observe_artifact(
     // retain distinct entries. Invocation identity must describe how the
     // artifact was acquired, not what it contained; otherwise every content
     // change makes a repeated observation incomparable by construction.
+    let invocation_input = args.invocation_identity.as_ref().unwrap_or(&input.input);
     let invocation_fingerprint = Store::cache_key(
         "observe",
         &input.name,
         &json!({
-            "input": &input.input,
+            "input": invocation_input,
             "mime": &input.mime,
         }),
     )?;

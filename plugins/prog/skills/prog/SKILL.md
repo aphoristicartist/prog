@@ -48,9 +48,11 @@ observe/call/run -> ranked findings -> inspect/search -> evidence exact path -> 
   --kind error|warning|test_failure` for structural evidence.
 - Use `prog evidence <cursor> --path <json-pointer>` for a compact citation
   block. Use `prog expand` only when the evidence excerpt is insufficient.
-- Use `prog recipe <name> -- <command...>` for known domains (`cargo-test`,
-  `pytest`, `npm-test`, `go-test`, `gh-issues`, `diff-review`,
-  `logs-root-cause`); it applies a lens and default goal in one step.
+- Use `prog recipe <name> -- <argv...>` for `cargo-test`, `pytest`, `npm-test`,
+  `go-test`, `vitest`, `playwright`, `bun-test`, `deno-test`, `ruff`, `biome`,
+  `semgrep`, `gh-issues`, `diff-review`, and `logs-root-cause`. Modern ones
+  observe a temporary JUnit/SARIF report and expose exact argv.
+- Wrappers stay argv: `pytest -- uv run pytest -q` and `npm-test -- pnpm test`.
 - Use `prog cost` and `prog cache` to inspect stored bytes and retention when a
   session has accumulated many observations.
 

@@ -4,34 +4,34 @@
     ".agents/prog-hooks/manifest.json": "9a5f25e3ffeb3ea20dd576a6f7eab7ec3807a01f69e3cb52c6e87d5b7d783ea7",
     ".agents/prog-hooks/prog-run.sh": "78319a80c4861f88dc12e57ca9488763ff2725f0e85e0cf05cbadfdcd6541eae",
     ".agents/prog-hooks/uninstall.sh": "79dabdeca624b5d7bd7edf7d72ae3461034d8b81ce9af28fb2cd5a06886ab65a",
-    ".agents/skills/prog/SKILL.md": "ebca3d3160d87fe15056a41a71ff08215cf0f35d0d9e3f8e32f659a359d04c79"
+    ".agents/skills/prog/SKILL.md": "5a9771252f1a048d82c4a8ffdc3e8920832b7284cbae437e5b1d22e1dccee9e5"
   },
   "codex": {
     ".codex/prog-hooks/README.md": "bd0194d8d8f4fc0519f100dbc95602e65b810a40a4c3f928c458e3aa8c239a2a",
     ".codex/prog-hooks/manifest.json": "a09733cc9c0722f459a7d52b2f2a9d61d5a24b1d48ff27836b5e67775bcaa535",
     ".codex/prog-hooks/prog-run.sh": "0c610997105e3806997025a5f62ab9665ae0d93d39c9fab359ccd2b3bacba0ab",
     ".codex/prog-hooks/uninstall.sh": "bf07f8cc38335093c81e0781b782b646df4d270afb41b361baae43213011526f",
-    ".agents/skills/prog/SKILL.md": "ebca3d3160d87fe15056a41a71ff08215cf0f35d0d9e3f8e32f659a359d04c79"
+    ".agents/skills/prog/SKILL.md": "5a9771252f1a048d82c4a8ffdc3e8920832b7284cbae437e5b1d22e1dccee9e5"
   },
   "claude-code": {
     ".claude/prog-hooks/README.md": "ea89620d0b1b58fcecd2cff17a5e471a8c94c1fae7cd95089e4e205ff7d7baf7",
     ".claude/prog-hooks/manifest.json": "9e35b316fd70b819d5e87d91212e1819984a51a736f22df5560dbaea52c35f0e",
     ".claude/prog-hooks/prog-run.sh": "1210fa9676a78ec8b6e7917c7d5211f197cfb37b42f19e05fc710f769293df0e",
     ".claude/prog-hooks/uninstall.sh": "17317e1b08f7b07f1bae41f6b7d81377a6880e9b2c5fa1b0ebe504949252ae9f",
-    ".claude/skills/prog/SKILL.md": "ebca3d3160d87fe15056a41a71ff08215cf0f35d0d9e3f8e32f659a359d04c79"
+    ".claude/skills/prog/SKILL.md": "5a9771252f1a048d82c4a8ffdc3e8920832b7284cbae437e5b1d22e1dccee9e5"
   },
   "cursor": {
     ".cursor/prog-hooks/README.md": "1b741ccfbb4aa21cc98d9ecc598a98bd71702886a2737ecdf9d7f02876c013b0",
     ".cursor/prog-hooks/manifest.json": "a434184e527065285b5d8cfd9e7c0375c566094dad75789bd3868707bb20eca3",
     ".cursor/prog-hooks/prog-run.sh": "ebdb62a3300cbfa3cf74cb78a37bf9d90df3e094ce6e8db0858ec2d90642d5e0",
     ".cursor/prog-hooks/uninstall.sh": "e8f8b5911432da9ffcf9ed24059d03155e6b421252f45ad5afc7bd96f6621d23",
-    ".cursor/rules/prog.mdc": "14d509c733f475d9f6cde21668ed3649f7909baf66bdfa06b8667f7b04fef35d"
+    ".cursor/rules/prog.mdc": "650b9a2e8b6fbdb66270e355cc3aaed43c20f8e1fc95f77d8b6629f42dec264a"
   },
   "gemini-cli": {
     ".gemini/prog-hooks/README.md": "b659e17e4340024cac40e08319ea6e6d2994df0512a3f0909d0dd1de02828e49",
     ".gemini/prog-hooks/manifest.json": "9403dee65e2d9ab5a25a2f672db40c1a33b5b799a032cefe11d0bb26077cca06",
     ".gemini/prog-hooks/prog-run.sh": "e257c0771ac2df8c52e1742d5f41feb811e6eb2f53d2fac116179bf1415ab13d",
     ".gemini/prog-hooks/uninstall.sh": "087729265a30980ed67fe446c3638080255adcb661cdc2685069ed62394f0800",
-    ".gemini/skills/prog/SKILL.md": "ebca3d3160d87fe15056a41a71ff08215cf0f35d0d9e3f8e32f659a359d04c79"
+    ".gemini/skills/prog/SKILL.md": "5a9771252f1a048d82c4a8ffdc3e8920832b7284cbae437e5b1d22e1dccee9e5"
   }
 }

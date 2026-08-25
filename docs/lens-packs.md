@@ -45,6 +45,11 @@ CI validates that:
 CLI tests also exercise real `run`, `observe`, and `call` flows with first-party
 lenses and expansion from the redacted cache.
 
+The `vitest`, `playwright`, `bun-test`, and `deno-test` recipes feed generated
+reports to `junit`; `ruff`, `biome`, and `semgrep` feed generated reports to
+`sarif`. These routes reuse the same parsers and manifests rather than adding
+tool-specific formats.
+
 ## Counterexamples
 
 Do not use the pack when a native query can return exactly the fields needed, a
