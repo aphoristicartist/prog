@@ -1,0 +1,45 @@
+jobs_dir: /tmp/prog-terminal-bench-pilot/prog-first
+n_attempts: 1
+timeout_multiplier: 1.0
+
+orchestrator:
+  type: local
+  n_concurrent_trials: 1
+  quiet: false
+  retry:
+    max_retries: 0
+
+environment:
+  type: docker
+  force_build: false
+  delete: true
+  env:
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+
+agents:
+  - import_path: claude_code_with_prog:ClaudeCodeWithProg
+    model_name: anthropic/claude-fable-5
+    kwargs:
+      version: "2.1.241"
+      reasoning_effort: high
+      max_turns: 100
+      max_budget_usd: "10.00"
+      prog_binary_path: ${PROG_PILOT_BINARY}
+      expected_prog_version: "0.1.1"
+  - name: claude-code
+    model_name: anthropic/claude-fable-5
+    kwargs:
+      version: "2.1.241"
+      reasoning_effort: high
+      max_turns: 100
+      max_budget_usd: "10.00"
+
+datasets:
+  - repo: harbor-framework/terminal-bench-2@2fd12b88aafdd04a52c298e3940bcb189f9766d6
+    path: .
+    task_names:
+      - caffe-cifar-10
+      - multi-source-data-merger
+      - raman-fitting
+      - model-extraction-relu-logits
+      - torch-tensor-parallelism

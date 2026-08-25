@@ -1,0 +1,26 @@
+{
+  "schema": "prog.agent_eval.public_benchmark_outcomes",
+  "benchmark": "terminal-bench-2.0",
+  "preregistration": "fixtures/agent-eval/terminal-bench-2/preregistration.json",
+  "status": "pending_budget_approval",
+  "trial_contract": [
+    "task_id",
+    "arm",
+    "official_resolved",
+    "claimed_success",
+    "verified_completion",
+    "dropout",
+    "dropout_reason",
+    "provider_input_tokens",
+    "provider_output_tokens",
+    "cost_usd",
+    "tool_calls",
+    "wall_time_ms"
+  ],
+  "trials": [],
+  "claim_eligible": false,
+  "limitations": [
+    "No live benchmark trial has been run.",
+    "This placeholder is not evidence of performance."
+  ]
+}

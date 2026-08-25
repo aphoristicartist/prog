@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Preregistered the Terminal-Bench 2.0 paired public pilot before any live
+  model spend: the benchmark, harness, model, resource-bounded seeded subset,
+  raw/prog arm order, stopping rule, analysis, and falsification conditions are
+  machine-readable and CI-gated; the checked-in outcome remains explicitly
+  pending and claim-ineligible (#236).
 - Extended route guidance to the 2026 toolchain: vitest, Playwright, Deno,
   uv, Ruff, Biome, tsc, Jest, Terraform/OpenTofu, Trivy, Semgrep, and
   `gh` log/API commands now receive conservative progressive-disclosure
