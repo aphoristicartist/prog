@@ -105,7 +105,7 @@ use commands::run::{
 };
 
 static RUN_CAPTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-const PROG_AGENT_SKILL: &str = include_str!("../../../skills/prog/SKILL.md");
+const PROG_AGENT_SKILL: &str = include_str!("../assets/prog-skill.md");
 const DEFAULT_DISCLOSURE_BUDGET_BYTES: usize = 16 * 1024;
 const MAX_DISCLOSURE_BUDGET_BYTES: usize = 64 * 1024;
 const MIN_DISCLOSURE_BUDGET_BYTES: usize = 512;

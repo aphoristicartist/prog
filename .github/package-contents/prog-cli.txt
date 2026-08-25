@@ -3,6 +3,7 @@ Cargo.lock
 Cargo.toml
 Cargo.toml.orig
 LICENSE
+assets/prog-skill.md
 build.rs
 integration-manifests/agent-skills.json
 integration-manifests/agents-md.json

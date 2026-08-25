@@ -43,7 +43,10 @@ fn codex_plugin_and_marketplace_are_self_consistent() {
 
     let canonical_skill = fs::read_to_string(root.join("skills/prog/SKILL.md")).unwrap();
     let plugin_skill = fs::read_to_string(plugin_root.join("skills/prog/SKILL.md")).unwrap();
+    let packaged_skill =
+        fs::read_to_string(root.join("crates/prog-cli/assets/prog-skill.md")).unwrap();
     assert_eq!(plugin_skill, canonical_skill);
+    assert_eq!(packaged_skill, canonical_skill);
     assert_eq!(
         fs::read_to_string(plugin_root.join("LICENSE")).unwrap(),
         fs::read_to_string(root.join("LICENSE")).unwrap()

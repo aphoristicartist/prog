@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 include = [
     "src/**/*.rs",
+    "assets/prog-skill.md",
     "integration-manifests/*.json",
     "build.rs",
     "Cargo.toml",
