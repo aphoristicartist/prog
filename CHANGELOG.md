@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added an installed skill/CLI coding-loop smoke using a real Rust failure,
+  exact cached evidence, an external fixture fix, and fresh verification.
+  Narrower, stale, and truncated evidence remain blocking; the report records
+  actual command and exported-file bytes without making agent or facade
+  performance claims (#120).
 - Fixed the `prog-cli` crate tarball so its embedded agent skill is packaged
   inside the crate and verified by the release dry-run build.
 - Routed public-benchmark A/B records through the existing actual-agent claim

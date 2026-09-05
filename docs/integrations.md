@@ -74,14 +74,17 @@ It calls `prog route` over the exact argv. `progressive` guidance prepends
 directly. Wrapping identical argv is capture, while substituting a different or
 narrower command is prohibited. The wrapper never reparses a shell string.
 
-The host-visible facade has three operations in the generated manifest:
+The generated manifest groups the CLI workflow into three conceptual operations:
 
 - `observe`: command argv, file capture, or a registered source call
 - `evidence`: exact path retrieval or explicitly bounded cached search
 - `status`: readiness alone or readiness plus canonical delta/comparability
 
-Advanced CLI commands remain available for debugging and recovery. The facade
-composes the same observation, evidence, delta, and verification contracts.
+Advanced CLI commands remain available for debugging and recovery. These groups
+compose the existing observation, evidence, delta, and verification contracts.
+The [installed coding-loop smoke](installed-coding-loop.md) validates the shipped
+skill/CLI workflow. A facade with three registered host operations and its
+measured comparison remain work under #120.
 
 For Codex, this is deliberately a skill plus an explicit argv wrapper, not an
 installed `PreToolUse` rewrite. The current [official Codex Hooks
