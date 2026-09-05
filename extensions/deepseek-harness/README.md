@@ -21,6 +21,14 @@ The package declares `dsh.bundle.patch`, so DeepSeek Harness adds the
 `prog-disclosure` layer automatically. Configuration keys are `minBytes`,
 `budgetBytes`, `timeoutMs`, `storeDir`, `cwd`, `progCommand`, and `progArgs`.
 
+Capture helpers use `scrubbedParentEnv()` from the installed host's
+`@deepseek-ai/dsh-subprocess` package. The host's shared filter removes ambient
+credential-shaped names and managed `DSH_*` variables, case-insensitively, while
+retaining ordinary child settings such as `PATH`, `HOME`, locale, proxy
+variables, and `PROG_DIR`. It leaves the harness's own environment intact and
+also applies to configured `progCommand` helpers. The adapter has no credential
+forwarding option; result capture does not need provider credentials.
+
 `timeoutMs` covers the capture helper and drainage of both output pipes under
 one deadline. On supported POSIX hosts, the helper starts in its own process
 group. Timeout, cancellation, failed stdin delivery, and stdout/stderr overflow
@@ -36,5 +44,10 @@ upstream tool has already executed and is never rerun during fallback.
 Run the adapter contract tests with:
 
 ```sh
+npm ci --ignore-scripts --no-audit --no-fund --prefix extensions/deepseek-harness
 npm test --prefix extensions/deepseek-harness
 ```
+
+The lockfile pins the tested host packages. The environment regressions use
+synthetic credentials in an isolated host process and inspect a real capture
+child on both replacement and fallback paths.
