@@ -123,3 +123,11 @@ missing binary, timeout, non-text content, nested calls, and preservation of an
 already-successful original result. Exact-argv wrappers additionally cover cwd,
 environment, quoting, exit status, signal, timeout, cancellation, streaming,
 and pre-execution fallback.
+
+The DeepSeek native adapter additionally exercises inherited stdout/stderr
+after a capture parent exits, late valid output, overflow on either stream,
+pre-aborted signals, short-lived descendants, and descendants outside its
+capture process group. Timeout and cancellation are terminal capture failures;
+closing local pipes does not wait for an escaped descendant. Separate guarded
+host processes verify natural exit after success or fallback, and Linux/macOS
+CI runs these fixtures with the real-binary capture/evidence smoke.
