@@ -124,8 +124,9 @@ function runProg({ command, prefixArgs, args, input, cwd, timeoutMs, signal }) {
         resolve(Buffer.concat(stdout).toString('utf8'))
       }
     })
-    child.stdin.on('error', () => {})
+    // Failed input delivery cannot authorize a valid-looking output prefix.
     // Stream failures cannot leave a reader alive until an inherited EOF.
+    child.stdin.on('error', stop)
     child.stdout.on('error', stop)
     child.stderr.on('error', stop)
     signal?.addEventListener?.('abort', abort, { once: true })

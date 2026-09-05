@@ -23,8 +23,8 @@ The package declares `dsh.bundle.patch`, so DeepSeek Harness adds the
 
 `timeoutMs` covers the capture helper and drainage of both output pipes under
 one deadline. On supported POSIX hosts, the helper starts in its own process
-group. Timeout, cancellation, and stdout/stderr overflow terminate that group,
-close the adapter's pipes, and preserve the original host decision. A valid
+group. Timeout, cancellation, failed stdin delivery, and stdout/stderr overflow
+terminate that group, close the adapter's pipes, and preserve the original host decision. A valid
 JSON prefix cannot become a replacement after capture stops. A signal already
 aborted before capture starts prevents the helper from being launched.
 
