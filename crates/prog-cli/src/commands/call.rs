@@ -163,7 +163,6 @@ pub(crate) async fn call_source(
     let adapter_call =
         execute_callable_conditional(&source, &operation, &call_args, revalidation.as_ref())
             .await?;
-    let mut source_baseline = adapter_source_baseline(profile.kind, &adapter_call.provenance);
     if adapter_call.not_modified {
         let prior = cached_entry.as_ref().ok_or_else(|| CoreError::BadArgs {
             operation: "call --refresh".to_string(),
@@ -190,6 +189,7 @@ pub(crate) async fn call_source(
             .get_payload(&prior.payload_hash)?
             .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
             .into_redacted();
+        let source_baseline = adapter_source_baseline(profile.kind, &adapter_call.provenance);
         let provenance_capture = call_provenance(
             &cache_key,
             adapter_call.status.clone(),
@@ -325,6 +325,7 @@ pub(crate) async fn call_source(
             received_error: false,
         });
     }
+    let mut source_baseline = adapter_source_baseline(profile.kind, &adapter_call.provenance);
     let received_error = adapter_call.received_error;
     let first_pagination = adapter_call.pagination.clone();
     let provenance_capture = call_provenance(
