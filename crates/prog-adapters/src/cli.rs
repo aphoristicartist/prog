@@ -5,6 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::process::{ProcessCapture, capture_process, configure_capture_process};
+
 use prog_core::{
     CoreError, RedactionPolicy, Result, TrustSettings, is_sensitive_name, redact_sensitive_text,
 };
@@ -13,7 +15,6 @@ use serde_json::{Map, Value, json};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::Command,
-    task::JoinHandle,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -132,12 +133,13 @@ impl CliSource {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        configure_process_group(&mut command);
+        configure_capture_process(&mut command);
         if let Some(working_dir) = &operation.working_dir {
             command.current_dir(working_dir);
         }
 
         let started = Instant::now();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
         let mut child = command.spawn().map_err(|error| CoreError::CliTransport {
             operation: operation.id.clone(),
             message: error.to_string(),
@@ -153,45 +155,31 @@ impl CliSource {
 
         let stdout_task = tokio::spawn(read_bounded(stdout, max_stdout_bytes));
         let stderr_task = tokio::spawn(read_bounded(stderr, max_stderr_bytes));
-        let wait = tokio::time::timeout(Duration::from_millis(timeout_ms), child.wait()).await;
-
-        let status = match wait {
-            Ok(result) => result.map_err(|error| CoreError::CliTransport {
-                operation: operation.id.clone(),
-                message: error.to_string(),
-            })?,
-            Err(_) => {
-                kill_child_process_group(&mut child).await;
-                let _ = tokio::join!(
-                    finish_reader_or_abort(stdout_task),
-                    finish_reader_or_abort(stderr_task)
-                );
+        let capture = capture_process(
+            child,
+            stdout_task,
+            stderr_task,
+            deadline,
+            std::future::pending(),
+        )
+        .await
+        .map_err(|error| CoreError::CliTransport {
+            operation: operation.id.clone(),
+            message: error.to_string(),
+        })?;
+        let (status, stdout, stderr) = match capture {
+            ProcessCapture::Complete {
+                status,
+                stdout,
+                stderr,
+            } => (status, stdout, stderr),
+            ProcessCapture::Interrupted { .. } => {
                 return Err(CoreError::CliTimeout {
                     operation: operation.id.clone(),
                     timeout_ms,
                 });
             }
         };
-        let stdout = stdout_task
-            .await
-            .map_err(|error| CoreError::CliTransport {
-                operation: operation.id.clone(),
-                message: error.to_string(),
-            })?
-            .map_err(|error| CoreError::CliTransport {
-                operation: operation.id.clone(),
-                message: error.to_string(),
-            })?;
-        let stderr = stderr_task
-            .await
-            .map_err(|error| CoreError::CliTransport {
-                operation: operation.id.clone(),
-                message: error.to_string(),
-            })?
-            .map_err(|error| CoreError::CliTransport {
-                operation: operation.id.clone(),
-                message: error.to_string(),
-            })?;
         let duration_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
         let exit_code = status.code().unwrap_or(-1);
         let stderr_preview = normalize_text(&stderr.bytes, stderr.truncated);
@@ -249,36 +237,6 @@ impl CliSource {
             received_error: !status.success(),
             warnings,
         })
-    }
-}
-
-#[cfg(unix)]
-fn configure_process_group(command: &mut Command) {
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-fn configure_process_group(_command: &mut Command) {}
-
-async fn kill_child_process_group(child: &mut tokio::process::Child) {
-    #[cfg(unix)]
-    {
-        if let Some(pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) {
-            // process_group(0) makes the process group id equal to the child pid.
-            let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
-        }
-    }
-    let _ = child.start_kill();
-    let _ = tokio::time::timeout(Duration::from_millis(100), child.wait()).await;
-}
-
-async fn finish_reader_or_abort(mut task: JoinHandle<std::io::Result<Capture>>) {
-    tokio::select! {
-        _ = &mut task => {}
-        _ = tokio::time::sleep(Duration::from_millis(25)) => {
-            task.abort();
-            let _ = task.await;
-        }
     }
 }
 
