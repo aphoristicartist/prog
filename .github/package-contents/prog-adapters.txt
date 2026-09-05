@@ -6,8 +6,8 @@ LICENSE
 src/cli.rs
 src/http.rs
 src/lib.rs
-src/mcp.rs
 src/mcp/stderr.rs
+src/mcp.rs
 src/process.rs
 tests/cli.rs
 tests/fixtures/inherited_pipes.py
