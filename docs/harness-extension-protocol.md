@@ -125,7 +125,8 @@ environment, quoting, exit status, signal, timeout, cancellation, streaming,
 and pre-execution fallback.
 
 The DeepSeek native adapter additionally exercises inherited stdout/stderr
-after a capture parent exits, late valid output, overflow on either stream,
+after a capture parent exits, late valid output, incomplete stdin delivery,
+overflow on either output stream,
 pre-aborted signals, short-lived descendants, and descendants outside its
 capture process group. Timeout and cancellation are terminal capture failures;
 closing local pipes does not wait for an escaped descendant. Separate guarded

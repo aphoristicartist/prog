@@ -16,7 +16,7 @@ const envelope = {
   observation: { safety: { redacted_before_persistence: false } },
 }
 
-function harness(config) {
+function harness(config, text = 'original tool result\n'.repeat(200)) {
   let listener
   const warnings = []
   let calls = 0
@@ -29,7 +29,7 @@ function harness(config) {
     accepted, warnings,
     get calls() { return calls },
     invoke: signal => listener({ name: 'fixture-tool', signal },
-      { content: [{ type: 'text', text: 'original tool result\n'.repeat(200) }], isError: false },
+      { content: [{ type: 'text', text }], isError: false },
       async () => { calls += 1; return accepted }),
   }
 }
@@ -71,7 +71,7 @@ async function fixture(t, { mode = 'hold', pipe = 'stdout', escaped = false, par
   const exitedFile = join(dir, 'exited')
   await writeFile(script, `
     import { spawn } from 'node:child_process'
-    import { writeFileSync, writeSync } from 'node:fs'
+    import { closeSync, writeFileSync, writeSync } from 'node:fs'
     const encoded = ${JSON.stringify(JSON.stringify(envelope))}
     if (process.argv[2] === 'descendant') {
       if (${JSON.stringify(mode)} === 'finite') {
@@ -89,6 +89,7 @@ async function fixture(t, { mode = 'hold', pipe = 'stdout', escaped = false, par
         stdio: ['ignore', ${pipe === 'stdout' ? '1' : "'ignore'"}, ${pipe === 'stderr' ? '2' : "'ignore'"}],
       })
       writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ parent: process.pid, descendant: child.pid }))
+      if (${JSON.stringify(mode)} === 'input_failure') closeSync(0)
       setTimeout(() => {
         writeFileSync(${JSON.stringify(exitedFile)}, 'exited')
         process.exit(0)
@@ -185,6 +186,17 @@ test('an already-aborted capture starts no helper', async t => {
   assert.equal(capture.calls, 1)
   assert.match(capture.warnings[0], /cancelled/)
   assert.equal(existsSync(source.startedFile), false)
+})
+
+test('incomplete stdin delivery rejects a valid prefix and stops its capture group', async t => {
+  const source = await fixture(t, { mode: 'input_failure' })
+  const capture = harness({ ...source.config, timeoutMs: 10000 }, 'x'.repeat(2 * 1024 * 1024))
+  assert.equal(await within(capture.invoke()), capture.accepted)
+  const state = await source.exitedParent()
+  assert.equal(capture.calls, 1)
+  assert.equal(capture.warnings.length, 1)
+  assert.match(capture.warnings[0], /EPIPE|ECONNRESET/)
+  await eventually(() => !running(state.descendant))
 })
 
 test('short-lived descendant output is drained after parent exit within the original deadline', async t => {
