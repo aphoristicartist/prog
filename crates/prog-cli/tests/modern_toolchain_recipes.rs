@@ -92,6 +92,8 @@ fn modern_report_recipes_run_noisy_failing_fixtures_and_observe_one_report() {
         let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(envelope["observation"]["parser"]["id"], case.parser);
         assert_eq!(envelope["recipe"]["command_result"]["exit"]["code"], 1);
+        assert_eq!(envelope["disclosure_verdict"]["result"], "unavailable");
+        assert!(envelope["disclosure_verdict"]["baseline"].is_null());
         assert_eq!(
             envelope["recipe"]["command_result"]["report_observed"],
             true

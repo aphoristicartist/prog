@@ -137,6 +137,10 @@ pub(crate) fn observe_artifact(
     envelope_for_payload(
         store,
         EnvelopeInput {
+            source_baseline: Some(prog_core::SourceByteBaseline {
+                bytes: input.bytes.len().try_into().unwrap_or(u64::MAX),
+                basis: prog_core::SourceByteBasis::Artifact,
+            }),
             value_scan: Some(value_scan),
             source_id: "observe".to_string(),
             operation: input.name.clone(),

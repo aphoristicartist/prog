@@ -80,6 +80,7 @@ pub(crate) fn meta_contracts(
     envelope_for_payload(
         store,
         EnvelopeInput {
+            source_baseline: None,
             value_scan: None,
             source_id: "prog".to_string(),
             operation,

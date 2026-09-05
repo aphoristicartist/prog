@@ -3521,7 +3521,7 @@ for line in sys.stdin:
         "{}",
     ]);
     assert!(called.status.success(), "{}", stdout(&called));
-    let envelope: Value = serde_json::from_slice(&called.stdout).unwrap();
+    let envelope = assert_source_cost(&called, None, "");
     let capture = &envelope["observation"]["capture"];
     assert_eq!(capture["can_prove_absence"], false, "{envelope:#}");
     assert_eq!(capture["stop_reason"], "redacted", "{envelope:#}");
@@ -5262,12 +5262,26 @@ async fn refresh_304_revalidates_prior_observation_without_replacing_payload() {
         "--refresh",
     ]);
     assert!(refreshed.status.success(), "{}", stdout(&refreshed));
-    let refreshed: Value = serde_json::from_slice(&refreshed.stdout).unwrap();
+    let refreshed = assert_source_cost(&refreshed, Some(0), "http_body");
     assert_eq!(refreshed["source_validity"], "confirmed_unchanged");
     assert_eq!(refreshed["data_preview"]["body"], "original");
     assert_eq!(refreshed["provenance"]["status"], "304");
     let second_observation = refreshed["observation"]["observation_id"].as_str().unwrap();
     assert_ne!(first_observation, second_observation);
+    let cached = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "refresh-state",
+        "get",
+        "--args",
+        r#"{"id":7}"#,
+    ]);
+    assert_source_cost(
+        &cached,
+        first["disclosure_verdict"]["baseline"]["bytes"].as_u64(),
+        "http_body",
+    );
     let observations = prog(&["--dir", dir_arg, "cache", "observations", "--limit", "2"]);
     assert!(observations.status.success(), "{}", stdout(&observations));
     let observations: Value = serde_json::from_slice(&observations.stdout).unwrap();
@@ -5441,7 +5455,7 @@ async fn http_capture_truncation_persists_unknown_total_lifecycle_metadata() {
 
     let called = prog(&["--dir", dir_arg, "call", "api", "logs", "--args", "{}"]);
     assert!(called.status.success(), "{}", stdout(&called));
-    let envelope: Value = serde_json::from_slice(&called.stdout).unwrap();
+    let envelope = assert_source_cost(&called, None, "");
     assert_eq!(envelope["observation"]["availability"], "capture_truncated");
     assert_eq!(
         envelope["observation"]["capture"]["total_bytes"],
@@ -5541,7 +5555,7 @@ for line in sys.stdin:
 
     let called = prog(&["--dir", dir_arg, "call", "fixture", "large", "--args", "{}"]);
     assert!(called.status.success(), "{}", stdout(&called));
-    let envelope: Value = serde_json::from_slice(&called.stdout).unwrap();
+    let envelope = assert_source_cost(&called, None, "");
     let response_bytes = envelope["provenance"]["adapter"]["response_bytes"]
         .as_u64()
         .unwrap();
@@ -6336,6 +6350,16 @@ async fn prog_call_pages_projects_each_page_and_merges_shapes() {
         "3",
     ]);
     assert!(call.status.success(), "{}", stdout(&call));
+    let raw_pages = [
+        json!({"items": [{"id": 1, "name": "a"}], "next_cursor": "tok_2"}),
+        json!({"items": [{"id": 2, "label": "b"}], "next_cursor": "tok_3"}),
+        json!({"items": [{"id": 3, "extra": {"k": 1}}], "has_more": false}),
+    ];
+    let raw_bytes = raw_pages
+        .iter()
+        .map(|page| serde_json::to_vec(page).unwrap().len() as u64)
+        .sum();
+    assert_source_cost(&call, Some(raw_bytes), "http_body");
     let envelope: Value = serde_json::from_slice(&call.stdout).unwrap();
     let pagination = &envelope["pagination"];
     assert_eq!(pagination["pages_fetched"], json!(3));
@@ -6776,4 +6800,223 @@ fn log_recipe_composes_observe_lens_findings_and_recommended_evidence() {
     );
     assert_eq!(value["recipe"]["recommended_next"]["cursor"], "{cursor}");
     assert!(recipe.stdout.len() <= 16 * 1024);
+}
+
+fn assert_source_cost(output: &std::process::Output, bytes: Option<u64>, basis: &str) -> Value {
+    assert!(output.status.success(), "{}", stdout(output));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let delivered = output.stdout.len() as u64;
+    assert_eq!(value["summary"]["envelope_bytes"], delivered);
+    assert_eq!(
+        value["summary"]["estimated_envelope_tokens"],
+        delivered.div_ceil(4)
+    );
+    assert_eq!(value["disclosure_budget"]["actual_bytes"], delivered);
+    assert_eq!(value["disclosure_verdict"]["envelope_bytes"], delivered);
+    if let Some(bytes) = bytes {
+        assert_eq!(
+            value["disclosure_verdict"]["baseline"],
+            json!({"bytes": bytes, "basis": basis})
+        );
+        let expected = if bytes < delivered {
+            "raw_cheaper"
+        } else if u128::from(bytes) * 4 >= u128::from(delivered) * 5 {
+            "bounded_win"
+        } else {
+            "neutral"
+        };
+        assert_eq!(value["disclosure_verdict"]["result"], expected);
+    } else {
+        assert!(value["disclosure_verdict"]["baseline"].is_null());
+        assert!(value["disclosure_verdict"]["ratio"].is_null());
+        assert_eq!(value["disclosure_verdict"]["result"], "unavailable");
+    }
+    value
+}
+
+#[test]
+fn disclosure_verdict_compares_original_run_streams_with_delivered_stdout() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut normalized_sizes = Vec::new();
+    for cap in ["128", "1048576"] {
+        let output = prog(&[
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "run",
+            "--max-stdout-bytes",
+            cap,
+            "--",
+            "python3",
+            "-c",
+            "import sys; sys.stdout.write('x' * 3072)",
+        ]);
+        let value = assert_source_cost(&output, Some(3072), "command_streams");
+        assert_eq!(value["disclosure_verdict"]["result"], "raw_cheaper");
+        normalized_sizes.push(value["summary"]["payload_bytes"].clone());
+    }
+    assert_ne!(
+        normalized_sizes[0], normalized_sizes[1],
+        "derived copies must not change the source baseline"
+    );
+    for pretty in [false, true] {
+        let mut args = vec!["--dir", dir.path().to_str().unwrap()];
+        if pretty {
+            args.push("--pretty");
+        }
+        args.extend(["run", "--", "python3", "-c", "import sys; sys.stdout.buffer.write(b'\\xff' * 3072); sys.stderr.buffer.write(b'err' * 11)"]);
+        assert_source_cost(&prog(&args), Some(3105), "command_streams");
+    }
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "run",
+        "--",
+        "python3",
+        "-c",
+        "print('x' * 100000)",
+    ]);
+    assert_eq!(
+        assert_source_cost(&output, Some(100001), "command_streams")["disclosure_verdict"]["result"],
+        "bounded_win"
+    );
+    let interrupted = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "run",
+        "--timeout-ms",
+        "100",
+        "--",
+        "python3",
+        "-c",
+        "import time; print('partial', flush=True); time.sleep(5)",
+    ]);
+    assert_source_cost(&interrupted, None, "");
+}
+
+#[test]
+fn disclosure_verdict_observe_preserves_input_size_before_normalization_and_redaction() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("input.json");
+    let input = b"{\n  \"password\": \"fixture-secret\",\n  \"value\": 1\n}\n";
+    fs::write(&file, input).unwrap();
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+    ]);
+    let value = assert_source_cost(&output, Some(input.len() as u64), "artifact");
+    assert_eq!(value["disclosure_verdict"]["result"], "raw_cheaper");
+    assert!(!stdout(&output).contains("fixture-secret"));
+    assert_eq!(
+        value["observation"]["safety"]["redacted_before_persistence"],
+        true
+    );
+    let expanded = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "expand",
+        value["cursor"].as_str().unwrap(),
+        "--path",
+        "/value",
+    ]);
+    assert_source_cost(&expanded, None, "");
+}
+
+#[tokio::test]
+async fn disclosure_verdict_http_preserves_body_bytes_across_cache_hits() {
+    let server = MockServer::start().await;
+    let body = "{\n  \"value\": 1\n}\n";
+    Mock::given(method("GET"))
+        .and(path("/cost"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let added = prog(&[
+        "--dir",
+        dir_arg,
+        "source",
+        "add-http",
+        "cost",
+        "--operation",
+        "get",
+        "--url",
+        &format!("{}/cost", server.uri()),
+    ]);
+    assert!(added.status.success(), "{}", stdout(&added));
+    for expected_cache in ["stored", "hit"] {
+        let output = prog(&["--dir", dir_arg, "call", "cost", "get", "--args", "{}"]);
+        let value = assert_source_cost(&output, Some(body.len() as u64), "http_body");
+        assert_eq!(value["cache"]["status"], expected_cache);
+        assert_ne!(value["summary"]["payload_bytes"], body.len());
+    }
+}
+
+#[tokio::test]
+async fn disclosure_verdict_failed_page_acquisition_cannot_claim_partial_cost() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page_token", "start"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"items": [1], "next_cursor": "tok_2"})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("page_token", "tok_2"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"items": [2]}))
+                .set_delay(Duration::from_secs(2)),
+        )
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let seed = write_seed(dir.path(), "http.json", &cursor_chain_seed(&server.uri()));
+    let discover = prog(&[
+        "--dir",
+        dir_arg,
+        "discover",
+        "api",
+        "--kind",
+        "http",
+        "--seed",
+        seed.to_str().unwrap(),
+    ]);
+    assert!(discover.status.success(), "{}", stdout(&discover));
+    let profile_path = dir.path().join("profiles/api.json");
+    let mut profile: Value = serde_json::from_slice(&fs::read(&profile_path).unwrap()).unwrap();
+    profile["adapter"]["http"]["timeout_ms"] = json!(500);
+    fs::write(profile_path, serde_json::to_vec(&profile).unwrap()).unwrap();
+    let output = prog(&[
+        "--dir",
+        dir_arg,
+        "call",
+        "api",
+        "list",
+        "--args",
+        r#"{"page_token":"start"}"#,
+        "--pages",
+        "2",
+    ]);
+    let value = assert_source_cost(&output, None, "");
+    assert_eq!(value["pagination"]["pages_fetched"], 1);
+    assert!(
+        value["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().unwrap().contains("prefetch stopped"))
+    );
 }

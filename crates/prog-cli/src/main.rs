@@ -959,7 +959,7 @@ fn render_budgeted_json(mut value: Value, pretty: bool, ctx: &InvocationContext)
     let budget = ctx.disclosure.clone();
     let capture_budget = ctx.capture.clone();
     let storage_budget = ctx.storage.clone();
-    let mut metadata = json!({
+    let metadata = json!({
         "source": budget.source,
         "requested_bytes": budget.requested_bytes,
         "requested_tokens": budget.requested_tokens,
@@ -985,48 +985,160 @@ fn render_budgeted_json(mut value: Value, pretty: bool, ctx: &InvocationContext)
             "storage_budget".to_string(),
             serde_json::to_value(storage_budget)?,
         );
-    let mut use_pretty = pretty;
-    for _ in 0..8 {
-        let rendered = if use_pretty {
-            serde_json::to_string_pretty(&value)?
+    let rendered = render_accounted_json(&mut value, pretty)?;
+    if rendered.len().saturating_add(1) <= budget.effective_bytes {
+        return Ok(rendered);
+    }
+    let rendered = if pretty {
+        render_accounted_json(&mut value, false)?
+    } else {
+        rendered
+    };
+    let bytes = rendered.len().saturating_add(1);
+    if bytes > budget.effective_bytes {
+        return Err(CoreError::BudgetTooSmall {
+            requested_bytes: budget.effective_bytes,
+            minimum_bytes: bytes,
+        });
+    }
+    Ok(rendered)
+}
+
+/// Final transport accounting, after all model-visible metadata is attached.
+/// Classification remains in core; this layer supplies actual serialized sizes.
+fn render_accounted_json(value: &mut Value, pretty: bool) -> Result<String> {
+    let original_verdict: Option<prog_core::DisclosureVerdict> = value
+        .get("disclosure_verdict")
+        .filter(|_| value.get("summary").is_some_and(Value::is_object))
+        .map(|verdict| serde_json::from_value(verdict.clone()))
+        .transpose()?;
+    let mut conservative_ratio = f64::INFINITY;
+    for iteration in 0..24 {
+        let rendered = if pretty {
+            serde_json::to_string_pretty(value)?
         } else {
-            serde_json::to_string(&value)?
+            serde_json::to_string(value)?
         };
-        // The trailing newline is part of stdout and therefore part of the
-        // hard caller-visible byte ceiling.
-        let bytes = rendered.len().saturating_add(1);
-        if bytes > budget.effective_bytes && use_pretty {
-            use_pretty = false;
-            continue;
+        // stdout writes exactly one trailing newline, including in compact mode.
+        let bytes = rendered.len().saturating_add(1) as u64;
+        let mut unchanged = value["disclosure_budget"]["actual_bytes"] == json!(bytes);
+        value["disclosure_budget"]["actual_bytes"] = json!(bytes);
+        if let Some(original) = &original_verdict {
+            let mut verdict = prog_core::DisclosureVerdict::for_baseline(original.baseline, bytes);
+            if let Some(ratio) = verdict.ratio {
+                // Let integer field widths settle first. If the ratio's own
+                // width then oscillates, pin its smaller recent display value;
+                // the classification and byte counters still use exact bytes.
+                if iteration >= 8 {
+                    conservative_ratio = conservative_ratio.min(ratio);
+                }
+                if iteration >= 16 {
+                    verdict.ratio = Some(conservative_ratio);
+                }
+            }
+            let verdict = serde_json::to_value(verdict)?;
+            let tokens = bytes.saturating_add(3) / 4;
+            unchanged &= value["disclosure_verdict"] == verdict
+                && value["summary"]["envelope_bytes"] == json!(bytes)
+                && value["summary"]["estimated_envelope_tokens"] == json!(tokens);
+            value["disclosure_verdict"] = verdict;
+            value["summary"]["envelope_bytes"] = json!(bytes);
+            value["summary"]["estimated_envelope_tokens"] = json!(tokens);
         }
-        if bytes > budget.effective_bytes {
-            return Err(CoreError::BudgetTooSmall {
-                requested_bytes: budget.effective_bytes,
-                minimum_bytes: bytes,
-            });
-        }
-        metadata["actual_bytes"] = json!(bytes);
-        value
-            .as_object_mut()
-            .expect("response value is an object")
-            .insert("disclosure_budget".to_string(), metadata.clone());
-        let final_rendered = if use_pretty {
-            serde_json::to_string_pretty(&value)?
-        } else {
-            serde_json::to_string(&value)?
-        };
-        if final_rendered.len().saturating_add(1) == bytes {
-            return Ok(final_rendered);
+        if unchanged {
+            return Ok(rendered);
         }
     }
     Err(CoreError::Storage(
-        "disclosure budget accounting did not converge".to_string(),
+        "delivered response accounting did not converge".to_string(),
     ))
 }
 
 #[cfg(test)]
 mod invocation_context_tests {
     use super::*;
+
+    fn assert_delivered_accounting(rendered: &str) -> Value {
+        let value: Value = serde_json::from_str(rendered).unwrap();
+        let bytes = rendered.len() as u64 + 1;
+        assert_eq!(value["disclosure_budget"]["actual_bytes"], bytes);
+        assert_eq!(value["summary"]["envelope_bytes"], bytes);
+        assert_eq!(
+            value["summary"]["estimated_envelope_tokens"],
+            bytes.div_ceil(4)
+        );
+        assert_eq!(value["disclosure_verdict"]["envelope_bytes"], bytes);
+        let verdict: prog_core::DisclosureVerdict =
+            serde_json::from_value(value["disclosure_verdict"].clone()).unwrap();
+        let expected = prog_core::DisclosureVerdict::for_baseline(verdict.baseline, bytes);
+        assert_eq!(verdict.result, expected.result);
+        if let (Some(actual), Some(expected)) = (verdict.ratio, expected.ratio) {
+            assert!(actual <= expected);
+            // A ratio-width cycle can change the denominator by a few bytes.
+            // Its lower display bound must still be close to the exact ratio.
+            let source = verdict.baseline.unwrap().bytes as f64;
+            assert!(actual >= source / (bytes + 4) as f64 - 0.01);
+        }
+        value
+    }
+
+    #[test]
+    fn delivered_accounting_converges_across_digit_ratio_and_threshold_boundaries() {
+        // Sweep lengths around decimal width boundaries and ratios around 1,
+        // 1.25, 10, and 100. The count must include all self-referential fields.
+        for pretty in [false, true] {
+            for padding in [0, 300, 400, 9_300, 9_400] {
+                for source_bytes in [
+                    0, 999, 1_000, 1_249, 1_250, 9_999, 10_000, 12_499, 12_500, 100_000,
+                ] {
+                    let mut value = json!({
+                        "summary": {"envelope_bytes": 0, "estimated_envelope_tokens": 0},
+                        "disclosure_verdict": prog_core::DisclosureVerdict::for_sizes(source_bytes, 0),
+                        "disclosure_budget": {"actual_bytes": 0},
+                        "data_preview": "x".repeat(padding),
+                    });
+                    assert_delivered_accounting(
+                        &render_accounted_json(&mut value, pretty).unwrap(),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pretty_formatting_can_change_a_savings_verdict() {
+        let ctx = InvocationContext::new(
+            effective_disclosure_budget(Some(16_384), None, "flag").unwrap(),
+        );
+        let value = json!({
+            "summary": {"envelope_bytes": 0, "estimated_envelope_tokens": 0},
+            "disclosure_verdict": prog_core::DisclosureVerdict::for_sizes(1_700, 0),
+            "data_preview": vec![0; 180],
+        });
+        let compact =
+            assert_delivered_accounting(&render_budgeted_json(value.clone(), false, &ctx).unwrap());
+        let pretty = assert_delivered_accounting(&render_budgeted_json(value, true, &ctx).unwrap());
+        assert_eq!(compact["disclosure_verdict"]["result"], "bounded_win");
+        assert_eq!(pretty["disclosure_verdict"]["result"], "raw_cheaper");
+    }
+
+    #[test]
+    fn pretty_fallback_reaccounts_the_actual_compact_response() {
+        let ctx =
+            InvocationContext::new(effective_disclosure_budget(Some(2_048), None, "flag").unwrap());
+        let value = json!({
+            "summary": {"envelope_bytes": 0, "estimated_envelope_tokens": 0},
+            "disclosure_verdict": prog_core::DisclosureVerdict::for_sizes(3_072, 0),
+            "data_preview": vec![0; 240],
+        });
+        let rendered = render_budgeted_json(value, true, &ctx).unwrap();
+        assert!(
+            !rendered.contains('\n'),
+            "fixture must require compact fallback"
+        );
+        assert!(rendered.len() < 2_048);
+        assert_delivered_accounting(&rendered);
+    }
 
     #[test]
     fn two_contexts_hold_independent_disclosure_budgets() {

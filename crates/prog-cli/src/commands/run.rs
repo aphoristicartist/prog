@@ -181,6 +181,21 @@ pub(crate) async fn run_command(
     }
     let payload_hash = store.put_payload(&redacted_payload)?;
     let payload_bytes = json_len_u64(redacted_payload.as_value())?;
+    // Stream readers count original bytes independently of retained text and
+    // derived head/tail/combined views. Interrupted execution has no known
+    // complete source-output cost and must not advertise savings.
+    let source_baseline = if matches!(run.status, RunProcessStatus::Exited { .. }) {
+        run.stdout
+            .total_bytes
+            .checked_add(run.stderr.total_bytes)
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .map(|bytes| prog_core::SourceByteBaseline {
+                bytes,
+                basis: prog_core::SourceByteBasis::CommandStreams,
+            })
+    } else {
+        None
+    };
     let ttl: i64 = args
         .ttl_seconds
         .try_into()
@@ -309,6 +324,7 @@ pub(crate) async fn run_command(
     let envelope = envelope_for_payload(
         store,
         EnvelopeInput {
+            source_baseline,
             value_scan: Some(value_scan),
             source_id: "run".to_string(),
             operation,

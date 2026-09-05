@@ -20,11 +20,11 @@ on every turn.
 ```text
                        tokens into the model
   raw payload   ████████████████████████████████████████  137,883
-  prog          ▏                                             847
+  prog          ▏                                             1,629
 ```
 
 <sub>One row from [`docs/token-economics.md`](docs/token-economics.md): the "discover shape"
-task over the checked-in HTTP fixture. Ratios across all fixtures range 24.4x-85.2x.
+task over the checked-in HTTP fixture. Ratios across all fixtures range 24.6x-84.6x.
 Measured on deterministic fixtures with a bytes/4 heuristic — not a promise about your workload.</sub>
 
 The difference isn't compression. `prog` captures the payload **once**, redacts
@@ -560,7 +560,7 @@ not universal promises about model quality, latency, or cost.
 ### Token-economics fixtures
 
 Across the checked-in HTTP, CLI, and MCP tasks, raw-payload tokens divided by
-the complete `prog` task tokens range from **24.4x-85.2x**. Each task includes
+the complete `prog` task tokens range from **24.6x-84.6x**. Each task includes
 the initial envelope and any expansion used to answer it. See
 [`docs/token-economics.md`](docs/token-economics.md) for every row and the
 regeneration command.
@@ -570,7 +570,7 @@ regeneration command.
 The five checked-in Cargo compile, Cargo test, pytest, noisy-log, and SARIF
 scenarios rank the expected causal path first in **5/5** cases. The findings
 workflow uses 10 tool calls versus 15 for `envelope -> paths -> evidence`, and
-the estimated output is 3,218 versus 3,369 tokens. See
+the estimated output is 2,426 versus 2,971 tokens. See
 [`docs/evidence-acquisition.md`](docs/evidence-acquisition.md) and the checked
 baseline in
 [`fixtures/evals/evidence-acquisition-metrics.json`](fixtures/evals/evidence-acquisition-metrics.json).
@@ -579,14 +579,12 @@ baseline in
 
 The checked-in GitHub review, kubectl events, CloudWatch-style logs, Jira-style
 triage, and MCP incident demos report raw-to-envelope-plus-expansion ratios from
-**9.61x to 15.40x**. These are generated local payloads, not credentialed live
+**9.34x to 13.86x**. These are generated local payloads, not credentialed live
 service measurements. See [`docs/real-world-demos.md`](docs/real-world-demos.md).
 
-### Correctness under an unknown target
+### Deterministic retrieval correctness
 
-Savings ratios assume you already know what you are looking for. The harder and
-more common case is that you do not, and there the relevant number is not
-compression but **whether the answer survives at all**.
+The competitive suite checks whether each strategy retrieves the fixture answer.
 
 Across the eleven checked-in competitive-baseline scenarios:
 
@@ -597,14 +595,12 @@ Across the eleven checked-in competitive-baseline scenarios:
 | `native_field_selection` | 8/11 |
 | `prog_paths_expand` | **11/11** |
 
-Truncation is the cheapest bounded strategy and the least correct one: it is
-wrong in ten of eleven scenarios, and its omissions are unrecoverable. Field
-selection and grep are excellent — *when the path or the term is already known*.
-The `unknown-target-buried-fatal` scenario removes that assumption: a long log
-whose one causal `FATAL` line is not guessable from the prompt. There, no field
-selector is derivable, a plausible pre-read `grep ERROR` returns matches but
-misses the causal line, and `prog` is the cheapest correct strategy at **7,917
-versus 35,594 raw input tokens (4.5x)**.
+These results measure the current scripted strategies. The
+`unknown-target-buried-fatal` case supplies the expected evidence path to the
+`prog` strategy, so it measures assisted retrieval and does not establish
+unknown-target discovery. [#256](https://github.com/aphoristicartist/prog/issues/256)
+tracks removal of that grader information and a fair comparison with broader
+search strategies.
 
 See [`docs/competitive-baselines.md`](docs/competitive-baselines.md).
 

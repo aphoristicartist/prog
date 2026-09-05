@@ -504,7 +504,7 @@ fn docs_keep_acceptance_topics_visible() {
     let root = repo_root();
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
     for expected in [
-        "24.4x-85.2x",
+        "24.6x-84.6x",
         "Built for loop engineering",
         "fail, inspect, fix, verify",
         "recipe --timeout-ms 180000 cargo-test",

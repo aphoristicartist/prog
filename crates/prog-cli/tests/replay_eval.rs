@@ -2078,7 +2078,9 @@ fn strategy_metric(strategy: &str, delivered_bytes: u64, calls: u64) -> Strategy
 
 fn verdict_matches_envelope(value: &Value, expected: &str) -> bool {
     value["disclosure_verdict"]["result"] == expected
-        && value["disclosure_verdict"]["payload_bytes"] == value["summary"]["payload_bytes"]
+        && value["disclosure_verdict"]["baseline"]["bytes"]
+            .as_u64()
+            .is_some()
         && value["disclosure_verdict"]["envelope_bytes"] == value["summary"]["envelope_bytes"]
         && value["disclosure_verdict"]["raw_cheaper_below_ratio"] == 1.0
         && value["disclosure_verdict"]["bounded_win_at_or_above_ratio"] == 1.25

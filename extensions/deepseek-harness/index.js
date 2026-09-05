@@ -7,7 +7,7 @@ const DEFAULT_MIN_BYTES = 16 * 1024
 const DEFAULT_BUDGET_BYTES = 16 * 1024
 const DEFAULT_TIMEOUT_MS = 30_000
 const MAX_CHILD_OUTPUT_BYTES = 256 * 1024
-const VERDICT_RESULTS = new Set(['raw_cheaper', 'neutral', 'bounded_win'])
+const VERDICT_RESULTS = new Set(['raw_cheaper', 'neutral', 'bounded_win', 'unavailable'])
 
 function plainText(content) {
   let text = ''

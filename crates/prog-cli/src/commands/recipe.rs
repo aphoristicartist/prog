@@ -142,6 +142,9 @@ pub(crate) async fn run_recipe(
                     report.lens
                 ]));
                 envelope = observe_artifact(store, lens_dir, &observe, ctx)?;
+                // This recipe combines a process and a generated report. Report
+                // bytes alone are not the original command's host-visible cost.
+                envelope.disclosure_verdict.baseline = None;
             } else {
                 envelope.warnings.push(format!(
                     "{} command produced no {} report; returning its captured process evidence",
