@@ -4,6 +4,7 @@ Cargo.toml
 Cargo.toml.orig
 LICENSE
 src/cli.rs
+src/execution_context.rs
 src/http.rs
 src/lib.rs
 src/mcp.rs

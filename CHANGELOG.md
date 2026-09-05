@@ -57,6 +57,10 @@
   different key; credential values exist only in the transient hash input.
   Mutating operations are never served from cache, and redacted provenance or
   prefetched pages mark the observation redacted and non-provable.
+- Scoped CLI and MCP stdio cache reuse to a single resolved working directory
+  and inherited environment snapshot, applied unchanged during execution.
+  Changed cwd, PATH, or environment inputs cannot reuse another context's
+  result; transient environment values stay out of metadata (#252).
 - Separated provider and selection completeness (#230): `provider.complete`
   now means bounded normalization of the captured diagnostics, while
   `selection.exhaustive` remains the only authority for absence. A failing

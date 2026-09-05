@@ -16,6 +16,8 @@ use tokio::{
     task::JoinHandle,
 };
 
+use crate::execution_context::ExecutionContext;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CliSource {
@@ -92,7 +94,31 @@ pub struct CliDiagnostics {
 }
 
 impl CliSource {
+    /// Capture the effective directory and inherited environment for one call.
+    pub fn execution_context(&self, operation_id: &str) -> Result<ExecutionContext> {
+        let operation = self
+            .operations
+            .iter()
+            .find(|operation| operation.id == operation_id)
+            .ok_or_else(|| CoreError::UnknownOperation {
+                source_id: self.id.clone(),
+                operation: operation_id.to_string(),
+            })?;
+        Ok(ExecutionContext::inherit(operation.working_dir.as_deref())?)
+    }
+
     pub async fn execute(&self, operation_id: &str, args: &Value) -> Result<CliCallResult> {
+        let context = self.execution_context(operation_id)?;
+        self.execute_in_context(operation_id, args, &context).await
+    }
+
+    /// Execute using the same transient context used to identify this call.
+    pub async fn execute_in_context(
+        &self,
+        operation_id: &str,
+        args: &Value,
+        context: &ExecutionContext,
+    ) -> Result<CliCallResult> {
         let operation = self
             .operations
             .iter()
@@ -125,6 +151,7 @@ impl CliSource {
         let max_stderr_bytes = operation.max_stderr_bytes.unwrap_or(self.max_stderr_bytes);
 
         let mut command = Command::new(&rendered_command);
+        context.configure(&mut command);
         command
             .args(&rendered_args)
             .envs(rendered_env)
@@ -133,9 +160,6 @@ impl CliSource {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         configure_process_group(&mut command);
-        if let Some(working_dir) = &operation.working_dir {
-            command.current_dir(working_dir);
-        }
 
         let started = Instant::now();
         let mut child = command.spawn().map_err(|error| CoreError::CliTransport {

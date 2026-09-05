@@ -1,6 +1,25 @@
 //! Source adapter construction, execution, and call policy helpers.
 
 use crate::*;
+use prog_adapters::execution_context::ExecutionContext;
+
+pub(crate) fn source_execution_context(
+    source: &CallableSource,
+    operation: &OperationProfile,
+) -> Result<Option<ExecutionContext>> {
+    match source {
+        CallableSource::Http(_) => Ok(None),
+        CallableSource::Cli(source) => source.execution_context(&operation.id).map(Some),
+        CallableSource::Mcp(_) => Ok(Some(ExecutionContext::inherit(None)?)),
+    }
+}
+
+fn require_process_context(context: Option<&ExecutionContext>) -> Result<&ExecutionContext> {
+    context.ok_or_else(|| CoreError::BadArgs {
+        operation: "call".to_string(),
+        reason: "process call requires a resolved execution context".to_string(),
+    })
+}
 
 pub(crate) fn validate_call_args(operation: &OperationProfile, args: &Value) -> Result<()> {
     let args = args.as_object().ok_or_else(|| CoreError::BadArgs {
@@ -262,6 +281,7 @@ pub(crate) async fn execute_callable(
     source: &CallableSource,
     operation: &OperationProfile,
     args: &Value,
+    context: Option<&ExecutionContext>,
 ) -> Result<AdapterCall> {
     match source {
         CallableSource::Http(source) => {
@@ -280,7 +300,9 @@ pub(crate) async fn execute_callable(
             })
         }
         CallableSource::Cli(source) => {
-            let result = source.execute(&operation.id, args).await?;
+            let result = source
+                .execute_in_context(&operation.id, args, require_process_context(context)?)
+                .await?;
             let mut provenance = serde_json::to_value(result.provenance.clone())?;
             if let Value::Object(map) = &mut provenance {
                 map.insert(
@@ -306,10 +328,11 @@ pub(crate) async fn execute_callable(
                 "tool" => {
                     let name = required_profile_string(invocation, "name")?;
                     source
-                        .call_tool_with_schema(
+                        .call_tool_in_context(
                             &name,
                             args,
                             operation.declared_output_schema.as_ref(),
+                            require_process_context(context)?,
                         )
                         .await?
                 }
@@ -322,7 +345,9 @@ pub(crate) async fn execute_callable(
                             operation: operation.id.clone(),
                             reason: "resource calls require args.uri".to_string(),
                         })?;
-                    source.read_resource(uri).await?
+                    source
+                        .read_resource_in_context(uri, require_process_context(context)?)
+                        .await?
                 }
                 _ => {
                     return Err(CoreError::BadArgs {
@@ -360,6 +385,7 @@ pub(crate) async fn execute_callable_conditional(
     operation: &OperationProfile,
     args: &Value,
     source_state: Option<&SourceStateToken>,
+    context: Option<&ExecutionContext>,
 ) -> Result<AdapterCall> {
     match source {
         CallableSource::Http(source) => {
@@ -383,7 +409,7 @@ pub(crate) async fn execute_callable_conditional(
             })
         }
         CallableSource::Cli(_) | CallableSource::Mcp(_) => {
-            execute_callable(source, operation, args).await
+            execute_callable(source, operation, args, context).await
         }
     }
 }
@@ -602,8 +628,9 @@ pub(crate) fn effective_cache_policy(
     policy
 }
 
-/// Hash every input that can change either upstream execution or the retained
-/// evidence for one source call. Learned examples, descriptions, and profile
+/// Hash the declared execution/evidence inputs and frozen process context for
+/// one source call. This does not fingerprint executable contents or arbitrary
+/// external state. Learned examples, descriptions, and profile
 /// revisions are deliberately absent: they do not change the call and must not
 /// turn a stable cache entry into a miss.
 ///
@@ -617,14 +644,22 @@ pub(crate) fn source_call_cache_key(
     args: &Value,
     redaction: &RedactionPolicy,
     cache: &CachePolicy,
+    context: Option<&ExecutionContext>,
 ) -> Result<String> {
     let execution = callable_source_semantics(source, operation)?;
+    let process_context = match source {
+        CallableSource::Http(_) => None,
+        CallableSource::Cli(_) | CallableSource::Mcp(_) => {
+            Some(require_process_context(context)?.cache_scope())
+        }
+    };
     Store::cache_key(
         &profile.id,
         &operation.id,
         &json!({
-            "contract": "source_call_cache_v2",
+            "contract": "source_call_cache_v3",
             "execution": execution,
+            "process_context": process_context,
             "auth": resolved_auth_scope(profile),
             "redaction": redaction,
             "cache": cache,
