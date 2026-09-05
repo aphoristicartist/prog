@@ -584,25 +584,30 @@ service measurements. See [`docs/real-world-demos.md`](docs/real-world-demos.md)
 
 ### Deterministic retrieval correctness
 
-The competitive suite checks whether each strategy retrieves the fixture answer.
+Known-path cases measure recovery at an explicitly supplied selector. The
+unknown-target cases keep the grader's path and answer private: strategies
+select evidence from their actual observations. The set includes a fatal
+record, its relocated counterpart, an unranked cause, and a no-answer control.
 
-Across the eleven checked-in competitive-baseline scenarios:
+| Unknown-target strategy | Evidence available / attempted | Unavailable | Approx. response tokens |
+| --- | ---: | ---: | ---: |
+| `raw_context` | 3/4 | 0 | 142205 |
+| `head_tail_truncation` | 0/4 | 0 | 4096 |
+| `native_field_selection` | 0/0 | 4 | 0 |
+| `rtk_grep_filter` | 0/4 | 0 | 3009 |
+| `broad_log_search` | 2/4 | 0 | 3085 |
+| `file_capture_search` | 2/4 | 0 | 3123 |
+| `prog_retrieve` | 2/4 | 0 | 17242 |
 
-| Strategy | Correct |
-| --- | --- |
-| `head_tail_truncation` | **1/11** |
-| `rtk_grep_filter` | 10/11 |
-| `native_field_selection` | 8/11 |
-| `prog_paths_expand` | **11/11** |
+These are deterministic evidence-availability results, not actual-agent task
+success. Raw context counts evidence present in the delivered artifact; a
+strategy with insufficient evidence receives no discovery credit. Costs use
+the bytes/4 approximation and include every capture, exploration, and lookup
+response. Fixture setup and live source-acquisition costs are outside this
+experiment. Broader search and a capture-once file baseline are included.
 
-These results measure the current scripted strategies. The
-`unknown-target-buried-fatal` case supplies the expected evidence path to the
-`prog` strategy, so it measures assisted retrieval and does not establish
-unknown-target discovery. [#256](https://github.com/aphoristicartist/prog/issues/256)
-tracks removal of that grader information and a fair comparison with broader
-search strategies.
-
-See [`docs/competitive-baselines.md`](docs/competitive-baselines.md).
+Known-path results, assumptions, and command traces are recorded in
+[`docs/competitive-baselines.md`](docs/competitive-baselines.md).
 
 ### Correctness, not just savings
 
@@ -661,7 +666,7 @@ queries beat `prog`: [`docs/positioning.md`](docs/positioning.md) and
 
 - [Token economics](docs/token-economics.md)
 - [Evidence acquisition](docs/evidence-acquisition.md)
-- [Task-success evaluation](docs/task-success-eval.md)
+- [Known-path recoverability evaluation](docs/task-success-eval.md)
 - [Replay and correctness](docs/replay-eval.md)
 - [Competitive baselines](docs/competitive-baselines.md)
 - [Real-world-shaped local demos](docs/real-world-demos.md)

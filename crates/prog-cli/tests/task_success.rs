@@ -1,10 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
-    time::Instant,
 };
 
 use serde::Serialize;
@@ -16,20 +13,10 @@ use wiremock::{
 
 const ITEM_COUNT: usize = 260;
 const BODY_BYTES: usize = 1024;
-const TRUNCATION_BYTES: usize = 4096;
 
-#[derive(Clone)]
-enum TaskSource {
-    Call {
-        source_id: String,
-        operation: String,
-    },
-    Observe {
-        name: String,
-        mime: String,
-        bytes: Vec<u8>,
-    },
-}
+#[path = "support/baseline_strategies.rs"]
+mod strategies;
+use strategies::{Source as TaskSource, Step, StrategyInput, Task, assert_success, timed_prog};
 
 #[derive(Clone)]
 struct TaskScenario {
@@ -38,7 +25,7 @@ struct TaskScenario {
     artifact: String,
     source: TaskSource,
     raw_bytes: Vec<u8>,
-    evidence_path: String,
+    lookup_path: String,
     answer: String,
     counterexample: bool,
 }
@@ -48,41 +35,30 @@ struct TaskMetric {
     scenario_id: String,
     prompt: String,
     artifact: String,
+    task_mode: &'static str,
     strategy: &'static str,
-    correct: bool,
+    available: bool,
+    evidence_available: bool,
+    artifact_bytes: usize,
+    response_bytes: usize,
     input_tokens: usize,
-    output_tokens: usize,
     tool_calls: usize,
     expansion_count: usize,
     cache_hits: usize,
     wall_time_ms: u128,
-    evidence_path: String,
+    public_lookup_path: String,
     counterexample: bool,
-}
-
-struct TimedOutput {
-    output: Output,
-    elapsed_ms: u128,
-}
-
-struct MetricInput {
-    correct: bool,
-    input_bytes: usize,
-    output_tokens: usize,
-    tool_calls: usize,
-    expansion_count: usize,
-    cache_hits: usize,
-    wall_time_ms: u128,
+    steps: Vec<Step>,
 }
 
 #[tokio::test]
-async fn task_success_eval_smoke() {
+async fn known_path_recoverability_eval_smoke() {
     let tempdir = tempfile::tempdir().unwrap();
     let mut keep_servers = Vec::new();
     let scenarios = setup_scenarios(tempdir.path(), &mut keep_servers).await;
     assert!(
         scenarios.len() >= 10,
-        "task eval should include at least 10 scenarios"
+        "known-path recoverability eval should include at least 10 scenarios"
     );
 
     let metrics = scenarios
@@ -90,11 +66,23 @@ async fn task_success_eval_smoke() {
         .flat_map(|scenario| run_scenario(tempdir.path(), scenario))
         .collect::<Vec<_>>();
 
-    assert_strategy_all_correct(&metrics, "raw");
-    assert_strategy_all_correct(&metrics, "prog_expand");
-    assert_strategy_has_failures(&metrics, "simple_truncation");
-    assert_strategy_has_failures(&metrics, "prog_call_only");
-    assert_counterexample_where_prog_costs_more(&metrics);
+    for metric in &metrics {
+        assert_eq!(
+            metric.response_bytes,
+            metric.steps.iter().map(|s| s.response_bytes).sum::<usize>()
+        );
+        assert_eq!(metric.task_mode, "known_path_recoverability");
+        if metric.strategy == "prog_expand" {
+            assert!(
+                metric.evidence_available,
+                "public selector must recover evidence for {}",
+                metric.scenario_id
+            );
+        }
+        if !metric.available {
+            assert!(!metric.evidence_available);
+        }
+    }
 
     let report = markdown_report(&metrics);
     let metrics_json = serde_json::to_string_pretty(&metrics).unwrap();
@@ -177,7 +165,7 @@ fn setup_cli_source(root: &Path) -> (TaskSource, Vec<u8>) {
     let payload_path = root.join("task-cli-payload.json");
     fs::write(&payload_path, serde_json::to_vec(&payload).unwrap()).unwrap();
     let command = format!(
-        "import pathlib; print(pathlib.Path({:?}).read_text())",
+        "import pathlib,sys; sys.stdout.buffer.write(pathlib.Path({:?}).read_bytes())",
         payload_path.to_string_lossy()
     );
     let seed = root.join("cli-task-seed.json");
@@ -254,7 +242,7 @@ fn item_scenarios(
                 artifact: artifact.to_string(),
                 source: source.clone(),
                 raw_bytes: raw_bytes.clone(),
-                evidence_path: format!("/{array}/{index}/{field}"),
+                lookup_path: format!("/{array}/{index}/{field}"),
                 answer,
                 counterexample: false,
             }
@@ -274,7 +262,7 @@ fn observe_json_scenario() -> TaskScenario {
             bytes: serde_json::to_vec(&payload).unwrap(),
         },
         raw_bytes: serde_json::to_vec(&payload).unwrap(),
-        evidence_path: "/items/150/body".to_string(),
+        lookup_path: "/items/150/body".to_string(),
         answer: "json-body-150-".to_string(),
         counterexample: false,
     }
@@ -303,7 +291,7 @@ fn observe_ndjson_scenario() -> TaskScenario {
             bytes: raw.clone(),
         },
         raw_bytes: raw,
-        evidence_path: "/records/170/message".to_string(),
+        lookup_path: "/records/170/message".to_string(),
         answer: "ndjson-message-170-".to_string(),
         counterexample: false,
     }
@@ -330,7 +318,7 @@ fn observe_text_scenario() -> TaskScenario {
             bytes: raw.clone(),
         },
         raw_bytes: raw,
-        evidence_path: "/lines/180/text".to_string(),
+        lookup_path: "/lines/180/text".to_string(),
         answer: "log-line-180-".to_string(),
         counterexample: false,
     }
@@ -349,210 +337,78 @@ fn tiny_counterexample_scenario() -> TaskScenario {
             bytes: raw.clone(),
         },
         raw_bytes: raw,
-        evidence_path: "/answer".to_string(),
+        lookup_path: "/answer".to_string(),
         answer: "tiny-answer".to_string(),
         counterexample: true,
     }
 }
 
-fn run_scenario(root: &Path, scenario: &TaskScenario) -> Vec<TaskMetric> {
-    vec![
-        raw_metric(scenario),
-        truncation_metric(scenario),
-        jq_field_metric(scenario),
-        grep_filter_metric(scenario),
-        prog_call_only_metric(root, scenario),
-        prog_expand_metric(root, scenario),
-    ]
-}
-
-fn raw_metric(scenario: &TaskScenario) -> TaskMetric {
-    metric(
-        scenario,
-        "raw",
-        MetricInput {
-            correct: contains_answer(&scenario.raw_bytes, &scenario.answer),
-            input_bytes: scenario.raw_bytes.len(),
-            output_tokens: 0,
-            tool_calls: 0,
-            expansion_count: 0,
-            cache_hits: 0,
-            wall_time_ms: 0,
-        },
-    )
-}
-
-fn truncation_metric(scenario: &TaskScenario) -> TaskMetric {
-    let visible = &scenario.raw_bytes[..scenario.raw_bytes.len().min(TRUNCATION_BYTES)];
-    metric(
-        scenario,
-        "simple_truncation",
-        MetricInput {
-            correct: contains_answer(visible, &scenario.answer),
-            input_bytes: visible.len(),
-            output_tokens: 0,
-            tool_calls: 0,
-            expansion_count: 0,
-            cache_hits: 0,
-            wall_time_ms: 0,
-        },
-    )
-}
-
-/// jq or native field selection baseline.
-/// For JSON payloads, extracts the specific field using a jq-like filter.
-fn jq_field_metric(scenario: &TaskScenario) -> TaskMetric {
-    // Try to parse as JSON and extract the specific path
-    let filtered = if let Ok(value) = serde_json::from_slice::<Value>(&scenario.raw_bytes) {
-        // Navigate to the evidence path
-        let result = extract_json_path(&value, &scenario.evidence_path);
-        serde_json::to_vec(&result).unwrap_or_default()
+fn strategy_input(scenario: &TaskScenario) -> StrategyInput {
+    // This suite explicitly supplies a lookup path. Only the expected answer
+    // remains private to grading. Terms come from the public selector, not it.
+    let term = if scenario.lookup_path.ends_with("/text") {
+        scenario
+            .lookup_path
+            .split('/')
+            .rev()
+            .nth(1)
+            .unwrap_or("text")
     } else {
-        // Not JSON, return empty
-        Vec::new()
+        scenario.lookup_path.rsplit('/').next().unwrap_or("")
     };
-
-    metric(
-        scenario,
-        "jq_field_selection",
-        MetricInput {
-            correct: contains_answer(&filtered, &scenario.answer),
-            input_bytes: filtered.len(),
-            output_tokens: 0,
-            tool_calls: 1, // Count the jq tool call
-            expansion_count: 0,
-            cache_hits: 0,
-            wall_time_ms: 5, // Assume minimal jq latency
-        },
-    )
-}
-
-/// RTK-style grep filtering baseline.
-/// For text payloads, filters to lines containing the answer.
-fn grep_filter_metric(scenario: &TaskScenario) -> TaskMetric {
-    let text = String::from_utf8_lossy(&scenario.raw_bytes);
-    let filtered_lines: Vec<&str> = text
-        .lines()
-        .filter(|line| line.contains(&scenario.answer))
-        .collect();
-    let filtered = filtered_lines.join("\n").into_bytes();
-
-    metric(
-        scenario,
-        "rtk_grep_filter",
-        MetricInput {
-            correct: !filtered.is_empty(),
-            input_bytes: filtered.len(),
-            output_tokens: 0,
-            tool_calls: 1, // Count the grep tool call
-            expansion_count: 0,
-            cache_hits: 0,
-            wall_time_ms: 3, // Assume minimal grep latency
-        },
-    )
-}
-
-fn prog_call_only_metric(root: &Path, scenario: &TaskScenario) -> TaskMetric {
-    let initial = run_initial(root, scenario);
-    assert_success(&initial.output);
-    metric(
-        scenario,
-        "prog_call_only",
-        MetricInput {
-            correct: contains_answer(&initial.output.stdout, &scenario.answer),
-            input_bytes: initial.output.stdout.len(),
-            output_tokens: 0,
-            tool_calls: 1,
-            expansion_count: 0,
-            cache_hits: 0,
-            wall_time_ms: initial.elapsed_ms,
-        },
-    )
-}
-
-fn prog_expand_metric(root: &Path, scenario: &TaskScenario) -> TaskMetric {
-    let initial = run_initial(root, scenario);
-    assert_success(&initial.output);
-    let cursor = cursor(&initial.output);
-    let expanded = timed_prog(
-        root,
-        &["expand", &cursor, "--path", &scenario.evidence_path],
-        None,
-    );
-    assert_success(&expanded.output);
-    let cache_hits = cache_hit_count(&expanded.output);
-    metric(
-        scenario,
-        "prog_expand",
-        MetricInput {
-            correct: contains_answer(&expanded.output.stdout, &scenario.answer),
-            input_bytes: initial.output.stdout.len() + expanded.output.stdout.len(),
-            output_tokens: 0,
-            tool_calls: 2,
-            expansion_count: 1,
-            cache_hits,
-            wall_time_ms: initial.elapsed_ms + expanded.elapsed_ms,
-        },
-    )
-}
-
-fn metric(scenario: &TaskScenario, strategy: &'static str, input: MetricInput) -> TaskMetric {
-    TaskMetric {
-        scenario_id: scenario.id.clone(),
-        prompt: scenario.prompt.clone(),
-        artifact: scenario.artifact.clone(),
-        strategy,
-        correct: input.correct,
-        input_tokens: approx_tokens(input.input_bytes),
-        output_tokens: input.output_tokens,
-        tool_calls: input.tool_calls,
-        expansion_count: input.expansion_count,
-        cache_hits: input.cache_hits,
-        wall_time_ms: input.wall_time_ms,
-        evidence_path: scenario.evidence_path.clone(),
-        counterexample: scenario.counterexample,
-    }
-}
-
-fn run_initial(root: &Path, scenario: &TaskScenario) -> TimedOutput {
-    match &scenario.source {
-        TaskSource::Call {
-            source_id,
-            operation,
-        } => timed_prog(root, &["call", source_id, operation, "--args", "{}"], None),
-        TaskSource::Observe { name, mime, bytes } => timed_prog(
-            root,
-            &["observe", "--stdin", "--mime", mime, "--name", name],
-            Some(bytes),
+    StrategyInput {
+        prompt: format!(
+            "{} Public lookup selector: {}.",
+            scenario.prompt, scenario.lookup_path
         ),
+        source: scenario.source.clone(),
+        raw_bytes: scenario.raw_bytes.clone(),
+        task: Task::KnownPath {
+            selector: scenario.lookup_path.clone(),
+            grep_term: Some(term.to_string()),
+        },
     }
 }
 
-fn timed_prog(root: &Path, args: &[&str], stdin: Option<&[u8]>) -> TimedOutput {
-    let started = Instant::now();
-    let mut command = Command::new(env!("CARGO_BIN_EXE_prog"));
-    command.arg("--dir").arg(root).args(args);
-    let output = if let Some(stdin) = stdin {
-        let mut child = command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("prog should spawn");
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(stdin)
-            .expect("stdin should write");
-        child.wait_with_output().expect("prog should run")
-    } else {
-        command.output().expect("prog should run")
-    };
-    TimedOutput {
-        output,
-        elapsed_ms: started.elapsed().as_millis(),
-    }
+fn run_scenario(root: &Path, scenario: &TaskScenario) -> Vec<TaskMetric> {
+    let input = strategy_input(scenario);
+    [
+        ("raw", "raw_context"),
+        ("simple_truncation", "head_tail_truncation"),
+        ("native_json_selection", "native_field_selection"),
+        ("rtk_grep_filter", "rtk_grep_filter"),
+        ("prog_call_only", "prog_envelope_only"),
+        ("prog_expand", "prog_retrieve"),
+    ]
+    .into_iter()
+    .map(|(label, strategy)| {
+        let execution = strategies::run(root, &input, strategy);
+        // No strategy runner can read scenario.answer. Grade only afterward.
+        let available = execution.unavailable.is_none();
+        let evidence_available =
+            available && String::from_utf8_lossy(&execution.evidence).contains(&scenario.answer);
+        let response_bytes = execution.response_bytes();
+        TaskMetric {
+            scenario_id: scenario.id.clone(),
+            prompt: input.prompt.clone(),
+            artifact: scenario.artifact.clone(),
+            task_mode: input.mode(),
+            strategy: label,
+            available,
+            evidence_available,
+            artifact_bytes: input.raw_bytes.len(),
+            response_bytes,
+            input_tokens: approx_tokens(response_bytes),
+            tool_calls: execution.tool_calls(),
+            expansion_count: execution.steps.iter().filter(|s| s.expansion).count(),
+            cache_hits: execution.steps.iter().filter(|s| s.cache_hit).count(),
+            wall_time_ms: execution.elapsed_ms,
+            public_lookup_path: scenario.lookup_path.clone(),
+            counterexample: scenario.counterexample,
+            steps: execution.steps,
+        }
+    })
+    .collect()
 }
 
 fn discover(root: &Path, source_id: &str, kind: &str, seed: &Path) {
@@ -569,55 +425,6 @@ fn discover(root: &Path, source_id: &str, kind: &str, seed: &Path) {
         None,
     );
     assert_success(&output.output);
-}
-
-fn cursor(output: &Output) -> String {
-    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-    value["cursor"].as_str().unwrap().to_string()
-}
-
-fn cache_hit_count(output: &Output) -> usize {
-    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-    usize::from(value["cache"]["status"] == "hit")
-}
-
-fn assert_success(output: &Output) {
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.stderr.is_empty());
-}
-
-fn contains_answer(bytes: &[u8], answer: &str) -> bool {
-    String::from_utf8_lossy(bytes).contains(answer)
-}
-
-/// Extract a value from JSON using a simple JSON Pointer-like path.
-/// Supports paths like "/items/42/body" or "/records/170/message".
-fn extract_json_path(value: &Value, path: &str) -> Value {
-    let parts: Vec<&str> = path.strip_prefix('/').unwrap_or(path).split('/').collect();
-
-    let mut current = value;
-    for part in parts {
-        if part.is_empty() {
-            continue;
-        }
-        current = match current {
-            Value::Object(map) => map.get(part).unwrap_or(&Value::Null),
-            Value::Array(arr) => {
-                if let Ok(index) = part.parse::<usize>() {
-                    arr.get(index).unwrap_or(&Value::Null)
-                } else {
-                    &Value::Null
-                }
-            }
-            _ => &Value::Null,
-        };
-    }
-    current.clone()
 }
 
 fn item_payload(array_key: &str, prefix: &str) -> Value {
@@ -650,45 +457,6 @@ fn read_only_effect() -> Value {
     })
 }
 
-fn assert_strategy_all_correct(metrics: &[TaskMetric], strategy: &str) {
-    let rows = strategy_rows(metrics, strategy);
-    assert!(!rows.is_empty(), "missing strategy {strategy}");
-    assert!(
-        rows.iter().all(|metric| metric.correct),
-        "{strategy} should solve every task"
-    );
-}
-
-fn assert_strategy_has_failures(metrics: &[TaskMetric], strategy: &str) {
-    let rows = strategy_rows(metrics, strategy);
-    assert!(!rows.is_empty(), "missing strategy {strategy}");
-    assert!(
-        rows.iter().any(|metric| !metric.correct),
-        "{strategy} should have at least one evidence-hiding failure"
-    );
-}
-
-fn assert_counterexample_where_prog_costs_more(metrics: &[TaskMetric]) {
-    let by_key = metrics
-        .iter()
-        .map(|metric| ((metric.scenario_id.as_str(), metric.strategy), metric))
-        .collect::<BTreeMap<_, _>>();
-    let counterexamples = metrics
-        .iter()
-        .filter(|metric| metric.counterexample && metric.strategy == "raw")
-        .collect::<Vec<_>>();
-    assert!(
-        !counterexamples.is_empty(),
-        "missing counterexample scenario"
-    );
-    assert!(counterexamples.iter().any(|raw| {
-        let prog = by_key
-            .get(&(raw.scenario_id.as_str(), "prog_expand"))
-            .unwrap();
-        prog.correct && prog.input_tokens > raw.input_tokens
-    }));
-}
-
 fn strategy_rows<'a>(metrics: &'a [TaskMetric], strategy: &str) -> Vec<&'a TaskMetric> {
     metrics
         .iter()
@@ -698,26 +466,33 @@ fn strategy_rows<'a>(metrics: &'a [TaskMetric], strategy: &str) -> Vec<&'a TaskM
 
 fn markdown_report(metrics: &[TaskMetric]) -> String {
     let mut output = String::from(
-        "# Task-success eval\n\n\
-         This deterministic eval asks whether each strategy exposes the evidence needed to answer fixed tasks. It is not a model-quality benchmark; optional model-backed scoring should be gated separately.\n\n\
+        "# Known-path recoverability eval\n\n\
+         This deterministic suite supplies the exact lookup selector in every task and grades evidence availability after execution. It does not measure discovery or actual-agent task success. Real-agent outcomes require separate live trials. The historical filenames remain for compatibility.\n\n\
+         The expected answer is private to grading. Line-search terms are derived from the public selector, never from the answer. Native JSON selection is unavailable for non-JSON artifacts. The raw fixture is supplied outside model context to every strategy; source setup is excluded. All actual strategy stdout, including initial capture and expansion, is counted. No model answer tokens are generated, and timings are local measurements rather than assumed jq/RTK latency.\n\n\
          Regenerate this report and the raw metrics with `PROG_TASK_EVAL_UPDATE=1 cargo test -p prog-cli --test task_success -- --nocapture`.\n\n\
          ## Aggregate\n\n\
-         | Strategy | Correct | Scenarios | Input tokens | Tool calls | Expansions | Cache hits |\n\
-         |---|---:|---:|---:|---:|---:|---:|\n",
+         | Strategy | Evidence available | Attempted | Unavailable | Response bytes | Approx. input tokens | Tool calls | Expansions | Cache hits |\n\
+         |---|---:|---:|---:|---:|---:|---:|---:|---:|\n",
     );
     for strategy in [
         "raw",
         "simple_truncation",
-        "jq_field_selection",
+        "native_json_selection",
         "rtk_grep_filter",
         "prog_call_only",
         "prog_expand",
     ] {
         let rows = strategy_rows(metrics, strategy);
         output.push_str(&format!(
-            "| {strategy} | {} | {} | {} | {} | {} | {} |\n",
-            rows.iter().filter(|metric| metric.correct).count(),
-            rows.len(),
+            "| {strategy} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            rows.iter()
+                .filter(|metric| metric.evidence_available)
+                .count(),
+            rows.iter().filter(|metric| metric.available).count(),
+            rows.iter().filter(|metric| !metric.available).count(),
+            rows.iter()
+                .map(|metric| metric.response_bytes)
+                .sum::<usize>(),
             rows.iter().map(|metric| metric.input_tokens).sum::<usize>(),
             rows.iter().map(|metric| metric.tool_calls).sum::<usize>(),
             rows.iter()
@@ -728,7 +503,7 @@ fn markdown_report(metrics: &[TaskMetric]) -> String {
     }
     output.push_str(
         "\n## Scenarios\n\n\
-         | Scenario | Artifact | Evidence path | Counterexample |\n\
+         | Scenario | Artifact | Public lookup path | Counterexample |\n\
          |---|---|---|---:|\n",
     );
     let mut seen = BTreeMap::new();
@@ -738,12 +513,12 @@ fn markdown_report(metrics: &[TaskMetric]) -> String {
     for metric in seen.values() {
         output.push_str(&format!(
             "| {} | {} | `{}` | {} |\n",
-            metric.scenario_id, metric.artifact, metric.evidence_path, metric.counterexample
+            metric.scenario_id, metric.artifact, metric.public_lookup_path, metric.counterexample
         ));
     }
     output.push_str(
         "\n## Counterexamples\n\n\
-         The tiny payload scenario is intentionally included: raw context is correct and cheaper than a `prog` envelope plus expansion. This report should keep that loss visible.\n",
+         The tiny payload scenario remains visible without a required cost ordering. Successful `prog_expand` rows prove that supplied paths are recoverable; they do not prove an agent discovered the path or solved the task.\n",
     );
     output
 }
@@ -803,3 +578,19 @@ for line in sys.stdin:
     else:
         send_error(message_id, -32601, f"unknown method: {method}")
 "#;
+
+#[test]
+fn known_path_inputs_do_not_consult_the_expected_answer() {
+    let original = observe_text_scenario();
+    let mut changed = original.clone();
+    changed.answer = "grader-only-answer".to_string();
+    let first = strategy_input(&original);
+    let second = strategy_input(&changed);
+    assert_eq!(
+        serde_json::to_value(&first).unwrap(),
+        serde_json::to_value(&second).unwrap()
+    );
+    assert_eq!(first.mode(), "known_path_recoverability");
+    assert!(first.prompt.contains(&original.lookup_path));
+    assert_eq!(first.selector(), Some(original.lookup_path.as_str()));
+}
