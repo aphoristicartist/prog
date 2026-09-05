@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{Read, Write},
+    io::Write,
     path::{Path, PathBuf},
     process::{ExitCode, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -359,7 +359,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
         }
         Command::Observe(args) => {
             let store = open_store(&cli.dir, ctx)?;
-            let mut envelope = observe_artifact(&store, &cli.lens_dir, args, ctx)?;
+            let mut envelope = observe_artifact(&store, &cli.lens_dir, args, ctx).await?;
             record_envelope_event(&store, &mut envelope, "observe");
             write_success(&envelope, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)

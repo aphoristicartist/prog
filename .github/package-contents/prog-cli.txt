@@ -28,6 +28,7 @@ src/commands/meta.rs
 src/commands/mod.rs
 src/commands/navigation.rs
 src/commands/observe.rs
+src/commands/observe_input.rs
 src/commands/paths.rs
 src/commands/profiles.rs
 src/commands/recipe.rs

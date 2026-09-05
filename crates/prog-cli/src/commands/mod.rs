@@ -13,6 +13,7 @@ pub(crate) mod mcp_task;
 pub(crate) mod meta;
 pub(crate) mod navigation;
 pub(crate) mod observe;
+pub(crate) mod observe_input;
 pub(crate) mod paths;
 pub(crate) mod profiles;
 pub(crate) mod recipe;

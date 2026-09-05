@@ -9,6 +9,13 @@ identifies the source and limits that governed source capture when one was
 performed. `storage_budget` identifies the durable retention policy used by the
 local store. See `prog --help` for `--budget-bytes` and `--budget-tokens`.
 
+A rejected `observe` acquisition returns `ErrorBody.kind = "capture_stopped"`
+with an optional typed `capture: CaptureCompleteness` field. It contains no
+cursor: `stored_bytes` is zero, `total_bytes` is unknown without EOF, and
+`can_prove_absence` is false. `prog meta ErrorBody` publishes that field and its
+capture schema. Other error shapes omit it. See [observe.md](observe.md) for
+byte caps, acquisition deadlines, cancellation, and input-byte accounting.
+
 `DisclosureEnvelope.summary` keeps payload cost and immediate envelope cost
 separate. `payload_bytes` is the size of the complete redacted payload retained
 behind the cursor. `envelope_bytes` is the serialized disclosure envelope, and

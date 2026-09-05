@@ -14,6 +14,10 @@
   records the child status, observes one private temporary report through the
   existing `junit`/`sarif` lens, and removes the temporary artifact afterward
   (#241).
+- Bounded `observe` file/stdin acquisition with finite byte and duration
+  limits, signal cancellation, and rejection before normalization/persistence.
+  Complete captures distinguish original input bytes from retained bytes;
+  rejected captures expose conservative typed error facts (#248).
 - Preregistered the Terminal-Bench 2.0 paired public pilot before any live
   model spend: the benchmark, harness, model, resource-bounded seeded subset,
   raw/prog arm order, stopping rule, analysis, and falsification conditions are

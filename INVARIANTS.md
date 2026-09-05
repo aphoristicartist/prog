@@ -50,3 +50,24 @@ The pure functions targeted for future model checking are:
 - `prog_core::pagination::{extract_pagination_hints,next_args_from_hints,merge_page_shapes}`
 
 Kani harnesses are not enabled in this PR because the repository has no pinned Kani toolchain or CI install path; adding one would make the standard gate depend on a non-Cargo setup. The proptest harnesses are intentionally written against pure, dependency-free core functions so they can be moved to feature-gated Kani/PropProof harnesses without rewriting the laws.
+
+## Artifact acquisition coverage (I2, I14)
+
+`crates/prog-cli/tests/observe_acquisition.rs` exercises finite file/stdin
+acquisition before any parser or store write:
+
+- `rejected_json_and_ndjson_are_not_normalized_or_persisted` checks rejected
+  input secrets never reach a persisted payload or observation (I2).
+- `file_and_stdin_boundaries_preserve_complete_evidence_and_reject_overflow`
+  checks rejection cannot create or replace an observation, while an exact
+  complete capture retains cursor-backed evidence (I14).
+- `stalled_stdin_and_exact_cap_without_eof_time_out_without_persistence` and
+  `sigint_and_sigterm_cancel_stalled_stdin_and_restore_flags` check incomplete
+  acquisitions report unknown totals, zero stored bytes, and no ability to
+  prove absence; controlled open producers cannot hold capture indefinitely
+  (I14).
+- `probe_consumes_only_one_extra_byte_and_restores_inherited_flags` verifies
+  the unread pipe suffix, proving that the cap applies during acquisition.
+
+The normal core redaction/idempotence and conservative delta tests remain
+required; an input cap never substitutes for their I2/I4/I14 guarantees.

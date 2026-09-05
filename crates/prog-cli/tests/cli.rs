@@ -4423,7 +4423,10 @@ fn disclosure_budget_flag_is_hard_and_retains_recovery_metadata() {
         serde_json::to_vec(&json!({"items": [{"body": "x".repeat(16_000)}]})).unwrap(),
     )
     .unwrap();
-    let output = prog(&[
+    // Finite capture limits are immutable safety facts. With those included,
+    // 2 KiB is below this envelope's minimum: retain the hard ceiling and
+    // report the required size instead of dropping facts or exceeding it.
+    let too_small = prog(&[
         "--dir",
         dir.path().to_str().unwrap(),
         "--budget-bytes",
@@ -4434,16 +4437,38 @@ fn disclosure_budget_flag_is_hard_and_retains_recovery_metadata() {
         "--name",
         "large",
     ]);
+    assert!(!too_small.status.success());
+    assert!(too_small.stdout.len() <= 2048);
+    let rejected: Value = serde_json::from_slice(&too_small.stdout).unwrap();
+    assert_eq!(rejected["error"]["kind"], "budget_too_small");
+    assert_eq!(rejected["disclosure_budget"]["effective_bytes"], 2048);
+    assert_eq!(
+        rejected["capture_budget"]["limits"][0]["max_bytes"],
+        16 * 1024 * 1024
+    );
+    // Keep a fixed cost ceiling, rather than trusting any minimum the program
+    // suggests. The same artifact must remain recoverable inside 2.25 KiB.
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "--budget-bytes",
+        "2304",
+        "observe",
+        "--file",
+        file.to_str().unwrap(),
+        "--name",
+        "large",
+    ]);
     assert!(output.status.success(), "{}", stdout(&output));
     assert!(
-        output.stdout.len() <= 2048,
+        output.stdout.len() <= 2304,
         "stdout was {} bytes: {}",
         output.stdout.len(),
         stdout(&output)
     );
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["disclosure_budget"]["source"], "flag");
-    assert_eq!(value["disclosure_budget"]["effective_bytes"], 2048);
+    assert_eq!(value["disclosure_budget"]["effective_bytes"], 2304);
     assert_eq!(
         value["disclosure_budget"]["actual_bytes"].as_u64().unwrap() as usize,
         output.stdout.len()
