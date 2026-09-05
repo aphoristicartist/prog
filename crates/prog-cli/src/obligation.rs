@@ -1,7 +1,7 @@
 //! Verification-obligation evaluation, split from `main.rs` as part of #183.
 //!
-//! Move-only: `evaluate_obligation` is `pub(crate)` (consumed by the
-//! verification/session command path); its helpers stay module-private.
+//! Readiness is evaluated from currently available evidence; immutable receipts
+//! retain their historical status even after supporting payloads are evicted.
 
 use crate::commands::delta::compare_observation_ids;
 use serde_json::Value;
@@ -34,6 +34,16 @@ pub(crate) fn evaluate_obligation(
                 obligation,
                 VerificationStatus::Unverifiable,
                 vec!["the read-back receipt names a different obligation".to_string()],
+                receipt.assessment,
+            ));
+        }
+        if receipt.status == ReadbackVerificationStatus::Verified
+            && let Some(reason) = readback_evidence_unavailable(store, &obligation, &receipt)?
+        {
+            return Ok(obligation_evaluation(
+                obligation,
+                VerificationStatus::Unverifiable,
+                vec![reason],
                 receipt.assessment,
             ));
         }
@@ -258,6 +268,73 @@ pub(crate) fn evaluate_obligation(
     }
 }
 
+/// A historical exact-value verification is not a current availability proof.
+/// Check its links and all supporting payloads offline, without imposing delta's
+/// unrelated `can_prove_absence` requirement or rerunning the source.
+fn readback_evidence_unavailable(
+    store: &Store,
+    obligation: &VerificationObligation,
+    receipt: &prog_core::ReadbackVerificationReceipt,
+) -> Result<Option<String>> {
+    let Some(readback_id) = receipt.readback_observation_id.as_deref() else {
+        return Ok(Some(
+            "the verified receipt has no read-back evidence observation".to_string(),
+        ));
+    };
+    if obligation.evidence_observation_id.as_deref() != Some(readback_id)
+        || obligation
+            .extra
+            .get("action_intent_id")
+            .and_then(Value::as_str)
+            != Some(receipt.intent_id.as_str())
+    {
+        return Ok(Some(
+            "the read-back receipt does not match the obligation's evidence or action intent"
+                .to_string(),
+        ));
+    }
+    let Some(intent) = store.get_action_intent(&receipt.intent_id)? else {
+        return Ok(Some(
+            "the read-back action intent is unavailable".to_string(),
+        ));
+    };
+    if intent.session_id != obligation.session_id
+        || intent.obligation_id != obligation.id
+        || intent.pre_observation_id != receipt.pre_observation_id
+    {
+        return Ok(Some("the read-back action intent does not match this session, obligation, or pre-mutation evidence".to_string()));
+    }
+    for (role, observation_id) in [
+        ("pre-mutation", Some(receipt.pre_observation_id.as_str())),
+        ("read-back", Some(readback_id)),
+        (
+            "mutation-response",
+            receipt.mutation_response_observation_id.as_deref(),
+        ),
+    ] {
+        let Some(observation_id) = observation_id else {
+            continue;
+        };
+        let Some(observation) = store.get_observation(observation_id)? else {
+            return Ok(Some(format!(
+                "the {role} evidence observation is unavailable"
+            )));
+        };
+        if matches!(
+            observation.availability,
+            prog_core::EvidenceAvailability::Expired
+                | prog_core::EvidenceAvailability::MetadataOnly
+                | prog_core::EvidenceAvailability::Unavailable
+        ) || store.get_payload(&observation.payload_hash)?.is_none()
+        {
+            return Ok(Some(format!(
+                "the {role} evidence payload is no longer available"
+            )));
+        }
+    }
+    Ok(None)
+}
+
 fn command_success(
     store: &Store,
     observation: &prog_core::ObservationRecord,
@@ -302,5 +379,234 @@ fn obligation_evaluation(
         reasons,
         assessment,
         extra: Extra::new(),
+    }
+}
+
+#[cfg(test)]
+mod readback_tests {
+    use super::*;
+    use prog_core::{EvidenceAvailability, NewObservation, RawPayload, RedactionPolicy};
+    use serde_json::json;
+
+    fn observation(store: &Store, role: &str, fault: &str) -> String {
+        if fault == "missing_record" {
+            return format!("missing-{role}");
+        }
+        let payload_hash = if fault == "missing_payload" {
+            format!("missing-payload-{role}")
+        } else {
+            store
+                .put_payload(
+                    &RawPayload::new(json!({"role": role}))
+                        .redact(&RedactionPolicy::default())
+                        .payload,
+                )
+                .unwrap()
+        };
+        store
+            .record_observation(NewObservation {
+                payload_hash,
+                availability: if fault == "metadata_only" {
+                    EvidenceAvailability::MetadataOnly
+                } else {
+                    EvidenceAvailability::Recoverable
+                },
+                invocation_fingerprint: role.to_string(),
+                source_id: "entity".to_string(),
+                operation: "get".to_string(),
+                comparison_family: None,
+                selection: Default::default(),
+                captured_at: None,
+                duration_ms: None,
+                status: None,
+                capture: Default::default(),
+                redacted: false,
+                provider: None,
+                parser: None,
+                lens: None,
+                workspace_state: None,
+                source_state: None,
+                source_validity: prog_core::SourceValidity::Unknown,
+                lineage: Default::default(),
+                provenance: None,
+                cache_key: None,
+                extra: Extra::new(),
+            })
+            .unwrap()
+            .observation_id
+    }
+
+    fn fixture(
+        store: &Store,
+        role: &str,
+        fault: &str,
+    ) -> (
+        VerificationObligation,
+        prog_core::ReadbackVerificationReceipt,
+    ) {
+        let evidence = |current_role| {
+            observation(
+                store,
+                current_role,
+                if role == current_role { fault } else { "" },
+            )
+        };
+        let pre = evidence("pre-mutation");
+        let readback = evidence("read-back");
+        let mutation = evidence("mutation-response");
+        let intent: prog_core::ActionIntent = serde_json::from_value(json!({
+            "schema": prog_core::ACTION_INTENT_SCHEMA,
+            "intent_id": "intent", "session_id": "session", "source_id": "entity",
+            "read_operation": "get", "read_args": {}, "pre_observation_id": pre,
+            "identity_path": "/id", "version_path": "/version",
+            "pre_identity_fingerprint": "identity", "pre_version_fingerprint": "version",
+            "obligation_id": "check", "created_at": "2026-09-05T00:00:00Z"
+        }))
+        .unwrap();
+        store.put_action_intent(&intent).unwrap();
+        let obligation: VerificationObligation = serde_json::from_value(json!({
+            "schema": prog_core::VERIFICATION_SCHEMA, "id": "check", "session_id": "session",
+            "required": true, "intended_check": "verify state", "required_scope": "entity",
+            "evidence_observation_id": readback, "created_at": "2026-09-05T00:00:00Z",
+            "readback_receipt_id": "receipt", "action_intent_id": "intent"
+        }))
+        .unwrap();
+        let receipt: prog_core::ReadbackVerificationReceipt = serde_json::from_value(json!({
+            "schema": prog_core::READBACK_VERIFICATION_SCHEMA, "receipt_id": "receipt",
+            "intent_id": "intent", "status": "verified", "obligation_id": "check",
+            "pre_observation_id": pre, "readback_observation_id": readback,
+            "mutation_response_observation_id": mutation, "created_at": "2026-09-05T00:00:00Z"
+        }))
+        .unwrap();
+        store.put_readback_receipt(&receipt).unwrap();
+        (obligation, receipt)
+    }
+
+    #[test]
+    fn each_supporting_observation_and_payload_must_remain_available() {
+        for role in ["pre-mutation", "read-back", "mutation-response"] {
+            for fault in ["missing_record", "missing_payload", "metadata_only"] {
+                let dir = tempfile::tempdir().unwrap();
+                let store = Store::open(dir.path()).unwrap();
+                let (obligation, receipt) = fixture(&store, role, fault);
+                let result = evaluate_obligation(&store, obligation).unwrap();
+                assert_eq!(
+                    result.status,
+                    VerificationStatus::Unverifiable,
+                    "{role}: {fault}"
+                );
+                assert!(result.reasons[0].contains(role), "{result:?}");
+                assert_eq!(
+                    store.get_readback_receipt("receipt").unwrap(),
+                    Some(receipt)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn readback_availability_does_not_require_delta_absence_proof() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let (obligation, receipt) = fixture(&store, "", "");
+        let observation = store
+            .get_observation(receipt.readback_observation_id.as_deref().unwrap())
+            .unwrap()
+            .unwrap();
+        assert!(!observation.capture.can_prove_absence);
+        assert_eq!(
+            evaluate_obligation(&store, obligation).unwrap().status,
+            VerificationStatus::Passed
+        );
+    }
+
+    #[test]
+    fn receipt_failures_and_broken_links_never_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let (obligation, original) = fixture(&store, "", "");
+        for (status, expected) in [
+            (
+                ReadbackVerificationStatus::Mismatched,
+                VerificationStatus::Failed,
+            ),
+            (
+                ReadbackVerificationStatus::Pending,
+                VerificationStatus::Pending,
+            ),
+            (
+                ReadbackVerificationStatus::StalePrecondition,
+                VerificationStatus::Stale,
+            ),
+            (
+                ReadbackVerificationStatus::ReadbackFailed,
+                VerificationStatus::Unverifiable,
+            ),
+            (
+                ReadbackVerificationStatus::Unverifiable,
+                VerificationStatus::Unverifiable,
+            ),
+        ] {
+            let mut receipt = original.clone();
+            receipt.receipt_id = format!("receipt-{status:?}");
+            receipt.status = status;
+            store.put_readback_receipt(&receipt).unwrap();
+            let mut obligation = obligation.clone();
+            obligation
+                .extra
+                .insert("readback_receipt_id".to_string(), json!(receipt.receipt_id));
+            assert_eq!(
+                evaluate_obligation(&store, obligation).unwrap().status,
+                expected
+            );
+        }
+        for fault in [
+            "missing_receipt",
+            "wrong_obligation",
+            "wrong_session",
+            "wrong_intent",
+            "wrong_evidence",
+            "missing_readback",
+            "missing_intent",
+            "wrong_pre",
+        ] {
+            let mut declaration = obligation.clone();
+            let mut receipt = original.clone();
+            receipt.receipt_id = format!("receipt-{fault}");
+            declaration
+                .extra
+                .insert("readback_receipt_id".to_string(), json!(receipt.receipt_id));
+            match fault {
+                "wrong_obligation" => receipt.obligation_id = "other".to_string(),
+                "wrong_session" => declaration.session_id = "other".to_string(),
+                "wrong_intent" => {
+                    declaration
+                        .extra
+                        .insert("action_intent_id".to_string(), json!("other"));
+                }
+                "wrong_evidence" => declaration.evidence_observation_id = Some("other".to_string()),
+                "missing_readback" => receipt.readback_observation_id = None,
+                "missing_intent" => {
+                    receipt.intent_id = "missing".to_string();
+                    declaration
+                        .extra
+                        .insert("action_intent_id".to_string(), json!("missing"));
+                }
+                "wrong_pre" => receipt.pre_observation_id = "other".to_string(),
+                _ => {}
+            }
+            if fault != "missing_receipt" {
+                store.put_readback_receipt(&receipt).unwrap();
+            }
+            assert_eq!(
+                evaluate_obligation(&store, declaration).unwrap().status,
+                VerificationStatus::Unverifiable,
+                "{fault}"
+            );
+        }
+        assert_eq!(
+            store.get_readback_receipt("receipt").unwrap(),
+            Some(original)
+        );
     }
 }

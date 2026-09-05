@@ -57,6 +57,14 @@ a new immutable receipt.
 | `readback_failed` | The independent read failed at transport or upstream level. |
 | `unverifiable` | Identity, version, mapping, payload, redaction, retention, or validator evidence is insufficient. |
 
+A receipt records the historical read-back result and remains unchanged after
+payload eviction. Current readiness separately validates its obligation/intent
+links and requires the referenced pre-mutation, read-back, and optional mutation
+response payloads to remain available. Missing, expired, or metadata-only evidence
+makes a required obligation `unverifiable` and readiness false. These checks are
+offline and do not require delta's absence proof: exact-value verification and
+proof that a finding disappeared have different requirements.
+
 Receipts link the intent, pre-observation, optional mutation-response
 observation, read-back observation, conservative comparability assessment, and
 the readiness obligation. Readiness maps `verified` to `passed`; every other

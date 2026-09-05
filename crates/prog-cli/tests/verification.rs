@@ -197,6 +197,125 @@ async fn external_change_is_verified_by_repeatable_get_only_readbacks() {
 }
 
 #[tokio::test]
+async fn verified_readback_becomes_unverifiable_after_payload_eviction() {
+    for persisted_policy in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_arg = dir.path().to_str().unwrap();
+        let server = MockServer::start().await;
+        let state = Arc::new(Mutex::new(EntityState {
+            version: 1,
+            state: "old".to_string(),
+        }));
+        let methods = Arc::new(Mutex::new(Vec::new()));
+        Mock::given(path("/entity/1"))
+            .respond_with(EntityResponder {
+                state: state.clone(),
+                methods: methods.clone(),
+            })
+            .mount(&server)
+            .await;
+        discover_entity(dir.path(), &server);
+        let pre = capture_pre(dir.path());
+        let intent = begin(dir.path(), &pre, r#"{"/state":"new"}"#, None);
+        *state.lock().unwrap() = EntityState {
+            version: 2,
+            state: "new".to_string(),
+        };
+        let output = prog(&[
+            "--dir",
+            dir_arg,
+            "verification",
+            "readback",
+            intent["intent_id"].as_str().unwrap(),
+        ]);
+        assert!(output.status.success(), "{}", stdout(&output));
+        let receipt: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(receipt["status"], "verified");
+        // Each CLI command is a separate process and reopens the store.
+        let before = prog(&["--dir", dir_arg, "session", "obligation-list"]);
+        let before: Value = serde_json::from_slice(&before.stdout).unwrap();
+        assert_eq!(before["ready"], true);
+        assert_eq!(before["evaluations"][0]["status"], "passed");
+        let stored_receipt = {
+            let store = prog_core::Store::open(dir.path()).unwrap();
+            store
+                .get_readback_receipt(receipt["receipt_id"].as_str().unwrap())
+                .unwrap()
+                .unwrap()
+        };
+        let args = if persisted_policy {
+            [
+                "--dir",
+                dir_arg,
+                "cache",
+                "retention",
+                "--max-payload-bytes",
+                "0",
+            ]
+        } else {
+            [
+                "--dir",
+                dir_arg,
+                "cache",
+                "purge",
+                "--payload-budget-bytes",
+                "0",
+            ]
+        };
+        let purge = prog(&args);
+        assert!(purge.status.success(), "{}", stdout(&purge));
+        for readiness in [
+            vec!["session", "obligation-list"],
+            vec!["session", "show", "--readiness"],
+        ] {
+            let mut args = vec!["--dir", dir_arg];
+            args.extend(readiness);
+            let after = prog(&args);
+            assert!(after.status.success(), "{}", stdout(&after));
+            let after: Value = serde_json::from_slice(&after.stdout).unwrap();
+            assert_eq!(after["ready"], false);
+            assert_eq!(after["evaluations"][0]["status"], "unverifiable");
+            assert_eq!(
+                after["evaluations"][0]["obligation"],
+                before["evaluations"][0]["obligation"]
+            );
+            assert!(
+                after["evaluations"][0]["reasons"]
+                    .to_string()
+                    .contains("payload is no longer available")
+            );
+        }
+        let store = prog_core::Store::open(dir.path()).unwrap();
+        assert_eq!(
+            store
+                .get_readback_receipt(&stored_receipt.receipt_id)
+                .unwrap(),
+            Some(stored_receipt)
+        );
+        for observation_id in [
+            pre.as_str(),
+            receipt["readback_observation_id"].as_str().unwrap(),
+        ] {
+            let observation = store.get_observation(observation_id).unwrap().unwrap();
+            assert_eq!(
+                observation.availability,
+                prog_core::EvidenceAvailability::MetadataOnly
+            );
+            assert!(
+                store
+                    .get_payload(&observation.payload_hash)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        if persisted_policy {
+            assert_eq!(store.storage_budget().unwrap().max_payload_bytes, Some(0));
+        }
+        assert_eq!(methods.lock().unwrap().as_slice(), ["GET", "GET"]);
+    }
+}
+
+#[tokio::test]
 async fn mismatches_are_failed_or_pending_only_inside_declared_window() {
     let dir = tempfile::tempdir().unwrap();
     let server = MockServer::start().await;
