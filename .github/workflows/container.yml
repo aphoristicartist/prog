@@ -42,16 +42,16 @@ jobs:
       - name: Bundled recipe lenses and reopened evidence work in the image
         run: |
           project="$(mktemp -d)"
-          trap 'sudo rm -rf "$project"' EXIT
-          chmod 777 "$project"
-          printf 'INFO start\nERROR installed fixture failed\n' > "$project/service.log"
-          docker run --rm -v "$project:/work" -w /work \
-            prog:ci recipe logs-root-cause --file service.log > "$project/recipe.json"
+          container=""
+          trap 'if [ -n "$container" ]; then docker rm -f "$container" >/dev/null; fi; rm -rf "$project"' EXIT
+          container="$(docker run --rm -d --entrypoint sleep prog:ci 300)"
+          printf 'INFO start\nERROR installed fixture failed\n' \
+            | docker exec -i "$container" sh -c 'cat > /work/service.log'
+          docker exec "$container" prog recipe logs-root-cause --file service.log > "$project/recipe.json"
           cursor="$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["lens"]["id"] == "logs"; assert r["findings"][0]["kind"] == "log_error"; print(r["cursor"])' "$project/recipe.json")"
-          docker run --rm -v "$project:/work" -w /work \
-            prog:ci inspect "$cursor" --goal 'find the root cause' > "$project/inspect.json"
-          docker run --rm -v "$project:/work" -w /work \
-            prog:ci evidence "$cursor" --path /lines/1 > "$project/evidence.json"
+          docker exec "$container" prog inspect "$cursor" --goal 'find the root cause' > "$project/inspect.json"
+          docker exec "$container" prog evidence "$cursor" --path /lines/1 > "$project/evidence.json"
+          docker exec "$container" test ! -e /work/lenses
           python3 - "$project" <<'PY'
           import json, sys
           from pathlib import Path
@@ -62,7 +62,6 @@ jobs:
           assert evidence["evidence_ref"]["availability"] == "recoverable"
           assert "installed fixture failed" in str(evidence["excerpt"])
           assert "could not be loaded" not in str(inspected) + str(evidence)
-          assert not (project / "lenses").exists()
           PY
       - name: Log in to ghcr.io
         if: startsWith(github.ref, 'refs/tags/')
