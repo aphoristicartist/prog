@@ -141,6 +141,10 @@ declare omissions and next actions, and contribute bounded finding rules. They
 are data. If you find yourself wanting a lens to run code, the answer is no;
 that belongs in `findings.rs` as a deterministic rule.
 
+Copy a new or changed first-party manifest to `crates/prog-cli/assets/lenses/`
+so installed binaries include it. The CLI packaging regression checks exact
+equality with the canonical pack; also update the `prog-cli` package manifest.
+
 **A recipe** — recipes are thin, deterministic compositions of `run`/`observe` +
 a first-party lens + `inspect`. They must not hide the expanded command; the
 envelope records exactly what ran.

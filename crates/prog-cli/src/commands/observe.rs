@@ -4,7 +4,7 @@ use crate::*;
 
 pub(crate) fn observe_artifact(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     args: &ObserveArgs,
     ctx: &mut InvocationContext,
 ) -> Result<DisclosureEnvelope> {

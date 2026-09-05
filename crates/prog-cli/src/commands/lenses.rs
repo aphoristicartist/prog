@@ -2,6 +2,8 @@
 
 use crate::*;
 
+include!(concat!(env!("OUT_DIR"), "/lens_manifests.rs"));
+
 pub(crate) fn parse_json_argument(raw: &str, operation: &str) -> Result<Value> {
     serde_json::from_str(raw).map_err(|error| CoreError::BadArgs {
         operation: operation.to_string(),
@@ -26,24 +28,70 @@ pub(crate) fn parse_view(raw: Option<&str>) -> Result<SliceRequest> {
     }
 }
 
-pub(crate) fn load_lens(lens_dir: &Path, id: &str, context: &str) -> Result<LensManifest> {
-    let manifests = load_lens_manifests(lens_dir, context)?;
+pub(crate) fn load_lens(lens_dir: Option<&Path>, id: &str, context: &str) -> Result<LensManifest> {
+    // Explicit directories retain their exclusive selection and missing-path
+    // errors. Default resolution permits project overrides without requiring a
+    // source checkout alongside an installed binary.
+    let external_dir = lens_dir.unwrap_or_else(|| Path::new("./lenses"));
+    let directory_present = match external_dir.symlink_metadata() {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    let external = if lens_dir.is_some() || directory_present {
+        load_lens_manifests(external_dir, context)?
+    } else {
+        Vec::new()
+    };
+    if let Some(lens) = select_lens(external, id, &external_dir.to_string_lossy(), context)? {
+        return Ok(lens);
+    }
+    if lens_dir.is_none()
+        && let Some(lens) = select_lens(builtin_lenses(context)?, id, "bundled lenses", context)?
+    {
+        return Ok(lens);
+    }
+    Err(CoreError::BadArgs {
+        operation: context.to_string(),
+        reason: format!(
+            "lens '{id}' not found in '{}'{}",
+            external_dir.to_string_lossy(),
+            if lens_dir.is_none() {
+                " or bundled lenses"
+            } else {
+                ""
+            }
+        ),
+    })
+}
+
+fn builtin_lenses(context: &str) -> Result<Vec<LensManifest>> {
+    BUILTIN_LENS_MANIFESTS
+        .iter()
+        .map(|(name, raw)| {
+            let manifest = parse_lens_manifest(Path::new(name), raw, context)?;
+            validate_lens_manifest(&manifest)?;
+            Ok(manifest)
+        })
+        .collect()
+}
+
+fn select_lens(
+    manifests: Vec<LensManifest>,
+    id: &str,
+    location: &str,
+    context: &str,
+) -> Result<Option<LensManifest>> {
     let mut matches = manifests
         .into_iter()
         .filter(|manifest| manifest.id == id)
         .collect::<Vec<_>>();
     match matches.len() {
-        0 => Err(CoreError::BadArgs {
-            operation: context.to_string(),
-            reason: format!("lens '{id}' not found in '{}'", lens_dir.to_string_lossy()),
-        }),
-        1 => Ok(matches.remove(0)),
+        0 => Ok(None),
+        1 => Ok(Some(matches.remove(0))),
         _ => Err(CoreError::BadArgs {
             operation: context.to_string(),
-            reason: format!(
-                "lens '{id}' is defined more than once in '{}'",
-                lens_dir.to_string_lossy()
-            ),
+            reason: format!("lens '{id}' is defined more than once in '{location}'"),
         }),
     }
 }

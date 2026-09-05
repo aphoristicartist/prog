@@ -4,7 +4,7 @@ use crate::*;
 
 pub(crate) async fn run_recipe(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     args: &RecipeArgs,
     ctx: &mut InvocationContext,
 ) -> Result<DisclosureEnvelope> {

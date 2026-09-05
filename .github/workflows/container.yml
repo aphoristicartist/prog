@@ -6,6 +6,9 @@ on:
       - Dockerfile
       - .dockerignore
       - .github/workflows/container.yml
+      - crates/prog-cli/assets/lenses/**
+      - crates/prog-cli/build.rs
+      - crates/prog-cli/src/commands/lenses.rs
   push:
     tags:
       - 'v*'
@@ -36,6 +39,30 @@ jobs:
             -v "$PWD/fixtures:/work/fixtures" \
             -w /work \
             prog:ci observe --file fixtures/cli/list_items.py >/dev/null
+      - name: Bundled recipe lenses and reopened evidence work in the image
+        run: |
+          project="$(mktemp -d)"
+          container=""
+          trap 'if [ -n "$container" ]; then docker rm -f "$container" >/dev/null; fi; rm -rf "$project"' EXIT
+          container="$(docker run --rm -d --entrypoint sleep prog:ci 300)"
+          printf 'INFO start\nERROR installed fixture failed\n' \
+            | docker exec -i "$container" sh -c 'cat > /work/service.log'
+          docker exec "$container" prog recipe logs-root-cause --file service.log > "$project/recipe.json"
+          cursor="$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["lens"]["id"] == "logs"; assert r["findings"][0]["kind"] == "log_error"; print(r["cursor"])' "$project/recipe.json")"
+          docker exec "$container" prog inspect "$cursor" --goal 'find the root cause' > "$project/inspect.json"
+          docker exec "$container" prog evidence "$cursor" --path /lines/1 > "$project/evidence.json"
+          docker exec "$container" test ! -e /work/lenses
+          python3 - "$project" <<'PY'
+          import json, sys
+          from pathlib import Path
+          project = Path(sys.argv[1])
+          inspected = json.loads((project / "inspect.json").read_text())
+          assert any(f["kind"] == "log_error" for f in inspected["findings"])
+          evidence = json.loads((project / "evidence.json").read_text())
+          assert evidence["evidence_ref"]["availability"] == "recoverable"
+          assert "installed fixture failed" in str(evidence["excerpt"])
+          assert "could not be loaded" not in str(inspected) + str(evidence)
+          PY
       - name: Log in to ghcr.io
         if: startsWith(github.ref, 'refs/tags/')
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin

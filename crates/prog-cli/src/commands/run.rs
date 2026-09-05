@@ -25,7 +25,7 @@ pub(crate) enum RunProcessStatus {
 
 pub(crate) async fn run_command(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     args: &RunArgs,
     ctx: &mut InvocationContext,
 ) -> Result<RunEnvelopeResult> {
