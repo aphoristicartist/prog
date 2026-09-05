@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Redact quoted JSON secrets in captured text, including escaped values and
+  interleaved stream fragments, before storage and evidence disclosure (#249).
+- Protect verification obligation metadata at the store boundary: redact
+  descriptions and reject sensitive exact operations or identity constraints.
+  Return the safe declaration to callers and reset older pre-release stores
+  that lack this persistence boundary (#250).
+
 - Fixed the `prog-cli` crate tarball so its embedded agent skill is packaged
   inside the crate and verified by the release dry-run build.
 - Routed public-benchmark A/B records through the existing actual-agent claim
