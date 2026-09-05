@@ -25,6 +25,15 @@ that never started from one that started and later became unreachable.
 Every subcommand records an observation, so the whole lifecycle stays inspectable
 after the fact.
 
+Connection cleanup does not poll, retry, send `tasks/cancel`, or change a
+received task status. Each command closes its own stdio connection. Servers
+must keep durable task state independently of that connection; a local task
+worker must release its transport pipes before successful shutdown, or run
+outside the connection's process group if it must survive forced cleanup.
+Interrupted stderr remains separate diagnostic evidence with an unknown total,
+even when a task response was received. See [MCP connection and diagnostic
+bounds](source-setup.md#mcp-from-a-command).
+
 ## Output
 
 Each subcommand returns:

@@ -77,7 +77,7 @@ pub async fn capture_process<T>(
             && stderr.done
             && let Some(status) = status
         {
-            process.finished = true;
+            process.group.disarm();
             return Ok(ProcessCapture::Complete {
                 status,
                 stdout: stdout.value.take().expect("stdout completed successfully"),
@@ -86,11 +86,10 @@ pub async fn capture_process<T>(
         }
     };
 
-    process.kill_group();
+    process.group.terminate();
     let _ = process.child.start_kill();
     let _ = tokio::time::timeout(Duration::from_millis(100), process.child.wait()).await;
     let (stdout, stderr) = tokio::join!(stdout.finish_or_abort(), stderr.finish_or_abort());
-    process.finished = true;
     Ok(ProcessCapture::Interrupted {
         reason: interrupted?,
         stdout,
@@ -100,35 +99,48 @@ pub async fn capture_process<T>(
 
 struct CaptureChild {
     child: Child,
-    // Child::id() becomes None after wait() reaps the immediate process.
-    // Its descendants may still belong to this group and hold the pipes open.
-    group_id: Option<u32>,
-    finished: bool,
+    group: OwnedProcessGroup,
 }
 
 impl CaptureChild {
     fn new(child: Child) -> Self {
         Self {
-            group_id: child.id(),
+            group: OwnedProcessGroup::new(child.id()),
             child,
-            finished: false,
         }
     }
+}
 
-    fn kill_group(&self) {
+/// Own the group created by `configure_capture_process`, even after the
+/// immediate child is reaped. Disarm only after successful transport cleanup.
+pub(crate) struct OwnedProcessGroup {
+    // Child::id() becomes None after wait() reaps the immediate process.
+    // Its descendants may still belong to this group and hold the pipes open.
+    group_id: Option<u32>,
+}
+
+impl OwnedProcessGroup {
+    pub(crate) fn new(group_id: Option<u32>) -> Self {
+        Self { group_id }
+    }
+
+    pub(crate) fn disarm(&mut self) {
+        self.group_id = None;
+    }
+
+    pub(crate) fn terminate(&mut self) {
+        let group_id = self.group_id.take();
         #[cfg(unix)]
-        if let Some(pid) = self.group_id.and_then(|pid| i32::try_from(pid).ok()) {
+        if let Some(pid) = group_id.and_then(|pid| i32::try_from(pid).ok()) {
             // configure_capture_process sets PGID to the child's original PID.
             let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
         }
     }
 }
 
-impl Drop for CaptureChild {
+impl Drop for OwnedProcessGroup {
     fn drop(&mut self) {
-        if !self.finished {
-            self.kill_group();
-        }
+        self.terminate();
     }
 }
 

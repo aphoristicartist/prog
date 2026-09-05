@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Preserve bounded MCP stderr prefixes when collection is interrupted, report
+  unknown totals instead of fabricated empty diagnostics, and abort owned
+  readers and clean up stalled connection process groups on every exit path.
+  Received responses and explicit MCP task actions remain separate evidence
+  (#271).
 - Fixed the `prog-cli` crate tarball so its embedded agent skill is packaged
   inside the crate and verified by the release dry-run build.
 - Routed public-benchmark A/B records through the existing actual-agent claim
