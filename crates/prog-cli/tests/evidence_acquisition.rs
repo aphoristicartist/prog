@@ -1,3 +1,5 @@
+#[path = "support/evidence_cli_eval.rs"]
+mod cli_eval;
 #[path = "support/eval_reports.rs"]
 mod eval_reports;
 
@@ -138,16 +140,20 @@ fn evidence_acquisition_eval_smoke() {
 
     let baseline = root.join("fixtures/evals/evidence-acquisition-metrics.json");
     let expected: BaselineReport = serde_json::from_slice(&fs::read(&baseline).unwrap()).unwrap();
-    if std::env::var_os("PROG_BLESS").is_some() {
-        let refreshed = blessed_baseline(&report, &expected);
-        // Blessing refreshes the human-readable measurements but does not
-        // silently raise a reviewed ceiling. A cost increase therefore needs
-        // an explicit fixture edit before this command can succeed.
-        assert_baseline_invariants(&report, &refreshed);
+    let bless = std::env::var_os("PROG_BLESS").is_some();
+    let refreshed = if bless {
+        blessed_baseline(&report, &expected)
+    } else {
+        expected
+    };
+    assert_baseline_invariants(&report, &refreshed);
+    // Separate transport measurements; legacy component sizes/ceilings retain
+    // their original meaning. Both families validate before artifact/doc writes.
+    cli_eval::evaluate(&root);
+    if bless {
+        // Neither measurement family can silently raise a reviewed ceiling.
         fs::write(&baseline, serde_json::to_vec_pretty(&refreshed).unwrap()).unwrap();
         eval_reports::write_documents(&root);
-    } else {
-        assert_baseline_invariants(&report, &expected);
     }
 }
 
@@ -295,6 +301,8 @@ fn with_headroom(value: u64) -> u64 {
     value.saturating_add((value / 4).max(1))
 }
 
+/// Legacy component serialization model, retained with its original ceilings.
+/// These sizes and call constants are not used for any CLI workflow cost claim.
 fn measure(scenario: Scenario) -> ScenarioMetrics {
     let cursor = format!("pc1_eval_{}", scenario.name);
     let projection = project(&scenario.payload, &PreviewPolicy::default(), "");

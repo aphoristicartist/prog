@@ -30,6 +30,10 @@
   JSON artifacts, including new token-economics rows. A read-only consistency
   check detects drift without requiring fresh measurements to match saved
   costs or changing reviewed ceilings (#257).
+- Measured evidence-acquisition workflows through actual CLI capture, bounded
+  navigation, and evidence/expansion requests. Complete stdout and command
+  ledgers now drive published costs; private grading, failure controls, and
+  separate reviewed ceilings preserve conservative evidence claims (#258).
 - Added JUnit report recipes for Vitest, Playwright, Bun, and Deno plus SARIF
   recipes for Ruff, Biome, and Semgrep. Each recipe exposes the exact argv,
   records the child status, observes one private temporary report through the
