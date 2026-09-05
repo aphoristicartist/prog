@@ -25,11 +25,12 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt},
-    process::Command,
-    task::JoinHandle,
-};
+use tokio::process::Command;
+
+use crate::process::{OwnedProcessGroup, configure_capture_process};
+
+mod stderr;
+use stderr::{Capture, StderrDrain, StderrStopReason, normalize_text_capture};
 
 use crate::execution_context::ExecutionContext;
 
@@ -247,7 +248,7 @@ impl McpSource {
             }
         }
 
-        let diagnostics = session.shutdown(self.timeout_ms).await;
+        let diagnostics = session.shutdown(self.timeout_ms, &mut warnings).await;
         let duration_ms = elapsed_ms(started);
         let mut extra = Extra::new();
         extra.insert(
@@ -343,7 +344,9 @@ impl McpSource {
                 "MCP tool '{tool_name}' structuredContent does not match its declared output schema: {issue}"
             ));
         }
-        let diagnostics = session.shutdown(self.timeout_ms).await;
+        let diagnostics = session
+            .shutdown(self.timeout_ms, &mut normalized.warnings)
+            .await;
 
         Ok(McpCallResult {
             data: normalized.data,
@@ -402,7 +405,8 @@ impl McpSource {
             ServerResult::CreateTaskResult(result) => result.task,
             _ => return Err(unexpected_task_response(&operation)),
         };
-        let diagnostics = session.shutdown(self.timeout_ms).await;
+        let mut warnings = Vec::new();
+        let diagnostics = session.shutdown(self.timeout_ms, &mut warnings).await;
         Ok(McpTaskResult {
             task: task.into(),
             provenance: self.provenance(
@@ -414,7 +418,7 @@ impl McpSource {
                 false,
             ),
             diagnostics,
-            warnings: Vec::new(),
+            warnings,
         })
     }
 
@@ -440,7 +444,8 @@ impl McpSource {
             ServerResult::GetTaskResult(result) => result.task,
             _ => return Err(unexpected_task_response(operation)),
         };
-        let diagnostics = session.shutdown(self.timeout_ms).await;
+        let mut warnings = Vec::new();
+        let diagnostics = session.shutdown(self.timeout_ms, &mut warnings).await;
         Ok(McpTaskResult {
             task: task.into(),
             provenance: self.provenance(
@@ -452,7 +457,7 @@ impl McpSource {
                 false,
             ),
             diagnostics,
-            warnings: Vec::new(),
+            warnings,
         })
     }
 
@@ -491,7 +496,9 @@ impl McpSource {
             _ => return Err(unexpected_task_response(operation)),
         };
         let mut normalized = self.normalize_tool_result("task result", tool_result)?;
-        let diagnostics = session.shutdown(self.timeout_ms).await;
+        let diagnostics = session
+            .shutdown(self.timeout_ms, &mut normalized.warnings)
+            .await;
         Ok(McpCallResult {
             data: normalized.data,
             provenance: self.provenance(
@@ -538,7 +545,8 @@ impl McpSource {
             ServerResult::GetTaskResult(result) => result.task,
             _ => return Err(unexpected_task_response(operation)),
         };
-        let diagnostics = session.shutdown(self.timeout_ms).await;
+        let mut warnings = Vec::new();
+        let diagnostics = session.shutdown(self.timeout_ms, &mut warnings).await;
         Ok(McpTaskResult {
             task: task.into(),
             provenance: self.provenance(
@@ -550,7 +558,7 @@ impl McpSource {
                 false,
             ),
             diagnostics,
-            warnings: Vec::new(),
+            warnings,
         })
     }
 
@@ -578,8 +586,10 @@ impl McpSource {
                     .read_resource(ReadResourceRequestParams::new(uri.to_string())),
             )
             .await?;
-        let normalized = self.normalize_resource_result(result)?;
-        let diagnostics = session.shutdown(self.timeout_ms).await;
+        let mut normalized = self.normalize_resource_result(result)?;
+        let diagnostics = session
+            .shutdown(self.timeout_ms, &mut normalized.warnings)
+            .await;
 
         Ok(McpCallResult {
             data: normalized.data,
@@ -610,8 +620,8 @@ impl McpSource {
     ) -> Result<McpSession> {
         let mut command = Command::new(&self.command);
         context.configure(&mut command);
-        command.args(&self.args).envs(&self.env).kill_on_drop(true);
-        configure_process_group(&mut command);
+        command.args(&self.args).envs(&self.env);
+        configure_capture_process(&mut command);
 
         let (transport, stderr) = TokioChildProcess::builder(command)
             .stderr(Stdio::piped())
@@ -620,8 +630,8 @@ impl McpSource {
                 operation: operation.to_string(),
                 message: error.to_string(),
             })?;
-        let stderr_task =
-            stderr.map(|stderr| tokio::spawn(read_bounded(stderr, self.max_stderr_bytes)));
+        let group = OwnedProcessGroup::new(transport.id());
+        let stderr = stderr.map(|stderr| StderrDrain::spawn(stderr, self.max_stderr_bytes));
         // Advertising this capability is a prerequisite for a later,
         // explicit task command. Nothing in the synchronous path adds task
         // fields or polls/cancels a task implicitly.
@@ -648,14 +658,12 @@ impl McpSource {
         {
             Ok(Ok(client)) => client,
             Ok(Err(error)) => {
-                wait_for_stderr(stderr_task).await;
                 return Err(CoreError::McpTransport {
                     operation: operation.to_string(),
                     message: error.to_string(),
                 });
             }
             Err(_) => {
-                wait_for_stderr(stderr_task).await;
                 return Err(CoreError::McpTimeout {
                     operation: operation.to_string(),
                     timeout_ms: self.timeout_ms,
@@ -665,7 +673,8 @@ impl McpSource {
 
         Ok(McpSession {
             client,
-            stderr_task,
+            stderr,
+            group,
         })
     }
 
@@ -953,7 +962,8 @@ impl McpSource {
 
 struct McpSession {
     client: RunningService<RoleClient, ClientInfo>,
-    stderr_task: Option<JoinHandle<std::io::Result<Capture>>>,
+    stderr: Option<StderrDrain>,
+    group: OwnedProcessGroup,
 }
 
 impl McpSession {
@@ -968,25 +978,47 @@ impl McpSession {
         self.client.peer().peer_info().map(|info| (*info).clone())
     }
 
-    async fn shutdown(&mut self, timeout_ms: u64) -> McpDiagnostics {
-        let _ = self
+    async fn shutdown(&mut self, timeout_ms: u64, warnings: &mut Vec<String>) -> McpDiagnostics {
+        let interrupted = match self
             .client
             .close_with_timeout(Duration::from_millis(timeout_ms))
-            .await;
-        let stderr = match self.stderr_task.take() {
-            Some(task) => tokio::time::timeout(Duration::from_millis(timeout_ms), task)
-                .await
-                .ok()
-                .and_then(|joined| joined.ok())
-                .and_then(|capture| capture.ok()),
-            None => None,
+            .await
+        {
+            Ok(Some(_)) => None,
+            Ok(None) => Some(StderrStopReason::ShutdownTimeout),
+            Err(_) => Some(StderrStopReason::ShutdownFailed),
         };
+        let capture = match self.stderr.as_mut() {
+            Some(stderr) => {
+                let (wait, reason) = match interrupted {
+                    None => (Duration::from_millis(timeout_ms), StderrStopReason::Timeout),
+                    Some(reason) => (Duration::ZERO, reason),
+                };
+                stderr.finish(wait, reason).await
+            }
+            None => Capture::default(),
+        };
+        // Stop the reader before terminating the group: EOF caused by cleanup
+        // must not turn interrupted diagnostics into a complete capture.
+        if interrupted.is_none() && capture.complete() {
+            self.group.disarm();
+        } else {
+            self.group.terminate();
+        }
+        if interrupted.is_some() {
+            warnings.push(
+                "MCP stdio shutdown did not finish; connection process-group cleanup was requested"
+                    .to_string(),
+            );
+        }
+        if !capture.complete() {
+            warnings.push(format!(
+                "MCP stderr collection is incomplete ({}); its total byte count is unknown",
+                capture.stop_reason.as_str()
+            ));
+        }
         McpDiagnostics {
-            stderr: stderr
-                .map(|capture| {
-                    normalize_text_capture(&capture.bytes, capture.total_bytes, capture.truncated)
-                })
-                .unwrap_or_else(|| normalize_text_capture(&[], 0, false)),
+            stderr: normalize_text_capture(&capture),
         }
     }
 }
@@ -1341,76 +1373,6 @@ fn safe_prefix_len(text: &str, max_bytes: usize) -> usize {
         end -= 1;
     }
     end
-}
-
-#[cfg(unix)]
-fn configure_process_group(command: &mut Command) {
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-fn configure_process_group(_command: &mut Command) {}
-
-#[derive(Debug)]
-struct Capture {
-    bytes: Vec<u8>,
-    total_bytes: usize,
-    truncated: bool,
-}
-
-async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R, cap: usize) -> std::io::Result<Capture> {
-    let mut output = Vec::new();
-    let mut total_bytes = 0usize;
-    let mut truncated = false;
-    let mut buffer = [0u8; 8192];
-    loop {
-        let read = reader.read(&mut buffer).await?;
-        if read == 0 {
-            break;
-        }
-        total_bytes = total_bytes.saturating_add(read);
-        let remaining = cap.saturating_sub(output.len());
-        if remaining > 0 {
-            output.extend_from_slice(&buffer[..read.min(remaining)]);
-        }
-        if read > remaining || total_bytes > cap {
-            truncated = true;
-        }
-    }
-    Ok(Capture {
-        bytes: output,
-        total_bytes,
-        truncated,
-    })
-}
-
-async fn wait_for_stderr(task: Option<JoinHandle<std::io::Result<Capture>>>) {
-    if let Some(task) = task {
-        let _ = tokio::time::timeout(Duration::from_millis(250), task).await;
-    }
-}
-
-fn normalize_text_capture(bytes: &[u8], total_bytes: usize, truncated: bool) -> Value {
-    let text = String::from_utf8_lossy(bytes);
-    let lines: Vec<String> = text
-        .lines()
-        .map(|line| redact_sensitive_text(line).0)
-        .collect();
-    let head: Vec<Value> = lines.iter().take(10).map(|line| json!(line)).collect();
-    let tail_start = lines.len().saturating_sub(10).max(head.len());
-    let tail: Vec<Value> = lines
-        .iter()
-        .skip(tail_start)
-        .map(|line| json!(line))
-        .collect();
-    json!({
-        "format": "text",
-        "head": head,
-        "tail": tail,
-        "line_count": lines.len(),
-        "byte_count": total_bytes,
-        "truncated": truncated
-    })
 }
 
 fn elapsed_ms(started: Instant) -> u64 {

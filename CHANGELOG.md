@@ -14,6 +14,11 @@
   terminate its POSIX process group, close local pipes, and preserve the
   original host result; guarded Linux/macOS fixtures cover cleanup (#269).
 
+- Preserve bounded MCP stderr prefixes when collection is interrupted, report
+  unknown totals instead of fabricated empty diagnostics, and abort owned
+  readers and clean up stalled connection process groups on every exit path.
+  Received responses and explicit MCP task actions remain separate evidence
+  (#271).
 - Fixed the `prog-cli` crate tarball so its embedded agent skill is packaged
   inside the crate and verified by the release dry-run build.
 - Stop treating historical verified read-back receipts as passing readiness
