@@ -7,6 +7,8 @@ src/cli.rs
 src/http.rs
 src/lib.rs
 src/mcp.rs
+src/process.rs
 tests/cli.rs
+tests/fixtures/inherited_pipes.py
 tests/http.rs
 tests/mcp.rs
