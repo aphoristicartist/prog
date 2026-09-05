@@ -57,7 +57,7 @@ overview and quickstart; contributors and coding agents should read
 | [real-world-demos.md](real-world-demos.md) | Real-world-shaped local demos. |
 | [positioning.md](positioning.md) | When to use prog and when not to. |
 | [cost.md](cost.md) | Storage and disclosure economics. |
-| [token-economics.md](token-economics.md) | Regeneration command for measured tables. |
+| [evaluation-docs.md](evaluation-docs.md) | Saved measurement sources, document generation, and drift checks. |
 | [release-notes.md](release-notes.md) | Per-release reference. |
 
 ## Design records
@@ -68,12 +68,18 @@ overview and quickstart; contributors and coding agents should read
 
 ## A note on the numbers
 
-Every measured figure in these docs is generated from checked-in fixtures, not
-written by hand. Regenerate with:
+Numerical README claims and evaluation reports share checked-in measurement
+artifacts. Render those reviewed measurements, or check for drift without
+changing repository files:
 
 ```sh
-PROG_TOKEN_EVAL_UPDATE=1 cargo test -p prog-cli --test eval -- --nocapture
+scripts/regenerate-eval-docs.sh --write
+scripts/regenerate-eval-docs.sh --check
 ```
+
+See [evaluation-docs.md](evaluation-docs.md) for the source of each metric family
+and the separate commands for refreshing measurements. Runtime correctness and
+reviewed cost ceilings remain independent from documentation consistency.
 
 Do not hand-edit figures in `token-economics.md`, `evidence-acquisition.md`, or
 `fixtures/evals/*.json`.

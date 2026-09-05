@@ -118,21 +118,28 @@ the process-group and signal semantics are POSIX-only.
 `crates/prog-cli/tests/docs_examples.rs` is a real test that:
 
 1. **Re-runs the README quickstart** end to end against `fixtures/cli/list_items.py`.
-2. **Asserts specific literal strings exist in `README.md`**, including
-   `24.4x-85.2x`, `5/5`, `Built for loop engineering`, `No MCP server mode`,
-   and several exact command lines.
+2. **Asserts command and topic strings exist in `README.md`**, including
+   `Built for loop engineering`, `No MCP server mode`, and exact command lines.
 3. **Asserts a list of `docs/*.md` files and fixtures still exist.**
 
-So: editing the README can fail the test suite. If you change a quickstart
-command, change the test with it. If you change a measured number, regenerate it
-rather than editing it by hand:
+`crates/prog-cli/tests/eval_docs.rs` separately checks numerical README claims
+and report tables against saved JSON artifacts. It does not compare fresh
+runtime sizes to exact saved measurements. Existing ratio and reviewed-ceiling
+gates remain independent.
+
+So: if you change a quickstart command, change its test with it. Never hand-edit
+measured numbers. Render reviewed artifacts or check for drift with:
 
 ```sh
-PROG_TOKEN_EVAL_UPDATE=1 cargo test -p prog-cli --test eval -- --nocapture
+scripts/regenerate-eval-docs.sh --write
+scripts/regenerate-eval-docs.sh --check
 ```
 
-Never hand-edit a number in `docs/token-economics.md`,
-`docs/evidence-acquisition.md`, or any `fixtures/evals/*.json`.
+To refresh measurements after an intentional behavior change, use the owning
+suite's update command listed in [`docs/evaluation-docs.md`](docs/evaluation-docs.md).
+Those commands also regenerate the documentation. Blessing never raises reviewed
+ceilings. Do not hand-edit numbers in `docs/token-economics.md`,
+`docs/evidence-acquisition.md`, or `fixtures/evals/*.json`.
 
 ## Adding things
 

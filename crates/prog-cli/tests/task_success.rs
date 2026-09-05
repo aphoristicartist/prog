@@ -1,5 +1,7 @@
+#[path = "support/eval_reports.rs"]
+mod eval_reports;
+
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -84,17 +86,14 @@ async fn known_path_recoverability_eval_smoke() {
         }
     }
 
-    let report = markdown_report(&metrics);
-    let metrics_json = serde_json::to_string_pretty(&metrics).unwrap();
     if std::env::var_os("PROG_TASK_EVAL_UPDATE").is_some() {
         let root = repo_root();
-        fs::write(root.join("docs/task-success-eval.md"), &report).unwrap();
         fs::write(
             root.join("fixtures/evals/task-success-metrics.json"),
-            format!("{metrics_json}\n"),
+            format!("{}\n", serde_json::to_string_pretty(&metrics).unwrap()),
         )
         .unwrap();
-        println!("{report}");
+        eval_reports::write_documents(&root);
     } else {
         assert!(repo_root().join("docs/task-success-eval.md").exists());
         assert!(
@@ -455,72 +454,6 @@ fn read_only_effect() -> Value {
         "cacheable": true,
         "requires_confirmation": false
     })
-}
-
-fn strategy_rows<'a>(metrics: &'a [TaskMetric], strategy: &str) -> Vec<&'a TaskMetric> {
-    metrics
-        .iter()
-        .filter(|metric| metric.strategy == strategy)
-        .collect()
-}
-
-fn markdown_report(metrics: &[TaskMetric]) -> String {
-    let mut output = String::from(
-        "# Known-path recoverability eval\n\n\
-         This deterministic suite supplies the exact lookup selector in every task and grades evidence availability after execution. It does not measure discovery or actual-agent task success. Real-agent outcomes require separate live trials. The historical filenames remain for compatibility.\n\n\
-         The expected answer is private to grading. Line-search terms are derived from the public selector, never from the answer. Native JSON selection is unavailable for non-JSON artifacts. The raw fixture is supplied outside model context to every strategy; source setup is excluded. All actual strategy stdout, including initial capture and expansion, is counted. No model answer tokens are generated, and timings are local measurements rather than assumed jq/RTK latency.\n\n\
-         Regenerate this report and the raw metrics with `PROG_TASK_EVAL_UPDATE=1 cargo test -p prog-cli --test task_success -- --nocapture`.\n\n\
-         ## Aggregate\n\n\
-         | Strategy | Evidence available | Attempted | Unavailable | Response bytes | Approx. input tokens | Tool calls | Expansions | Cache hits |\n\
-         |---|---:|---:|---:|---:|---:|---:|---:|---:|\n",
-    );
-    for strategy in [
-        "raw",
-        "simple_truncation",
-        "native_json_selection",
-        "rtk_grep_filter",
-        "prog_call_only",
-        "prog_expand",
-    ] {
-        let rows = strategy_rows(metrics, strategy);
-        output.push_str(&format!(
-            "| {strategy} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-            rows.iter()
-                .filter(|metric| metric.evidence_available)
-                .count(),
-            rows.iter().filter(|metric| metric.available).count(),
-            rows.iter().filter(|metric| !metric.available).count(),
-            rows.iter()
-                .map(|metric| metric.response_bytes)
-                .sum::<usize>(),
-            rows.iter().map(|metric| metric.input_tokens).sum::<usize>(),
-            rows.iter().map(|metric| metric.tool_calls).sum::<usize>(),
-            rows.iter()
-                .map(|metric| metric.expansion_count)
-                .sum::<usize>(),
-            rows.iter().map(|metric| metric.cache_hits).sum::<usize>()
-        ));
-    }
-    output.push_str(
-        "\n## Scenarios\n\n\
-         | Scenario | Artifact | Public lookup path | Counterexample |\n\
-         |---|---|---|---:|\n",
-    );
-    let mut seen = BTreeMap::new();
-    for metric in metrics {
-        seen.entry(metric.scenario_id.clone()).or_insert(metric);
-    }
-    for metric in seen.values() {
-        output.push_str(&format!(
-            "| {} | {} | `{}` | {} |\n",
-            metric.scenario_id, metric.artifact, metric.public_lookup_path, metric.counterexample
-        ));
-    }
-    output.push_str(
-        "\n## Counterexamples\n\n\
-         The tiny payload scenario remains visible without a required cost ordering. Successful `prog_expand` rows prove that supplied paths are recoverable; they do not prove an agent discovered the path or solved the task.\n",
-    );
-    output
 }
 
 fn approx_tokens(bytes: usize) -> usize {

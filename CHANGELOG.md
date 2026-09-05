@@ -15,6 +15,10 @@
   exploration and lookup costs; regenerated reports and the README retain
   insufficient evidence and unavailable strategies without requiring a `prog`
   win (#256).
+- Generated numerical README claims and evaluation reports from shared saved
+  JSON artifacts, including new token-economics rows. A read-only consistency
+  check detects drift without requiring fresh measurements to match saved
+  costs or changing reviewed ceilings (#257).
 - Added JUnit report recipes for Vitest, Playwright, Bun, and Deno plus SARIF
   recipes for Ruff, Biome, and Semgrep. Each recipe exposes the exact argv,
   records the child status, observes one private temporary report through the

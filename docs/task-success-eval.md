@@ -4,7 +4,9 @@ This deterministic suite supplies the exact lookup selector in every task and gr
 
 The expected answer is private to grading. Line-search terms are derived from the public selector, never from the answer. Native JSON selection is unavailable for non-JSON artifacts. The raw fixture is supplied outside model context to every strategy; source setup is excluded. All actual strategy stdout, including initial capture and expansion, is counted. No model answer tokens are generated, and timings are local measurements rather than assumed jq/RTK latency.
 
-Regenerate this report and the raw metrics with `PROG_TASK_EVAL_UPDATE=1 cargo test -p prog-cli --test task_success -- --nocapture`.
+Token counts approximate total response bytes/4, rounded up per task before aggregation.
+
+Source: [`task-success-metrics.json`](../fixtures/evals/task-success-metrics.json). Refresh measurements with `PROG_TASK_EVAL_UPDATE=1 cargo test -p prog-cli --test task_success -- --nocapture`; render reviewed artifacts with `scripts/regenerate-eval-docs.sh --write` or check them with `--check`.
 
 ## Aggregate
 
@@ -21,12 +23,12 @@ Regenerate this report and the raw metrics with `PROG_TASK_EVAL_UPDATE=1 cargo t
 
 | Scenario | Artifact | Public lookup path | Counterexample |
 |---|---|---|---:|
-| cli-body-42 | CLI | `/items/42/body` | false |
-| cli-lookup_code-128 | CLI | `/items/128/lookup_code` | false |
-| cli-lookup_code-211 | CLI | `/items/211/lookup_code` | false |
 | http-body-42 | HTTP | `/items/42/body` | false |
 | http-lookup_code-128 | HTTP | `/items/128/lookup_code` | false |
 | http-lookup_code-211 | HTTP | `/items/211/lookup_code` | false |
+| cli-body-42 | CLI | `/items/42/body` | false |
+| cli-lookup_code-128 | CLI | `/items/128/lookup_code` | false |
+| cli-lookup_code-211 | CLI | `/items/211/lookup_code` | false |
 | mcp-body-42 | MCP | `/results/42/body` | false |
 | mcp-lookup_code-128 | MCP | `/results/128/lookup_code` | false |
 | mcp-lookup_code-211 | MCP | `/results/211/lookup_code` | false |

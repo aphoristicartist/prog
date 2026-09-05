@@ -10,37 +10,37 @@ Unknown-target prog retrieval expands the first finding returned in the initial 
 
 Token counts approximate response bytes/4 rounded up. No model answers are generated: the separate assumed-answer tokens and illustrative Fable prices in JSON are hypothetical, never provider usage. Unavailable arms are excluded from attempted counts; no-answer and missed/unranked evidence remain insufficient rather than being counted as discovery successes.
 
-Regenerate with `PROG_BASELINE_EVAL_UPDATE=1 cargo test -p prog-cli --test competitive_baselines -- --nocapture`.
+Source: [`competitive-baseline-metrics.json`](../fixtures/evals/competitive-baseline-metrics.json). Refresh measurements with `PROG_BASELINE_EVAL_UPDATE=1 cargo test -p prog-cli --test competitive_baselines -- --nocapture`. Render reviewed artifacts with `scripts/regenerate-eval-docs.sh --write`; `--check` detects documentation drift without running measurements.
 
 ## known_path_recoverability
 
 | Strategy | Evidence available | Attempted | Unavailable | Response bytes | Approx. input tokens | Tool calls |
 |---|---:|---:|---:|---:|---:|---:|
-| raw_context | 10 | 10 | 0 | 1299777 | 324949 | 0 |
+| broad_log_search | 2 | 10 | 0 | 49863 | 12466 | 10 |
+| caveman_terse_output | 10 | 10 | 0 | 1299777 | 324949 | 0 |
+| file_capture_search | 10 | 10 | 0 | 1200169 | 300046 | 20 |
 | head_tail_truncation | 1 | 10 | 0 | 36921 | 9231 | 0 |
 | native_field_selection | 8 | 8 | 2 | 1688 | 423 | 8 |
-| rtk_grep_filter | 10 | 10 | 0 | 1199796 | 299952 | 10 |
-| broad_log_search | 2 | 10 | 0 | 49863 | 12466 | 10 |
-| file_capture_search | 10 | 10 | 0 | 1200169 | 300046 | 20 |
-| caveman_terse_output | 10 | 10 | 0 | 1299777 | 324949 | 0 |
 | prog_envelope_only | 1 | 10 | 0 | 66639 | 16664 | 10 |
-| prog_retrieve | 10 | 10 | 0 | 110560 | 27643 | 20 |
 | prog_repeated_cache | 10 | 10 | 0 | 150512 | 37629 | 30 |
+| prog_retrieve | 10 | 10 | 0 | 110560 | 27643 | 20 |
+| raw_context | 10 | 10 | 0 | 1299777 | 324949 | 0 |
+| rtk_grep_filter | 10 | 10 | 0 | 1199796 | 299952 | 10 |
 
 ## deterministic_discovery
 
 | Strategy | Evidence available | Attempted | Unavailable | Response bytes | Approx. input tokens | Tool calls |
 |---|---:|---:|---:|---:|---:|---:|
-| raw_context | 3 | 4 | 0 | 568816 | 142205 | 0 |
+| broad_log_search | 2 | 4 | 0 | 12336 | 3085 | 4 |
+| caveman_terse_output | 3 | 4 | 0 | 568816 | 142205 | 0 |
+| file_capture_search | 2 | 4 | 0 | 12488 | 3123 | 8 |
 | head_tail_truncation | 0 | 4 | 0 | 16384 | 4096 | 0 |
 | native_field_selection | 0 | 0 | 4 | 0 | 0 | 0 |
-| rtk_grep_filter | 0 | 4 | 0 | 12030 | 3009 | 4 |
-| broad_log_search | 2 | 4 | 0 | 12336 | 3085 | 4 |
-| file_capture_search | 2 | 4 | 0 | 12488 | 3123 | 8 |
-| caveman_terse_output | 3 | 4 | 0 | 568816 | 142205 | 0 |
 | prog_envelope_only | 0 | 4 | 0 | 36917 | 9231 | 4 |
-| prog_retrieve | 2 | 4 | 0 | 68964 | 17242 | 8 |
 | prog_repeated_cache | 2 | 4 | 0 | 109981 | 27496 | 11 |
+| prog_retrieve | 2 | 4 | 0 | 68964 | 17242 | 8 |
+| raw_context | 3 | 4 | 0 | 568816 | 142205 | 0 |
+| rtk_grep_filter | 0 | 4 | 0 | 12030 | 3009 | 4 |
 
 ## Unknown-target outcomes
 

@@ -84,26 +84,14 @@ async fn competitive_baseline_eval_smoke() {
 
     assert_measurement_contract(&metrics);
 
-    let report = markdown_report(&metrics);
-    let metrics_json = serde_json::to_string_pretty(&metrics).unwrap();
     if std::env::var_os("PROG_BASELINE_EVAL_UPDATE").is_some() {
         let root = repo_root();
-        fs::write(root.join("docs/competitive-baselines.md"), &report).unwrap();
-        let readme = fs::read_to_string(root.join("README.md")).unwrap();
-        fs::write(
-            root.join("README.md"),
-            eval_reports::replace_competitive_readme(
-                &readme,
-                &serde_json::to_value(&metrics).unwrap(),
-            ),
-        )
-        .unwrap();
         fs::write(
             root.join("fixtures/evals/competitive-baseline-metrics.json"),
-            format!("{metrics_json}\n"),
+            format!("{}\n", serde_json::to_string_pretty(&metrics).unwrap()),
         )
         .unwrap();
-        println!("{report}");
+        eval_reports::write_documents(&root);
     } else {
         assert!(repo_root().join("docs/competitive-baselines.md").exists());
         assert!(
@@ -698,64 +686,6 @@ fn assert_measurement_contract(metrics: &[BaselineMetric]) {
             );
         }
     }
-}
-
-fn markdown_report(metrics: &[BaselineMetric]) -> String {
-    let mut output = String::from(
-        "# Competitive baselines\n\n\
-         This is a deterministic evidence-availability experiment, not actual-agent task success. Known-path tasks publish their selector; unknown-target strategies receive only the task and artifact. The grader's path and answer are consulted only after execution. No strategy receives answer-derived grep terms.\n\n\
-         All arms start from the same fixture artifact outside model context. Source-profile discovery/setup is excluded. Raw context discloses that artifact; filters transform it; file capture writes it once and returns a receipt before searching; prog returns a capture envelope before retrieval. Every strategy response (including exploration, receipt, retrieval, and repeated retrieval) contributes to response bytes and tool-call counts. These are disclosure costs, not end-to-end live acquisition or latency comparisons. Python implements the declared JSON/line filters with actual argv and stdout; it is not the RTK or jq executable.\n\n\
-         Broad search uses the declared case-insensitive severity pattern `fatal|panic|error|failed|exception` with word boundaries. The narrow unknown-target grep assumes `ERROR`. File search uses the public known-task term or that broad pattern. Minified JSON can make line search return the entire artifact.\n\n\
-         Unknown-target prog retrieval expands the first finding returned in the initial envelope, or calls `inspect --goal root_cause` if none is returned. With no candidate it stops; an incorrect candidate has no oracle fallback. Repeated retrieval uses the same observed path. Known-path retrieval is explicitly assisted recoverability.\n\n\
-         Token counts approximate response bytes/4 rounded up. No model answers are generated: the separate assumed-answer tokens and illustrative Fable prices in JSON are hypothetical, never provider usage. Unavailable arms are excluded from attempted counts; no-answer and missed/unranked evidence remain insufficient rather than being counted as discovery successes.\n\n\
-         Regenerate with `PROG_BASELINE_EVAL_UPDATE=1 cargo test -p prog-cli --test competitive_baselines -- --nocapture`.\n\n",
-    );
-    for mode in ["known_path_recoverability", "deterministic_discovery"] {
-        output.push_str(&format!("## {mode}\n\n| Strategy | Evidence available | Attempted | Unavailable | Response bytes | Approx. input tokens | Tool calls |\n|---|---:|---:|---:|---:|---:|---:|\n"));
-        for strategy in STRATEGIES {
-            let rows = metrics
-                .iter()
-                .filter(|m| m.task_mode == mode && m.strategy == strategy)
-                .collect::<Vec<_>>();
-            output.push_str(&format!(
-                "| {strategy} | {} | {} | {} | {} | {} | {} |\n",
-                rows.iter().filter(|m| m.evidence_available).count(),
-                rows.iter().filter(|m| m.available).count(),
-                rows.iter().filter(|m| !m.available).count(),
-                rows.iter().map(|m| m.response_bytes).sum::<usize>(),
-                rows.iter().map(|m| m.input_tokens).sum::<usize>(),
-                rows.iter().map(|m| m.tool_calls).sum::<usize>()
-            ));
-        }
-        output.push('\n');
-    }
-    output.push_str("## Unknown-target outcomes\n\n| Scenario | Strategy | Outcome | Selected path | Response bytes |\n|---|---|---|---|---:|\n");
-    for m in metrics
-        .iter()
-        .filter(|m| m.task_mode == "deterministic_discovery")
-    {
-        output.push_str(&format!(
-            "| {} | {} | {} | `{}` | {} |\n",
-            m.scenario_id,
-            m.strategy,
-            m.outcome,
-            m.selected_path.as_deref().unwrap_or("none"),
-            m.response_bytes
-        ));
-    }
-    output.push_str("\n## Known-path fixtures\n\n| Scenario | Public selector |\n|---|---|\n");
-    for m in metrics
-        .iter()
-        .filter(|m| m.task_mode == "known_path_recoverability" && m.strategy == "raw_context")
-    {
-        output.push_str(&format!(
-            "| {} | `{}` |\n",
-            m.scenario_id,
-            m.oracle_path.as_deref().unwrap()
-        ));
-    }
-    output.push_str("\nThe tiny payload counterexample is retained. These tables impose no requirement that prog win a cost comparison. Broad search, file search, and raw input may cost less. Exact command traces and every response size are recorded in the generated JSON; traces are audit data, not additional strategy observations.\n");
-    output
 }
 
 fn repo_root() -> PathBuf {

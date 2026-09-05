@@ -6,6 +6,9 @@ See `demos/real-world/README.md` for copy-paste commands and optional credential
 
 Regenerate with `PROG_REAL_WORLD_DEMO_UPDATE=1 cargo test -p prog-cli --test real_world_demos -- --nocapture`.
 
+<!-- eval:demo-table:start -->
+Source: [`real-world-demo-metrics.json`](../fixtures/evals/real-world-demo-metrics.json). Render reviewed artifacts with `scripts/regenerate-eval-docs.sh --write`; `--check` reads saved measurements without rerunning demos. Ratios use approximate bytes/4 counts rounded up.
+
 | Demo | Raw bytes | call envelope bytes | expansion task bytes | cache hit | Token ratio |
 |---|---:|---:|---:|---|---:|
 | github-pr-review | 191790 | 10266 | 14367 | hit | 13.35x |
@@ -13,6 +16,7 @@ Regenerate with `PROG_REAL_WORLD_DEMO_UPDATE=1 cargo test -p prog-cli --test rea
 | cloudwatch-logs | 157667 | 7336 | 11371 | hit | 13.86x |
 | jira-triage | 169953 | 9283 | 13333 | hit | 12.74x |
 | mcp-incidents | 150772 | 12120 | 16136 | hit | 9.34x |
+<!-- eval:demo-table:end -->
 
 ## Copy-paste seeds
 

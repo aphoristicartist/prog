@@ -1,0 +1,60 @@
+{
+  "schema": "prog.token_economics_eval",
+  "token_estimator": "bytes_div_4_approximate",
+  "rows": [
+    {
+      "fixture": "HTTP",
+      "task": "Discover shape",
+      "raw_bytes": 551530,
+      "prog_bytes": 6515
+    },
+    {
+      "fixture": "HTTP",
+      "task": "Count states",
+      "raw_bytes": 551530,
+      "prog_bytes": 21105
+    },
+    {
+      "fixture": "HTTP",
+      "task": "Target body",
+      "raw_bytes": 551530,
+      "prog_bytes": 10159
+    },
+    {
+      "fixture": "CLI",
+      "task": "Discover shape",
+      "raw_bytes": 551009,
+      "prog_bytes": 6905
+    },
+    {
+      "fixture": "CLI",
+      "task": "Count states",
+      "raw_bytes": 551009,
+      "prog_bytes": 21821
+    },
+    {
+      "fixture": "CLI",
+      "task": "Target body",
+      "raw_bytes": 551009,
+      "prog_bytes": 10876
+    },
+    {
+      "fixture": "MCP",
+      "task": "Discover shape",
+      "raw_bytes": 551011,
+      "prog_bytes": 7457
+    },
+    {
+      "fixture": "MCP",
+      "task": "Count states",
+      "raw_bytes": 551011,
+      "prog_bytes": 22419
+    },
+    {
+      "fixture": "MCP",
+      "task": "Target body",
+      "raw_bytes": 551011,
+      "prog_bytes": 11336
+    }
+  ]
+}

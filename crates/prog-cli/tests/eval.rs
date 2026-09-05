@@ -1,3 +1,6 @@
+#[path = "support/eval_reports.rs"]
+mod eval_reports;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -28,7 +31,7 @@ struct Fixture {
     _server: Option<MockServer>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 struct EvalRow {
     fixture: &'static str,
     task: &'static str,
@@ -67,10 +70,18 @@ async fn token_economics_eval_smoke() {
         );
     }
 
-    let report = markdown_report(&rows);
     if std::env::var_os("PROG_TOKEN_EVAL_UPDATE").is_some() {
-        fs::write(repo_root().join("docs/token-economics.md"), &report).unwrap();
-        println!("{report}");
+        let source = json!({
+            "schema": "prog.token_economics_eval",
+            "token_estimator": "bytes_div_4_approximate",
+            "rows": rows,
+        });
+        fs::write(
+            repo_root().join("fixtures/evals/token-economics-metrics.json"),
+            format!("{}\n", serde_json::to_string_pretty(&source).unwrap()),
+        )
+        .unwrap();
+        eval_reports::write_documents(&repo_root());
     }
 }
 
@@ -315,28 +326,6 @@ fn read_only_effect() -> Value {
         "cacheable": true,
         "requires_confirmation": false
     })
-}
-
-fn markdown_report(rows: &[EvalRow]) -> String {
-    let mut output = String::from(
-        "# Token economics eval\n\n\
-         Token counts use the project heuristic `bytes / 4`, rounded up. Raw cost is the full fixture payload entering context. prog cost is the sum of every bounded envelope or expansion stdout consumed for the task, including the initial call envelope before any expansion. This is not a latency benchmark or a model-success benchmark.\n\n\
-         Every `DisclosureEnvelope` reports a `disclosure_verdict`. When original input cost is known, its ratio is `baseline.bytes / envelope_bytes`: below `1.0` is `raw_cheaper`, from `1.0` through less than `1.25` is `neutral`, and `1.25` or above is `bounded_win` (the envelope is at least 20 percent smaller). The displayed ratio is rounded down to hundredths (or a conservative lower value when its encoded width cycles), but classification uses exact integer byte counts. `baseline.basis` identifies original command streams counted once, file/stdin bytes, or decoded HTTP body bytes. Unknown original costs (including MCP SDK-normalized content and incomplete HTTP bodies) report `unavailable` with null baseline and ratio. `summary.payload_bytes` is normalized, redacted storage size and is never the source comparison baseline. `summary.envelope_bytes`, verdict bytes, and disclosure-budget actual bytes all count final stdout including budget metadata, formatting, and its trailing newline. The verdict reports cost; it does not automatically replace the envelope with raw output.\n\n\
-         Regenerate this table with `PROG_TOKEN_EVAL_UPDATE=1 cargo test -p prog-cli --test eval -- --nocapture`.\n\n\
-         | Fixture | Task | Raw tokens | prog tokens | Ratio |\n\
-         |---|---:|---:|---:|---:|\n",
-    );
-    for row in rows {
-        output.push_str(&format!(
-            "| {} | {} | {} | {} | {:.1}x |\n",
-            row.fixture,
-            row.task,
-            approx_tokens(row.raw_bytes),
-            approx_tokens(row.prog_bytes),
-            row.ratio()
-        ));
-    }
-    output
 }
 
 fn approx_tokens(bytes: usize) -> usize {
