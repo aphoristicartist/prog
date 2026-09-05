@@ -92,3 +92,11 @@ The competitive baseline report in
 source for broader claims against raw context, simple truncation, native field
 selection, RTK-style grep filtering, Caveman-style terse output, and repeated
 cache-backed `prog` expansion. It includes cases where `prog` loses.
+
+
+The deterministic comparison separates explicitly supplied paths from unknown
+search targets. Strategies cannot access grading paths or answers. Its results
+measure evidence availability under the recorded strategy and response costs;
+real-agent task success requires separate live trials. Broad severity search and
+capture-once file search are measured alongside the narrow filters, and
+unavailable arms are distinguished from attempted but insufficient retrieval.

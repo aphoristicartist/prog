@@ -1,3 +1,6 @@
+#[path = "support/eval_reports.rs"]
+mod eval_reports;
+
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use prog_core::{
@@ -142,6 +145,7 @@ fn evidence_acquisition_eval_smoke() {
         // an explicit fixture edit before this command can succeed.
         assert_baseline_invariants(&report, &refreshed);
         fs::write(&baseline, serde_json::to_vec_pretty(&refreshed).unwrap()).unwrap();
+        eval_reports::write_documents(&root);
     } else {
         assert_baseline_invariants(&report, &expected);
     }

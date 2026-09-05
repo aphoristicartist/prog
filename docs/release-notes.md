@@ -89,8 +89,8 @@ Shipped deterministic evaluations live under `fixtures/evals/` and are run as
 ordinary Cargo integration tests (`cargo test --workspace --all-features`).
 They cover:
 
-- **Task-success evals** comparing raw, simple truncation, call-only, and
-  targeted-expansion strategies (see
+- **Known-path recoverability evals** comparing raw, simple truncation,
+  call-only, and explicitly supplied lookup selectors (see
   [`task-success-eval.md`](task-success-eval.md)).
 - **Competitive baselines** against raw context, truncation, native field
   selection, RTK-style grep filtering, Caveman-style terse output, and repeated

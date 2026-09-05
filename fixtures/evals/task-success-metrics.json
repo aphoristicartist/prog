@@ -1,1172 +1,2584 @@
 [
   {
     "scenario_id": "http-body-42",
-    "prompt": "Find body for HTTP item 42.",
+    "prompt": "Find body for HTTP item 42. Public lookup selector: /items/42/body.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 293500,
     "input_tokens": 73375,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 293500,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-body-42",
-    "prompt": "Find body for HTTP item 42.",
+    "prompt": "Find body for HTTP item 42. Public lookup selector: /items/42/body.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 293500,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-body-42",
-    "prompt": "Find body for HTTP item 42.",
+    "prompt": "Find body for HTTP item 42. Public lookup selector: /items/42/body.",
     "artifact": "HTTP",
-    "strategy": "jq_field_selection",
-    "correct": true,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 1040,
     "input_tokens": 260,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "wall_time_ms": 19,
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/items/42/body"
+        ],
+        "response_bytes": 1040,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-body-42",
-    "prompt": "Find body for HTTP item 42.",
+    "prompt": "Find body for HTTP item 42. Public lookup selector: /items/42/body.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
-    "input_tokens": 73375,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 293503,
+    "input_tokens": 73376,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "wall_time_ms": 17,
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "body"
+        ],
+        "response_bytes": 293503,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-body-42",
-    "prompt": "Find body for HTTP item 42.",
+    "prompt": "Find body for HTTP item 42. Public lookup selector: /items/42/body.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 293500,
+    "response_bytes": 6672,
     "input_tokens": 1668,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 400,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "wall_time_ms": 257,
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_http",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 6672,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-body-42",
-    "prompt": "Find body for HTTP item 42.",
+    "prompt": "Find body for HTTP item 42. Public lookup selector: /items/42/body.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 10316,
     "input_tokens": 2579,
-    "output_tokens": 0,
     "tool_calls": 2,
     "expansion_count": 1,
-    "cache_hits": 1,
-    "wall_time_ms": 230,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "cache_hits": 2,
+    "wall_time_ms": 195,
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_http",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 6582,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/42/body"
+        ],
+        "response_bytes": 3734,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-128",
-    "prompt": "Find lookup_code for HTTP item 128.",
+    "prompt": "Find lookup_code for HTTP item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 293500,
     "input_tokens": 73375,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 293500,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-128",
-    "prompt": "Find lookup_code for HTTP item 128.",
+    "prompt": "Find lookup_code for HTTP item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 293500,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-128",
-    "prompt": "Find lookup_code for HTTP item 128.",
+    "prompt": "Find lookup_code for HTTP item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "HTTP",
-    "strategy": "jq_field_selection",
-    "correct": true,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 16,
     "input_tokens": 4,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 18,
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/items/128/lookup_code"
+        ],
+        "response_bytes": 16,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-128",
-    "prompt": "Find lookup_code for HTTP item 128.",
+    "prompt": "Find lookup_code for HTTP item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
-    "input_tokens": 73375,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 293503,
+    "input_tokens": 73376,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 16,
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "lookup_code"
+        ],
+        "response_bytes": 293503,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-128",
-    "prompt": "Find lookup_code for HTTP item 128.",
+    "prompt": "Find lookup_code for HTTP item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 293500,
+    "response_bytes": 6582,
     "input_tokens": 1646,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
-    "cache_hits": 0,
+    "cache_hits": 1,
     "wall_time_ms": 102,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_http",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 6582,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-128",
-    "prompt": "Find lookup_code for HTTP item 128.",
+    "prompt": "Find lookup_code for HTTP item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 9846,
     "input_tokens": 2462,
-    "output_tokens": 0,
     "tool_calls": 2,
     "expansion_count": 1,
-    "cache_hits": 1,
-    "wall_time_ms": 218,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "cache_hits": 2,
+    "wall_time_ms": 191,
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_http",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 6582,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/128/lookup_code"
+        ],
+        "response_bytes": 3264,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-211",
-    "prompt": "Find lookup_code for HTTP item 211.",
+    "prompt": "Find lookup_code for HTTP item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 293500,
     "input_tokens": 73375,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 293500,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-211",
-    "prompt": "Find lookup_code for HTTP item 211.",
+    "prompt": "Find lookup_code for HTTP item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 293500,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-211",
-    "prompt": "Find lookup_code for HTTP item 211.",
+    "prompt": "Find lookup_code for HTTP item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "HTTP",
-    "strategy": "jq_field_selection",
-    "correct": true,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 16,
     "input_tokens": 4,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 19,
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/items/211/lookup_code"
+        ],
+        "response_bytes": 16,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-211",
-    "prompt": "Find lookup_code for HTTP item 211.",
+    "prompt": "Find lookup_code for HTTP item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
-    "input_tokens": 73375,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 293503,
+    "input_tokens": 73376,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 16,
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "lookup_code"
+        ],
+        "response_bytes": 293503,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-211",
-    "prompt": "Find lookup_code for HTTP item 211.",
+    "prompt": "Find lookup_code for HTTP item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 293500,
+    "response_bytes": 6582,
     "input_tokens": 1646,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
-    "cache_hits": 0,
-    "wall_time_ms": 129,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "cache_hits": 1,
+    "wall_time_ms": 102,
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_http",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 6582,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "http-lookup_code-211",
-    "prompt": "Find lookup_code for HTTP item 211.",
+    "prompt": "Find lookup_code for HTTP item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "HTTP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 9846,
     "input_tokens": 2462,
-    "output_tokens": 0,
     "tool_calls": 2,
     "expansion_count": 1,
-    "cache_hits": 1,
-    "wall_time_ms": 208,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "cache_hits": 2,
+    "wall_time_ms": 195,
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_http",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 6582,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/211/lookup_code"
+        ],
+        "response_bytes": 3264,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "cli-body-42",
-    "prompt": "Find body for CLI item 42.",
+    "prompt": "Find body for CLI item 42. Public lookup selector: /items/42/body.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 292719,
     "input_tokens": 73180,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 292719,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-body-42",
-    "prompt": "Find body for CLI item 42.",
+    "prompt": "Find body for CLI item 42. Public lookup selector: /items/42/body.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292719,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-body-42",
-    "prompt": "Find body for CLI item 42.",
+    "prompt": "Find body for CLI item 42. Public lookup selector: /items/42/body.",
     "artifact": "CLI",
-    "strategy": "jq_field_selection",
-    "correct": true,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 1039,
     "input_tokens": 260,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "wall_time_ms": 19,
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/items/42/body"
+        ],
+        "response_bytes": 1039,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-body-42",
-    "prompt": "Find body for CLI item 42.",
+    "prompt": "Find body for CLI item 42. Public lookup selector: /items/42/body.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
-    "input_tokens": 73180,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 292722,
+    "input_tokens": 73181,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "wall_time_ms": 17,
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "body"
+        ],
+        "response_bytes": 292722,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-body-42",
-    "prompt": "Find body for CLI item 42.",
+    "prompt": "Find body for CLI item 42. Public lookup selector: /items/42/body.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
-    "input_tokens": 1766,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292719,
+    "response_bytes": 7085,
+    "input_tokens": 1772,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 406,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "wall_time_ms": 282,
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_cli",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 7085,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-body-42",
-    "prompt": "Find body for CLI item 42.",
+    "prompt": "Find body for CLI item 42. Public lookup selector: /items/42/body.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
-    "input_tokens": 2760,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 11084,
+    "input_tokens": 2771,
     "tool_calls": 2,
     "expansion_count": 1,
-    "cache_hits": 1,
-    "wall_time_ms": 210,
-    "evidence_path": "/items/42/body",
-    "counterexample": false
+    "cache_hits": 2,
+    "wall_time_ms": 200,
+    "public_lookup_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_cli",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 6995,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/42/body"
+        ],
+        "response_bytes": 4089,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-128",
-    "prompt": "Find lookup_code for CLI item 128.",
+    "prompt": "Find lookup_code for CLI item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 292719,
     "input_tokens": 73180,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 292719,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-128",
-    "prompt": "Find lookup_code for CLI item 128.",
+    "prompt": "Find lookup_code for CLI item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292719,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-128",
-    "prompt": "Find lookup_code for CLI item 128.",
+    "prompt": "Find lookup_code for CLI item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "CLI",
-    "strategy": "jq_field_selection",
-    "correct": true,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 15,
     "input_tokens": 4,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 19,
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/items/128/lookup_code"
+        ],
+        "response_bytes": 15,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-128",
-    "prompt": "Find lookup_code for CLI item 128.",
+    "prompt": "Find lookup_code for CLI item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
-    "input_tokens": 73180,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 292722,
+    "input_tokens": 73181,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 17,
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "lookup_code"
+        ],
+        "response_bytes": 292722,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-128",
-    "prompt": "Find lookup_code for CLI item 128.",
+    "prompt": "Find lookup_code for CLI item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
-    "input_tokens": 1743,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292719,
+    "response_bytes": 6995,
+    "input_tokens": 1749,
     "tool_calls": 1,
     "expansion_count": 0,
-    "cache_hits": 0,
-    "wall_time_ms": 107,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "cache_hits": 1,
+    "wall_time_ms": 103,
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_cli",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 6995,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-128",
-    "prompt": "Find lookup_code for CLI item 128.",
+    "prompt": "Find lookup_code for CLI item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
-    "input_tokens": 2642,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 10612,
+    "input_tokens": 2653,
     "tool_calls": 2,
     "expansion_count": 1,
-    "cache_hits": 1,
-    "wall_time_ms": 205,
-    "evidence_path": "/items/128/lookup_code",
-    "counterexample": false
+    "cache_hits": 2,
+    "wall_time_ms": 200,
+    "public_lookup_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_cli",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 6995,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/128/lookup_code"
+        ],
+        "response_bytes": 3617,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-211",
-    "prompt": "Find lookup_code for CLI item 211.",
+    "prompt": "Find lookup_code for CLI item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 292719,
     "input_tokens": 73180,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 292719,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-211",
-    "prompt": "Find lookup_code for CLI item 211.",
+    "prompt": "Find lookup_code for CLI item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292719,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-211",
-    "prompt": "Find lookup_code for CLI item 211.",
+    "prompt": "Find lookup_code for CLI item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "CLI",
-    "strategy": "jq_field_selection",
-    "correct": true,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 15,
     "input_tokens": 4,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 23,
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/items/211/lookup_code"
+        ],
+        "response_bytes": 15,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-211",
-    "prompt": "Find lookup_code for CLI item 211.",
+    "prompt": "Find lookup_code for CLI item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
-    "input_tokens": 73180,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 292722,
+    "input_tokens": 73181,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 18,
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "lookup_code"
+        ],
+        "response_bytes": 292722,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-211",
-    "prompt": "Find lookup_code for CLI item 211.",
+    "prompt": "Find lookup_code for CLI item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
-    "input_tokens": 1743,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292719,
+    "response_bytes": 6995,
+    "input_tokens": 1749,
     "tool_calls": 1,
     "expansion_count": 0,
-    "cache_hits": 0,
+    "cache_hits": 1,
     "wall_time_ms": 104,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_cli",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 6995,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "cli-lookup_code-211",
-    "prompt": "Find lookup_code for CLI item 211.",
+    "prompt": "Find lookup_code for CLI item 211. Public lookup selector: /items/211/lookup_code.",
     "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
-    "input_tokens": 2642,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292719,
+    "response_bytes": 10612,
+    "input_tokens": 2653,
     "tool_calls": 2,
     "expansion_count": 1,
-    "cache_hits": 1,
-    "wall_time_ms": 206,
-    "evidence_path": "/items/211/lookup_code",
-    "counterexample": false
+    "cache_hits": 2,
+    "wall_time_ms": 198,
+    "public_lookup_path": "/items/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_cli",
+          "list",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 6995,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/211/lookup_code"
+        ],
+        "response_bytes": 3617,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "mcp-body-42",
-    "prompt": "Find body for MCP item 42.",
+    "prompt": "Find body for MCP item 42. Public lookup selector: /results/42/body.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 292721,
     "input_tokens": 73181,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/results/42/body",
-    "counterexample": false
+    "public_lookup_path": "/results/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 292721,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-body-42",
-    "prompt": "Find body for MCP item 42.",
+    "prompt": "Find body for MCP item 42. Public lookup selector: /results/42/body.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292721,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/results/42/body",
-    "counterexample": false
+    "public_lookup_path": "/results/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-body-42",
-    "prompt": "Find body for MCP item 42.",
+    "prompt": "Find body for MCP item 42. Public lookup selector: /results/42/body.",
     "artifact": "MCP",
-    "strategy": "jq_field_selection",
-    "correct": true,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 1039,
     "input_tokens": 260,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/results/42/body",
-    "counterexample": false
+    "wall_time_ms": 19,
+    "public_lookup_path": "/results/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/results/42/body"
+        ],
+        "response_bytes": 1039,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-body-42",
-    "prompt": "Find body for MCP item 42.",
+    "prompt": "Find body for MCP item 42. Public lookup selector: /results/42/body.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 292724,
     "input_tokens": 73181,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/results/42/body",
-    "counterexample": false
+    "wall_time_ms": 17,
+    "public_lookup_path": "/results/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "body"
+        ],
+        "response_bytes": 292724,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-body-42",
-    "prompt": "Find body for MCP item 42.",
+    "prompt": "Find body for MCP item 42. Public lookup selector: /results/42/body.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292721,
+    "response_bytes": 7605,
     "input_tokens": 1902,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 430,
-    "evidence_path": "/results/42/body",
-    "counterexample": false
+    "wall_time_ms": 293,
+    "public_lookup_path": "/results/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_mcp",
+          "search_docs",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 7605,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-body-42",
-    "prompt": "Find body for MCP item 42.",
+    "prompt": "Find body for MCP item 42. Public lookup selector: /results/42/body.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 11484,
     "input_tokens": 2871,
-    "output_tokens": 0,
     "tool_calls": 2,
     "expansion_count": 1,
-    "cache_hits": 1,
-    "wall_time_ms": 242,
-    "evidence_path": "/results/42/body",
-    "counterexample": false
+    "cache_hits": 2,
+    "wall_time_ms": 207,
+    "public_lookup_path": "/results/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_mcp",
+          "search_docs",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 7469,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/results/42/body"
+        ],
+        "response_bytes": 4015,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-128",
-    "prompt": "Find lookup_code for MCP item 128.",
+    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 292721,
     "input_tokens": 73181,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/results/128/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/results/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 292721,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-128",
-    "prompt": "Find lookup_code for MCP item 128.",
+    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292721,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/results/128/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/results/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-128",
-    "prompt": "Find lookup_code for MCP item 128.",
+    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
     "artifact": "MCP",
-    "strategy": "jq_field_selection",
-    "correct": true,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 15,
     "input_tokens": 4,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/results/128/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 20,
+    "public_lookup_path": "/results/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/results/128/lookup_code"
+        ],
+        "response_bytes": 15,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-128",
-    "prompt": "Find lookup_code for MCP item 128.",
+    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 292724,
     "input_tokens": 73181,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/results/128/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 17,
+    "public_lookup_path": "/results/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "lookup_code"
+        ],
+        "response_bytes": 292724,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-128",
-    "prompt": "Find lookup_code for MCP item 128.",
+    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292721,
+    "response_bytes": 7469,
     "input_tokens": 1868,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
-    "cache_hits": 0,
-    "wall_time_ms": 118,
-    "evidence_path": "/results/128/lookup_code",
-    "counterexample": false
+    "cache_hits": 1,
+    "wall_time_ms": 107,
+    "public_lookup_path": "/results/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_mcp",
+          "search_docs",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 7469,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-128",
-    "prompt": "Find lookup_code for MCP item 128.",
+    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 11008,
     "input_tokens": 2752,
-    "output_tokens": 0,
     "tool_calls": 2,
     "expansion_count": 1,
-    "cache_hits": 1,
-    "wall_time_ms": 230,
-    "evidence_path": "/results/128/lookup_code",
-    "counterexample": false
+    "cache_hits": 2,
+    "wall_time_ms": 208,
+    "public_lookup_path": "/results/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_mcp",
+          "search_docs",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 7469,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/results/128/lookup_code"
+        ],
+        "response_bytes": 3539,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-211",
-    "prompt": "Find lookup_code for MCP item 211.",
+    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 292721,
     "input_tokens": 73181,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/results/211/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/results/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 292721,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-211",
-    "prompt": "Find lookup_code for MCP item 211.",
+    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292721,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/results/211/lookup_code",
-    "counterexample": false
+    "public_lookup_path": "/results/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-211",
-    "prompt": "Find lookup_code for MCP item 211.",
+    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
     "artifact": "MCP",
-    "strategy": "jq_field_selection",
-    "correct": true,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 15,
     "input_tokens": 4,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/results/211/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 19,
+    "public_lookup_path": "/results/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/results/211/lookup_code"
+        ],
+        "response_bytes": 15,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-211",
-    "prompt": "Find lookup_code for MCP item 211.",
+    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 292724,
     "input_tokens": 73181,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/results/211/lookup_code",
-    "counterexample": false
+    "wall_time_ms": 17,
+    "public_lookup_path": "/results/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "lookup_code"
+        ],
+        "response_bytes": 292724,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-211",
-    "prompt": "Find lookup_code for MCP item 211.",
+    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292721,
+    "response_bytes": 7469,
     "input_tokens": 1868,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
-    "cache_hits": 0,
-    "wall_time_ms": 115,
-    "evidence_path": "/results/211/lookup_code",
-    "counterexample": false
+    "cache_hits": 1,
+    "wall_time_ms": 106,
+    "public_lookup_path": "/results/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_mcp",
+          "search_docs",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 7469,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "mcp-lookup_code-211",
-    "prompt": "Find lookup_code for MCP item 211.",
+    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
     "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 11008,
     "input_tokens": 2752,
-    "output_tokens": 0,
     "tool_calls": 2,
     "expansion_count": 1,
-    "cache_hits": 1,
-    "wall_time_ms": 217,
-    "evidence_path": "/results/211/lookup_code",
-    "counterexample": false
+    "cache_hits": 2,
+    "wall_time_ms": 215,
+    "public_lookup_path": "/results/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_mcp",
+          "search_docs",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 7469,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/results/211/lookup_code"
+        ],
+        "response_bytes": 3539,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "observe-json-body-150",
-    "prompt": "Find the JSON observed item 150 body.",
+    "prompt": "Find the JSON observed item 150 body. Public lookup selector: /items/150/body.",
     "artifact": "Observed JSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 293500,
     "input_tokens": 73375,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/150/body",
-    "counterexample": false
+    "public_lookup_path": "/items/150/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 293500,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-json-body-150",
-    "prompt": "Find the JSON observed item 150 body.",
+    "prompt": "Find the JSON observed item 150 body. Public lookup selector: /items/150/body.",
     "artifact": "Observed JSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 293500,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/items/150/body",
-    "counterexample": false
+    "public_lookup_path": "/items/150/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-json-body-150",
-    "prompt": "Find the JSON observed item 150 body.",
+    "prompt": "Find the JSON observed item 150 body. Public lookup selector: /items/150/body.",
     "artifact": "Observed JSON",
-    "strategy": "jq_field_selection",
-    "correct": true,
-    "input_tokens": 260,
-    "output_tokens": 0,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 1041,
+    "input_tokens": 261,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/items/150/body",
-    "counterexample": false
+    "wall_time_ms": 19,
+    "public_lookup_path": "/items/150/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/items/150/body"
+        ],
+        "response_bytes": 1041,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-json-body-150",
-    "prompt": "Find the JSON observed item 150 body.",
+    "prompt": "Find the JSON observed item 150 body. Public lookup selector: /items/150/body.",
     "artifact": "Observed JSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
-    "input_tokens": 73375,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 293503,
+    "input_tokens": 73376,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/items/150/body",
-    "counterexample": false
+    "wall_time_ms": 17,
+    "public_lookup_path": "/items/150/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "body"
+        ],
+        "response_bytes": 293503,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-json-body-150",
-    "prompt": "Find the JSON observed item 150 body.",
+    "prompt": "Find the JSON observed item 150 body. Public lookup selector: /items/150/body.",
     "artifact": "Observed JSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 293500,
+    "response_bytes": 6037,
     "input_tokens": 1510,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 401,
-    "evidence_path": "/items/150/body",
-    "counterexample": false
+    "wall_time_ms": 283,
+    "public_lookup_path": "/items/150/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "application/json",
+          "--name",
+          "task-json"
+        ],
+        "response_bytes": 6037,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-json-body-150",
-    "prompt": "Find the JSON observed item 150 body.",
+    "prompt": "Find the JSON observed item 150 body. Public lookup selector: /items/150/body.",
     "artifact": "Observed JSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
-    "input_tokens": 2687,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 293500,
+    "response_bytes": 10758,
+    "input_tokens": 2690,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 730,
-    "evidence_path": "/items/150/body",
-    "counterexample": false
+    "wall_time_ms": 623,
+    "public_lookup_path": "/items/150/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "application/json",
+          "--name",
+          "task-json"
+        ],
+        "response_bytes": 6641,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/150/body"
+        ],
+        "response_bytes": 4117,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "observe-ndjson-message-170",
-    "prompt": "Find the NDJSON record 170 message.",
+    "prompt": "Find the NDJSON record 170 message. Public lookup selector: /records/170/message.",
     "artifact": "Observed NDJSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 153070,
+    "response_bytes": 153070,
     "input_tokens": 38268,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/records/170/message",
-    "counterexample": false
+    "public_lookup_path": "/records/170/message",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 153070,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-ndjson-message-170",
-    "prompt": "Find the NDJSON record 170 message.",
+    "prompt": "Find the NDJSON record 170 message. Public lookup selector: /records/170/message.",
     "artifact": "Observed NDJSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 153070,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/records/170/message",
-    "counterexample": false
+    "public_lookup_path": "/records/170/message",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-ndjson-message-170",
-    "prompt": "Find the NDJSON record 170 message.",
+    "prompt": "Find the NDJSON record 170 message. Public lookup selector: /records/170/message.",
     "artifact": "Observed NDJSON",
-    "strategy": "jq_field_selection",
-    "correct": false,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": false,
+    "evidence_available": false,
+    "artifact_bytes": 153070,
+    "response_bytes": 0,
     "input_tokens": 0,
-    "output_tokens": 0,
-    "tool_calls": 1,
+    "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/records/170/message",
-    "counterexample": false
+    "wall_time_ms": 0,
+    "public_lookup_path": "/records/170/message",
+    "counterexample": false,
+    "steps": []
   },
   {
     "scenario_id": "observe-ndjson-message-170",
-    "prompt": "Find the NDJSON record 170 message.",
+    "prompt": "Find the NDJSON record 170 message. Public lookup selector: /records/170/message.",
     "artifact": "Observed NDJSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
-    "input_tokens": 148,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 153070,
+    "response_bytes": 154002,
+    "input_tokens": 38501,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/records/170/message",
-    "counterexample": false
+    "wall_time_ms": 19,
+    "public_lookup_path": "/records/170/message",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "message"
+        ],
+        "response_bytes": 154002,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-ndjson-message-170",
-    "prompt": "Find the NDJSON record 170 message.",
+    "prompt": "Find the NDJSON record 170 message. Public lookup selector: /records/170/message.",
     "artifact": "Observed NDJSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 153070,
+    "response_bytes": 6000,
     "input_tokens": 1500,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 364,
-    "evidence_path": "/records/170/message",
-    "counterexample": false
+    "wall_time_ms": 231,
+    "public_lookup_path": "/records/170/message",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "application/x-ndjson",
+          "--name",
+          "task-ndjson"
+        ],
+        "response_bytes": 6000,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-ndjson-message-170",
-    "prompt": "Find the NDJSON record 170 message.",
+    "prompt": "Find the NDJSON record 170 message. Public lookup selector: /records/170/message.",
     "artifact": "Observed NDJSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
-    "input_tokens": 2687,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 153070,
+    "response_bytes": 10757,
+    "input_tokens": 2690,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 701,
-    "evidence_path": "/records/170/message",
-    "counterexample": false
+    "wall_time_ms": 583,
+    "public_lookup_path": "/records/170/message",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "application/x-ndjson",
+          "--name",
+          "task-ndjson"
+        ],
+        "response_bytes": 6605,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/records/170/message"
+        ],
+        "response_bytes": 4152,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "observe-text-line-180",
-    "prompt": "Find observed text log line 180.",
+    "prompt": "Find observed text log line 180. Public lookup selector: /lines/180/text.",
     "artifact": "Observed Text",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 76849,
+    "response_bytes": 76849,
     "input_tokens": 19213,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/lines/180/text",
-    "counterexample": false
+    "public_lookup_path": "/lines/180/text",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 76849,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-text-line-180",
-    "prompt": "Find observed text log line 180.",
+    "prompt": "Find observed text log line 180. Public lookup selector: /lines/180/text.",
     "artifact": "Observed Text",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 76849,
+    "response_bytes": 4096,
     "input_tokens": 1024,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/lines/180/text",
-    "counterexample": false
+    "public_lookup_path": "/lines/180/text",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-text-line-180",
-    "prompt": "Find observed text log line 180.",
+    "prompt": "Find observed text log line 180. Public lookup selector: /lines/180/text.",
     "artifact": "Observed Text",
-    "strategy": "jq_field_selection",
-    "correct": false,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": false,
+    "evidence_available": false,
+    "artifact_bytes": 76849,
+    "response_bytes": 0,
     "input_tokens": 0,
-    "output_tokens": 0,
-    "tool_calls": 1,
+    "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/lines/180/text",
-    "counterexample": false
+    "wall_time_ms": 0,
+    "public_lookup_path": "/lines/180/text",
+    "counterexample": false,
+    "steps": []
   },
   {
     "scenario_id": "observe-text-line-180",
-    "prompt": "Find observed text log line 180.",
+    "prompt": "Find observed text log line 180. Public lookup selector: /lines/180/text.",
     "artifact": "Observed Text",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
-    "input_tokens": 74,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 76849,
+    "response_bytes": 300,
+    "input_tokens": 75,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/lines/180/text",
-    "counterexample": false
+    "wall_time_ms": 19,
+    "public_lookup_path": "/lines/180/text",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "180"
+        ],
+        "response_bytes": 300,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-text-line-180",
-    "prompt": "Find observed text log line 180.",
+    "prompt": "Find observed text log line 180. Public lookup selector: /lines/180/text.",
     "artifact": "Observed Text",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": false,
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 76849,
+    "response_bytes": 8745,
     "input_tokens": 2187,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 354,
-    "evidence_path": "/lines/180/text",
-    "counterexample": false
+    "wall_time_ms": 240,
+    "public_lookup_path": "/lines/180/text",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "text/plain",
+          "--name",
+          "task-text"
+        ],
+        "response_bytes": 8745,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "observe-text-line-180",
-    "prompt": "Find observed text log line 180.",
+    "prompt": "Find observed text log line 180. Public lookup selector: /lines/180/text.",
     "artifact": "Observed Text",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
-    "input_tokens": 3360,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 76849,
+    "response_bytes": 13449,
+    "input_tokens": 3363,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 566,
-    "evidence_path": "/lines/180/text",
-    "counterexample": false
+    "wall_time_ms": 462,
+    "public_lookup_path": "/lines/180/text",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "text/plain",
+          "--name",
+          "task-text"
+        ],
+        "response_bytes": 9349,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/lines/180/text"
+        ],
+        "response_bytes": 4100,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   },
   {
     "scenario_id": "tiny-payload-counterexample",
-    "prompt": "Read the tiny answer.",
+    "prompt": "Read the tiny answer. Public lookup selector: /answer.",
     "artifact": "Tiny JSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "raw",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 53,
+    "response_bytes": 53,
     "input_tokens": 14,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/answer",
-    "counterexample": true
+    "public_lookup_path": "/answer",
+    "counterexample": true,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 53,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "tiny-payload-counterexample",
-    "prompt": "Read the tiny answer.",
+    "prompt": "Read the tiny answer. Public lookup selector: /answer.",
     "artifact": "Tiny JSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "simple_truncation",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 53,
+    "response_bytes": 53,
     "input_tokens": 14,
-    "output_tokens": 0,
     "tool_calls": 0,
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 0,
-    "evidence_path": "/answer",
-    "counterexample": true
+    "public_lookup_path": "/answer",
+    "counterexample": true,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 53,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "tiny-payload-counterexample",
-    "prompt": "Read the tiny answer.",
+    "prompt": "Read the tiny answer. Public lookup selector: /answer.",
     "artifact": "Tiny JSON",
-    "strategy": "jq_field_selection",
-    "correct": true,
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 53,
+    "response_bytes": 14,
     "input_tokens": 4,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 5,
-    "evidence_path": "/answer",
-    "counterexample": true
+    "wall_time_ms": 18,
+    "public_lookup_path": "/answer",
+    "counterexample": true,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/answer"
+        ],
+        "response_bytes": 14,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "tiny-payload-counterexample",
-    "prompt": "Read the tiny answer.",
+    "prompt": "Read the tiny answer. Public lookup selector: /answer.",
     "artifact": "Tiny JSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "rtk_grep_filter",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 53,
+    "response_bytes": 56,
     "input_tokens": 14,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 3,
-    "evidence_path": "/answer",
-    "counterexample": true
+    "wall_time_ms": 16,
+    "public_lookup_path": "/answer",
+    "counterexample": true,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "answer"
+        ],
+        "response_bytes": 56,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "tiny-payload-counterexample",
-    "prompt": "Read the tiny answer.",
+    "prompt": "Read the tiny answer. Public lookup selector: /answer.",
     "artifact": "Tiny JSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_call_only",
-    "correct": true,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 53,
+    "response_bytes": 3202,
     "input_tokens": 801,
-    "output_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 234,
-    "evidence_path": "/answer",
-    "counterexample": true
+    "wall_time_ms": 112,
+    "public_lookup_path": "/answer",
+    "counterexample": true,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "application/json",
+          "--name",
+          "task-tiny"
+        ],
+        "response_bytes": 3202,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
   },
   {
     "scenario_id": "tiny-payload-counterexample",
-    "prompt": "Read the tiny answer.",
+    "prompt": "Read the tiny answer. Public lookup selector: /answer.",
     "artifact": "Tiny JSON",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_expand",
-    "correct": true,
-    "input_tokens": 1839,
-    "output_tokens": 0,
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 53,
+    "response_bytes": 7364,
+    "input_tokens": 1841,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 281,
-    "evidence_path": "/answer",
-    "counterexample": true
+    "wall_time_ms": 179,
+    "public_lookup_path": "/answer",
+    "counterexample": true,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "application/json",
+          "--name",
+          "task-tiny"
+        ],
+        "response_bytes": 3806,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/answer"
+        ],
+        "response_bytes": 3558,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
   }
 ]

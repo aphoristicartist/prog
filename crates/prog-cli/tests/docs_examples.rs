@@ -1,3 +1,6 @@
+#[path = "support/eval_reports.rs"]
+mod eval_reports;
+
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
@@ -504,7 +507,6 @@ fn docs_keep_acceptance_topics_visible() {
     let root = repo_root();
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
     for expected in [
-        "24.6x-84.6x",
         "Built for loop engineering",
         "fail, inspect, fix, verify",
         "recipe --timeout-ms 180000 cargo-test",
@@ -513,7 +515,6 @@ fn docs_keep_acceptance_topics_visible() {
         "session start --goal",
         "prog call --pages N",
         "Redaction before persistence",
-        "5/5",
         "No MCP server mode",
         "source add-cli repository",
         "prog --dir /tmp/prog-demo --pretty source add-cli",
@@ -628,7 +629,7 @@ fn docs_keep_acceptance_topics_visible() {
 
     let task_success = std::fs::read_to_string(root.join("docs/task-success-eval.md")).unwrap();
     for expected in [
-        "Task-success eval",
+        "Known-path recoverability eval",
         "simple_truncation",
         "prog_call_only",
         "prog_expand",
@@ -636,7 +637,7 @@ fn docs_keep_acceptance_topics_visible() {
     ] {
         assert!(
             task_success.contains(expected),
-            "task success doc should mention {expected}"
+            "recoverability doc should mention {expected}"
         );
     }
 
@@ -646,7 +647,7 @@ fn docs_keep_acceptance_topics_visible() {
     .unwrap();
     assert!(
         task_metrics.as_array().unwrap().len() >= 40,
-        "task success metrics should include strategy rows for at least 10 scenarios"
+        "recoverability metrics should include strategy rows for at least 10 scenarios"
     );
 
     let competitive = std::fs::read_to_string(root.join("docs/competitive-baselines.md")).unwrap();
@@ -656,6 +657,10 @@ fn docs_keep_acceptance_topics_visible() {
         "rtk_grep_filter",
         "caveman_terse_output",
         "prog_repeated_cache",
+        "deterministic_discovery",
+        "broad_log_search",
+        "file_capture_search",
+        "Unavailable",
         "tiny payload counterexample",
     ] {
         assert!(
@@ -672,6 +677,45 @@ fn docs_keep_acceptance_topics_visible() {
         competitive_metrics.as_array().unwrap().len() >= 80,
         "competitive baseline metrics should include 8 strategy rows for at least 10 scenarios"
     );
+
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    assert_eq!(
+        readme,
+        eval_reports::replace_competitive_readme(&readme, &competitive_metrics),
+        "README comparison must be regenerated from the checked-in experiment"
+    );
+    for row in competitive_metrics.as_array().unwrap() {
+        let steps = row["steps"]
+            .as_array()
+            .expect("each metric retains its response ledger");
+        assert_eq!(
+            row["response_bytes"].as_u64().unwrap(),
+            steps
+                .iter()
+                .map(|step| step["response_bytes"].as_u64().unwrap())
+                .sum::<u64>()
+        );
+        if row["task_mode"] == "deterministic_discovery" {
+            for (index, step) in steps.iter().enumerate() {
+                if step["expansion"] != true {
+                    continue;
+                }
+                let command = step["command"].as_array().unwrap();
+                let selected = &command.windows(2).find(|args| args[0] == "--path").unwrap()[1];
+                assert!(
+                    steps[..index].iter().any(|prior| prior["finding_paths"]
+                        .as_array()
+                        .unwrap()
+                        .contains(selected)),
+                    "a published retrieval must cite a path from an earlier observation"
+                );
+            }
+        }
+        if row["available"] == false {
+            assert_eq!(row["outcome"], "not_attempted");
+            assert_eq!(row["evidence_available"], false);
+        }
+    }
 
     let real_world = std::fs::read_to_string(root.join("docs/real-world-demos.md")).unwrap();
     for expected in [

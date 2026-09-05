@@ -17,15 +17,18 @@ line — but it can't know which line until it has read them all.
 So you truncate, and lose the answer. Or you don't, and pay for the whole log
 on every turn.
 
+<!-- eval:hero:start -->
 ```text
-                       tokens into the model
-  raw payload   ████████████████████████████████████████  137,883
-  prog          ▏                                             1,629
+                       approximate tokens into the model
+  raw fixture        137,883
+  prog task            1,629
 ```
 
-<sub>One row from [`docs/token-economics.md`](docs/token-economics.md): the "discover shape"
-task over the checked-in HTTP fixture. Ratios across all fixtures range 24.6x-84.6x.
-Measured on deterministic fixtures with a bytes/4 heuristic — not a promise about your workload.</sub>
+<sub>HTTP “Discover shape” from [`docs/token-economics.md`](docs/token-economics.md),
+rendered from the [checked-in rows](fixtures/evals/token-economics-metrics.json).
+Ratios across these deterministic fixtures range 24.6x-84.6x.
+Counts use the bytes/4 approximation, not provider tokens or a promise about your workload.</sub>
+<!-- eval:hero:end -->
 
 The difference isn't compression. `prog` captures the payload **once**, redacts
 it, stores it, and hands back a small envelope describing its *shape* — plus a
@@ -559,50 +562,64 @@ not universal promises about model quality, latency, or cost.
 
 ### Token-economics fixtures
 
-Across the checked-in HTTP, CLI, and MCP tasks, raw-payload tokens divided by
-the complete `prog` task tokens range from **24.6x-84.6x**. Each task includes
-the initial envelope and any expansion used to answer it. See
-[`docs/token-economics.md`](docs/token-economics.md) for every row and the
-regeneration command.
+<!-- eval:tokens:start -->
+Across the checked-in HTTP, CLI, and MCP tasks, raw-fixture token estimates
+divided by complete `prog` task estimates range from **24.6x-84.6x**. Every
+task includes its initial envelope and any expansions. Estimates use bytes/4,
+rounded up; these are fixture measurements, not provider token counts. See
+[`docs/token-economics.md`](docs/token-economics.md) and the
+[measurement rows](fixtures/evals/token-economics-metrics.json).
+<!-- eval:tokens:end -->
 
 ### Evidence-acquisition fixtures
 
-The five checked-in Cargo compile, Cargo test, pytest, noisy-log, and SARIF
-scenarios rank the expected causal path first in **5/5** cases. The findings
-workflow uses 10 tool calls versus 15 for `envelope -> paths -> evidence`, and
-the estimated output is 2,426 versus 2,971 tokens. See
-[`docs/evidence-acquisition.md`](docs/evidence-acquisition.md) and the checked
-baseline in
-[`fixtures/evals/evidence-acquisition-metrics.json`](fixtures/evals/evidence-acquisition-metrics.json).
+<!-- eval:evidence:start -->
+The 5 checked-in evidence-acquisition scenarios rank the expected causal
+path first in **5/5** cases. The modeled findings workflow uses 10 tool calls
+versus 15 for `envelope -> paths -> evidence`; approximate output costs are
+2,426 versus 2,971 tokens using bytes/4. These costs serialize core structures and
+model workflow calls; they do not measure complete CLI stdout or acquisition. See
+[`docs/evidence-acquisition.md`](docs/evidence-acquisition.md) and the
+[checked measurements](fixtures/evals/evidence-acquisition-metrics.json).
+<!-- eval:evidence:end -->
 
 ### Deterministic workflow demos
 
-The checked-in GitHub review, kubectl events, CloudWatch-style logs, Jira-style
-triage, and MCP incident demos report raw-to-envelope-plus-expansion ratios from
-**9.34x to 13.86x**. These are generated local payloads, not credentialed live
-service measurements. See [`docs/real-world-demos.md`](docs/real-world-demos.md).
+<!-- eval:demos:start -->
+The 5 checked-in workflow demos report raw-to-envelope-plus-expansion ratios
+from **9.34x to 13.86x**, using the bytes/4 token approximation. These are
+generated local payloads, not credentialed live service measurements. See
+[`docs/real-world-demos.md`](docs/real-world-demos.md) and the
+[recorded metrics](fixtures/evals/real-world-demo-metrics.json).
+<!-- eval:demos:end -->
 
 ### Deterministic retrieval correctness
 
-The competitive suite checks whether each strategy retrieves the fixture answer.
+Known-path cases measure recovery at an explicitly supplied selector. The
+unknown-target cases keep the grader's path and answer private: strategies
+select evidence from their actual observations. The set includes a fatal
+record, its relocated counterpart, an unranked cause, and a no-answer control.
 
-Across the eleven checked-in competitive-baseline scenarios:
+| Unknown-target strategy | Evidence available / attempted | Unavailable | Approx. response tokens |
+| --- | ---: | ---: | ---: |
+| `raw_context` | 3/4 | 0 | 142,205 |
+| `head_tail_truncation` | 0/4 | 0 | 4,096 |
+| `native_field_selection` | 0/0 | 4 | 0 |
+| `rtk_grep_filter` | 0/4 | 0 | 3,009 |
+| `broad_log_search` | 2/4 | 0 | 3,085 |
+| `file_capture_search` | 2/4 | 0 | 3,123 |
+| `prog_retrieve` | 2/4 | 0 | 17,242 |
 
-| Strategy | Correct |
-| --- | --- |
-| `head_tail_truncation` | **1/11** |
-| `rtk_grep_filter` | 10/11 |
-| `native_field_selection` | 8/11 |
-| `prog_paths_expand` | **11/11** |
+These are deterministic evidence-availability results, not actual-agent task
+success. Raw context counts evidence present in the delivered artifact; a
+strategy with insufficient evidence receives no discovery credit. Costs use
+the bytes/4 approximation and include every capture, exploration, and lookup
+response. Fixture setup and live source-acquisition costs are outside this
+experiment. Broader search and a capture-once file baseline are included.
 
-These results measure the current scripted strategies. The
-`unknown-target-buried-fatal` case supplies the expected evidence path to the
-`prog` strategy, so it measures assisted retrieval and does not establish
-unknown-target discovery. [#256](https://github.com/aphoristicartist/prog/issues/256)
-tracks removal of that grader information and a fair comparison with broader
-search strategies.
-
-See [`docs/competitive-baselines.md`](docs/competitive-baselines.md).
+Known-path results, assumptions, and command traces are recorded in
+[`docs/competitive-baselines.md`](docs/competitive-baselines.md) and the
+[measurement rows](fixtures/evals/competitive-baseline-metrics.json).
 
 ### Correctness, not just savings
 
@@ -661,7 +678,7 @@ queries beat `prog`: [`docs/positioning.md`](docs/positioning.md) and
 
 - [Token economics](docs/token-economics.md)
 - [Evidence acquisition](docs/evidence-acquisition.md)
-- [Task-success evaluation](docs/task-success-eval.md)
+- [Known-path recoverability evaluation](docs/task-success-eval.md)
 - [Replay and correctness](docs/replay-eval.md)
 - [Competitive baselines](docs/competitive-baselines.md)
 - [Real-world-shaped local demos](docs/real-world-demos.md)
