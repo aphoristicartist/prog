@@ -1,0 +1,15 @@
+{
+  "schema": "prog.lens_manifest",
+  "id": "gh-actions-log",
+  "match": {"source_id": "observe", "artifact_kind": "text"},
+  "view": {"limit": 8, "depth": 3, "fields": {"head": "/head", "tail": "/tail", "line_count": "/line_count", "byte_count": "/byte_count"}},
+  "omit": [{"path": "/lines", "reason": "long_array", "detail": "all redacted workflow log lines remain cursor-expandable", "expandable": true}],
+  "findings": [
+    {"kind": "ci_error", "path": "/lines/*", "confidence": 0.97, "reason": "GitHub Actions log line carries a workflow command error annotation", "title": "GitHub Actions error", "severity": "error", "contains_any": ["##[error]"]},
+    {"kind": "ci_warning", "path": "/lines/*", "confidence": 0.74, "reason": "GitHub Actions log line carries a workflow command warning annotation", "title": "GitHub Actions warning", "severity": "warning", "contains_any": ["##[warning]"]},
+    {"kind": "ci_failed_step", "path": "/lines/*", "confidence": 0.9, "reason": "GitHub Actions log line reports a step that exited nonzero", "title": "failed CI step", "severity": "error", "contains_any": ["process completed with exit code"]}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/lines/{index}", "reason": "cite the exact redacted workflow log line"}],
+  "invariants": ["annotations_reference_existing_lines", "full_workflow_log_remains_expandable", "redaction_precedes_lens_projection"],
+  "fixtures": {"positive": ["fixtures/gh-actions-log-normalized.json"], "negative": ["fixtures/counterexamples/json-items.json"]}
+}

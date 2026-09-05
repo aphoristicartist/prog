@@ -11,18 +11,33 @@ command when the exact query is already known.
 ## Layout
 
 By default, `prog call --lens <id>`, `prog observe --lens <id>`, and
-`prog run --lens <id>` load manifests from `./lenses`. Override that with
-`--lens-dir` or `PROG_LENS_DIR`.
+`prog run --lens <id>` use the first-party manifests embedded in the binary.
+No source checkout or local lens directory is required. If `./lenses` exists,
+its manifests are validated first; a project manifest with the requested id
+overrides the bundled manifest. Other ids still resolve from the bundled pack.
+
+An explicit `--lens-dir <DIR>` or `PROG_LENS_DIR` selects **only** that external
+directory, including when it names `./lenses`. A missing directory or missing
+id then fails without falling back to the bundled pack. The flag takes
+precedence over the environment variable.
 
 ```bash
-prog --lens-dir ./lenses call github list_issues --args '{}' --lens github.issues.triage
-prog --lens-dir ./lenses observe --file service.log --mime text/plain --lens observe.text.logs
-prog --lens-dir ./lenses run --lens run.failures -- cargo test
+prog call github list_issues --args '{}' --lens github.issues.triage
+prog observe --file service.log --mime text/plain --lens observe.text.logs
+prog run --lens run.failures -- cargo test
 ```
 
 Manifest files may be JSON, YAML, or YML. They are loaded from the top level of
 the lens directory. Every loaded manifest is validated before the requested
-lens is applied, so duplicate ids and invalid manifests fail early.
+lens is applied. Invalid external manifests fail even when the requested id
+is bundled; multiple external definitions of the requested id also fail.
+Bundled manifests pass the same contract validation and source-match checks.
+
+Captures record the selected lens id on their cursor. `inspect`, `search`,
+`find`, and `evidence` use the same resolution rules when reopening it. Keep
+the same project overrides or explicit directory selection for those follow-ups;
+bundled recipes need no additional flags. A missing cursor lens produces a
+warning and generic findings, as with external-only captures.
 
 ## Contract
 
@@ -94,7 +109,8 @@ The public contract is exposed through `prog meta LensManifest`.
   conservatively restrict a rule by case-insensitive terms.
 - Expansion still uses the original redacted cached payload, not the synthetic
   preview.
-- The first-party pack lives in `lenses/`; see [First-party lens
+- The canonical first-party pack lives in `lenses/` and is bundled in every
+  binary. See [First-party lens
   packs](lens-packs.md).
 
 ## Safety Rules

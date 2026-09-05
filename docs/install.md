@@ -4,6 +4,14 @@ The first-party install channel is a verified GitHub Release binary. It does
 not require Rust, root access, a package manager, or a writable system prefix.
 It requires `curl`, `tar`, a SHA-256 implementation, and GitHub CLI (`gh`).
 
+The binary includes its version-matched first-party lens manifests, including
+in release archives and the container image. In your own project, run
+`prog recipe cargo-test` or `prog recipe logs-root-cause --file service.log`
+without installing a separate lens directory. Command recipes still require
+the corresponding test or analysis tool. Cursor-backed `inspect` and `evidence`
+follow-ups use the bundled pack too. Project overrides and explicit external
+directories are described in [Observation lenses](lenses.md#layout).
+
 ## Latest release
 
 ```sh

@@ -1,12 +1,13 @@
 # First-party lens packs
 
-`prog` ships a small in-tree lens pack in `lenses/`. Use it when the artifact
-family is known and the next useful slice is not.
+`prog` embeds its first-party lens pack in the executable. The canonical
+manifests live in `lenses/`, but installed binaries do not need that directory.
+Use the pack when the artifact family is known and the next useful slice is not.
 
 ```bash
-prog --lens-dir ./lenses run --lens run.failures -- cargo test
-prog --lens-dir ./lenses observe --file service.log --mime text/plain --lens observe.text.logs
-prog --lens-dir ./lenses call github list_issues --args '{}' --lens github.issues.triage
+prog run --lens run.failures -- cargo test
+prog observe --file service.log --mime text/plain --lens observe.text.logs
+prog call github list_issues --args '{}' --lens github.issues.triage
 ```
 
 The first-party pack is deliberately boring: each lens is declarative, fixture
@@ -33,6 +34,8 @@ silently producing a misleading preview.
 CI validates that:
 
 - every top-level lens parses and passes `LensManifest` validation
+- the packaged `crates/prog-cli/assets/lenses/` copies match the canonical pack
+- every recipe and its evidence follow-ups work outside the source checkout
 - lens ids are unique
 - every lens has positive and counterexample fixtures
 - every lens declares invariants

@@ -1,0 +1,13 @@
+{
+  "schema": "prog.lens_manifest",
+  "id": "mcp-jsonrpc-error",
+  "match": {"source_id": "observe", "artifact_kind": "json"},
+  "view": {"limit": 4, "depth": 3, "fields": {"jsonrpc": "/jsonrpc", "id": "/id", "code": "/error/code", "message": "/error/message"}},
+  "omit": [{"path": "/error/data", "reason": "deep_object", "detail": "provider error data remains cursor-expandable", "expandable": true}],
+  "findings": [
+    {"kind": "mcp_error", "path": "/error/message", "confidence": 0.97, "reason": "MCP JSON-RPC response carries an error envelope", "title": "MCP JSON-RPC error", "severity": "error", "contains_any": ["error", "failed", "timeout", "denied", "invalid", "not found", "exceeded", "unavailable"]}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/error", "reason": "cite the exact MCP error envelope"}],
+  "invariants": ["error_code_and_message_come_from_the_response", "provider_error_data_remains_expandable", "success_responses_produce_no_error_finding"],
+  "fixtures": {"positive": ["fixtures/mcp-jsonrpc-error.json"], "negative": ["fixtures/counterexamples/mcp-jsonrpc-success.json"]}
+}

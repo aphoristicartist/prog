@@ -92,7 +92,7 @@ content is text-like. Binary-looking input is rejected with a structured error.
 
 ```bash
 prog observe --file ./large.json --mime application/json --name large-json
-prog --lens-dir ./lenses observe --file ./large.json --mime application/json --lens json.items.triage
+prog observe --file ./large.json --mime application/json --lens json.items.triage
 ```
 
 Observation cache entries default to a 24-hour TTL. Override it when a fixture
@@ -115,7 +115,7 @@ prog expand pc1_... --path /items/0/body
 
 ```bash
 cat events.ndjson | prog observe --stdin --mime application/x-ndjson --name events
-cat events.ndjson | prog --lens-dir ./lenses observe --stdin --mime application/x-ndjson --name events --lens observe.ndjson.records
+cat events.ndjson | prog observe --stdin --mime application/x-ndjson --name events --lens observe.ndjson.records
 ```
 
 NDJSON observations are wrapped as:
@@ -154,7 +154,7 @@ lossy and describes their range semantics.
 
 ```bash
 cargo test 2>&1 | prog observe --stdin --mime text/plain --name cargo-test
-cargo test 2>&1 | prog --lens-dir ./lenses observe --stdin --mime text/plain --name cargo-test --lens observe.text.logs
+cargo test 2>&1 | prog observe --stdin --mime text/plain --name cargo-test --lens observe.text.logs
 ```
 
 Text observations expose a bounded head/tail preview plus cursor-backed line

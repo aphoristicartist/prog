@@ -13,7 +13,7 @@ Use the first-party lens pack when the command output is noisy and failure
 triage is the goal:
 
 ```bash
-prog --lens-dir ./lenses run --lens run.failures -- cargo test
+prog run --lens run.failures -- cargo test
 ```
 
 The stored payload includes:
