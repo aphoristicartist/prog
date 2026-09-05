@@ -4,9 +4,6 @@
 
 - Fixed the `prog-cli` crate tarball so its embedded agent skill is packaged
   inside the crate and verified by the release dry-run build.
-- Bundled the first-party lens pack in the executable so recipes and cursor
-  follow-ups work outside the source checkout. Project lenses override bundled
-  ids by default; explicit lens directories retain exclusive selection (#254).
 - Routed public-benchmark A/B records through the existing actual-agent claim
   gate, with generated Wilson intervals, exact paired McNemar results, explicit
   false-completion/dropout accounting, and the SWE-bench contamination caveat.
@@ -30,6 +27,9 @@
   Trivy reports, MCP JSON-RPC errors, LLM provider errors, and OpenTelemetry
   records, and enforced that the lens README documents exactly the shipped
   manifests (#240).
+- Bundled the first-party lens pack in the executable so recipes and cursor
+  follow-ups work outside the source checkout. Project lenses override bundled
+  ids by default; explicit lens directories retain exclusive selection (#254).
 - Added the conservative live-trial accounting and claim-gate contract for the
   actual-agent evaluation: provider/model metadata, all fixed and provider
   token fields, calls/reruns/latency, dropouts, per-trial graders, and ordered
