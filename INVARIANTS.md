@@ -19,6 +19,18 @@ This table maps the RFC 0002 invariant set to executable tests. Property tests r
 | I13 | Session trails contain metadata references only, survive store reopen, cap retained events, and purge with cache privacy state. | `crates/prog-core/tests/store.rs::session_trail_is_persistent_bounded_and_purged_with_cache` |
 | I14 | A `resolved` delta classification implies the finding's evidence is absent from the subject's persisted payload — never merely absent from a bounded derivation window (head/tail slice, rank cap, or traversal cap) over a payload that still contains it, never claimed from a capture that was incompletely executed (timed out or cancelled), and never claimed from a capture redacted at a proof-bearing path (stdout, stderr, argv, or provenance). Bounded delta serialization may omit detail findings but preserves complete status counts and marks truncation. | `crates/prog-core/src/delta.rs::tests::{assess_is_not_provable_when_capture_was_derivation_windowed,redacted_or_metadata_only_evidence_never_proves_absence}`; derivation-bound coverage in `crates/prog-core/tests/findings.rs::{finding_derivation_completeness_covers_windows_node_caps_and_depth_caps,unlimited_ranking_retains_every_candidate_within_the_derivation_bound}`; persisted-capture and delta-call-site coverage in `crates/prog-cli/src/{main.rs::capture_lifecycle_tests::record_capture_marks_windowed_persisted_payloads_non_exhaustive,commands/delta.rs::tests::delta_derives_every_finding_within_the_bounded_payload_traversal}`; CLI end-to-end in `crates/prog-cli/tests/cli.rs::{delta_never_reports_resolved_for_a_finding_that_moved_into_the_derivation_window,cli_call_marks_head_tail_only_text_derivation_incomplete,mcp_call_marks_head_tail_only_text_derivation_incomplete,observe_repeated_file_uses_stable_invocation_identity_and_tracks_moved_findings}`; multi-iteration correctness/budget oracle in `crates/prog-cli/tests/replay_eval.rs::replay_eval_smoke` |
 
+## Read-back readiness lifecycle
+
+Historical read-back verification does not prove that its evidence is still
+available. `crates/prog-cli/tests/verification.rs::verified_readback_becomes_unverifiable_after_payload_eviction`
+checks readiness after explicit quota eviction and persisted retention-policy
+eviction across store reopenings, preserving the original verified receipt and
+making no additional source requests. The `readback_tests` module in
+`crates/prog-cli/src/obligation.rs` covers missing records/payloads and metadata-only
+evidence for every supporting role, broken receipt/intent/obligation links,
+non-passing receipt statuses, and exact-value verification without delta's
+`can_prove_absence` requirement.
+
 ## Property strategy
 
 The arbitrary JSON strategy in `crates/prog-core/tests/disclosure.rs` is bounded by depth and width and includes long strings, redaction sentinels, unicode text, escaped pointer keys, and sensitive-looking field names. The arbitrary shape strategy in `crates/prog-core/tests/shape.rs` generates nested shapes and exact enum-cap value sets to keep the known string-enum absorption boundary under test.
