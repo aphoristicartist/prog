@@ -22,6 +22,7 @@ jobs:
           node-version: '22.19.0'
       - name: Test native harness extension packages
         run: |
+          npm ci --ignore-scripts --no-audit --no-fund --prefix extensions/deepseek-harness
           PROG_TEST_BINARY="$PWD/target/debug/prog" npm test --prefix extensions/deepseek-harness
           npm pack --dry-run ./extensions/deepseek-harness
       - run: cargo run -p prog-cli -- --help
@@ -50,7 +51,9 @@ jobs:
         with:
           node-version: '22.19.0'
       - name: Test native harness lifecycle on macOS
-        run: PROG_TEST_BINARY="$PWD/target/debug/prog" npm test --prefix extensions/deepseek-harness
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund --prefix extensions/deepseek-harness
+          PROG_TEST_BINARY="$PWD/target/debug/prog" npm test --prefix extensions/deepseek-harness
 
   dirty-checkout-isolation:
     # CLI tests must never observe the checkout that runs them. Keep an

@@ -9,6 +9,10 @@
   Return the safe declaration to callers and reset older pre-release stores
   that lack this persistence boundary (#250).
 
+- Applied the native host's shared child-environment filter to `prog` capture
+  helpers, preventing implicit inheritance of provider credentials and managed
+  `DSH_*` identity while retaining ordinary child settings (#274).
+
 - Made native harness capture deadlines, cancellation, and output overflow
   terminal even after a helper exits with descendant-held pipes. Capture stops
   terminate its POSIX process group, close local pipes, and preserve the

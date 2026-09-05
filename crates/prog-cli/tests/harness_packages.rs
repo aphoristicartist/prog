@@ -78,9 +78,16 @@ fn deepseek_harness_package_declares_a_native_bundle() {
     let root = repo_root();
     let extension_root = root.join("extensions/deepseek-harness");
     let package = read_json(&extension_root.join("package.json"));
+    let lock = read_json(&extension_root.join("package-lock.json"));
 
     assert_eq!(package["name"], "@aphoristicartist/dsh-prog");
     assert_eq!(package["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(lock["version"], package["version"]);
+    assert_eq!(lock["packages"][""]["version"], package["version"]);
+    assert_eq!(
+        lock["packages"][""]["peerDependencies"],
+        package["peerDependencies"]
+    );
     assert_eq!(package["type"], "module");
     assert_eq!(package["engines"]["node"], "^22.19.0 || >=24.0.0");
     assert_eq!(package["main"], "./index.js");
@@ -88,6 +95,10 @@ fn deepseek_harness_package_declares_a_native_bundle() {
     assert_eq!(package["peerDependencies"]["@deepseek-ai/cordis"], "^4.0.1");
     assert_eq!(
         package["peerDependencies"]["@deepseek-ai/dsh-tools"],
+        "^0.1.0-rc.6"
+    );
+    assert_eq!(
+        package["peerDependencies"]["@deepseek-ai/dsh-subprocess"],
         "^0.1.0-rc.6"
     );
     assert_eq!(

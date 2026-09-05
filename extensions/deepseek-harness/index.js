@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
 
 export const name = 'prog-disclosure'
 export const inject = ['tools']
@@ -46,7 +47,9 @@ function runProg({ command, prefixArgs, args, input, cwd, timeoutMs, signal }) {
     const deadline = performance.now() + timeoutMs
     const child = spawn(command, [...prefixArgs, ...args], {
       cwd,
-      env: process.env,
+      // Share the host's child boundary: ambient provider credentials and
+      // managed DSH_* identity must not reach a result-capture helper.
+      env: scrubbedParentEnv(),
       shell: false,
       // prog supports POSIX hosts. Keep capture helpers in a group separate
       // from the host so stopping them cannot signal the upstream tool.
