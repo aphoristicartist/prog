@@ -1,7 +1,120 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::Extra;
+use crate::{CoreError, Extra, Result, VerificationObligation, VerificationOperation};
+
+/// Protect descriptive metadata, and reject sensitive identity/operation data
+/// rather than silently changing the meaning of an immutable declaration.
+pub(crate) fn redact_obligation(
+    obligation: &VerificationObligation,
+) -> Result<VerificationObligation> {
+    let mut safe = obligation.clone();
+    safe.intended_check = redact_metadata_text(&safe.intended_check);
+    for (field, value) in [
+        ("id", Some(safe.id.as_str())),
+        ("session_id", Some(safe.session_id.as_str())),
+        ("required_scope", Some(safe.required_scope.as_str())),
+        ("comparison_family", safe.comparison_family.as_deref()),
+        (
+            "origin_observation_id",
+            safe.origin_observation_id.as_deref(),
+        ),
+        (
+            "expected_absent_fingerprint",
+            safe.expected_absent_fingerprint.as_deref(),
+        ),
+        (
+            "evidence_observation_id",
+            safe.evidence_observation_id.as_deref(),
+        ),
+        ("created_at", Some(safe.created_at.as_str())),
+    ] {
+        if let Some(value) = value {
+            require_safe_metadata(field, value)?;
+        }
+    }
+    if let Some(operation) = &safe.expected_operation {
+        match operation {
+            VerificationOperation::Argv(argv) => require_safe_argv("expected argv", argv)?,
+            VerificationOperation::SourceOperation(operation) => {
+                require_safe_metadata("source operation", operation)?;
+            }
+        }
+    }
+    for action in &mut safe.advisory_actions {
+        if let Some(reason) = &mut action.reason {
+            *reason = redact_metadata_text(reason);
+        }
+        if let Some(argv) = &action.argv {
+            require_safe_argv("advisory argv", argv)?;
+        }
+        for value in [
+            Some(action.kind.as_str()),
+            action.operation.as_deref(),
+            action.path.as_deref(),
+            action.derived_from.as_deref(),
+            action.cwd.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .chain(action.does_not_satisfy.iter().map(String::as_str))
+        {
+            require_safe_metadata("advisory action", value)?;
+        }
+        action.extra = redact_metadata_extra(&action.extra);
+    }
+    for field in ["readback_receipt_id", "action_intent_id"] {
+        if let Some(value) = safe.extra.get(field).and_then(Value::as_str) {
+            require_safe_metadata(field, value)?;
+        }
+    }
+    safe.extra = redact_metadata_extra(&safe.extra);
+    Ok(safe)
+}
+
+fn redact_metadata_text(text: &str) -> String {
+    let (text, _) = redact_sensitive_text(text);
+    let (safe, _) = RedactionPolicy::default().apply_persistence(&Value::String(text));
+    safe.as_str()
+        .expect("redaction of text remains text")
+        .to_string()
+}
+
+fn redact_metadata_extra(extra: &Extra) -> Extra {
+    let (safe, _) = RedactionPolicy::default().apply_persistence(&Value::Object(extra.clone()));
+    safe.as_object()
+        .expect("redaction of an object remains an object")
+        .clone()
+}
+
+fn sensitive_metadata_error(field: &str) -> CoreError {
+    CoreError::BadArgs {
+        operation: "verification obligation".to_string(),
+        reason: format!(
+            "{field} contains recognized sensitive data; use a secret-free declaration so exact verification semantics are preserved"
+        ),
+    }
+}
+
+fn require_safe_metadata(field: &str, text: &str) -> Result<()> {
+    if redact_metadata_text(text) != text {
+        return Err(sensitive_metadata_error(field));
+    }
+    Ok(())
+}
+
+fn require_safe_argv(field: &str, argv: &[String]) -> Result<()> {
+    for arg in argv {
+        // Check standalone flags as well as inline/embedded values. An argv
+        // vector must not lose the association between --password and its value.
+        let name = arg.split(['=', ':']).next().unwrap_or(arg);
+        if name.starts_with('-') && is_sensitive_name(name.trim_start_matches('-')) {
+            return Err(sensitive_metadata_error(field));
+        }
+        require_safe_metadata(field, arg)?;
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -352,32 +465,101 @@ pub fn is_sensitive_name(name: &str) -> bool {
 }
 
 pub fn redact_sensitive_text(input: &str) -> (String, usize) {
-    let mut output = String::with_capacity(input.len());
-    let mut cursor = 0usize;
+    let (mut fragments, redactions) = redact_sensitive_text_fragments(&[input]);
+    (fragments.remove(0), redactions)
+}
+
+/// Redact fragments of one logical stream using the whole stream as context.
+/// A secret crossing fragment boundaries is replaced with an explicit marker
+/// in each affected fragment. Benign bytes and fragment order are preserved.
+pub fn redact_sensitive_text_fragments(fragments: &[&str]) -> (Vec<String>, usize) {
+    let input = fragments.concat();
+    let ranges = sensitive_text_ranges(&input);
+    let mut offset = 0;
+    let mut next_range = 0;
+    let output = fragments
+        .iter()
+        .map(|fragment| {
+            if fragment.is_empty() {
+                return String::new();
+            }
+            let start = offset;
+            offset += fragment.len();
+            let end = offset;
+            let mut cursor = start;
+            let mut output = String::with_capacity(fragment.len());
+            while let Some(range) = ranges.get(next_range) {
+                if range.value_start >= end {
+                    break;
+                }
+                if range.value_end <= start {
+                    next_range += 1;
+                    continue;
+                }
+                let value_start = range.value_start.max(start);
+                let value_end = range.value_end.min(end);
+                output.push_str(&input[cursor..value_start]);
+                if range.wrap_marker && range.value_start >= start {
+                    output.push('"');
+                }
+                output.push_str("[REDACTED:observed_text_secret]");
+                if range.wrap_marker && range.value_end <= end {
+                    output.push('"');
+                }
+                cursor = value_end;
+                if range.value_end > end {
+                    break;
+                }
+                next_range += 1;
+            }
+            output.push_str(&input[cursor..end]);
+            output
+        })
+        .collect();
+    (output, ranges.len())
+}
+
+fn sensitive_text_ranges(input: &str) -> Vec<TextSecretRange> {
     let mut search = 0usize;
-    let mut redactions = 0usize;
+    let mut ranges = Vec::new();
+    // Count existing sensitive-value markers as redaction evidence as well.
+    // A capture of an already-redacted log must not regain absence-proof rights.
+    let mut quoted = next_quoted_sensitive_value(input, search, true);
 
-    while let Some(range) = next_sensitive_text_value(input, search) {
-        output.push_str(&input[cursor..range.value_start]);
-        output.push_str("[REDACTED:observed_text_secret]");
-        cursor = range.value_end;
+    while let Some(range) = next_sensitive_text_value(input, search, quoted) {
+        ranges.push(range);
         search = range.value_end;
-        redactions += 1;
+        if input
+            .as_bytes()
+            .get(search)
+            .is_some_and(|ch| matches!(ch, b'"' | b'\''))
+        {
+            search += 1;
+        }
+        if quoted.is_some_and(|quoted| quoted.value_start < search) {
+            quoted = next_quoted_sensitive_value(input, search, true);
+        }
     }
-
-    output.push_str(&input[cursor..]);
-    (output, redactions)
+    ranges
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TextSecretRange {
     value_start: usize,
     value_end: usize,
+    wrap_marker: bool,
 }
 
-fn next_sensitive_text_value(input: &str, search: usize) -> Option<TextSecretRange> {
+fn next_sensitive_text_value(
+    input: &str,
+    search: usize,
+    quoted: Option<TextSecretRange>,
+) -> Option<TextSecretRange> {
     let mut index = search.min(input.len());
     while index < input.len() {
+        if quoted.is_some_and(|range| index >= range.value_start) {
+            return quoted;
+        }
         let (key_start, ch) = next_char(input, index)?;
         index = key_start + ch.len_utf8();
         if !is_text_key_char(ch) || previous_char(input, key_start).is_some_and(is_text_key_char) {
@@ -403,20 +585,150 @@ fn next_sensitive_text_value(input: &str, search: usize) -> Option<TextSecretRan
             index = key_end;
             continue;
         }
-        let value_end = if redacts_to_line_end(key, separator) {
-            line_end(input, value_start)
+        let range = if matches!(input.as_bytes()[value_start], b'"' | b'\'') {
+            quoted_value_range(input, value_start)
+        } else if redacts_to_line_end(key, separator) {
+            TextSecretRange {
+                value_start,
+                value_end: line_end(input, value_start),
+                wrap_marker: false,
+            }
         } else {
-            token_end(input, value_start)
+            TextSecretRange {
+                value_start,
+                value_end: token_end(input, value_start),
+                wrap_marker: false,
+            }
         };
-        if value_end > value_start {
-            return Some(TextSecretRange {
+        if range.value_end > range.value_start {
+            return Some(range);
+        }
+        index = range.value_end.max(key_end);
+    }
+    quoted
+}
+
+/// Scan quoted name/value pairs without reparsing or reserializing the log.
+/// Quote scanning is linear; JSON key escapes are decoded only for matching.
+/// Value ranges retain their original quotes and surrounding bytes.
+/// An incomplete quoted value is redacted through the end of the capture.
+fn next_quoted_sensitive_value(
+    input: &str,
+    search: usize,
+    include_markers: bool,
+) -> Option<TextSecretRange> {
+    let mut index = search;
+    while let Some((start, ch)) = next_char(input, index) {
+        index = start + ch.len_utf8();
+        if !matches!(ch, '"' | '\'') {
+            continue;
+        }
+        if input[..start]
+            .bytes()
+            .rev()
+            .take_while(|&byte| byte == b'\\')
+            .count()
+            % 2
+            == 1
+        {
+            continue;
+        }
+        let Some(end) = quoted_token_end(input, start) else {
+            continue;
+        };
+        index = end;
+        let separator = consume_while(input, end, |ch| ch.is_ascii_whitespace());
+        if !input
+            .as_bytes()
+            .get(separator)
+            .is_some_and(|ch| matches!(ch, b':' | b'='))
+        {
+            // Quotes in a log prefix are not necessarily string boundaries.
+            // Reconsider the closing quote as a possible key opener; escaped
+            // quotes are skipped above, so each interval is scanned at most
+            // twice for each quote kind.
+            index = start + 1;
+            continue;
+        }
+        let key = if ch == '"' {
+            match serde_json::from_str::<String>(&input[start..end]) {
+                Ok(key) => key,
+                Err(_) => continue,
+            }
+        } else {
+            input[start + 1..end - 1].to_string()
+        };
+        if !is_sensitive_text_key(&key) {
+            continue;
+        }
+        let value_start = consume_while(input, separator + 1, |ch| ch.is_ascii_whitespace());
+        let Some(first) = input.as_bytes().get(value_start) else {
+            break;
+        };
+        let range = if matches!(first, b'"' | b'\'') {
+            quoted_value_range(input, value_start)
+        } else {
+            // Consume a complete JSON value, including nested containers. On
+            // malformed/truncated input the boundary is unknown, so redact
+            // the remaining capture rather than leave a possible secret tail.
+            let mut values = serde_json::Deserializer::from_str(&input[value_start..])
+                .into_iter::<serde::de::IgnoredAny>();
+            let value_end = if values.next().is_some_and(|value| value.is_ok()) {
+                value_start + values.byte_offset()
+            } else {
+                input.len()
+            };
+            TextSecretRange {
                 value_start,
                 value_end,
-            });
+                wrap_marker: true,
+            }
+        };
+        if range.value_end > range.value_start
+            && (include_markers
+                || !is_text_redaction_marker(&input[range.value_start..range.value_end]))
+        {
+            return Some(range);
         }
-        index = key_end;
+        index = range.value_end;
+        // A closing value quote must not be mistaken for the next key's opener.
+        if matches!(first, b'"' | b'\'') && index < input.len() {
+            index += 1;
+        }
     }
     None
+}
+
+fn quoted_value_range(input: &str, start: usize) -> TextSecretRange {
+    TextSecretRange {
+        value_start: start + 1,
+        value_end: quoted_token_end(input, start).map_or(input.len(), |end| end - 1),
+        wrap_marker: false,
+    }
+}
+
+/// End byte offset including the closing quote, with backslash escapes honored.
+fn quoted_token_end(input: &str, start: usize) -> Option<usize> {
+    let quote = input.as_bytes()[start];
+    let mut index = start + 1;
+    while index < input.len() {
+        match input.as_bytes()[index] {
+            b'\\' => index += 2,
+            ch if ch == quote => return Some(index + 1),
+            _ => index += 1,
+        }
+    }
+    None
+}
+
+fn is_text_redaction_marker(text: &str) -> bool {
+    matches!(
+        text,
+        "[REDACTED:observed_text_secret]"
+            | "[REDACTED:value_secret]"
+            | "[REDACTED:value_secret_low_confidence]"
+            | "[REDACTED:secret_field]"
+    )
 }
 
 fn text_secret_separator(input: &str, key: &str, key_end: usize) -> Option<(char, usize)> {
@@ -569,6 +881,7 @@ pub(crate) fn classify_value_secret(text: &str) -> ValueSecretClass {
         || contains_pem_block(text)
         || contains_jwt(text)
         || contains_sensitive_url_param(text)
+        || next_quoted_sensitive_value(text, 0, false).is_some()
         || contains_sensitive_name_value_pair(text)
     {
         ValueSecretClass::High

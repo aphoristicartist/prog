@@ -615,7 +615,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
                         created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
                         extra: Extra::new(),
                     };
-                    store.put_obligation(&obligation)?;
+                    let obligation = store.put_obligation(&obligation)?;
                     write_success(&obligation, cli.pretty, ctx)?;
                 }
                 SessionCommand::ObligationList(args) => {

@@ -44,7 +44,7 @@ pub(crate) fn declare_recipe_obligation(
         created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
         extra: Extra::new(),
     };
-    store.put_obligation(&obligation)
+    store.put_obligation(&obligation).map(|_| ())
 }
 
 pub(crate) fn session_show(

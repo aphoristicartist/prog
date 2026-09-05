@@ -128,20 +128,7 @@ pub(crate) async fn run_command(
                 .filter(|arg| arg.contains("[REDACTED"))
                 .count(),
         );
-    let combined = run
-        .combined
-        .iter()
-        .enumerate()
-        .map(|(index, chunk)| {
-            let text = redact_run_output_bytes(&chunk.bytes).text;
-            json!({
-                "index": index,
-                "stream": chunk.stream,
-                "text": text,
-                "byte_count": chunk.bytes.len()
-            })
-        })
-        .collect::<Vec<_>>();
+    let combined = redact_run_chunks(&run.combined);
     let failure_sections = detect_run_failure_sections(&run.status, &stdout_text, &stderr_text);
     let provider = normalize_coding_output(
         &args.command,
@@ -606,6 +593,45 @@ fn run_operation_name(argv: &[String]) -> String {
         .to_string()
 }
 
+fn redact_run_chunks(chunks: &[RunChunk]) -> Vec<Value> {
+    // Redact each stream with all of its chunks as context before restoring
+    // interleaving. A key/value split by output on the other stream must not
+    // expose a secret that was removed from the complete stdout/stderr view.
+    let chunk_text = chunks
+        .iter()
+        .map(|chunk| String::from_utf8_lossy(&chunk.bytes))
+        .collect::<Vec<_>>();
+    let mut redacted_chunks = vec![String::new(); chunks.len()];
+    for stream in ["stdout", "stderr"] {
+        let indices = chunks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, chunk)| (chunk.stream == stream).then_some(index))
+            .collect::<Vec<_>>();
+        let fragments = indices
+            .iter()
+            .map(|&index| chunk_text[index].as_ref())
+            .collect::<Vec<_>>();
+        let (redacted, _) = prog_core::redact_sensitive_text_fragments(&fragments);
+        for (index, text) in indices.into_iter().zip(redacted) {
+            redacted_chunks[index] = text.lines().collect::<Vec<_>>().join("\n");
+        }
+    }
+    chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| {
+            let text = &redacted_chunks[index];
+            json!({
+                "index": index,
+                "stream": chunk.stream,
+                "text": text,
+                "byte_count": chunk.bytes.len()
+            })
+        })
+        .collect::<Vec<_>>()
+}
+
 fn run_text_from_capture(capture: &RunCapture) -> RunText {
     let mut text = redact_run_output_bytes(&capture.bytes);
     text.byte_count = capture.total_bytes;
@@ -617,15 +643,8 @@ fn run_text_from_capture(capture: &RunCapture) -> RunText {
 fn redact_run_output_bytes(bytes: &[u8]) -> RunText {
     let utf8_valid = std::str::from_utf8(bytes).is_ok();
     let text = String::from_utf8_lossy(bytes);
-    let mut redactions = 0usize;
-    let lines = text
-        .lines()
-        .map(|line| {
-            let (redacted, count) = prog_core::redact_sensitive_text(line);
-            redactions = redactions.saturating_add(count);
-            redacted
-        })
-        .collect::<Vec<_>>();
+    let (text, redactions) = prog_core::redact_sensitive_text(&text);
+    let lines = text.lines().map(str::to_string).collect::<Vec<_>>();
     let line_count = lines.len();
     let head = lines.iter().take(10).cloned().collect::<Vec<_>>();
     let tail_start = lines.len().saturating_sub(10).max(head.len());
@@ -1509,4 +1528,58 @@ fn redact_inline_secret(arg: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    #[test]
+    fn interleaved_chunks_redact_with_complete_stream_context() {
+        let chunks = vec![
+            RunChunk {
+                stream: "stdout",
+                bytes: br#"{"pass"#.to_vec(),
+            },
+            RunChunk {
+                stream: "stderr",
+                bytes: b"progress one".to_vec(),
+            },
+            RunChunk {
+                stream: "stdout",
+                bytes: br#"word":"FIRST_HALF"#.to_vec(),
+            },
+            RunChunk {
+                stream: "stderr",
+                bytes: b"progress two".to_vec(),
+            },
+            RunChunk {
+                stream: "stdout",
+                bytes: br#" SECOND_HALF","message":"benign"}"#.to_vec(),
+            },
+        ];
+        let output = redact_run_chunks(&chunks);
+        assert_eq!(output.len(), chunks.len());
+        for (index, value) in output.iter().enumerate() {
+            assert_eq!(value["index"], index);
+            assert_eq!(value["stream"], chunks[index].stream);
+            assert_eq!(value["byte_count"], chunks[index].bytes.len());
+        }
+        assert_eq!(output[1]["text"], "progress one");
+        assert_eq!(output[3]["text"], "progress two");
+        let serialized = serde_json::to_string(&output).unwrap();
+        assert!(!serialized.contains("FIRST_HALF"));
+        assert!(!serialized.contains("SECOND_HALF"));
+        assert!(serialized.contains("benign"));
+        let joined = output
+            .iter()
+            .filter(|value| value["stream"] == "stdout")
+            .map(|value| value["text"].as_str().unwrap())
+            .collect::<String>();
+        let parsed: Value = serde_json::from_str(&joined).unwrap();
+        assert_eq!(
+            parsed["password"],
+            "[REDACTED:observed_text_secret][REDACTED:observed_text_secret]"
+        );
+    }
 }
