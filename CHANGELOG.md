@@ -23,6 +23,11 @@
   readers and clean up stalled connection process groups on every exit path.
   Received responses and explicit MCP task actions remain separate evidence
   (#271).
+- Added an installed skill/CLI coding-loop smoke using a real Rust failure,
+  exact cached evidence, an external fixture fix, and fresh verification.
+  Narrower, stale, and truncated evidence remain blocking; the report records
+  actual command and exported-file bytes without making agent or facade
+  performance claims (#120).
 - Fixed the `prog-cli` crate tarball so its embedded agent skill is packaged
   inside the crate and verified by the release dry-run build.
 - Stop treating historical verified read-back receipts as passing readiness

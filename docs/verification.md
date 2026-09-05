@@ -124,6 +124,13 @@ envelope's `findings`.
 | `--advisory-argv` | A displayed hint. Never auto-run, and running it does not satisfy the obligation. |
 | `--declared-by` | `user`, `recipe`, `normalizer`, or `harness`. |
 
+`--expected-argv` accepts literal argv entries and can be repeated. Use `=` for
+entries that begin with a dash. For `cargo test --lib`, the options are:
+
+```sh
+--expected-argv=cargo --expected-argv=test --expected-argv=--lib
+```
+
 `--origin-observation` and `--expected-absent-fingerprint` must be supplied
 together; supplying one alone evaluates to `unknown`.
 
@@ -216,6 +223,9 @@ Before any of that, evaluation rejects evidence that is unavailable, evicted,
 incomplete, truncated, from a changed workspace, or from a mismatched operation.
 
 ## Full loop example
+
+The [installed coding-loop smoke](installed-coding-loop.md) runs this pattern
+against a real Cargo fixture and checks narrower, stale, and truncated evidence.
 
 ```sh
 prog session start --goal "fix checkout timeout"

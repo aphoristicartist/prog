@@ -80,15 +80,21 @@ advanced commands remain available to agents for debugging and recovery.
 
 ## Integration context budget
 
-CI gates the fixed pre-work integration surface: the top-level help, one help
+CI gates the available integration surface: the top-level help, one help
 response for every immediate command, and the portable Agent Skill. The
 current reviewed ceiling is 34,000 bytes. Nested recovery-command help and
 model-visible tool responses are not hidden from accounting; they occur only
 when invoked and are measured by the actual-agent evaluation instead.
 
-A proposed facade must report its fixed schema/instruction cost against this
-same denominator. Replacing three existing commands with three differently
-named wrappers is not, by itself, an integration win.
+Host trials must record the instructions, schemas, help responses, and tool
+results actually delivered in each arm. Available help text is counted in the
+trial only when delivered. A proposed facade must report its fixed
+schema/instruction cost and total task context against that measured baseline.
+
+The [installed coding-loop smoke](installed-coding-loop.md) validates a real
+failure-to-verification sequence through the shipped skill/CLI workflow and
+records command and exported-file bytes. It provides a reproducible workflow
+for future facade trials; actual-agent outcomes require separate measurement.
 
 ## Installation contract
 
