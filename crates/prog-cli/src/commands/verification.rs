@@ -130,7 +130,7 @@ pub(crate) fn begin_verification(
 
 pub(crate) async fn readback_verification(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     args: &VerificationReadbackArgs,
     ctx: &mut InvocationContext,
 ) -> Result<prog_core::ReadbackVerificationReceipt> {

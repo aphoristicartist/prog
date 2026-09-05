@@ -21,8 +21,9 @@ pub(crate) struct Cli {
     #[arg(long, env = "PROG_DIR", default_value = "./.prog", global = true)]
     pub(crate) dir: PathBuf,
 
-    #[arg(long, env = "PROG_LENS_DIR", default_value = "./lenses", global = true)]
-    pub(crate) lens_dir: PathBuf,
+    /// External lenses.
+    #[arg(long, env = "PROG_LENS_DIR", global = true)]
+    pub(crate) lens_dir: Option<PathBuf>,
 
     #[arg(long, global = true)]
     pub(crate) pretty: bool,

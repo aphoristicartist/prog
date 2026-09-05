@@ -4,7 +4,7 @@ use crate::*;
 
 pub(crate) async fn call_source(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     args: &CallArgs,
     ctx: &mut InvocationContext,
 ) -> Result<CallSourceResult> {

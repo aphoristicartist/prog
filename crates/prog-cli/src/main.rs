@@ -348,7 +348,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
         }
         Command::Call(args) => {
             let store = open_store(&cli.dir, ctx)?;
-            let mut result = call_source(&store, &cli.lens_dir, args, ctx).await?;
+            let mut result = call_source(&store, cli.lens_dir.as_deref(), args, ctx).await?;
             record_envelope_event(&store, &mut result.envelope, "call");
             write_success(&result.envelope, cli.pretty, ctx)?;
             Ok(if result.received_error {
@@ -359,14 +359,14 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
         }
         Command::Observe(args) => {
             let store = open_store(&cli.dir, ctx)?;
-            let mut envelope = observe_artifact(&store, &cli.lens_dir, args, ctx)?;
+            let mut envelope = observe_artifact(&store, cli.lens_dir.as_deref(), args, ctx)?;
             record_envelope_event(&store, &mut envelope, "observe");
             write_success(&envelope, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Run(args) => {
             let store = open_store(&cli.dir, ctx)?;
-            let mut result = run_command(&store, &cli.lens_dir, args, ctx).await?;
+            let mut result = run_command(&store, cli.lens_dir.as_deref(), args, ctx).await?;
             record_envelope_event(&store, &mut result.envelope, "run");
             write_success(&result.envelope, cli.pretty, ctx)?;
             Ok(if args.preserve_exit_code {
@@ -377,7 +377,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
         }
         Command::Recipe(args) => {
             let store = open_store(&cli.dir, ctx)?;
-            let mut envelope = run_recipe(&store, &cli.lens_dir, args, ctx).await?;
+            let mut envelope = run_recipe(&store, cli.lens_dir.as_deref(), args, ctx).await?;
             declare_recipe_obligation(&store, args, &envelope)?;
             record_envelope_event(&store, &mut envelope, "recipe");
             write_success(&envelope, cli.pretty, ctx)?;
@@ -420,7 +420,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
         }
         Command::Inspect(args) => {
             let store = open_store(&cli.dir, ctx)?;
-            let response = inspect_cursor(&store, &cli.lens_dir, args, ctx)?;
+            let response = inspect_cursor(&store, cli.lens_dir.as_deref(), args, ctx)?;
             record_navigation_event(
                 &store,
                 "inspect",
@@ -438,7 +438,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
         }
         Command::Evidence(args) => {
             let store = open_store(&cli.dir, ctx)?;
-            let response = evidence_cursor(&store, &cli.lens_dir, args, ctx)?;
+            let response = evidence_cursor(&store, cli.lens_dir.as_deref(), args, ctx)?;
             record_navigation_event(
                 &store,
                 "evidence",
@@ -457,7 +457,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
             let store = open_store(&cli.dir, ctx)?;
             let response = search_cursor(
                 &store,
-                &cli.lens_dir,
+                cli.lens_dir.as_deref(),
                 &args.cursor,
                 Some(args.query.clone()),
                 args.kind.clone(),
@@ -482,7 +482,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
             let store = open_store(&cli.dir, ctx)?;
             let response = search_cursor(
                 &store,
-                &cli.lens_dir,
+                cli.lens_dir.as_deref(),
                 &args.cursor,
                 None,
                 Some(args.kind.clone()),
@@ -529,7 +529,8 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
                     Ok(ExitCode::SUCCESS)
                 }
                 VerificationCommand::Readback(args) => {
-                    let receipt = readback_verification(&store, &cli.lens_dir, args, ctx).await?;
+                    let receipt =
+                        readback_verification(&store, cli.lens_dir.as_deref(), args, ctx).await?;
                     let exit = if matches!(
                         receipt.status,
                         prog_core::ReadbackVerificationStatus::Verified

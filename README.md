@@ -267,7 +267,7 @@ prog --dir /tmp/prog-logs search "$CURSOR" "timeout" --path /lines
 prog --dir /tmp/prog-logs find "$CURSOR" --kind error
 ```
 
-The log recipe uses the checked-in `logs` lens. Search is case-insensitive by
+The log recipe uses the bundled `logs` lens. Search is case-insensitive by
 default; `--regex` enables a size-bounded Rust regex.
 
 ### Example: review a diff without losing the source hunk
@@ -415,7 +415,7 @@ command; the envelope records the command and recommended next evidence action.
 
 ### First-party lens coverage
 
-The repository includes data-only lenses for Cargo, pytest, npm, Go tests,
+The binary includes data-only lenses for Cargo, pytest, npm, Go tests,
 JUnit, SARIF, GitHub issues, kubectl JSON, unified diffs, logs, run streams,
 NDJSON records, and generic JSON item triage. Lens manifests can select fields,
 declare omissions and next actions, and contribute bounded finding rules. They
@@ -510,7 +510,8 @@ Agent Skill plus explicit wrapper, all backed by the same local CLI transport.
 
 Harnesses can run `prog <command> --help` for the complete argument surface;
 every command and subcommand self-describes. Global options are `--dir <DIR>` (`PROG_DIR`, default
-`./.prog`), `--lens-dir <DIR>` (`PROG_LENS_DIR`, default `./lenses`),
+`./.prog`), `--lens-dir <DIR>` (`PROG_LENS_DIR`, external lenses only;
+default resolution uses bundled lenses with optional `./lenses` overrides),
 `--budget-bytes <N>` (`PROG_BUDGET_BYTES`), `--budget-tokens <N>`
 (`PROG_BUDGET_TOKENS`), and `--pretty`. The byte budget is authoritative; when
 pretty formatting would exceed it, `prog` emits compact JSON instead.

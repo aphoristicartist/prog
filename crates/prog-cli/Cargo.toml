@@ -9,6 +9,7 @@ repository.workspace = true
 include = [
     "src/**/*.rs",
     "assets/prog-skill.md",
+    "assets/lenses/*.json",
     "integration-manifests/*.json",
     "build.rs",
     "Cargo.toml",
