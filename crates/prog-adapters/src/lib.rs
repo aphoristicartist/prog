@@ -7,5 +7,6 @@ pub mod cli;
 pub mod execution_context;
 pub mod http;
 pub mod mcp;
+pub mod process;
 
 pub const ADAPTERS_PLACEHOLDER: &str = "prog-adapters";

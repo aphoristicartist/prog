@@ -14,6 +14,10 @@
   records the child status, observes one private temporary report through the
   existing `junit`/`sarif` lens, and removes the temporary artifact afterward
   (#241).
+- Keep capture deadlines active until the immediate child and both output
+  readers finish. Timeout and signal cleanup retain process-group identity
+  after parent exit, bound detached pipe holders, and preserve partial `run`
+  evidence; registered CLI sources keep their structured timeout error (#253).
 - Preregistered the Terminal-Bench 2.0 paired public pilot before any live
   model spend: the benchmark, harness, model, resource-bounded seeded subset,
   raw/prog arm order, stopping rule, analysis, and falsification conditions are

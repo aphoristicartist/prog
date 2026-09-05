@@ -1,6 +1,9 @@
 //! Local command execution, capture, and failure analysis.
 
 use crate::*;
+use prog_adapters::process::{
+    CaptureInterruption, ProcessCapture, capture_process, configure_capture_process,
+};
 use prog_core::normalize_coding_output;
 
 struct RunProcessResult {
@@ -90,7 +93,7 @@ pub(crate) async fn run_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    configure_run_process_group(&mut command);
+    configure_capture_process(&mut command);
 
     store.release()?;
     let run = match command.spawn() {
@@ -356,6 +359,7 @@ async fn run_spawned_child(
     max_stdout_bytes: usize,
     max_stderr_bytes: usize,
 ) -> Result<RunProcessResult> {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
     let stdout = child.stdout.take().ok_or_else(|| CoreError::CliTransport {
         operation: "run".to_string(),
         message: "failed to capture stdout".to_string(),
@@ -379,82 +383,49 @@ async fn run_spawned_child(
     ));
     drop(tx);
 
-    let timeout = tokio::time::sleep(Duration::from_millis(timeout_ms));
-    tokio::pin!(timeout);
-    let status = tokio::select! {
-        result = child.wait() => {
-            let status = result.map_err(|error| CoreError::CliTransport {
-                operation: "run".to_string(),
-                message: error.to_string(),
-            })?;
+    let capture = capture_process(
+        child,
+        stdout_task,
+        stderr_task,
+        deadline,
+        termination_signal(),
+    )
+    .await
+    .map_err(|error| CoreError::CliTransport {
+        operation: "run".to_string(),
+        message: error.to_string(),
+    })?;
+    let mut combined = Vec::new();
+    while let Ok(chunk) = rx.try_recv() {
+        combined.push(chunk);
+    }
+    let (stdout, stderr, status) = match capture {
+        ProcessCapture::Complete {
+            status,
+            stdout,
+            stderr,
+        } => (
+            stdout,
+            stderr,
             RunProcessStatus::Exited {
                 success: status.success(),
                 code: status.code(),
                 signal: exit_signal(&status),
-            }
-        }
-        _ = &mut timeout => {
-            kill_run_process_group(&mut child).await;
-            return interrupted_run_result(stdout_task, stderr_task, &mut rx, RunProcessStatus::TimedOut).await;
-        }
-        signal = termination_signal() => {
-            kill_run_process_group(&mut child).await;
-            return interrupted_run_result(
-                stdout_task,
-                stderr_task,
-                &mut rx,
-                RunProcessStatus::Cancelled { signal },
-            ).await;
-        }
+            },
+        ),
+        ProcessCapture::Interrupted {
+            reason,
+            stdout,
+            stderr,
+        } => (
+            stdout.unwrap_or_else(|| capture_from_chunks("stdout", &combined)),
+            stderr.unwrap_or_else(|| capture_from_chunks("stderr", &combined)),
+            match reason {
+                CaptureInterruption::Timeout => RunProcessStatus::TimedOut,
+                CaptureInterruption::Signal(signal) => RunProcessStatus::Cancelled { signal },
+            },
+        ),
     };
-    let stdout = stdout_task
-        .await
-        .map_err(|error| CoreError::CliTransport {
-            operation: "run".to_string(),
-            message: error.to_string(),
-        })?
-        .map_err(|error| CoreError::CliTransport {
-            operation: "run".to_string(),
-            message: error.to_string(),
-        })?;
-    let stderr = stderr_task
-        .await
-        .map_err(|error| CoreError::CliTransport {
-            operation: "run".to_string(),
-            message: error.to_string(),
-        })?
-        .map_err(|error| CoreError::CliTransport {
-            operation: "run".to_string(),
-            message: error.to_string(),
-        })?;
-    let mut combined = Vec::new();
-    while let Ok(chunk) = rx.try_recv() {
-        combined.push(chunk);
-    }
-    Ok(RunProcessResult {
-        stdout,
-        stderr,
-        combined: coalesce_run_chunks(combined),
-        status,
-    })
-}
-
-async fn interrupted_run_result(
-    stdout_task: JoinHandle<std::io::Result<RunCapture>>,
-    stderr_task: JoinHandle<std::io::Result<RunCapture>>,
-    rx: &mut mpsc::UnboundedReceiver<RunChunk>,
-    status: RunProcessStatus,
-) -> Result<RunProcessResult> {
-    let (stdout, stderr) = tokio::join!(
-        finish_run_reader_or_abort(stdout_task),
-        finish_run_reader_or_abort(stderr_task)
-    );
-    let mut combined = Vec::new();
-    while let Ok(chunk) = rx.try_recv() {
-        combined.push(chunk);
-    }
-    let stdout = stdout.unwrap_or_else(|| capture_from_chunks("stdout", &combined));
-    let stderr = stderr.unwrap_or_else(|| capture_from_chunks("stderr", &combined));
     Ok(RunProcessResult {
         stdout,
         stderr,
@@ -508,38 +479,6 @@ fn capture_from_chunks(stream: &'static str, chunks: &[RunChunk]) -> RunCapture 
         total_bytes: bytes.len(),
         bytes,
         truncated: false,
-    }
-}
-
-#[cfg(unix)]
-fn configure_run_process_group(command: &mut TokioCommand) {
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-fn configure_run_process_group(_command: &mut TokioCommand) {}
-
-async fn kill_run_process_group(child: &mut tokio::process::Child) {
-    #[cfg(unix)]
-    {
-        if let Some(pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) {
-            let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
-        }
-    }
-    let _ = child.start_kill();
-    let _ = tokio::time::timeout(Duration::from_millis(100), child.wait()).await;
-}
-
-async fn finish_run_reader_or_abort(
-    mut task: JoinHandle<std::io::Result<RunCapture>>,
-) -> Option<RunCapture> {
-    tokio::select! {
-        result = &mut task => result.ok().and_then(std::result::Result::ok),
-        _ = tokio::time::sleep(Duration::from_millis(25)) => {
-            task.abort();
-            let _ = task.await;
-            None
-        }
     }
 }
 

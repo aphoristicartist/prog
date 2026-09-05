@@ -47,6 +47,15 @@ that byte-exact hashing distinguishes missing, empty, and non-UTF-8 values.
 
 Because the property harnesses are ordinary Rust tests, they run in the same CI job as unit and integration tests.
 
+## Capture lifecycle coverage
+
+I14's timeout/cancellation premise is exercised after immediate-parent exit in
+`crates/prog-cli/tests/capture_lifecycle.rs`: stdout-only, stderr-only, and combined
+pipe holders; same-group and detached descendants; cancellation after the parent
+has been reaped; one absolute deadline; retained partial evidence; and normal
+short-lived descendant output. The registered adapter uses the same lifecycle
+helper and is covered by `crates/prog-adapters/tests/cli.rs::{deadline_covers_exited_parent_and_each_inherited_stream,short_lived_descendant_output_completes_normally,dropping_capture_future_terminates_the_reaped_parents_group}`.
+
 ## Kani evaluation
 
 The pure functions targeted for future model checking are:
