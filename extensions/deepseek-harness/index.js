@@ -39,23 +39,70 @@ function looksLikeProgResult(text) {
 
 function runProg({ command, prefixArgs, args, input, cwd, timeoutMs, signal }) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('prog capture cancelled'))
+      return
+    }
+    const deadline = performance.now() + timeoutMs
     const child = spawn(command, [...prefixArgs, ...args], {
       cwd,
       env: process.env,
       shell: false,
+      // prog supports POSIX hosts. Keep capture helpers in a group separate
+      // from the host so stopping them cannot signal the upstream tool.
+      detached: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     const stdout = []
     const stderr = []
     let stdoutBytes = 0
     let stderrBytes = 0
-    let outputLimitHit = false
+    let settled = false
+    let timer
+
+    const cleanup = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener?.('abort', abort)
+    }
+    const stop = error => {
+      if (settled) return
+      settled = true
+      cleanup()
+      // A parent exit does not imply EOF: descendants can retain either pipe.
+      // Signal the owned group even after its leader exits, then close our
+      // descriptors independently of whether all descendants can be stopped.
+      if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, 'SIGKILL')
+        } catch (killError) {
+          if (killError.code !== 'ESRCH') {
+            error = new Error(`${error.message}; capture group termination failed: ${killError.message}`)
+          }
+        }
+      }
+      child.stdin.destroy()
+      child.stdout.destroy()
+      child.stderr.destroy()
+      child.unref()
+      stdout.length = 0
+      stderr.length = 0
+      // Never depend on `close` to settle a stop, and never let a later clean
+      // close turn a timed-out/cancelled prefix into successful capture.
+      reject(error)
+    }
+    const abort = () => stop(new Error('prog capture cancelled'))
+    const expired = () => stop(new Error('prog capture timed out'))
+    const stopped = () => {
+      if (!settled && signal?.aborted) abort()
+      if (!settled && performance.now() >= deadline) expired()
+      return settled
+    }
 
     const collect = (target, chunk, stream) => {
+      if (stopped()) return
       const next = stream === 'stdout' ? stdoutBytes + chunk.length : stderrBytes + chunk.length
       if (next > MAX_CHILD_OUTPUT_BYTES) {
-        outputLimitHit = true
-        child.kill('SIGKILL')
+        stop(new Error(`prog child ${stream} exceeded the adapter limit`))
         return
       }
       target.push(chunk)
@@ -65,30 +112,25 @@ function runProg({ command, prefixArgs, args, input, cwd, timeoutMs, signal }) {
     child.stdout.on('data', chunk => collect(stdout, chunk, 'stdout'))
     child.stderr.on('data', chunk => collect(stderr, chunk, 'stderr'))
 
-    const abort = () => child.kill('SIGKILL')
-    signal?.addEventListener?.('abort', abort, { once: true })
-    if (signal?.aborted) abort()
-    const cleanup = () => signal?.removeEventListener?.('abort', abort)
-    const timer = setTimeout(abort, timeoutMs)
-    child.on('error', error => {
-      clearTimeout(timer)
-      cleanup()
-      reject(error)
-    })
+    child.on('error', stop)
     child.on('close', (code, signal) => {
-      clearTimeout(timer)
+      if (stopped()) return
+      settled = true
       cleanup()
       const stderrText = Buffer.concat(stderr).toString('utf8').trim()
-      if (outputLimitHit) {
-        reject(new Error('prog child output exceeded the adapter limit'))
-      } else if (code !== 0) {
+      if (code !== 0) {
         reject(new Error(`prog exited with ${code ?? signal ?? 'unknown'}${stderrText ? `: ${stderrText}` : ''}`))
       } else {
         resolve(Buffer.concat(stdout).toString('utf8'))
       }
     })
     child.stdin.on('error', () => {})
-    child.stdin.end(input)
+    // Stream failures cannot leave a reader alive until an inherited EOF.
+    child.stdout.on('error', stop)
+    child.stderr.on('error', stop)
+    signal?.addEventListener?.('abort', abort, { once: true })
+    timer = setTimeout(expired, Math.max(1, Math.ceil(deadline - performance.now())))
+    if (!stopped()) child.stdin.end(input)
   })
 }
 

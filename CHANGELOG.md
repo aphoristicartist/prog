@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Made native harness capture deadlines, cancellation, and output overflow
+  terminal even after a helper exits with descendant-held pipes. Capture stops
+  terminate its POSIX process group, close local pipes, and preserve the
+  original host result; guarded Linux/macOS fixtures cover cleanup (#269).
+
 - Fixed the `prog-cli` crate tarball so its embedded agent skill is packaged
   inside the crate and verified by the release dry-run build.
 - Routed public-benchmark A/B records through the existing actual-agent claim
