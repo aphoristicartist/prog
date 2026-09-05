@@ -45,7 +45,6 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::Command as TokioCommand,
     sync::mpsc,
-    task::JoinHandle,
 };
 use tracing_subscriber::{EnvFilter, fmt::writer::MakeWriterExt};
 

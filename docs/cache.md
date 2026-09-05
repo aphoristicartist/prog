@@ -4,11 +4,13 @@
 
 ## Cache identity and isolation
 
-Every cache entry is keyed by a SHA-256 hash of everything that can change
-either the upstream execution or the retained evidence: the configured
+Every cache entry is keyed by a SHA-256 hash of the configured
 adapter and the selected operation's execution semantics, the resolved auth
 principal, the redaction and cache policy, the declared output schema,
-pagination and source-state configuration, and the call arguments.
+pagination and source-state configuration, and the call arguments. CLI and
+MCP stdio calls also include their resolved process context, described below.
+These inputs isolate invocations; they do not prove that upstream data or
+executable files stayed unchanged during a cache entry's TTL.
 
 Consequences:
 
@@ -25,6 +27,42 @@ Consequences:
 - Redacted provenance and prefetched pagination pages carry their own
   redaction truth; an observation whose provenance was redacted is recorded
   as redacted and cannot prove absence.
+
+## Process context
+
+Before looking up a CLI or MCP stdio result, `prog` captures the inherited
+environment and resolves the effective working directory. Execution uses that
+same snapshot, including for explicitly requested pagination calls.
+
+- An unset CLI `working_dir` uses the caller's current directory. A relative
+  value resolves against that directory; an absolute value selects that
+  directory directly. Symlinks resolve to the canonical directory used by the
+  child. Missing or invalid directories fail before cache reuse.
+- MCP stdio uses the caller's canonical current directory. It has the same
+  environment snapshot policy as CLI sources.
+- The full inherited environment is included, with exact OS bytes for names
+  and values. Missing, empty, and non-UTF-8 values remain distinct. Changing
+  even an unrelated or subsequently overridden variable conservatively changes
+  the key. Identical context remains eligible for a hit.
+- Configured CLI environment templates and MCP environment values override
+  inherited values in the child. Their configuration and call arguments are
+  already part of the source-call identity.
+- On the supported POSIX platforms, bare executable names use the child's
+  effective `PATH`; relative `PATH` entries and executable paths resolve from
+  the child's directory. The directory, inherited `PATH`, and any configured
+  `PATH` override are included in identity. Executable contents, files the tool
+  reads, remote state, and other external dependencies are **not** hashed.
+  Use `--refresh` or `--no-cache` when these may have changed within the TTL.
+
+The snapshot is transient and is not serialized into profiles, provenance,
+responses, or diagnostics. Only the final call fingerprint is persisted;
+environment values and the intermediate context digest are not. This does not
+change output redaction policy: a tool's own output still passes through the
+existing redaction pipeline.
+
+The `source_call_cache_v3` identity separates these invocations from older
+entries that omitted process context. Existing cursors still address their
+original captured evidence; this identity change does not reset the store.
 
 ## Parallel agents and worktrees
 

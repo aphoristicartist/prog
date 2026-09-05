@@ -29,6 +29,10 @@
   limits, signal cancellation, and rejection before normalization/persistence.
   Complete captures distinguish original input bytes from retained bytes;
   rejected captures expose conservative typed error facts (#248).
+- Keep capture deadlines active until the immediate child and both output
+  readers finish. Timeout and signal cleanup retain process-group identity
+  after parent exit, bound detached pipe holders, and preserve partial `run`
+  evidence; registered CLI sources keep their structured timeout error (#253).
 - Preregistered the Terminal-Bench 2.0 paired public pilot before any live
   model spend: the benchmark, harness, model, resource-bounded seeded subset,
   raw/prog arm order, stopping rule, analysis, and falsification conditions are
@@ -72,6 +76,10 @@
   different key; credential values exist only in the transient hash input.
   Mutating operations are never served from cache, and redacted provenance or
   prefetched pages mark the observation redacted and non-provable.
+- Scoped CLI and MCP stdio cache reuse to a single resolved working directory
+  and inherited environment snapshot, applied unchanged during execution.
+  Changed cwd, PATH, or environment inputs cannot reuse another context's
+  result; transient environment values stay out of metadata (#252).
 - Separated provider and selection completeness (#230): `provider.complete`
   now means bounded normalization of the captured diagnostics, while
   `selection.exhaustive` remains the only authority for absence. A failing

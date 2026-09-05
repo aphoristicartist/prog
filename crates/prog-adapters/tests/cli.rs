@@ -262,6 +262,141 @@ async fn stdout_and_stderr_are_capped_independently() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn deadline_covers_exited_parent_and_each_inherited_stream() {
+    for stream in ["stdout", "stderr", "both"] {
+        for group in ["same-group", "detached"] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut op = operation(
+                "holder",
+                &[
+                    "-c",
+                    include_str!("fixtures/inherited_pipes.py"),
+                    dir.path().to_str().unwrap(),
+                    stream,
+                    group,
+                    "10",
+                    "0",
+                ],
+            );
+            op.timeout_ms = Some(1_000);
+            let source = source(op);
+            let started = Instant::now();
+            // Independently bound the regression, including a broken runner.
+            let result =
+                tokio::time::timeout(Duration::from_secs(4), source.execute("holder", &json!({})))
+                    .await;
+            let pid = wait_for_pid_file(&dir.path().join("holder.pid")).await;
+            let mut still_running = process_running(pid);
+            if group == "same-group" {
+                for _ in 0..40 {
+                    if !still_running {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    still_running = process_running(pid);
+                }
+            }
+            if still_running {
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGKILL);
+                }
+            }
+            assert!(
+                result.is_ok(),
+                "{stream}/{group} exceeded the guard deadline"
+            );
+            assert_eq!(
+                result.unwrap().unwrap_err().kind(),
+                "cli_timeout",
+                "{stream}/{group}"
+            );
+            assert!(started.elapsed() < Duration::from_secs(4));
+            if group == "same-group" {
+                assert!(!still_running, "the reaped parent's group survived");
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn short_lived_descendant_output_completes_normally() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut op = operation(
+        "holder",
+        &[
+            "-c",
+            include_str!("fixtures/inherited_pipes.py"),
+            dir.path().to_str().unwrap(),
+            "both",
+            "same-group",
+            "0.1",
+            "0",
+        ],
+    );
+    op.timeout_ms = Some(2_000);
+    let output = source(op).execute("holder", &json!({})).await.unwrap();
+    assert_eq!(output.provenance.exit_code, Some(0));
+    let output = serde_json::to_string(&output).unwrap();
+    assert!(output.contains("stdout from descendant"));
+    assert!(output.contains("stderr from descendant"));
+}
+
+#[cfg(unix)]
+fn process_running(pid: u32) -> bool {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    let state = String::from_utf8_lossy(&output.stdout);
+    let state = state.trim();
+    !state.is_empty() && !state.starts_with('Z')
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn dropping_capture_future_terminates_the_reaped_parents_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut op = operation(
+        "holder",
+        &[
+            "-c",
+            include_str!("fixtures/inherited_pipes.py"),
+            dir.path().to_str().unwrap(),
+            "both",
+            "same-group",
+            "10",
+            "0",
+        ],
+    );
+    op.timeout_ms = Some(10_000);
+    let source = source(op);
+    let task = tokio::spawn(async move { source.execute("holder", &json!({})).await });
+    let parent = wait_for_pid_file(&dir.path().join("parent.pid")).await;
+    let holder = wait_for_pid_file(&dir.path().join("holder.pid")).await;
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while pid_exists(parent) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the parent was not reaped");
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    for _ in 0..40 {
+        if !process_running(holder) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    unsafe {
+        libc::kill(holder as i32, libc::SIGKILL);
+    }
+    panic!("dropping capture left the descendant running");
+}
+
 #[tokio::test]
 async fn sensitive_args_are_redacted_from_provenance() {
     let mut op = operation(

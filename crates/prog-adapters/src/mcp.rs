@@ -31,6 +31,8 @@ use tokio::{
     task::JoinHandle,
 };
 
+use crate::execution_context::ExecutionContext;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct McpSource {
@@ -303,13 +305,26 @@ impl McpSource {
         args: &Value,
         declared_output_schema: Option<&Value>,
     ) -> Result<McpCallResult> {
+        let context = ExecutionContext::inherit(None)?;
+        self.call_tool_in_context(tool_name, args, declared_output_schema, &context)
+            .await
+    }
+
+    /// Call a tool with the same transient stdio context used for cache identity.
+    pub async fn call_tool_in_context(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        declared_output_schema: Option<&Value>,
+        context: &ExecutionContext,
+    ) -> Result<McpCallResult> {
         let args = args.as_object().ok_or_else(|| CoreError::BadArgs {
             operation: tool_name.to_string(),
             reason: "MCP tool arguments must be a JSON object".to_string(),
         })?;
         let operation = format!("tools/call:{tool_name}");
         let started = Instant::now();
-        let mut session = self.connect(&operation).await?;
+        let mut session = self.connect_in_context(&operation, context).await?;
         let protocol_version = session.protocol_version();
         let result = self
             .request(
@@ -540,9 +555,19 @@ impl McpSource {
     }
 
     pub async fn read_resource(&self, uri: &str) -> Result<McpCallResult> {
+        let context = ExecutionContext::inherit(None)?;
+        self.read_resource_in_context(uri, &context).await
+    }
+
+    /// Read a resource with a previously resolved stdio execution context.
+    pub async fn read_resource_in_context(
+        &self,
+        uri: &str,
+        context: &ExecutionContext,
+    ) -> Result<McpCallResult> {
         let operation = format!("resources/read:{uri}");
         let started = Instant::now();
-        let mut session = self.connect(&operation).await?;
+        let mut session = self.connect_in_context(&operation, context).await?;
         let protocol_version = session.protocol_version();
         let result = self
             .request(
@@ -574,7 +599,17 @@ impl McpSource {
     }
 
     async fn connect(&self, operation: &str) -> Result<McpSession> {
+        let context = ExecutionContext::inherit(None)?;
+        self.connect_in_context(operation, &context).await
+    }
+
+    async fn connect_in_context(
+        &self,
+        operation: &str,
+        context: &ExecutionContext,
+    ) -> Result<McpSession> {
         let mut command = Command::new(&self.command);
+        context.configure(&mut command);
         command.args(&self.args).envs(&self.env).kill_on_drop(true);
         configure_process_group(&mut command);
 
