@@ -53,13 +53,14 @@ fn sync_evaluation_documents() {
 
 #[test]
 fn every_metric_family_detects_source_drift_without_writing() {
-    for (index, report) in DOCUMENTS.iter().enumerate().skip(1) {
+    for (source_index, index) in [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 2)] {
+        let report = &DOCUMENTS[index];
         let temp = fixture();
-        edit_artifact(temp.path(), index - 1, |source| match index {
-            1 => source["rows"][0]["prog_bytes"] = json!(1_000_001),
-            2 => source["scenarios"][0]["findings_output_tokens"] = json!(123_456),
-            3 => source[0]["expansion_task_bytes"] = json!(1_000_001),
-            4 => {
+        edit_artifact(temp.path(), source_index, |source| match source_index {
+            0 => source["rows"][0]["prog_bytes"] = json!(1_000_001),
+            1 => source["scenarios"][0]["top_finding_path"] = json!("/wrong"),
+            2 => source[0]["expansion_task_bytes"] = json!(1_000_001),
+            3 => {
                 let row = source
                     .as_array_mut()
                     .unwrap()
@@ -71,7 +72,8 @@ fn every_metric_family_detects_source_drift_without_writing() {
                     .unwrap();
                 row["response_bytes"] = json!(1_000_001);
             }
-            5 => source[0]["response_bytes"] = json!(1_000_001),
+            4 => source[0]["response_bytes"] = json!(1_000_001),
+            5 => source["rows"][0]["response_bytes"] = json!(1_000_001),
             _ => unreachable!(),
         });
         let before = snapshot(temp.path());
@@ -176,6 +178,22 @@ fn aggregates_rounding_counts_and_qualifications_follow_the_rows() {
             {"id":"synthetic-b", "raw_payload_bytes":400, "call_envelope_bytes":4, "expansion_task_bytes":28, "cache_hit_status":"hit"}
         ])
     });
+    edit_artifact(temp.path(), 5, |source| {
+        let mut rows = vec![];
+        for (strategy, bytes, calls) in [
+            ("findings", 49377, 2),
+            ("paths", 80000, 3),
+            ("inspect", 200, 3),
+        ] {
+            for correct in [true, false] {
+                rows.push(
+                    json!({"scenario":"synthetic", "strategy":strategy, "response_bytes":bytes,
+                    "tool_calls":calls, "correct":correct, "output_tokens":999999}),
+                );
+            }
+        }
+        source["rows"] = json!(rows);
+    });
     let docs = render_documents(temp.path());
     let readme = &docs[0].1;
     for expected in [
@@ -183,9 +201,8 @@ fn aggregates_rounding_counts_and_qualifications_follow_the_rows() {
         "1,001",
         "12.3x-33.3x",
         "**1/2**",
-        "24,690 versus 40,000",
-        "4 tool calls",
-        "versus 6",
+        "| findings | 1/2 | 4 | 24,690 |",
+        "| paths | 1/2 | 6 | 40,000 |",
         "The 2 checked-in workflow demos",
         "14.29x to 33.33x",
         "bytes/4",
@@ -198,6 +215,10 @@ fn aggregates_rounding_counts_and_qualifications_follow_the_rows() {
     for artifact in ARTIFACTS.into_iter().take(4) {
         assert!(readme.contains(artifact), "missing provenance {artifact}");
     }
+    assert!(readme.contains(ARTIFACTS[5]));
+    assert!(docs[2].1.contains("evidence-cli-metrics.json"));
+    assert!(docs[2].1.contains("Component regression measurements"));
+    assert!(docs[2].1.contains("Actual CLI workflow measurements"));
     assert!(
         docs[1]
             .1

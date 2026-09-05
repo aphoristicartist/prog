@@ -26,7 +26,8 @@ consistency check. `--write` updates only changed generated documentation.
 | Saved artifact under `fixtures/evals/` | Generated documentation |
 |---|---|
 | `token-economics-metrics.json` | README HTTP “Discover shape” hero and token ratio range; `docs/token-economics.md`. |
-| `evidence-acquisition-metrics.json` | README causal-path count and call/token totals; recorded table in `docs/evidence-acquisition.md`. |
+| `evidence-acquisition-metrics.json` | README component causal-path count; legacy component table in `docs/evidence-acquisition.md`. |
+| `evidence-cli-metrics.json` | README CLI outcomes/call/token totals; actual CLI tables in `docs/evidence-acquisition.md`. |
 | `real-world-demo-metrics.json` | README demo count and ratio range; table in `docs/real-world-demos.md`. |
 | `competitive-baseline-metrics.json` | README unknown-target comparison; `docs/competitive-baselines.md`. |
 | `task-success-metrics.json` | `docs/task-success-eval.md`, explicitly known-path recoverability. |
@@ -34,9 +35,11 @@ consistency check. `--write` updates only changed generated documentation.
 Token estimates are bytes divided by four, rounded up, using the task's
 recorded total response bytes. Ranges use those unrounded ratios before
 formatting: one decimal for token economics and two for demos. Competitive
-and recoverability aggregate estimates sum per-task estimates. Evidence
-acquisition already records approximate output tokens per scenario; totals
-sum those scenario rows, not their redundant summary. A correct top-ranked
+and recoverability aggregate estimates sum per-task estimates. Legacy evidence
+component rows retain their modeled token estimates. Actual
+evidence CLI totals derive estimates from complete stdout bytes per workflow;
+aggregate claims include insufficient attempts and do not use component costs.
+A correct top-ranked
 path requires the recorded correctness flag, rank, and expected path to agree.
 README prose formats large totals with thousands separators; detailed tables
 retain plain numeric cells. Counts include insufficient attempts and distinguish

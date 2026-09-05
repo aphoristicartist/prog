@@ -82,12 +82,13 @@ pub fn replace_competitive_readme(readme: &str, metrics: &Value) -> String {
     )
 }
 
-pub const ARTIFACTS: [&str; 5] = [
+pub const ARTIFACTS: [&str; 6] = [
     "fixtures/evals/token-economics-metrics.json",
     "fixtures/evals/evidence-acquisition-metrics.json",
     "fixtures/evals/real-world-demo-metrics.json",
     "fixtures/evals/competitive-baseline-metrics.json",
     "fixtures/evals/task-success-metrics.json",
+    "fixtures/evals/evidence-cli-metrics.json",
 ];
 pub const DOCUMENTS: [&str; 6] = [
     "README.md",
@@ -214,10 +215,10 @@ fn evidence_totals(source: &Value) -> (usize, usize, u64, u64, u64, u64) {
         sum(&scenarios, "baseline_output_tokens"),
     )
 }
-fn evidence_table(source: &Value) -> String {
+fn evidence_table(source: &Value, cli: &Value) -> String {
     let (count, correct, ..) = evidence_totals(source);
     let mut report = format!(
-        "## Recorded measurements\n\n{correct}/{count} scenarios retain the expected top-ranked path. Output tokens are\napproximate bytes/4 counts of core structures, with modeled workflow calls;\nthese are not complete CLI stdout or acquisition costs. Source: [`evidence-acquisition-metrics.json`](../fixtures/evals/evidence-acquisition-metrics.json).\n\n| Scenario | Top rank | Correct path | Baseline calls | Findings calls | Baseline output tokens | Findings output tokens | Inspect output tokens |\n|---|---:|---|---:|---:|---:|---:|---:|\n"
+        "## Component regression measurements\n\n{correct}/{count} scenarios retain the expected top-ranked path. The legacy output tokens are\napproximate bytes/4 counts of core structures, with modeled workflow calls;\nthese are not complete CLI stdout or acquisition costs. Their original ceilings\nremain unchanged. Source: [`evidence-acquisition-metrics.json`](../fixtures/evals/evidence-acquisition-metrics.json).\n\n| Scenario | Top rank | Correct path | Modeled baseline calls | Modeled findings calls | Modeled baseline tokens | Modeled findings tokens | Modeled inspect tokens |\n|---|---:|---|---:|---:|---:|---:|---:|\n"
     );
     for row in rows(&source["scenarios"]) {
         report.push_str(&format!(
@@ -232,7 +233,46 @@ fn evidence_table(source: &Value) -> String {
             number(row, "inspect_output_tokens")
         ));
     }
+    report.push_str("\n## Actual CLI workflow measurements\n\nEach workflow executes the built binary against its own fresh temporary store.\nResponse bytes sum complete stdout, including capture metadata, all emitted findings,\nbounded navigation, errors, and any expansion. Tokens use\n`bytes_div_4_approximate`: bytes/4 rounded up per workflow before aggregation.\nCorrectness requires an observed path and the complete required redacted slice.\nThese are deterministic CLI regressions, not agent reasoning, provider billing,\nlive-service latency, or real-world success measurements.\n\nSource and normalized command traces: [`evidence-cli-metrics.json`](../fixtures/evals/evidence-cli-metrics.json).\n\n| Scenario | Strategy | Complete evidence | Calls | Stdout bytes | Approx. tokens |\n|---|---|---|---:|---:|---:|\n");
+    for row in rows(&cli["rows"]) {
+        report.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} |\n",
+            label(row, "scenario"),
+            label(row, "strategy"),
+            row["correct"],
+            number(row, "tool_calls"),
+            number(row, "response_bytes"),
+            approx_tokens(number(row, "response_bytes"))
+        ));
+    }
+    report.push_str("\n| Strategy total | Complete evidence / attempts | Calls | Stdout bytes | Approx. tokens |\n|---|---:|---:|---:|---:|\n");
+    for strategy in ["paths", "findings", "inspect"] {
+        let (count, correct, calls, bytes, tokens) = evidence_cli_totals(cli, strategy);
+        report.push_str(&format!(
+            "| {strategy} | {correct}/{count} | {calls} | {bytes} | {tokens} |\n"
+        ));
+    }
     report
+}
+
+fn evidence_cli_totals(source: &Value, strategy: &str) -> (usize, usize, u64, u64, u64) {
+    assert_eq!(source["schema"], "prog.evidence_cli_eval.v1");
+    assert_eq!(source["token_estimator"], "bytes_div_4_approximate");
+    let selected = rows(&source["rows"])
+        .iter()
+        .filter(|row| row["strategy"] == strategy)
+        .collect::<Vec<_>>();
+    assert!(!selected.is_empty(), "missing CLI strategy {strategy}");
+    (
+        selected.len(),
+        selected.iter().filter(|row| row["correct"] == true).count(),
+        sum(&selected, "tool_calls"),
+        sum(&selected, "response_bytes"),
+        selected
+            .iter()
+            .map(|row| approx_tokens(number(row, "response_bytes")))
+            .sum(),
+    )
 }
 fn demo_table(source: &Value) -> String {
     let mut report = String::from(
@@ -403,6 +443,7 @@ pub fn render_documents(root: &std::path::Path) -> Vec<(&'static str, String)> {
     let demos = load(ARTIFACTS[2]);
     let competitive = load(ARTIFACTS[3]);
     let task = load(ARTIFACTS[4]);
+    let evidence_cli = load(ARTIFACTS[5]);
     let read = |path: &str| std::fs::read_to_string(root.join(path)).unwrap();
     let hero = rows(&token["rows"])
         .iter()
@@ -426,15 +467,19 @@ pub fn render_documents(root: &std::path::Path) -> Vec<(&'static str, String)> {
         "Across the checked-in HTTP, CLI, and MCP tasks, raw-fixture token estimates\ndivided by complete `prog` task estimates range from **{low}x-{high}x**. Every\ntask includes its initial envelope and any expansions. Estimates use bytes/4,\nrounded up; these are fixture measurements, not provider token counts. See\n[`docs/token-economics.md`](docs/token-economics.md) and the\n[measurement rows](fixtures/evals/token-economics-metrics.json)."
     );
     readme = replace_block(&readme, "tokens", &token_text);
-    let (count, correct, findings_calls, baseline_calls, findings_tokens, baseline_tokens) =
-        evidence_totals(&evidence);
-    let evidence_text = format!(
-        "The {count} checked-in evidence-acquisition scenarios rank the expected causal\npath first in **{correct}/{count}** cases. The modeled findings workflow uses {} tool calls\nversus {} for `envelope -> paths -> evidence`; approximate output costs are\n{} versus {} tokens using bytes/4. These costs serialize core structures and\nmodel workflow calls; they do not measure complete CLI stdout or acquisition. See\n[`docs/evidence-acquisition.md`](docs/evidence-acquisition.md) and the\n[checked measurements](fixtures/evals/evidence-acquisition-metrics.json).",
-        thousands(findings_calls),
-        thousands(baseline_calls),
-        thousands(findings_tokens),
-        thousands(baseline_tokens)
+    let (count, correct, ..) = evidence_totals(&evidence);
+    let mut evidence_text = format!(
+        "The {count} checked-in evidence-acquisition scenarios rank the expected causal\npath first in **{correct}/{count}** component checks. Separate actual CLI workflows\nmeasure complete stdout from capture through navigation and evidence retrieval.\n\n| CLI strategy | Complete evidence / attempts | Tool calls | Approx. output tokens |\n|---|---:|---:|---:|\n"
     );
+    for strategy in ["paths", "findings", "inspect"] {
+        let (count, correct, calls, _, tokens) = evidence_cli_totals(&evidence_cli, strategy);
+        evidence_text.push_str(&format!(
+            "| {strategy} | {correct}/{count} | {} | {} |\n",
+            thousands(calls),
+            thousands(tokens)
+        ));
+    }
+    evidence_text.push_str("\nCosts include every initial finding and metadata field, actual bounded path\nlistings/searches, and expansions needed after truncated evidence. Tokens use\nbytes/4 rounded up per workflow; these are deterministic CLI regressions, not\nprovider token usage or actual-agent success rates. See\n[`docs/evidence-acquisition.md`](docs/evidence-acquisition.md),\n[component checks](fixtures/evals/evidence-acquisition-metrics.json), and\n[CLI measurements and command traces](fixtures/evals/evidence-cli-metrics.json).");
     readme = replace_block(&readme, "evidence", &evidence_text);
     let (low, high) = range(
         rows(&demos).iter().map(|row| {
@@ -459,7 +504,7 @@ pub fn render_documents(root: &std::path::Path) -> Vec<(&'static str, String)> {
             replace_block(
                 &read(DOCUMENTS[2]),
                 "evidence-table",
-                &evidence_table(&evidence),
+                &evidence_table(&evidence, &evidence_cli),
             ),
         ),
         (

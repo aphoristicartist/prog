@@ -575,12 +575,22 @@ rounded up; these are fixture measurements, not provider token counts. See
 
 <!-- eval:evidence:start -->
 The 5 checked-in evidence-acquisition scenarios rank the expected causal
-path first in **5/5** cases. The modeled findings workflow uses 10 tool calls
-versus 15 for `envelope -> paths -> evidence`; approximate output costs are
-2,426 versus 2,971 tokens using bytes/4. These costs serialize core structures and
-model workflow calls; they do not measure complete CLI stdout or acquisition. See
-[`docs/evidence-acquisition.md`](docs/evidence-acquisition.md) and the
-[checked measurements](fixtures/evals/evidence-acquisition-metrics.json).
+path first in **5/5** component checks. Separate actual CLI workflows
+measure complete stdout from capture through navigation and evidence retrieval.
+
+| CLI strategy | Complete evidence / attempts | Tool calls | Approx. output tokens |
+|---|---:|---:|---:|
+| paths | 5/5 | 17 | 15,903 |
+| findings | 5/5 | 11 | 9,943 |
+| inspect | 5/5 | 16 | 15,781 |
+
+Costs include every initial finding and metadata field, actual bounded path
+listings/searches, and expansions needed after truncated evidence. Tokens use
+bytes/4 rounded up per workflow; these are deterministic CLI regressions, not
+provider token usage or actual-agent success rates. See
+[`docs/evidence-acquisition.md`](docs/evidence-acquisition.md),
+[component checks](fixtures/evals/evidence-acquisition-metrics.json), and
+[CLI measurements and command traces](fixtures/evals/evidence-cli-metrics.json).
 <!-- eval:evidence:end -->
 
 ### Deterministic workflow demos
