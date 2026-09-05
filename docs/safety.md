@@ -104,6 +104,24 @@ Before inference and persistence, `prog` redacts object fields whose names look 
 
 HTTP and CLI adapters also redact sensitive argument values from provenance URLs, command argv, and recorded args. Operation seeds can list explicit `sensitive_args` to extend this behavior.
 
+The default value scan also recognizes quoted sensitive JSON keys embedded in
+text, including escaped key names and quoted values. `run` redacts each complete
+stream before deriving text/head/tail views, and uses that stream's full context
+when redacting interleaved output fragments. Explicit markers replace secret
+content; benign quoted fields remain visible. Redaction applies the supported
+name/value policy and does not guarantee detection of arbitrary secret formats.
+
+Verification obligation descriptions and advisory reasons pass through text and
+persistence redaction at `Store::put_obligation`. Extension metadata uses the
+default persistence policy. Recognized sensitive data in exact argv (including
+advisory argv), source operations, scope/family constraints, or identity fields
+is rejected with a structured error that does not echo the input. These fields
+are never silently rewritten into a different check. The store returns the safe
+declaration for display, preserving system identifiers such as `session_id`.
+
+The pre-release store contract resets older local observation/session stores on
+opening; records written without the obligation metadata boundary are not reused.
+
 Sensitive operations are not cached. If a persisted payload would contain redacted fields, the envelope includes a warning with the count of redacted paths.
 
 ## Profiles and cache

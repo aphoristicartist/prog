@@ -1538,6 +1538,93 @@ fn run_can_apply_first_party_failure_lens_and_expand_redacted_capture() {
 }
 
 #[test]
+fn run_quoted_json_secrets_stay_redacted_through_storage_and_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let script = dir.path().join("quoted_output.py");
+    fs::write(&script, r#"
+import sys
+for stream in [sys.stdout, sys.stderr]:
+    for i in range(24):
+        print(r'{"password" : "PROG_SYNTHETIC_JSON_12345\" with spaces\\tail", "message":"benign"}', file=stream)
+"#).unwrap();
+    let output = prog(&[
+        "--dir",
+        dir_arg,
+        "run",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("PROG_SYNTHETIC_JSON_12345"));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["observation"]["availability"], "redacted");
+    assert_eq!(
+        envelope["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+    let cursor = envelope["cursor"].as_str().unwrap();
+    // Each command reopens the store. Check every duplicated representation,
+    // including the non-preview head/tail and the exported evidence contract.
+    for path in [
+        "/stdout/text",
+        "/stdout/head",
+        "/stdout/tail",
+        "/stderr/text",
+        "/stderr/head",
+        "/stderr/tail",
+        "/combined",
+    ] {
+        for command in ["expand", "evidence"] {
+            let expanded = prog(&["--dir", dir_arg, command, cursor, "--path", path]);
+            assert!(expanded.status.success(), "{}", stdout(&expanded));
+            let text = stdout(&expanded);
+            assert!(
+                !text.contains("PROG_SYNTHETIC_JSON_12345"),
+                "{command} {path}: {text}"
+            );
+            assert!(
+                text.contains("[REDACTED:observed_text_secret]"),
+                "{command} {path}: {text}"
+            );
+            assert!(text.contains("benign"), "{command} {path}: {text}");
+        }
+    }
+    let database = fs::read(dir.path().join("cache/data.redb")).unwrap();
+    assert!(!String::from_utf8_lossy(&database).contains("PROG_SYNTHETIC_JSON_12345"));
+}
+
+#[test]
+fn run_already_redacted_json_cannot_prove_absence() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("redacted.py");
+    fs::write(
+        &script,
+        "print('{\"password\":\"[REDACTED:observed_text_secret]\"}')",
+    )
+    .unwrap();
+    let output = prog(&[
+        "--dir",
+        dir.path().to_str().unwrap(),
+        "run",
+        "--selection-scope",
+        "full-suite",
+        "--selection-exhaustive",
+        "--",
+        "python3",
+        script.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "{}", stdout(&output));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["observation"]["availability"], "redacted");
+    assert_eq!(
+        envelope["observation"]["capture"]["can_prove_absence"],
+        false
+    );
+}
+
+#[test]
 fn run_redacts_compound_secret_flags_in_recorded_argv() {
     let dir = tempfile::tempdir().unwrap();
     let dir_arg = dir.path().to_str().unwrap();
@@ -3607,6 +3694,88 @@ fn observe_repeated_file_uses_stable_invocation_identity_and_tracks_moved_findin
     assert_eq!(moved_finding["subject_path"], "/lines/15/text");
     assert_eq!(moved_finding["status"], "persisting");
 }
+#[test]
+fn obligation_metadata_is_safe_in_declarations_reopened_lists_and_readiness() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir_arg = dir.path().to_str().unwrap();
+    let declared = prog(&[
+        "--dir",
+        dir_arg,
+        "session",
+        "obligation-add",
+        "safe-check",
+        "--check",
+        "Verify password=PROG_SYNTHETIC_DESCRIPTION",
+        "--scope",
+        "target",
+        "--expected-argv",
+        "cargo",
+        "test",
+    ]);
+    assert!(declared.status.success(), "{}", stdout(&declared));
+    let mut safe: Value = serde_json::from_slice(&declared.stdout).unwrap();
+    for metadata in ["disclosure_budget", "capture_budget", "storage_budget"] {
+        safe.as_object_mut().unwrap().remove(metadata);
+    }
+    assert!(
+        safe["intended_check"]
+            .as_str()
+            .unwrap()
+            .contains("[REDACTED:")
+    );
+    assert!(safe["session_id"].as_str().unwrap().starts_with("ps1_"));
+    assert_eq!(safe["expected_operation"]["argv"], json!(["cargo", "test"]));
+    assert!(!stdout(&declared).contains("PROG_SYNTHETIC"));
+    for args in [
+        vec!["session", "obligation-list"],
+        vec!["session", "show", "--readiness"],
+    ] {
+        let mut command = vec!["--dir", dir_arg];
+        command.extend(args);
+        let result = prog(&command);
+        assert!(result.status.success(), "{}", stdout(&result));
+        assert!(!stdout(&result).contains("PROG_SYNTHETIC"));
+        let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(report["ready"], false);
+        assert_eq!(report["evaluations"][0]["status"], "pending");
+        assert_eq!(report["evaluations"][0]["obligation"], safe);
+    }
+    for fields in [
+        vec!["--expected-argv", "env", "password=PROG_SYNTHETIC_ARG"],
+        vec![
+            "--expected-argv",
+            "env",
+            "--expected-argv=--password",
+            "--expected-argv=PROG_SYNTHETIC_FLAG",
+        ],
+        vec!["--advisory-argv", "env", "password=PROG_SYNTHETIC_ADVISORY"],
+        vec!["--comparison-family", "password=PROG_SYNTHETIC_FAMILY"],
+    ] {
+        let mut command = vec![
+            "--dir",
+            dir_arg,
+            "session",
+            "obligation-add",
+            "rejected-check",
+            "--check",
+            "password=PROG_SYNTHETIC_CHECK",
+            "--scope",
+            "target",
+        ];
+        command.extend(fields);
+        let result = prog(&command);
+        assert!(!result.status.success(), "{}", stdout(&result));
+        assert!(!stdout(&result).contains("PROG_SYNTHETIC"));
+        let error: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(error["error"]["kind"], "bad_args", "{error}");
+    }
+    let listed = prog(&["--dir", dir_arg, "session", "obligation-list"]);
+    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(listed["evaluations"].as_array().unwrap().len(), 1);
+    let database = fs::read(dir.path().join("cache/data.redb")).unwrap();
+    assert!(!String::from_utf8_lossy(&database).contains("PROG_SYNTHETIC"));
+}
+
 #[test]
 fn obligation_comparison_family_matches_evidence_and_becomes_passed() {
     let workspace = test_git_repo();

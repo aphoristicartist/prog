@@ -178,6 +178,13 @@ introducing a new one yields `new`, not `passed`.
 
 ## How a pass is decided
 
+Declarations redact check descriptions and advisory reasons before storage and
+display. Recognized secrets in expected/advisory argv, source operations, scope,
+comparison family, and identity fields cause a `bad_args` rejection. Use
+secret-free declarations: replacing part of exact argv or a scope constraint
+would change what evidence can satisfy the check. This boundary also applies to
+library callers of `Store::put_obligation`, which returns the safe stored record.
+
 When an obligation names both an origin observation and an expected-absent
 fingerprint, evaluation runs a [conservative delta](delta.md) between the origin
 and the evidence, then maps the finding's delta status:

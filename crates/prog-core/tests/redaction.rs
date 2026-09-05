@@ -431,6 +431,97 @@ fn value_embedded_sensitive_name_value_pair_colon_is_redacted() {
 }
 
 #[test]
+fn quoted_sensitive_values_are_redacted_without_changing_benign_json() {
+    for text in [
+        r#"{"password":"SYNTHETIC secret with spaces","message":"keep me"}"#,
+        r#"{"password" : "SYNTHETIC\"escaped\\tail", "message":"keep me"}"#,
+        r#"{"pass\u0077ord":"SYNTHETIC\nline\t雪","message":"keep me"}"#,
+        r#"{"password":"short","api_key":"second","message":"keep me"}"#,
+        r#"{"password":{"nested":["SYNTHETIC",2]},"message":"keep me"}"#,
+        r#"{"password":12345678,"message":"keep me"}"#,
+        "{\"password\"\n:\t\"SYNTHETIC\",\"message\":\"keep me\"}",
+    ] {
+        let (redacted, count) = redact_sensitive_text(text);
+        assert!(count > 0, "{text}");
+        let parsed: serde_json::Value = serde_json::from_str(&redacted).unwrap();
+        assert_eq!(parsed["password"], "[REDACTED:observed_text_secret]");
+        assert_eq!(parsed["message"], "keep me");
+        if parsed.get("api_key").is_some() {
+            assert_eq!(count, 2);
+            assert_eq!(parsed["api_key"], "[REDACTED:observed_text_secret]");
+        }
+        assert_eq!(redact_sensitive_text(&redacted).0, redacted);
+        assert_eq!(
+            RedactionPolicy::default()
+                .apply_persistence(&json!({"log": redacted}))
+                .0,
+            json!({"log": redacted})
+        );
+    }
+    let benign = r#"{"message":"keep me","max_tokens":100,"secretary":"Alex"}"#;
+    assert_eq!(redact_sensitive_text(benign), (benign.to_string(), 0));
+    let single = "'password': 'SYNTHETIC with spaces', 'message': 'keep me'";
+    assert_eq!(
+        redact_sensitive_text(single).0,
+        "'password': '[REDACTED:observed_text_secret]', 'message': 'keep me'"
+    );
+    let truncated = r#"{"password":"SYNTHETIC\"unterminated"#;
+    assert!(!redact_sensitive_text(truncated).0.contains("SYNTHETIC"));
+}
+
+#[test]
+fn value_embedded_quoted_json_secret_is_redacted() {
+    for log in [
+        r#"{"password":"SYNTHETIC_JSON_12345"}"#,
+        r#"INFO {"pass\u0077ord" : "SYNTHETIC\" secret\\tail","message":"ok"}"#,
+        r#"{"password":"tiny"}"#,
+        r#"INFO don't print {"password":"SYNTHETIC_JSON_12345"}"#,
+        r#"INFO 'json: {"password":"SYNTHETIC_JSON_12345"}'"#,
+        r#"INFO "unfinished {"password":"SYNTHETIC_JSON_12345"}"#,
+    ] {
+        let payload = json!({"log": log});
+        let (redacted, paths) = RedactionPolicy::default().apply_persistence(&payload);
+        assert_eq!(paths, ["/log"]);
+        assert_eq!(redacted["log"], "[REDACTED:value_secret]");
+        assert_eq!(
+            RedactionPolicy::default().apply_persistence(&redacted).0,
+            redacted
+        );
+    }
+}
+
+#[test]
+fn quoted_secret_split_at_any_fragment_boundary_is_redacted() {
+    let text = r#"{"password":"SYNTHETIC\" with spaces\\tail","message":"benign"}"#;
+    for boundary in 0..=text.len() {
+        let fragments = [&text[..boundary], &text[boundary..]];
+        let (redacted, count) = prog_core::redact_sensitive_text_fragments(&fragments);
+        assert_eq!(count, 1, "boundary {boundary}");
+        let joined = redacted.concat();
+        let parsed: serde_json::Value = serde_json::from_str(&joined).unwrap();
+        let value = parsed["password"].as_str().unwrap();
+        assert_eq!(value.replace("[REDACTED:observed_text_secret]", ""), "");
+        assert_eq!(parsed["message"], "benign");
+    }
+}
+
+#[test]
+fn existing_sensitive_markers_remain_redaction_evidence() {
+    for text in [
+        "password=[REDACTED:observed_text_secret]",
+        r#"{"password":"[REDACTED:observed_text_secret]"}"#,
+    ] {
+        assert_eq!(redact_sensitive_text(text), (text.to_string(), 1));
+        let value = json!({"log": text});
+        // Persistence value scanning must still leave explicit markers alone.
+        assert_eq!(
+            RedactionPolicy::default().apply_persistence(&value).0,
+            value
+        );
+    }
+}
+
+#[test]
 fn name_value_pair_with_benign_name_is_preserved() {
     let (redacted, paths) =
         RedactionPolicy::default().apply_persistence(&json!({ "note": "username=johndoe12345" }));
@@ -488,6 +579,16 @@ fn value_scan_lossy_signal_reaches_redaction_outcome() {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
+
+    #[test]
+    fn quoted_json_redaction_preserves_structure_and_is_idempotent(secret in ".{1,120}") {
+        let input = json!({"password": secret, "message": "benign"}).to_string();
+        let (first, _) = redact_sensitive_text(&input);
+        let parsed: serde_json::Value = serde_json::from_str(&first).unwrap();
+        prop_assert_eq!(&parsed["password"], &json!("[REDACTED:observed_text_secret]"));
+        prop_assert_eq!(&parsed["message"], &json!("benign"));
+        prop_assert_eq!(redact_sensitive_text(&first).0, first);
+    }
 
     #[test]
     fn value_scan_never_persists_embedded_high_confidence_secret(

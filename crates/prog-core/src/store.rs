@@ -43,7 +43,7 @@ const STORE_RETRY_MAX_DELAY: Duration = Duration::from_millis(25);
 // Pre-release storage is intentionally reset, rather than migrated, whenever
 // an immutable-record invariant changes. This is a contract identity, not a
 // compatibility version.
-const STORE_SCHEMA: &str = "prog.store.readback_verification_contract";
+const STORE_SCHEMA: &str = "prog.store.redacted_obligation_metadata";
 
 #[derive(Debug)]
 pub struct Store {
@@ -698,7 +698,12 @@ impl Store {
         Ok(None)
     }
 
-    pub fn put_obligation(&self, obligation: &VerificationObligation) -> Result<()> {
+    /// Persist an immutable, safe declaration and return exactly what was stored.
+    /// Descriptions are redacted; sensitive operation/identity fields are rejected.
+    pub fn put_obligation(
+        &self,
+        obligation: &VerificationObligation,
+    ) -> Result<VerificationObligation> {
         if obligation.schema != VERIFICATION_SCHEMA
             || obligation.id.trim().is_empty()
             || obligation.session_id.trim().is_empty()
@@ -726,8 +731,9 @@ impl Store {
                 reason: "expected argv must contain only non-empty arguments".to_string(),
             });
         }
+        let obligation = crate::redaction::redact_obligation(obligation)?;
         let key = obligation_key(&obligation.session_id, &obligation.id)?;
-        let bytes = serde_json::to_vec(obligation)?;
+        let bytes = serde_json::to_vec(&obligation)?;
         let db = self.open_database()?;
         let write = db.begin_write().map_err(CoreError::storage)?;
         {
@@ -749,7 +755,8 @@ impl Store {
                 .insert(key.as_str(), bytes.as_slice())
                 .map_err(CoreError::storage)?;
         }
-        write.commit().map_err(CoreError::storage)
+        write.commit().map_err(CoreError::storage)?;
+        Ok(obligation)
     }
 
     pub fn get_obligation(
@@ -788,6 +795,7 @@ impl Store {
             "readback_receipt_id".to_string(),
             Value::String(receipt_id.to_string()),
         );
+        let obligation = crate::redaction::redact_obligation(&obligation)?;
         let key = obligation_key(session_id, obligation_id)?;
         let bytes = serde_json::to_vec(&obligation)?;
         let db = self.open_database()?;
