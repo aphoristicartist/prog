@@ -41,6 +41,9 @@ pub(crate) async fn call_source(
     let effective_cache = effective_cache_policy(&profile, &operation);
     let may_cache = !args.no_cache && cache_allowed(&operation, &effective_cache);
     let redaction = resolve_redaction(Some(&profile));
+    // Freeze ambient process inputs before lookup, and reuse this exact
+    // snapshot for the initial execution and any explicit pagination calls.
+    let process_context = source_execution_context(&source, &operation)?;
     // Include the already-validated effective adapter in cache identity. A
     // stale entry must never make changed execution semantics appear reusable.
     let cache_key = source_call_cache_key(
@@ -50,6 +53,7 @@ pub(crate) async fn call_source(
         &call_args,
         &redaction,
         &effective_cache,
+        process_context.as_ref(),
     )?;
 
     let cached_entry = if may_cache {
@@ -159,9 +163,14 @@ pub(crate) async fn call_source(
         None
     };
     store.release()?;
-    let adapter_call =
-        execute_callable_conditional(&source, &operation, &call_args, revalidation.as_ref())
-            .await?;
+    let adapter_call = execute_callable_conditional(
+        &source,
+        &operation,
+        &call_args,
+        revalidation.as_ref(),
+        process_context.as_ref(),
+    )
+    .await?;
     if adapter_call.not_modified {
         let prior = cached_entry.as_ref().ok_or_else(|| CoreError::BadArgs {
             operation: "call --refresh".to_string(),
@@ -405,6 +414,7 @@ pub(crate) async fn call_source(
             }),
             &redaction,
             &effective_cache,
+            process_context.as_ref(),
         )?
     } else {
         cache_key.clone()
@@ -617,7 +627,14 @@ pub(crate) async fn call_source(
                 store.release()?;
                 let (page_call, page_key_args) = match target {
                     prog_core::PageTarget::Args(page_args) => {
-                        let call = match execute_callable(&source, &operation, &page_args).await {
+                        let call = match execute_callable(
+                            &source,
+                            &operation,
+                            &page_args,
+                            process_context.as_ref(),
+                        )
+                        .await
+                        {
                             Ok(call) => call,
                             Err(error) => {
                                 prefetch_warnings.push(format!(
@@ -665,6 +682,7 @@ pub(crate) async fn call_source(
                     &page_key_args,
                     &redaction,
                     &effective_cache,
+                    process_context.as_ref(),
                 )?;
                 let page_provenance_capture = call_provenance(
                     &page_cache_key,

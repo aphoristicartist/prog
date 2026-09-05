@@ -4,6 +4,7 @@
 //! HTTP, CLI, and MCP roadmap issues.
 
 pub mod cli;
+pub mod execution_context;
 pub mod http;
 pub mod mcp;
 pub mod process;

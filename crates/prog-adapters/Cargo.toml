@@ -18,6 +18,7 @@ chrono.workspace = true
 reqwest.workspace = true
 rmcp.workspace = true
 libc.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true
