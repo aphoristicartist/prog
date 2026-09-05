@@ -4,17 +4,17 @@
 
 - Fixed the `prog-cli` crate tarball so its embedded agent skill is packaged
   inside the crate and verified by the release dry-run build.
+- Routed public-benchmark A/B records through the existing actual-agent claim
+  gate, with generated Wilson intervals, exact paired McNemar results, explicit
+  false-completion/dropout accounting, and the SWE-bench contamination caveat.
+  A checked-in synthetic dry run proves incomplete usage stays claim-ineligible
+  before any credentialed benchmark spend (#238).
 - Removed grader answer/path access from deterministic retrieval strategies,
   separated known-path recoverability from unknown-target discovery, and added
   broad severity and capture-once file baselines. Response ledgers include all
   exploration and lookup costs; regenerated reports and the README retain
   insufficient evidence and unavailable strategies without requiring a `prog`
   win (#256).
-- Routed public-benchmark A/B records through the existing actual-agent claim
-  gate, with generated Wilson intervals, exact paired McNemar results, explicit
-  false-completion/dropout accounting, and the SWE-bench contamination caveat.
-  A checked-in synthetic dry run proves incomplete usage stays claim-ineligible
-  before any credentialed benchmark spend (#238).
 - Added JUnit report recipes for Vitest, Playwright, Bun, and Deno plus SARIF
   recipes for Ruff, Biome, and Semgrep. Each recipe exposes the exact argv,
   records the child status, observes one private temporary report through the
