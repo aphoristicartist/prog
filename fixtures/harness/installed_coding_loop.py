@@ -255,6 +255,14 @@ class Loop:
                    and incomplete["readiness"]["evaluations"][0]["status"] == "unverifiable")
         self.check("all captures and no implicit reruns accounted for", len(self.executions()) == 7)
 
+        restored = self.cli("status", "--session-id", verified_session, role="readiness")
+        self.check("restoring identical fixed content retains full-suite verification", restored["readiness"]["ready"] is True)
+        self.cli("cache", "purge", "--payload-budget-bytes", "0", role="setup")
+        evicted = self.cli("status", "--session-id", verified_session, role="readiness")
+        self.check("evicted verification evidence blocks readiness", evicted["readiness"]["ready"] is False
+                   and evicted["readiness"]["evaluations"][0]["status"] == "unverifiable")
+        self.check("eviction checks never rerun tests", len(self.executions()) == 7)
+
         return {
             "schema": "prog.installed_coding_loop_smoke", "passed": True,
             "scope": "deterministic installed skill/CLI fixture; no agent, provider, or three-tool facade trial",
@@ -268,7 +276,7 @@ class Loop:
             "instruction_accounting": "available installed file; not claimed as delivered model context",
             "baseline_observation_id": origin, "verification_observation_id": subject,
             "failure_evidence": evidence, "exact_failure_slice": exact, "verified_status": status,
-            "negative_controls": {"narrow": narrow_status, "stale": stale, "incomplete": incomplete},
+            "negative_controls": {"narrow": narrow_status, "stale": stale, "incomplete": incomplete, "evicted": evicted},
             "test_executions": self.executions(),
         }
 

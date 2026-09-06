@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22.19.0'
+      - name: Install the Linux sandbox backend for native host tests
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends bubblewrap
       - name: Test native harness extension packages
         run: |
           npm ci --ignore-scripts --no-audit --no-fund --prefix extensions/deepseek-harness

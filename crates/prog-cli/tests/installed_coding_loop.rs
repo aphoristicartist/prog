@@ -32,7 +32,7 @@ fn installed_coding_loop_preserves_evidence_and_refuses_unearned_readiness() {
         report["verification_observation_id"]
     );
     assert_eq!(report["verified_status"]["readiness"]["ready"], true);
-    for name in ["narrow", "stale", "incomplete"] {
+    for name in ["narrow", "stale", "incomplete", "evicted"] {
         assert_eq!(
             report["negative_controls"][name]["readiness"]["ready"],
             false

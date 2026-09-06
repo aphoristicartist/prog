@@ -109,6 +109,9 @@ pub enum CoreError {
     #[error("cli transport error for '{operation}': {message}")]
     CliTransport { operation: String, message: String },
 
+    #[error("source call cancelled by signal {signal}; upstream effects may be unknown")]
+    CallCancelled { signal: i32 },
+
     #[error("cli operation '{operation}' exited with code {exit_code}: {stderr_preview}")]
     CliExit {
         operation: String,
@@ -182,6 +185,7 @@ impl CoreError {
             CoreError::HttpStatus { .. } => "http_status",
             CoreError::CliTimeout { .. } => "cli_timeout",
             CoreError::CliTransport { .. } => "cli_transport",
+            CoreError::CallCancelled { .. } => "call_cancelled",
             CoreError::CliExit { .. } => "cli_exit",
             CoreError::McpTimeout { .. } => "mcp_timeout",
             CoreError::McpTransport { .. } => "mcp_transport",
@@ -272,6 +276,9 @@ impl CoreError {
             }
             CoreError::CliTransport { .. } => {
                 "Check that the executable and working directory exist.".to_string()
+            }
+            CoreError::CallCancelled { .. } => {
+                "Inspect stored evidence and verify upstream state before retrying; interrupted network or mutating work may have taken effect.".to_string()
             }
             CoreError::CliExit { .. } => {
                 "Inspect the bounded stderr preview and adjust the command arguments.".to_string()

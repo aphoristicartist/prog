@@ -78,6 +78,15 @@ The stable agent-facing workflow has three conceptual operations:
 These compose the existing CLI contracts. They are not a second engine. The
 advanced commands remain available to agents for debugging and recovery.
 
+The [experimental registered host facade](registered-host-facade.md) exposes
+these operations as opt-in DeepSeek Harness tools. Unlike an immutable-result
+hook, a directly requested capture has no earlier successful host result to
+restore: acquisition failures return errors without retrying the source.
+Unknown/TTY/streaming inputs are rejected before launch. Canonical source
+failures remain recoverable observations, with their original failure facts.
+The owner must explicitly enable the layer; the experiment is not yet the
+canonical agent surface.
+
 ## Integration context budget
 
 CI gates the available integration surface: the top-level help, one help
@@ -94,7 +103,8 @@ schema/instruction cost and total task context against that measured baseline.
 The [installed coding-loop smoke](installed-coding-loop.md) validates a real
 failure-to-verification sequence through the shipped skill/CLI workflow and
 records command and exported-file bytes. It provides a reproducible workflow
-for future facade trials; actual-agent outcomes require separate measurement.
+for the registered-host comparison; actual-agent outcomes require separate
+measurement.
 
 ## Installation contract
 

@@ -35,7 +35,8 @@ The driver performs this workflow:
 
 Negative controls check that a narrower successful test cannot prove the
 failure absent, a later workspace edit invalidates an earlier pass, and a
-successful command with truncated capture cannot satisfy readiness. Test-side
+successful command with truncated capture cannot satisfy readiness. Evicting
+the full-suite evidence also invalidates a previously passing obligation. Test-side
 execution records establish that navigation and verification do not rerun the
 suite. Each negative control has a separate fixture session; it never changes
 the successful session's criterion.
@@ -52,4 +53,6 @@ to the fixture driver. It does not measure agent problem-solving, register a
 three-tool facade, make provider calls, or establish a context-cost advantage.
 The installed instruction file's size is labelled as available surface;
 delivered model context requires an actual host/agent trial. The measured
-facade comparison and actual-agent trials remain part of #120 and #139.
+facade comparison now reuses this fixture through the
+[real registered host](registered-host-facade.md). Actual-agent trials remain
+part of #120 and #139.

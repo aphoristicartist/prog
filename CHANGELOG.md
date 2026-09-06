@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added an owner-enabled DeepSeek Harness experiment with three registered
+  tools composing canonical observe/evidence/status through the real host
+  policy and subprocess boundary. An installed npm-artifact coding loop checks
+  same-observation evidence and verification parity and records delivered
+  context without making an actual-agent performance claim (#120).
+- Release registered CLI/MCP source process groups on SIGINT/SIGTERM and
+  return a non-retryable cancellation error with uncertain upstream effects.
+
 - Redact quoted JSON secrets in captured text, including escaped values and
   interleaved stream fragments, before storage and evidence disclosure (#249).
 - Protect verification obligation metadata at the store boundary: redact

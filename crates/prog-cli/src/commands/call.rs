@@ -8,6 +8,32 @@ pub(crate) async fn call_source(
     args: &CallArgs,
     ctx: &mut InvocationContext,
 ) -> Result<CallSourceResult> {
+    // Install handlers before polling the adapter. Dropping an interrupted
+    // call releases the adapters' owned process groups and readers; an outer
+    // host signalling only prog's group cannot reach those separate groups.
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut interrupt = signal(SignalKind::interrupt())?;
+        let mut terminate = signal(SignalKind::terminate())?;
+        tokio::select! {
+            biased;
+            Some(_) = interrupt.recv() => Err(CoreError::CallCancelled { signal: libc::SIGINT }),
+            Some(_) = terminate.recv() => Err(CoreError::CallCancelled { signal: libc::SIGTERM }),
+            result = call_source_inner(store, lens_dir, args, ctx) => result,
+        }
+    }
+    #[cfg(not(unix))]
+    call_source_inner(store, lens_dir, args, ctx).await
+}
+
+async fn call_source_inner(
+    store: &Store,
+    lens_dir: Option<&Path>,
+    args: &CallArgs,
+    ctx: &mut InvocationContext,
+) -> Result<CallSourceResult> {
     let profile = store
         .read_profile(&args.source_id)?
         .ok_or_else(|| CoreError::UnknownSource(args.source_id.clone()))?;

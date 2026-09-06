@@ -68,6 +68,14 @@ has been reaped; one absolute deadline; retained partial evidence; and normal
 short-lived descendant output. The registered adapter uses the same lifecycle
 helper and is covered by `crates/prog-adapters/tests/cli.rs::{deadline_covers_exited_parent_and_each_inherited_stream,short_lived_descendant_output_completes_normally,dropping_capture_future_terminates_the_reaped_parents_group}`.
 
+`crates/prog-cli/tests/source_cancellation.rs` exercises SIGINT and SIGTERM
+through registered CLI and MCP calls, including reaped parents and inherited
+stderr holders. Interrupted calls release owned process groups, return a
+non-retryable `call_cancelled` error with explicitly uncertain upstream effects,
+and do not create a successful observation (I14). Native host policy/confirmation
+and cancellation composition are also exercised through the real tool registry
+in `extensions/deepseek-harness/test/facade.test.mjs` (I7, I14).
+
 ## Kani evaluation
 
 The pure functions targeted for future model checking are:

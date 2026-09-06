@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
+import * as facade from './facade.js'
 
 export const name = 'prog-disclosure'
 export const inject = ['tools']
@@ -179,10 +180,15 @@ function shouldReplace(envelope) {
 
 export function apply(ctx, config = {}) {
   const minBytes = positiveInteger(config.minBytes, DEFAULT_MIN_BYTES, 'minBytes')
+  if (config.facade !== undefined && config.facade !== false && config.facade !== true
+    && (typeof config.facade !== 'object' || config.facade === null || Array.isArray(config.facade))) {
+    throw new Error('prog-disclosure: facade must be a boolean or configuration object')
+  }
 
   ctx.on('tools/post-execute', async (exec, result, next) => {
     const decision = await next()
-    if (decision.kind !== 'accept' || Object.hasOwn(decision, 'value') || exec.parent !== undefined) {
+    if (decision.kind !== 'accept' || Object.hasOwn(decision, 'value') || exec.parent !== undefined
+      || facade.toolNames.includes(exec.name)) {
       return decision
     }
     const content = decision.content ?? result.content
@@ -209,6 +215,14 @@ export function apply(ctx, config = {}) {
       return decision
     }
   }, { prepend: true })
+
+  if (config.facade) {
+    const settings = config.facade === true ? {} : config.facade
+    return Promise.resolve(ctx.plugin(facade, {
+      progCommand: config.progCommand, storeDir: config.storeDir,
+      budgetBytes: config.budgetBytes, timeoutMs: config.timeoutMs, ...settings,
+    })).then(() => undefined)
+  }
 }
 
 export const testing = { looksLikeProgResult, plainText, shouldReplace }
