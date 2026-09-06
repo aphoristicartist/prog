@@ -204,7 +204,9 @@ async fn run_cancellation_is_honored_after_the_parent_is_reaped() {
 async fn run_pipe_drainage_does_not_receive_a_fresh_timeout() {
     let fixture = Fixture::new();
     let child = fixture.spawn("both", "same-group", "10", "1.5", "2000");
-    let output = tokio::time::timeout(Duration::from_secs(4), child.wait_with_output())
+    // Allow startup/store overhead on shared CI runners. The capture itself
+    // still has the strict <3s assertion below, which rejects a reset deadline.
+    let output = tokio::time::timeout(Duration::from_secs(8), child.wait_with_output())
         .await
         .expect("capture exceeded the independent guard deadline")
         .unwrap();
