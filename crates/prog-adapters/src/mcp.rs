@@ -893,10 +893,8 @@ impl McpSource {
                 structured_value: None,
             };
         }
-        let lines: Vec<String> = bounded
-            .lines()
-            .map(|line| redact_sensitive_text(line).0)
-            .collect();
+        let (redacted, _) = redact_sensitive_text(bounded);
+        let lines: Vec<String> = redacted.lines().map(str::to_string).collect();
         let head: Vec<Value> = lines.iter().take(10).map(|line| json!(line)).collect();
         let tail_start = lines.len().saturating_sub(10).max(head.len());
         let tail: Vec<Value> = lines
@@ -1393,4 +1391,44 @@ fn default_max_stderr_bytes() -> usize {
 
 fn default_max_schema_depth() -> usize {
     32
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    #[test]
+    fn multiline_secrets_are_redacted_in_tool_and_resource_text() {
+        let source: McpSource =
+            serde_json::from_value(json!({"id": "fixture", "command": "unused"})).unwrap();
+        let text =
+            "diagnostic marker\n{\"password\":\n\"MULTILINE_SECRET\", \"message\": \"benign\"}";
+        let tool = source
+            .normalize_tool_result(
+                "fixture",
+                serde_json::from_value(json!({
+                    "content": [{"type": "text", "text": text}]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let resource = source
+            .normalize_resource_result(
+                serde_json::from_value(json!({
+                    "contents": [{"uri": "fixture://secret", "text": text}]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        for result in [tool, resource] {
+            // Content-block metadata is still raw at the adapter boundary;
+            // test the same persistence redaction applied by the caller.
+            let safe = prog_core::RawPayload::new(result.data)
+                .redact(&prog_core::RedactionPolicy::default());
+            let rendered = safe.payload.as_value().to_string();
+            assert!(!rendered.contains("MULTILINE_SECRET"), "{rendered}");
+            assert!(rendered.contains("benign"), "{rendered}");
+            assert!(rendered.contains("[REDACTED:observed_text_secret]"));
+        }
+    }
 }

@@ -76,6 +76,7 @@ with open('pids', 'a') as pids:
     pids.write(str(os.getpid()) + '\n' + str(child.pid) + '\n')
 print('diagnostic marker', file=sys.stderr, flush=True)
 print('Authorization: Bearer secret-mcp-token', file=sys.stderr, flush=True)
+print('{"password":\n"MULTILINE_MCP_SECRET"}', file=sys.stderr, flush=True)
 def reply(message_id, result):
     print(json.dumps({'jsonrpc': '2.0', 'id': message_id, 'result': result}), flush=True)
 for line in sys.stdin:
@@ -116,6 +117,7 @@ for line in sys.stdin:
     assert!(stderr["byte_count"].is_null());
     assert!(stderr["observed_byte_count"].as_u64().unwrap() > 0);
     assert!(!envelope.to_string().contains("secret-mcp-token"));
+    assert!(!envelope.to_string().contains("MULTILINE_MCP_SECRET"));
 
     let store = Store::open(fixture.dir.path().join("store")).unwrap();
     let observation = store
@@ -133,6 +135,11 @@ for line in sys.stdin:
         !stored
             .windows(b"secret-mcp-token".len())
             .any(|bytes| bytes == b"secret-mcp-token")
+    );
+    assert!(
+        !stored
+            .windows(b"MULTILINE_MCP_SECRET".len())
+            .any(|bytes| bytes == b"MULTILINE_MCP_SECRET")
     );
 
     assert_eq!(fixture.pids().len(), 4);

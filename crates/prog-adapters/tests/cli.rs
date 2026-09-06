@@ -57,6 +57,27 @@ async fn text_output_redacts_common_secret_formats() {
 }
 
 #[tokio::test]
+async fn multiline_secrets_are_redacted_before_text_is_split_into_lines() {
+    let source = source(operation(
+        "multiline_secret",
+        &[
+            "-c",
+            "import sys\ntext = 'diagnostic marker\\n{\"password\":\\n\"MULTILINE_SECRET\", \"message\": \"benign\"}\\n'\nprint(text)\nprint(text, file=sys.stderr)",
+        ],
+    ));
+    let result = source
+        .execute("multiline_secret", &json!({}))
+        .await
+        .unwrap();
+    for value in [&result.data, &result.diagnostics.stderr] {
+        let rendered = value.to_string();
+        assert!(!rendered.contains("MULTILINE_SECRET"), "{rendered}");
+        assert!(rendered.contains("benign"), "{rendered}");
+        assert!(rendered.contains("[REDACTED:observed_text_secret]"));
+    }
+}
+
+#[tokio::test]
 async fn argv_template_substitution_never_resplits_values() {
     let source = source(operation(
         "argv",
