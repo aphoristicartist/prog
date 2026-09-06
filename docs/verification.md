@@ -57,6 +57,14 @@ a new immutable receipt.
 | `readback_failed` | The independent read failed at transport or upstream level. |
 | `unverifiable` | Identity, version, mapping, payload, redaction, retention, or validator evidence is insufficient. |
 
+A receipt records the historical read-back result and remains unchanged after
+payload eviction. Current readiness separately validates its obligation/intent
+links and requires the referenced pre-mutation, read-back, and optional mutation
+response payloads to remain available. Missing, expired, or metadata-only evidence
+makes a required obligation `unverifiable` and readiness false. These checks are
+offline and do not require delta's absence proof: exact-value verification and
+proof that a finding disappeared have different requirements.
+
 Receipts link the intent, pre-observation, optional mutation-response
 observation, read-back observation, conservative comparability assessment, and
 the readiness obligation. Readiness maps `verified` to `passed`; every other
@@ -115,6 +123,13 @@ envelope's `findings`.
 | `--optional` | Advisory only; does not block readiness. |
 | `--advisory-argv` | A displayed hint. Never auto-run, and running it does not satisfy the obligation. |
 | `--declared-by` | `user`, `recipe`, `normalizer`, or `harness`. |
+
+`--expected-argv` accepts literal argv entries and can be repeated. Use `=` for
+entries that begin with a dash. For `cargo test --lib`, the options are:
+
+```sh
+--expected-argv=cargo --expected-argv=test --expected-argv=--lib
+```
 
 `--origin-observation` and `--expected-absent-fingerprint` must be supplied
 together; supplying one alone evaluates to `unknown`.
@@ -178,6 +193,13 @@ introducing a new one yields `new`, not `passed`.
 
 ## How a pass is decided
 
+Declarations redact check descriptions and advisory reasons before storage and
+display. Recognized secrets in expected/advisory argv, source operations, scope,
+comparison family, and identity fields cause a `bad_args` rejection. Use
+secret-free declarations: replacing part of exact argv or a scope constraint
+would change what evidence can satisfy the check. This boundary also applies to
+library callers of `Store::put_obligation`, which returns the safe stored record.
+
 When an obligation names both an origin observation and an expected-absent
 fingerprint, evaluation runs a [conservative delta](delta.md) between the origin
 and the evidence, then maps the finding's delta status:
@@ -201,6 +223,9 @@ Before any of that, evaluation rejects evidence that is unavailable, evicted,
 incomplete, truncated, from a changed workspace, or from a mismatched operation.
 
 ## Full loop example
+
+The [installed coding-loop smoke](installed-coding-loop.md) runs this pattern
+against a real Cargo fixture and checks narrower, stale, and truncated evidence.
 
 ```sh
 prog session start --goal "fix checkout timeout"

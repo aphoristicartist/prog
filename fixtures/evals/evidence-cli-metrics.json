@@ -1,0 +1,1169 @@
+{
+  "schema": "prog.evidence_cli_eval.v1",
+  "token_estimator": "bytes_div_4_approximate",
+  "rows": [
+    {
+      "scenario": "cargo_compile_error",
+      "strategy": "paths",
+      "goal": "find the root cause",
+      "expected_path": "/failure_sections/0",
+      "selected": {
+        "path": "/failure_sections/0",
+        "step": 1,
+        "field": "paths"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 11548,
+      "output_tokens": 2887,
+      "tool_calls": 3,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 5118,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/0",
+            "/stderr/head/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "paths",
+            "$CURSOR",
+            "--prefix",
+            "",
+            "--limit",
+            "8",
+            "--depth",
+            "2"
+          ],
+          "stdout_bytes": 3982,
+          "exit_code": 0,
+          "offered_paths": [
+            "",
+            "/command",
+            "/command/exit_code",
+            "/command/spawn_error",
+            "/command/success",
+            "/command/timed_out",
+            "/failure_sections",
+            "/failure_sections/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/failure_sections/0"
+          ],
+          "stdout_bytes": 2448,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 15360,
+        "tool_calls": 4
+      }
+    },
+    {
+      "scenario": "cargo_compile_error",
+      "strategy": "findings",
+      "goal": "find the root cause",
+      "expected_path": "/failure_sections/0",
+      "selected": {
+        "path": "/failure_sections/0",
+        "step": 0,
+        "field": "findings"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 7566,
+      "output_tokens": 1892,
+      "tool_calls": 2,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 5118,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/0",
+            "/stderr/head/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/failure_sections/0"
+          ],
+          "stdout_bytes": 2448,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 10240,
+        "tool_calls": 3
+      }
+    },
+    {
+      "scenario": "cargo_compile_error",
+      "strategy": "inspect",
+      "goal": "find the root cause",
+      "expected_path": "/failure_sections/0",
+      "selected": {
+        "path": "/failure_sections/0",
+        "step": 1,
+        "field": "findings"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 13853,
+      "output_tokens": 3464,
+      "tool_calls": 3,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 5118,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/0",
+            "/stderr/head/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "inspect",
+            "$CURSOR",
+            "--goal",
+            "find the root cause",
+            "--limit",
+            "5"
+          ],
+          "stdout_bytes": 6287,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/0",
+            "/stderr/head/0",
+            "/stderr/text",
+            "/command"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/failure_sections/0"
+          ],
+          "stdout_bytes": 2448,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 17408,
+        "tool_calls": 4
+      }
+    },
+    {
+      "scenario": "cargo_test_failure",
+      "strategy": "paths",
+      "goal": "which test failed first",
+      "expected_path": "/failure_sections/0",
+      "selected": {
+        "path": "/failure_sections/0",
+        "step": 1,
+        "field": "paths"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 11536,
+      "output_tokens": 2884,
+      "tool_calls": 3,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 5062,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/1",
+            "/failure_sections/0/lines/2"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "paths",
+            "$CURSOR",
+            "--prefix",
+            "",
+            "--limit",
+            "8",
+            "--depth",
+            "2"
+          ],
+          "stdout_bytes": 3982,
+          "exit_code": 0,
+          "offered_paths": [
+            "",
+            "/command",
+            "/command/exit_code",
+            "/command/spawn_error",
+            "/command/success",
+            "/command/timed_out",
+            "/failure_sections",
+            "/failure_sections/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/failure_sections/0"
+          ],
+          "stdout_bytes": 2492,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 15360,
+        "tool_calls": 4
+      }
+    },
+    {
+      "scenario": "cargo_test_failure",
+      "strategy": "findings",
+      "goal": "which test failed first",
+      "expected_path": "/failure_sections/0",
+      "selected": {
+        "path": "/failure_sections/0",
+        "step": 0,
+        "field": "findings"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 7554,
+      "output_tokens": 1889,
+      "tool_calls": 2,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 5062,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/1",
+            "/failure_sections/0/lines/2"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/failure_sections/0"
+          ],
+          "stdout_bytes": 2492,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 10240,
+        "tool_calls": 3
+      }
+    },
+    {
+      "scenario": "cargo_test_failure",
+      "strategy": "inspect",
+      "goal": "which test failed first",
+      "expected_path": "/failure_sections/0",
+      "selected": {
+        "path": "/failure_sections/0",
+        "step": 1,
+        "field": "findings"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 13893,
+      "output_tokens": 3474,
+      "tool_calls": 3,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 5062,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/1",
+            "/failure_sections/0/lines/2"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "inspect",
+            "$CURSOR",
+            "--goal",
+            "which test failed first",
+            "--limit",
+            "5"
+          ],
+          "stdout_bytes": 6339,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/1",
+            "/failure_sections/0/lines/2",
+            "/stdout/text",
+            "/failure_sections/0/lines/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/failure_sections/0"
+          ],
+          "stdout_bytes": 2492,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 17408,
+        "tool_calls": 4
+      }
+    },
+    {
+      "scenario": "noisy_log_root_error",
+      "strategy": "paths",
+      "goal": "find the root cause in the logs",
+      "expected_path": "/lines/39/text",
+      "selected": {
+        "path": "/lines/39/text",
+        "step": 2,
+        "field": "hits"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 13358,
+      "output_tokens": 3340,
+      "tool_calls": 4,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 4610,
+          "exit_code": 0,
+          "offered_paths": [
+            "/lines/39/text",
+            "/lines/40/text"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "paths",
+            "$CURSOR",
+            "--prefix",
+            "",
+            "--limit",
+            "8",
+            "--depth",
+            "2"
+          ],
+          "stdout_bytes": 5669,
+          "exit_code": 0,
+          "offered_paths": [
+            "",
+            "/format",
+            "/line_count",
+            "/lines",
+            "/lines/0",
+            "/lines/1",
+            "/lines/2",
+            "/lines/3"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "search",
+            "$CURSOR",
+            "FATAL|ERROR|error",
+            "--regex",
+            "--path",
+            "/lines",
+            "--limit",
+            "8"
+          ],
+          "stdout_bytes": 1024,
+          "exit_code": 0,
+          "offered_paths": [
+            "/lines/39/text",
+            "/lines/40/text"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/lines/39/text"
+          ],
+          "stdout_bytes": 2055,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 17408,
+        "tool_calls": 5
+      }
+    },
+    {
+      "scenario": "noisy_log_root_error",
+      "strategy": "findings",
+      "goal": "find the root cause in the logs",
+      "expected_path": "/lines/39/text",
+      "selected": {
+        "path": "/lines/39/text",
+        "step": 0,
+        "field": "findings"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 6665,
+      "output_tokens": 1667,
+      "tool_calls": 2,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 4610,
+          "exit_code": 0,
+          "offered_paths": [
+            "/lines/39/text",
+            "/lines/40/text"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/lines/39/text"
+          ],
+          "stdout_bytes": 2055,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 9216,
+        "tool_calls": 3
+      }
+    },
+    {
+      "scenario": "noisy_log_root_error",
+      "strategy": "inspect",
+      "goal": "find the root cause in the logs",
+      "expected_path": "/lines/39/text",
+      "selected": {
+        "path": "/lines/39/text",
+        "step": 1,
+        "field": "findings"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 9507,
+      "output_tokens": 2377,
+      "tool_calls": 3,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 4610,
+          "exit_code": 0,
+          "offered_paths": [
+            "/lines/39/text",
+            "/lines/40/text"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "inspect",
+            "$CURSOR",
+            "--goal",
+            "find the root cause in the logs",
+            "--limit",
+            "5"
+          ],
+          "stdout_bytes": 2842,
+          "exit_code": 0,
+          "offered_paths": [
+            "/lines/39/text",
+            "/lines/40/text"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/lines/39/text"
+          ],
+          "stdout_bytes": 2055,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 12288,
+        "tool_calls": 4
+      }
+    },
+    {
+      "scenario": "pytest_assertion_failure",
+      "strategy": "paths",
+      "goal": "debug the first failing test",
+      "expected_path": "/failure_sections/0",
+      "selected": {
+        "path": "/failure_sections/0",
+        "step": 1,
+        "field": "paths"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 11599,
+      "output_tokens": 2900,
+      "tool_calls": 3,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 5117,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/0",
+            "/stderr/head/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "paths",
+            "$CURSOR",
+            "--prefix",
+            "",
+            "--limit",
+            "8",
+            "--depth",
+            "2"
+          ],
+          "stdout_bytes": 3982,
+          "exit_code": 0,
+          "offered_paths": [
+            "",
+            "/command",
+            "/command/exit_code",
+            "/command/spawn_error",
+            "/command/success",
+            "/command/timed_out",
+            "/failure_sections",
+            "/failure_sections/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/failure_sections/0"
+          ],
+          "stdout_bytes": 2500,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 15360,
+        "tool_calls": 4
+      }
+    },
+    {
+      "scenario": "pytest_assertion_failure",
+      "strategy": "findings",
+      "goal": "debug the first failing test",
+      "expected_path": "/failure_sections/0",
+      "selected": {
+        "path": "/failure_sections/0",
+        "step": 0,
+        "field": "findings"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 7617,
+      "output_tokens": 1905,
+      "tool_calls": 2,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 5117,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/0",
+            "/stderr/head/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/failure_sections/0"
+          ],
+          "stdout_bytes": 2500,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 10240,
+        "tool_calls": 3
+      }
+    },
+    {
+      "scenario": "pytest_assertion_failure",
+      "strategy": "inspect",
+      "goal": "debug the first failing test",
+      "expected_path": "/failure_sections/0",
+      "selected": {
+        "path": "/failure_sections/0",
+        "step": 1,
+        "field": "findings"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 13913,
+      "output_tokens": 3479,
+      "tool_calls": 3,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 5117,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/0",
+            "/stderr/head/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "inspect",
+            "$CURSOR",
+            "--goal",
+            "debug the first failing test",
+            "--limit",
+            "5"
+          ],
+          "stdout_bytes": 6296,
+          "exit_code": 0,
+          "offered_paths": [
+            "/failure_sections/0",
+            "/failure_sections/0/lines/2",
+            "/stderr/tail/0",
+            "/failure_sections/0/lines/0",
+            "/stderr/head/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/failure_sections/0"
+          ],
+          "stdout_bytes": 2500,
+          "exit_code": 0,
+          "offered_paths": []
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 17408,
+        "tool_calls": 4
+      }
+    },
+    {
+      "scenario": "sarif_security_error",
+      "strategy": "paths",
+      "goal": "find the security error",
+      "expected_path": "/runs/0/results/0",
+      "selected": {
+        "path": "/runs/0/results/0",
+        "step": 1,
+        "field": "paths"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 15567,
+      "output_tokens": 3892,
+      "tool_calls": 4,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 4137,
+          "exit_code": 0,
+          "offered_paths": [
+            "/runs/0/results/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "paths",
+            "$CURSOR",
+            "--prefix",
+            "",
+            "--limit",
+            "8",
+            "--depth",
+            "2"
+          ],
+          "stdout_bytes": 5208,
+          "exit_code": 0,
+          "offered_paths": [
+            "",
+            "/runs",
+            "/runs/0",
+            "/version",
+            "/runs/0/results/0",
+            "/runs/0/results/1"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/runs/0/results/0"
+          ],
+          "stdout_bytes": 2705,
+          "exit_code": 0,
+          "offered_paths": []
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "expand",
+            "$CURSOR",
+            "--path",
+            "/runs/0/results/0",
+            "--depth",
+            "12",
+            "--limit",
+            "100"
+          ],
+          "stdout_bytes": 3517,
+          "exit_code": 0,
+          "offered_paths": [
+            "/runs/0/results/0"
+          ]
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 20480,
+        "tool_calls": 5
+      }
+    },
+    {
+      "scenario": "sarif_security_error",
+      "strategy": "findings",
+      "goal": "find the security error",
+      "expected_path": "/runs/0/results/0",
+      "selected": {
+        "path": "/runs/0/results/0",
+        "step": 0,
+        "field": "findings"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 10359,
+      "output_tokens": 2590,
+      "tool_calls": 3,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 4137,
+          "exit_code": 0,
+          "offered_paths": [
+            "/runs/0/results/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/runs/0/results/0"
+          ],
+          "stdout_bytes": 2705,
+          "exit_code": 0,
+          "offered_paths": []
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "expand",
+            "$CURSOR",
+            "--path",
+            "/runs/0/results/0",
+            "--depth",
+            "12",
+            "--limit",
+            "100"
+          ],
+          "stdout_bytes": 3517,
+          "exit_code": 0,
+          "offered_paths": [
+            "/runs/0/results/0"
+          ]
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 13312,
+        "tool_calls": 4
+      }
+    },
+    {
+      "scenario": "sarif_security_error",
+      "strategy": "inspect",
+      "goal": "find the security error",
+      "expected_path": "/runs/0/results/0",
+      "selected": {
+        "path": "/runs/0/results/0",
+        "step": 1,
+        "field": "findings"
+      },
+      "correct": true,
+      "outcome": "evidence_available",
+      "stop": "candidate_retrieved",
+      "response_bytes": 11946,
+      "output_tokens": 2987,
+      "tool_calls": 4,
+      "steps": [
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "observe",
+            "--stdin",
+            "--mime",
+            "application/json",
+            "--name",
+            "evidence-eval"
+          ],
+          "stdout_bytes": 4137,
+          "exit_code": 0,
+          "offered_paths": [
+            "/runs/0/results/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "inspect",
+            "$CURSOR",
+            "--goal",
+            "find the security error",
+            "--limit",
+            "5"
+          ],
+          "stdout_bytes": 1587,
+          "exit_code": 0,
+          "offered_paths": [
+            "/runs/0/results/0"
+          ]
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "evidence",
+            "$CURSOR",
+            "--path",
+            "/runs/0/results/0"
+          ],
+          "stdout_bytes": 2705,
+          "exit_code": 0,
+          "offered_paths": []
+        },
+        {
+          "command": [
+            "prog",
+            "--dir",
+            "$STORE",
+            "expand",
+            "$CURSOR",
+            "--path",
+            "/runs/0/results/0",
+            "--depth",
+            "12",
+            "--limit",
+            "100"
+          ],
+          "stdout_bytes": 3517,
+          "exit_code": 0,
+          "offered_paths": [
+            "/runs/0/results/0"
+          ]
+        }
+      ],
+      "ceilings": {
+        "response_bytes": 15360,
+        "tool_calls": 5
+      }
+    }
+  ]
+}

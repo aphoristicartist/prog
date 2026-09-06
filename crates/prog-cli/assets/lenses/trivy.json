@@ -1,0 +1,30 @@
+{
+  "schema": "prog.lens_manifest",
+  "id": "trivy",
+  "match": {"source_id": "observe", "artifact_kind": "json"},
+  "view": {
+    "root": "/Results",
+    "limit": 4,
+    "depth": 3,
+    "fields": {
+      "artifact": "/ArtifactName",
+      "vulnerability_id": "/Vulnerabilities/*/VulnerabilityID",
+      "package": "/Vulnerabilities/*/PkgName",
+      "installed": "/Vulnerabilities/*/InstalledVersion",
+      "fixed": "/Vulnerabilities/*/FixedVersion",
+      "severity": "/Vulnerabilities/*/Severity",
+      "primary_url": "/Vulnerabilities/*/PrimaryURL"
+    }
+  },
+  "omit": [
+    {"path": "/Results/*/Vulnerabilities/*/Description", "reason": "large_string", "detail": "full advisory text remains cursor-expandable", "expandable": true},
+    {"path": "/Results/*/Misconfigurations", "reason": "long_array", "detail": "misconfiguration details remain cursor-expandable", "expandable": true}
+  ],
+  "findings": [
+    {"kind": "critical_vulnerability", "path": "/Results/*/Vulnerabilities/*/Severity", "confidence": 0.97, "reason": "Trivy reports the vulnerability severity as CRITICAL", "title": "critical vulnerability", "severity": "critical", "contains_any": ["critical"]},
+    {"kind": "high_vulnerability", "path": "/Results/*/Vulnerabilities/*/Severity", "confidence": 0.95, "reason": "Trivy reports the vulnerability severity as HIGH", "title": "high vulnerability", "severity": "error", "contains_any": ["high"]}
+  ],
+  "next_actions": [{"kind": "evidence", "path": "/Results/{index}/Vulnerabilities/{vuln}", "reason": "cite the selected vulnerability advisory"}],
+  "invariants": ["severity_comes_from_trivy_not_recomputed", "advisory_details_remain_expandable", "fixed_versions_are_not_fabricated_when_unknown"],
+  "fixtures": {"positive": ["fixtures/trivy.json"], "negative": ["fixtures/counterexamples/text-log-normalized.json"]}
+}

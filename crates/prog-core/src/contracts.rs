@@ -745,6 +745,8 @@ pub struct Summary {
     pub item_count: Option<u64>,
     #[serde(default)]
     pub preview_count: Option<u64>,
+    /// Serialized normalized, redacted payload bytes, independent of source
+    /// input cost and the final delivered response size.
     #[serde(default)]
     pub payload_bytes: u64,
     /// Named bytes/4 estimate for the complete delivered envelope, never the
@@ -757,12 +759,12 @@ pub struct Summary {
     pub extra: Extra,
 }
 
-/// `payload_bytes / envelope_bytes` below this boundary means that reading the
-/// captured payload directly would have delivered fewer bytes.
+/// `baseline.bytes / envelope_bytes` below this boundary means that reading
+/// the original input directly would have delivered fewer bytes.
 pub const RAW_CHEAPER_BELOW_RATIO: f64 = 1.0;
 
-/// `payload_bytes / envelope_bytes` at or above this boundary means that the
-/// envelope is at least 20 percent smaller than the captured payload.
+/// `baseline.bytes / envelope_bytes` at or above this boundary means that the
+/// response is at least 20% smaller than input.
 pub const BOUNDED_WIN_AT_OR_ABOVE_RATIO: f64 = 1.25;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -771,60 +773,98 @@ pub enum DisclosureVerdictResult {
     BoundedWin,
     Neutral,
     RawCheaper,
+    Unavailable,
+}
+
+/// The original input representation counted by a cost comparison. These
+/// counts precede normalization and redaction and never count derived copies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceByteBasis {
+    /// Sum of the original stdout and stderr streams, each counted once.
+    CommandStreams,
+    /// Bytes read from the original file or stdin artifact.
+    Artifact,
+    /// Original decoded HTTP response body bytes, excluding HTTP headers.
+    HttpBody,
+    /// An explicit original byte count supplied by a library caller.
+    Provided,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct SourceByteBaseline {
+    pub bytes: u64,
+    pub basis: SourceByteBasis,
 }
 
 /// Machine-readable cost comparison for a disclosure envelope.
 ///
-/// `ratio` is `payload_bytes / envelope_bytes`, rounded down to two decimal
-/// places for a conservative display. Classification uses the exact integer
-/// byte counts, so rounding can never turn a real cost regression into a
-/// favorable verdict.
+/// `ratio` compares original input bytes with the complete delivered response.
+/// It is unavailable without a known baseline or a nonzero denominator.
+/// Classification uses exact integer counts. The display is conservative and
+/// rounded down to hundredths (or a lower approximation beyond f64 precision).
+/// Normalized storage size is reported separately by `Summary::payload_bytes`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct DisclosureVerdict {
     pub result: DisclosureVerdictResult,
-    pub payload_bytes: u64,
+    pub baseline: Option<SourceByteBaseline>,
     pub envelope_bytes: u64,
-    pub ratio: f64,
+    pub ratio: Option<f64>,
     pub raw_cheaper_below_ratio: f64,
     pub bounded_win_at_or_above_ratio: f64,
     pub reason: String,
 }
 
 impl DisclosureVerdict {
-    pub fn for_sizes(payload_bytes: u64, envelope_bytes: u64) -> Self {
-        let result = if payload_bytes < envelope_bytes {
+    pub fn for_sizes(source_bytes: u64, envelope_bytes: u64) -> Self {
+        Self::for_baseline(
+            Some(SourceByteBaseline {
+                bytes: source_bytes,
+                basis: SourceByteBasis::Provided,
+            }),
+            envelope_bytes,
+        )
+    }
+
+    pub fn for_baseline(baseline: Option<SourceByteBaseline>, envelope_bytes: u64) -> Self {
+        let result = if baseline.is_none() {
+            DisclosureVerdictResult::Unavailable
+        } else if baseline.is_some_and(|source| source.bytes < envelope_bytes) {
             DisclosureVerdictResult::RawCheaper
-        } else if u128::from(payload_bytes).saturating_mul(4)
-            >= u128::from(envelope_bytes).saturating_mul(5)
-        {
+        } else if baseline.is_some_and(|source| {
+            source.bytes > 0 && u128::from(source.bytes) * 4 >= u128::from(envelope_bytes) * 5
+        }) {
             DisclosureVerdictResult::BoundedWin
         } else {
             DisclosureVerdictResult::Neutral
         };
-        let ratio = if envelope_bytes == 0 {
-            0.0
-        } else {
-            let unrounded = payload_bytes as f64 / envelope_bytes as f64;
-            (unrounded * 100.0).floor() / 100.0
-        };
+        let ratio = baseline.filter(|_| envelope_bytes > 0).map(|source| {
+            let hundredths = u128::from(source.bytes) * 100 / u128::from(envelope_bytes);
+            let approximate = hundredths as f64 / 100.0;
+            if hundredths > (1_u128 << 53) {
+                // Conversion and division can each round upward. Two ULPs
+                // leave the large-ratio display below the exact quotient.
+                f64::from_bits(approximate.to_bits() - 2)
+            } else {
+                approximate
+            }
+        });
         // The result plus reason strings have equal encoded lengths. That
         // keeps the self-referential envelope byte count convergent even at a
         // classification boundary.
         let reason = match result {
-            DisclosureVerdictResult::BoundedWin => {
-                "envelope is at least 20 percent smaller than the captured payload."
-            }
-            DisclosureVerdictResult::Neutral => {
-                "envelope and captured payload byte costs fall within the neutral range"
-            }
-            DisclosureVerdictResult::RawCheaper => {
-                "envelope exceeds captured payload; direct output costs fewer bytes"
+            DisclosureVerdictResult::BoundedWin => "response is at least 20% smaller than input.",
+            DisclosureVerdictResult::Neutral => "response is less than 20% smaller than raw input",
+            DisclosureVerdictResult::RawCheaper => "response is larger than original input bytes",
+            DisclosureVerdictResult::Unavailable => {
+                "original input cost is unknown; no savings claim"
             }
         };
         Self {
             result,
-            payload_bytes,
+            baseline,
             envelope_bytes,
             ratio,
             raw_cheaper_below_ratio: RAW_CHEAPER_BELOW_RATIO,
@@ -1839,6 +1879,8 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<DisclosureEnvelope>(&mut schemas, "DisclosureEnvelope")?;
     insert_schema::<DisclosureVerdict>(&mut schemas, "DisclosureVerdict")?;
     insert_schema::<DisclosureVerdictResult>(&mut schemas, "DisclosureVerdictResult")?;
+    insert_schema::<SourceByteBaseline>(&mut schemas, "SourceByteBaseline")?;
+    insert_schema::<SourceByteBasis>(&mut schemas, "SourceByteBasis")?;
     insert_schema::<EvidenceRef>(&mut schemas, "EvidenceRef")?;
     insert_schema::<InspectResponse>(&mut schemas, "InspectResponse")?;
     insert_schema::<Finding>(&mut schemas, "Finding")?;

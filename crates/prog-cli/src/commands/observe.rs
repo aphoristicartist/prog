@@ -2,14 +2,15 @@
 
 use crate::*;
 
-pub(crate) fn observe_artifact(
+pub(crate) async fn observe_artifact(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     args: &ObserveArgs,
     ctx: &mut InvocationContext,
 ) -> Result<DisclosureEnvelope> {
     store.release()?;
-    let input = read_observation_input(args)?;
+    ctx.set_capture(super::observe_input::budget(args));
+    let input = read_observation_input(args).await?;
     let normalized = normalize_observation(&input.bytes, &input.mime)?;
     let lens = match &args.lens {
         Some(id) => {
@@ -70,7 +71,12 @@ pub(crate) fn observe_artifact(
         &normalized.kind,
         redacted_paths.len(),
     ));
-    let (availability, capture) = complete_capture(payload_bytes, true, !redacted_paths.is_empty());
+    let (availability, mut capture) =
+        complete_capture(payload_bytes, true, !redacted_paths.is_empty());
+    let input_bytes = input.bytes.len() as u64;
+    capture.total_bytes = Some(input_bytes);
+    capture.captured_bytes = input_bytes;
+    capture.budget = super::observe_input::budget(args);
     ctx.set_capture(capture.budget.clone());
     let observation_id = record_capture(
         store,
@@ -137,6 +143,10 @@ pub(crate) fn observe_artifact(
     envelope_for_payload(
         store,
         EnvelopeInput {
+            source_baseline: Some(prog_core::SourceByteBaseline {
+                bytes: input.bytes.len().try_into().unwrap_or(u64::MAX),
+                basis: prog_core::SourceByteBasis::Artifact,
+            }),
             value_scan: Some(value_scan),
             source_id: "observe".to_string(),
             operation: input.name.clone(),
@@ -173,47 +183,23 @@ pub(crate) fn observe_artifact(
     )
 }
 
-fn read_observation_input(args: &ObserveArgs) -> Result<ObservationInput> {
-    let (bytes, name, input) = if let Some(path) = &args.file {
-        let bytes = std::fs::read(path).map_err(|error| CoreError::BadArgs {
-            operation: "observe".to_string(),
-            reason: format!(
-                "file '{}' could not be read: {error}",
-                path.to_string_lossy()
-            ),
-        })?;
-        let name = args.name.clone().unwrap_or_else(|| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("file")
-                .to_string()
-        });
+async fn read_observation_input(args: &ObserveArgs) -> Result<ObservationInput> {
+    let bytes = super::observe_input::read(args).await?;
+    let (name, input) = if let Some(path) = &args.file {
         (
-            bytes,
-            name,
-            json!({
-                "kind": "file",
-                "path": path.to_string_lossy()
+            args.name.clone().unwrap_or_else(|| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("file")
+                    .to_string()
             }),
+            json!({ "kind": "file", "path": path.to_string_lossy() }),
         )
-    } else if args.stdin {
-        let mut bytes = Vec::new();
-        std::io::stdin()
-            .read_to_end(&mut bytes)
-            .map_err(|error| CoreError::BadArgs {
-                operation: "observe".to_string(),
-                reason: format!("stdin could not be read: {error}"),
-            })?;
+    } else {
         (
-            bytes,
             args.name.clone().unwrap_or_else(|| "stdin".to_string()),
             json!({"kind": "stdin"}),
         )
-    } else {
-        return Err(CoreError::BadArgs {
-            operation: "observe".to_string(),
-            reason: "pass --file <path> or --stdin".to_string(),
-        });
     };
 
     let mime = args

@@ -49,6 +49,7 @@ tests/importers.rs
 tests/lens.rs
 tests/lifecycle.rs
 tests/navigation.rs
+tests/obligations.rs
 tests/pagination.rs
 tests/policy.rs
 tests/redaction.rs

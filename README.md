@@ -17,15 +17,18 @@ line — but it can't know which line until it has read them all.
 So you truncate, and lose the answer. Or you don't, and pay for the whole log
 on every turn.
 
+<!-- eval:hero:start -->
 ```text
-                       tokens into the model
-  raw payload   ████████████████████████████████████████  137,883
-  prog          ▏                                             847
+                       approximate tokens into the model
+  raw fixture        137,883
+  prog task            1,629
 ```
 
-<sub>One row from [`docs/token-economics.md`](docs/token-economics.md): the "discover shape"
-task over the checked-in HTTP fixture. Ratios across all fixtures range 24.4x-85.2x.
-Measured on deterministic fixtures with a bytes/4 heuristic — not a promise about your workload.</sub>
+<sub>HTTP “Discover shape” from [`docs/token-economics.md`](docs/token-economics.md),
+rendered from the [checked-in rows](fixtures/evals/token-economics-metrics.json).
+Ratios across these deterministic fixtures range 24.6x-84.6x.
+Counts use the bytes/4 approximation, not provider tokens or a promise about your workload.</sub>
+<!-- eval:hero:end -->
 
 The difference isn't compression. `prog` captures the payload **once**, redacts
 it, stores it, and hands back a small envelope describing its *shape* — plus a
@@ -267,7 +270,7 @@ prog --dir /tmp/prog-logs search "$CURSOR" "timeout" --path /lines
 prog --dir /tmp/prog-logs find "$CURSOR" --kind error
 ```
 
-The log recipe uses the checked-in `logs` lens. Search is case-insensitive by
+The log recipe uses the bundled `logs` lens. Search is case-insensitive by
 default; `--regex` enables a size-bounded Rust regex.
 
 ### Example: review a diff without losing the source hunk
@@ -415,7 +418,7 @@ command; the envelope records the command and recommended next evidence action.
 
 ### First-party lens coverage
 
-The repository includes data-only lenses for Cargo, pytest, npm, Go tests,
+The binary includes data-only lenses for Cargo, pytest, npm, Go tests,
 JUnit, SARIF, GitHub issues, kubectl JSON, unified diffs, logs, run streams,
 NDJSON records, and generic JSON item triage. Lens manifests can select fields,
 declare omissions and next actions, and contribute bounded finding rules. They
@@ -510,7 +513,8 @@ Agent Skill plus explicit wrapper, all backed by the same local CLI transport.
 
 Harnesses can run `prog <command> --help` for the complete argument surface;
 every command and subcommand self-describes. Global options are `--dir <DIR>` (`PROG_DIR`, default
-`./.prog`), `--lens-dir <DIR>` (`PROG_LENS_DIR`, default `./lenses`),
+`./.prog`), `--lens-dir <DIR>` (`PROG_LENS_DIR`, external lenses only;
+default resolution uses bundled lenses with optional `./lenses` overrides),
 `--budget-bytes <N>` (`PROG_BUDGET_BYTES`), `--budget-tokens <N>`
 (`PROG_BUDGET_TOKENS`), and `--pretty`. The byte budget is authoritative; when
 pretty formatting would exceed it, `prog` emits compact JSON instead.
@@ -559,54 +563,74 @@ not universal promises about model quality, latency, or cost.
 
 ### Token-economics fixtures
 
-Across the checked-in HTTP, CLI, and MCP tasks, raw-payload tokens divided by
-the complete `prog` task tokens range from **24.4x-85.2x**. Each task includes
-the initial envelope and any expansion used to answer it. See
-[`docs/token-economics.md`](docs/token-economics.md) for every row and the
-regeneration command.
+<!-- eval:tokens:start -->
+Across the checked-in HTTP, CLI, and MCP tasks, raw-fixture token estimates
+divided by complete `prog` task estimates range from **24.6x-84.6x**. Every
+task includes its initial envelope and any expansions. Estimates use bytes/4,
+rounded up; these are fixture measurements, not provider token counts. See
+[`docs/token-economics.md`](docs/token-economics.md) and the
+[measurement rows](fixtures/evals/token-economics-metrics.json).
+<!-- eval:tokens:end -->
 
 ### Evidence-acquisition fixtures
 
-The five checked-in Cargo compile, Cargo test, pytest, noisy-log, and SARIF
-scenarios rank the expected causal path first in **5/5** cases. The findings
-workflow uses 10 tool calls versus 15 for `envelope -> paths -> evidence`, and
-the estimated output is 3,218 versus 3,369 tokens. See
-[`docs/evidence-acquisition.md`](docs/evidence-acquisition.md) and the checked
-baseline in
-[`fixtures/evals/evidence-acquisition-metrics.json`](fixtures/evals/evidence-acquisition-metrics.json).
+<!-- eval:evidence:start -->
+The 5 checked-in evidence-acquisition scenarios rank the expected causal
+path first in **5/5** component checks. Separate actual CLI workflows
+measure complete stdout from capture through navigation and evidence retrieval.
+
+| CLI strategy | Complete evidence / attempts | Tool calls | Approx. output tokens |
+|---|---:|---:|---:|
+| paths | 5/5 | 17 | 15,903 |
+| findings | 5/5 | 11 | 9,943 |
+| inspect | 5/5 | 16 | 15,781 |
+
+Costs include every initial finding and metadata field, actual bounded path
+listings/searches, and expansions needed after truncated evidence. Tokens use
+bytes/4 rounded up per workflow; these are deterministic CLI regressions, not
+provider token usage or actual-agent success rates. See
+[`docs/evidence-acquisition.md`](docs/evidence-acquisition.md),
+[component checks](fixtures/evals/evidence-acquisition-metrics.json), and
+[CLI measurements and command traces](fixtures/evals/evidence-cli-metrics.json).
+<!-- eval:evidence:end -->
 
 ### Deterministic workflow demos
 
-The checked-in GitHub review, kubectl events, CloudWatch-style logs, Jira-style
-triage, and MCP incident demos report raw-to-envelope-plus-expansion ratios from
-**9.61x to 15.40x**. These are generated local payloads, not credentialed live
-service measurements. See [`docs/real-world-demos.md`](docs/real-world-demos.md).
+<!-- eval:demos:start -->
+The 5 checked-in workflow demos report raw-to-envelope-plus-expansion ratios
+from **9.34x to 13.86x**, using the bytes/4 token approximation. These are
+generated local payloads, not credentialed live service measurements. See
+[`docs/real-world-demos.md`](docs/real-world-demos.md) and the
+[recorded metrics](fixtures/evals/real-world-demo-metrics.json).
+<!-- eval:demos:end -->
 
-### Correctness under an unknown target
+### Deterministic retrieval correctness
 
-Savings ratios assume you already know what you are looking for. The harder and
-more common case is that you do not, and there the relevant number is not
-compression but **whether the answer survives at all**.
+Known-path cases measure recovery at an explicitly supplied selector. The
+unknown-target cases keep the grader's path and answer private: strategies
+select evidence from their actual observations. The set includes a fatal
+record, its relocated counterpart, an unranked cause, and a no-answer control.
 
-Across the eleven checked-in competitive-baseline scenarios:
+| Unknown-target strategy | Evidence available / attempted | Unavailable | Approx. response tokens |
+| --- | ---: | ---: | ---: |
+| `raw_context` | 3/4 | 0 | 142,205 |
+| `head_tail_truncation` | 0/4 | 0 | 4,096 |
+| `native_field_selection` | 0/0 | 4 | 0 |
+| `rtk_grep_filter` | 0/4 | 0 | 3,009 |
+| `broad_log_search` | 2/4 | 0 | 3,085 |
+| `file_capture_search` | 2/4 | 0 | 3,123 |
+| `prog_retrieve` | 2/4 | 0 | 17,242 |
 
-| Strategy | Correct |
-| --- | --- |
-| `head_tail_truncation` | **1/11** |
-| `rtk_grep_filter` | 10/11 |
-| `native_field_selection` | 8/11 |
-| `prog_paths_expand` | **11/11** |
+These are deterministic evidence-availability results, not actual-agent task
+success. Raw context counts evidence present in the delivered artifact; a
+strategy with insufficient evidence receives no discovery credit. Costs use
+the bytes/4 approximation and include every capture, exploration, and lookup
+response. Fixture setup and live source-acquisition costs are outside this
+experiment. Broader search and a capture-once file baseline are included.
 
-Truncation is the cheapest bounded strategy and the least correct one: it is
-wrong in ten of eleven scenarios, and its omissions are unrecoverable. Field
-selection and grep are excellent — *when the path or the term is already known*.
-The `unknown-target-buried-fatal` scenario removes that assumption: a long log
-whose one causal `FATAL` line is not guessable from the prompt. There, no field
-selector is derivable, a plausible pre-read `grep ERROR` returns matches but
-misses the causal line, and `prog` is the cheapest correct strategy at **7,917
-versus 35,594 raw input tokens (4.5x)**.
-
-See [`docs/competitive-baselines.md`](docs/competitive-baselines.md).
+Known-path results, assumptions, and command traces are recorded in
+[`docs/competitive-baselines.md`](docs/competitive-baselines.md) and the
+[measurement rows](fixtures/evals/competitive-baseline-metrics.json).
 
 ### Correctness, not just savings
 
@@ -665,7 +689,7 @@ queries beat `prog`: [`docs/positioning.md`](docs/positioning.md) and
 
 - [Token economics](docs/token-economics.md)
 - [Evidence acquisition](docs/evidence-acquisition.md)
-- [Task-success evaluation](docs/task-success-eval.md)
+- [Known-path recoverability evaluation](docs/task-success-eval.md)
 - [Replay and correctness](docs/replay-eval.md)
 - [Competitive baselines](docs/competitive-baselines.md)
 - [Real-world-shaped local demos](docs/real-world-demos.md)

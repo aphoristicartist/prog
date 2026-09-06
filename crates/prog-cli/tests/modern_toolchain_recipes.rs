@@ -92,6 +92,8 @@ fn modern_report_recipes_run_noisy_failing_fixtures_and_observe_one_report() {
         let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(envelope["observation"]["parser"]["id"], case.parser);
         assert_eq!(envelope["recipe"]["command_result"]["exit"]["code"], 1);
+        assert_eq!(envelope["disclosure_verdict"]["result"], "unavailable");
+        assert!(envelope["disclosure_verdict"]["baseline"].is_null());
         assert_eq!(
             envelope["recipe"]["command_result"]["report_observed"],
             true
@@ -123,8 +125,16 @@ fn modern_report_recipes_run_noisy_failing_fixtures_and_observe_one_report() {
         assert!(!command.iter().any(|argument| argument == "-c"));
         assert_eq!(expanded[1][0], "prog");
         assert_eq!(expanded[1][1], "observe");
-        let report_path = expanded[1][3].as_str().unwrap();
+        let observe = expanded[1].as_array().unwrap();
+        let option = |name: &str| {
+            observe.windows(2).find(|pair| pair[0] == name).unwrap()[1]
+                .as_str()
+                .unwrap()
+        };
+        let report_path = option("--file");
         assert!(!Path::new(report_path).exists());
+        assert_eq!(option("--max-input-bytes"), "16777216");
+        assert_eq!(option("--timeout-ms"), "30000");
 
         let observations = prog(&[
             "--dir",

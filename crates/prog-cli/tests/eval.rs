@@ -1,3 +1,6 @@
+#[path = "support/eval_reports.rs"]
+mod eval_reports;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -28,7 +31,7 @@ struct Fixture {
     _server: Option<MockServer>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 struct EvalRow {
     fixture: &'static str,
     task: &'static str,
@@ -67,10 +70,18 @@ async fn token_economics_eval_smoke() {
         );
     }
 
-    let report = markdown_report(&rows);
     if std::env::var_os("PROG_TOKEN_EVAL_UPDATE").is_some() {
-        fs::write(repo_root().join("docs/token-economics.md"), &report).unwrap();
-        println!("{report}");
+        let source = json!({
+            "schema": "prog.token_economics_eval",
+            "token_estimator": "bytes_div_4_approximate",
+            "rows": rows,
+        });
+        fs::write(
+            repo_root().join("fixtures/evals/token-economics-metrics.json"),
+            format!("{}\n", serde_json::to_string_pretty(&source).unwrap()),
+        )
+        .unwrap();
+        eval_reports::write_documents(&repo_root());
     }
 }
 
@@ -260,6 +271,7 @@ fn call(root: &Path, source_id: &str, operation: &str) -> Output {
 fn checked_stdout_len(output: &Output) -> usize {
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     let envelope_bytes = value["summary"]["envelope_bytes"].as_u64().unwrap() as usize;
+    assert_eq!(envelope_bytes, output.stdout.len());
     assert!(
         envelope_bytes <= MAX_ENVELOPE_BYTES,
         "envelope_bytes exceeded budget: {envelope_bytes}"
@@ -314,28 +326,6 @@ fn read_only_effect() -> Value {
         "cacheable": true,
         "requires_confirmation": false
     })
-}
-
-fn markdown_report(rows: &[EvalRow]) -> String {
-    let mut output = String::from(
-        "# Token economics eval\n\n\
-         Token counts use the project heuristic `bytes / 4`, rounded up. Raw cost is the full fixture payload entering context. prog cost is the sum of every bounded envelope or expansion stdout consumed for the task, including the initial call envelope before any expansion. This is not a latency benchmark or a model-success benchmark.\n\n\
-         Every `DisclosureEnvelope` reports a `disclosure_verdict` using the same fixed thresholds for every capture kind. Its ratio is `payload_bytes / envelope_bytes`: below `1.0` is `raw_cheaper`, from `1.0` through less than `1.25` is `neutral`, and `1.25` or above is `bounded_win` (the envelope is at least 20 percent smaller). The displayed ratio is rounded down to two decimal places, but classification uses the exact byte counts. The verdict reports cost; it does not automatically replace the envelope with raw output.\n\n\
-         Regenerate this table with `PROG_TOKEN_EVAL_UPDATE=1 cargo test -p prog-cli --test eval -- --nocapture`.\n\n\
-         | Fixture | Task | Raw tokens | prog tokens | Ratio |\n\
-         |---|---:|---:|---:|---:|\n",
-    );
-    for row in rows {
-        output.push_str(&format!(
-            "| {} | {} | {} | {} | {:.1}x |\n",
-            row.fixture,
-            row.task,
-            approx_tokens(row.raw_bytes),
-            approx_tokens(row.prog_bytes),
-            row.ratio()
-        ));
-    }
-    output
 }
 
 fn approx_tokens(bytes: usize) -> usize {

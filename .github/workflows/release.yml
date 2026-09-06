@@ -240,6 +240,28 @@ jobs:
       - name: prog --help exits 0
         run: prog --help
 
+      - name: Installed recipes and evidence work outside the checkout
+        run: |
+          project="$(mktemp -d)"
+          trap 'rm -rf "$project"' EXIT
+          cd "$project"
+          unset PROG_LENS_DIR PROG_DIR
+          printf 'INFO start\nERROR installed fixture failed\n' > service.log
+          prog recipe logs-root-cause --file service.log > recipe.json
+          cursor="$(python3 -c 'import json; r=json.load(open("recipe.json")); assert r["lens"]["id"] == "logs"; assert r["findings"][0]["kind"] == "log_error"; print(r["cursor"])')"
+          prog inspect "$cursor" --goal 'find the root cause' > inspect.json
+          prog evidence "$cursor" --path /lines/1 > evidence.json
+          python3 - <<'PY'
+          import json
+          inspected = json.load(open("inspect.json"))
+          assert any(f["kind"] == "log_error" for f in inspected["findings"])
+          evidence = json.load(open("evidence.json"))
+          assert evidence["evidence_ref"]["availability"] == "recoverable"
+          assert "installed fixture failed" in str(evidence["excerpt"])
+          assert "could not be loaded" not in str(inspected) + str(evidence)
+          PY
+          test ! -e lenses
+
       - name: Bounded observation produces a non-null cursor
         run: |
           rm -rf /tmp/prog-rc-smoke

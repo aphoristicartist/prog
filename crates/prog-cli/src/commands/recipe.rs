@@ -4,7 +4,7 @@ use crate::*;
 
 pub(crate) async fn run_recipe(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     args: &RecipeArgs,
     ctx: &mut InvocationContext,
 ) -> Result<DisclosureEnvelope> {
@@ -39,6 +39,8 @@ pub(crate) async fn run_recipe(
             let observe = ObserveArgs {
                 file: Some(file.clone()),
                 stdin: false,
+                max_input_bytes: Some(args.max_input_bytes),
+                timeout_ms: Some(args.timeout_ms),
                 mime: Some(mime.to_string()),
                 name: Some(args.recipe.as_str().to_string()),
                 lens: Some(lens.to_string()),
@@ -49,10 +51,14 @@ pub(crate) async fn run_recipe(
                 invocation_identity: None,
             };
             (
-                observe_artifact(store, lens_dir, &observe, ctx)?,
+                observe_artifact(store, lens_dir, &observe, ctx).await?,
                 vec![json!([
                     "prog",
                     "observe",
+                    "--max-input-bytes",
+                    args.max_input_bytes.to_string(),
+                    "--timeout-ms",
+                    args.timeout_ms.to_string(),
                     "--file",
                     file.to_string_lossy(),
                     "--mime",
@@ -117,6 +123,8 @@ pub(crate) async fn run_recipe(
                 let observe = ObserveArgs {
                     file: Some(report_path.clone()),
                     stdin: false,
+                    max_input_bytes: Some(args.max_input_bytes),
+                    timeout_ms: Some(args.timeout_ms),
                     mime: Some(report.mime.to_string()),
                     name: Some(format!("{}-report", recipe.as_str())),
                     lens: Some(report.lens.to_string()),
@@ -134,6 +142,10 @@ pub(crate) async fn run_recipe(
                 expanded_commands.push(json!([
                     "prog",
                     "observe",
+                    "--max-input-bytes",
+                    args.max_input_bytes.to_string(),
+                    "--timeout-ms",
+                    args.timeout_ms.to_string(),
                     "--file",
                     report_path.to_string_lossy(),
                     "--mime",
@@ -141,7 +153,10 @@ pub(crate) async fn run_recipe(
                     "--lens",
                     report.lens
                 ]));
-                envelope = observe_artifact(store, lens_dir, &observe, ctx)?;
+                envelope = observe_artifact(store, lens_dir, &observe, ctx).await?;
+                // This recipe combines a process and a generated report. Report
+                // bytes alone are not the original command's host-visible cost.
+                envelope.disclosure_verdict.baseline = None;
             } else {
                 envelope.warnings.push(format!(
                     "{} command produced no {} report; returning its captured process evidence",

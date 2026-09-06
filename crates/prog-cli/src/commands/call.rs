@@ -4,7 +4,33 @@ use crate::*;
 
 pub(crate) async fn call_source(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
+    args: &CallArgs,
+    ctx: &mut InvocationContext,
+) -> Result<CallSourceResult> {
+    // Install handlers before polling the adapter. Dropping an interrupted
+    // call releases the adapters' owned process groups and readers; an outer
+    // host signalling only prog's group cannot reach those separate groups.
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut interrupt = signal(SignalKind::interrupt())?;
+        let mut terminate = signal(SignalKind::terminate())?;
+        tokio::select! {
+            biased;
+            Some(_) = interrupt.recv() => Err(CoreError::CallCancelled { signal: libc::SIGINT }),
+            Some(_) = terminate.recv() => Err(CoreError::CallCancelled { signal: libc::SIGTERM }),
+            result = call_source_inner(store, lens_dir, args, ctx) => result,
+        }
+    }
+    #[cfg(not(unix))]
+    call_source_inner(store, lens_dir, args, ctx).await
+}
+
+async fn call_source_inner(
+    store: &Store,
+    lens_dir: Option<&Path>,
     args: &CallArgs,
     ctx: &mut InvocationContext,
 ) -> Result<CallSourceResult> {
@@ -41,6 +67,9 @@ pub(crate) async fn call_source(
     let effective_cache = effective_cache_policy(&profile, &operation);
     let may_cache = !args.no_cache && cache_allowed(&operation, &effective_cache);
     let redaction = resolve_redaction(Some(&profile));
+    // Freeze ambient process inputs before lookup, and reuse this exact
+    // snapshot for the initial execution and any explicit pagination calls.
+    let process_context = source_execution_context(&source, &operation)?;
     // Include the already-validated effective adapter in cache identity. A
     // stale entry must never make changed execution semantics appear reusable.
     let cache_key = source_call_cache_key(
@@ -50,6 +79,7 @@ pub(crate) async fn call_source(
         &call_args,
         &redaction,
         &effective_cache,
+        process_context.as_ref(),
     )?;
 
     let cached_entry = if may_cache {
@@ -97,6 +127,7 @@ pub(crate) async fn call_source(
             let mut envelope = envelope_for_payload(
                 store,
                 EnvelopeInput {
+                    source_baseline: cached_source_baseline(entry),
                     value_scan: None,
                     source_id: args.source_id.clone(),
                     operation: args.operation.clone(),
@@ -159,9 +190,14 @@ pub(crate) async fn call_source(
         None
     };
     store.release()?;
-    let adapter_call =
-        execute_callable_conditional(&source, &operation, &call_args, revalidation.as_ref())
-            .await?;
+    let adapter_call = execute_callable_conditional(
+        &source,
+        &operation,
+        &call_args,
+        revalidation.as_ref(),
+        process_context.as_ref(),
+    )
+    .await?;
     if adapter_call.not_modified {
         let prior = cached_entry.as_ref().ok_or_else(|| CoreError::BadArgs {
             operation: "call --refresh".to_string(),
@@ -188,6 +224,7 @@ pub(crate) async fn call_source(
             .get_payload(&prior.payload_hash)?
             .ok_or_else(|| CoreError::CacheMiss(cache_key.clone()))?
             .into_redacted();
+        let source_baseline = adapter_source_baseline(profile.kind, &adapter_call.provenance);
         let provenance_capture = call_provenance(
             &cache_key,
             adapter_call.status.clone(),
@@ -262,6 +299,7 @@ pub(crate) async fn call_source(
         let mut envelope = envelope_for_payload(
             store,
             EnvelopeInput {
+                source_baseline,
                 value_scan: None,
                 source_id: args.source_id.clone(),
                 operation: args.operation.clone(),
@@ -322,6 +360,7 @@ pub(crate) async fn call_source(
             received_error: false,
         });
     }
+    let mut source_baseline = adapter_source_baseline(profile.kind, &adapter_call.provenance);
     let received_error = adapter_call.received_error;
     let first_pagination = adapter_call.pagination.clone();
     let provenance_capture = call_provenance(
@@ -347,6 +386,9 @@ pub(crate) async fn call_source(
     let redacted_path_count = redacted
         .redacted_paths
         .len()
+        // Adapters may redact text before line projection. Idempotent core
+        // redaction must not make those existing markers regain proof rights.
+        .max(redaction_marker_count(redacted.payload.as_value()))
         .saturating_add(provenance_redacted_paths);
     let had_redactions = redacted_path_count > 0;
     let value_scan = redacted.value_scan;
@@ -405,6 +447,7 @@ pub(crate) async fn call_source(
             }),
             &redaction,
             &effective_cache,
+            process_context.as_ref(),
         )?
     } else {
         cache_key.clone()
@@ -477,6 +520,10 @@ pub(crate) async fn call_source(
         );
         entry.observation_id = Some(observation_id.clone());
         entry.provenance = Some(provenance.clone());
+        entry.extra.insert(
+            "source_byte_baseline".to_string(),
+            serde_json::to_value(source_baseline)?,
+        );
         let retained = store.put_entry(&persistence_cache_key, &entry)?;
         if !retained {
             let reason =
@@ -529,6 +576,7 @@ pub(crate) async fn call_source(
     let mut envelope = envelope_for_payload(
         store,
         EnvelopeInput {
+            source_baseline,
             value_scan: Some(value_scan),
             source_id: args.source_id.clone(),
             operation: args.operation.clone(),
@@ -617,9 +665,17 @@ pub(crate) async fn call_source(
                 store.release()?;
                 let (page_call, page_key_args) = match target {
                     prog_core::PageTarget::Args(page_args) => {
-                        let call = match execute_callable(&source, &operation, &page_args).await {
+                        let call = match execute_callable(
+                            &source,
+                            &operation,
+                            &page_args,
+                            process_context.as_ref(),
+                        )
+                        .await
+                        {
                             Ok(call) => call,
                             Err(error) => {
+                                source_baseline = None;
                                 prefetch_warnings.push(format!(
                                     "pagination prefetch stopped at page {}: {error}",
                                     pages_fetched + 1
@@ -648,6 +704,7 @@ pub(crate) async fn call_source(
                                 break;
                             }
                             Err(error) => {
+                                source_baseline = None;
                                 prefetch_warnings.push(format!(
                                     "pagination prefetch stopped at page {}: {error}",
                                     pages_fetched + 1
@@ -658,6 +715,8 @@ pub(crate) async fn call_source(
                         }
                     }
                 };
+                let page_baseline = adapter_source_baseline(profile.kind, &page_call.provenance);
+                source_baseline = add_source_baselines(source_baseline, page_baseline);
                 let page_cache_key = source_call_cache_key(
                     &profile,
                     &operation,
@@ -665,6 +724,7 @@ pub(crate) async fn call_source(
                     &page_key_args,
                     &redaction,
                     &effective_cache,
+                    process_context.as_ref(),
                 )?;
                 let page_provenance_capture = call_provenance(
                     &page_cache_key,
@@ -691,6 +751,7 @@ pub(crate) async fn call_source(
                 let page_redacted_paths = page_redacted
                     .redacted_paths
                     .len()
+                    .max(redaction_marker_count(page_redacted.payload.as_value()))
                     .saturating_add(page_provenance_redacted_paths);
                 let page_payload = page_redacted.payload;
                 let page_bytes = json_len_u64(page_payload.as_value())?;
@@ -771,6 +832,10 @@ pub(crate) async fn call_source(
                     );
                     entry.observation_id = Some(page_observation_id.clone());
                     entry.provenance = Some(page_provenance);
+                    entry.extra.insert(
+                        "source_byte_baseline".to_string(),
+                        serde_json::to_value(page_baseline)?,
+                    );
                     let page_retained = store.put_entry(&page_cache_key, &entry)?;
                     if !page_retained {
                         prefetch_warnings.push(format!(
@@ -909,11 +974,16 @@ pub(crate) async fn call_source(
             // is appended AFTER `envelope_for_payload`'s budget loop, so re-enforce
             // `max_envelope_bytes` here: compact the pagination metadata if the
             // final envelope would otherwise exceed the budget (invariant I11).
+            envelope.disclosure_verdict.baseline = source_baseline;
             compact_pagination_extra_to_budget(&mut envelope, ctx.max_envelope_bytes())?;
             if may_cache
                 && let Some(pagination) = envelope.extra.get("pagination").cloned()
                 && let Some(mut entry) = store.get_entry(&cache_key)?
             {
+                entry.extra.insert(
+                    "source_byte_baseline".to_string(),
+                    serde_json::to_value(source_baseline)?,
+                );
                 entry.extra.insert("pagination".to_string(), pagination);
                 let pagination_next_actions = envelope
                     .next_actions
@@ -989,4 +1059,140 @@ fn source_state_is_revalidatable(state: &SourceStateToken, policy_scope: &str) -
             .map(|expiry| expiry > chrono::Utc::now())
             .unwrap_or(false)
     })
+}
+
+// Adapter provenance is captured before normalization or redaction. MCP's byte
+// count describes SDK-normalized content, so it cannot stand in for source cost.
+fn adapter_source_baseline(
+    kind: prog_core::SourceKind,
+    provenance: &Value,
+) -> Option<prog_core::SourceByteBaseline> {
+    let (bytes, basis) = match kind {
+        prog_core::SourceKind::Cli => (
+            provenance
+                .get("stdout_bytes")?
+                .as_u64()?
+                .checked_add(provenance.get("stderr_bytes")?.as_u64()?)?,
+            prog_core::SourceByteBasis::CommandStreams,
+        ),
+        prog_core::SourceKind::Http if !provenance.get("truncated")?.as_bool()? => (
+            provenance.get("response_bytes")?.as_u64()?,
+            prog_core::SourceByteBasis::HttpBody,
+        ),
+        _ => return None,
+    };
+    Some(prog_core::SourceByteBaseline { bytes, basis })
+}
+
+fn cached_source_baseline(
+    entry: &prog_core::CacheEntryMeta,
+) -> Option<prog_core::SourceByteBaseline> {
+    // Legacy entries without the original acquisition count remain unavailable.
+    serde_json::from_value(entry.extra.get("source_byte_baseline")?.clone()).ok()
+}
+
+fn add_source_baselines(
+    first: Option<prog_core::SourceByteBaseline>,
+    second: Option<prog_core::SourceByteBaseline>,
+) -> Option<prog_core::SourceByteBaseline> {
+    let (first, second) = (first?, second?);
+    if first.basis != second.basis {
+        return None;
+    }
+    Some(prog_core::SourceByteBaseline {
+        bytes: first.bytes.checked_add(second.bytes)?,
+        basis: first.basis,
+    })
+}
+
+#[cfg(test)]
+mod source_baseline_tests {
+    use super::*;
+    use prog_core::{SourceByteBasis, SourceKind};
+
+    #[test]
+    fn legacy_and_invalid_cache_baselines_remain_unavailable() {
+        let mut entry = new_cache_entry(
+            "key".to_string(),
+            "hash".to_string(),
+            "source".to_string(),
+            "operation".to_string(),
+            1_000_000,
+            3600,
+        );
+        assert!(cached_source_baseline(&entry).is_none());
+        for invalid in [
+            json!(null),
+            json!({"bytes": 1}),
+            json!({"bytes": 1, "basis": "normalized"}),
+        ] {
+            entry
+                .extra
+                .insert("source_byte_baseline".to_string(), invalid);
+            assert!(cached_source_baseline(&entry).is_none());
+        }
+        entry.extra.insert(
+            "source_byte_baseline".to_string(),
+            json!({"bytes": 17, "basis": "http_body"}),
+        );
+        assert_eq!(cached_source_baseline(&entry).unwrap().bytes, 17);
+    }
+
+    #[test]
+    fn adapter_baselines_count_original_bytes_or_decline_the_comparison() {
+        let streams = adapter_source_baseline(
+            SourceKind::Cli,
+            &json!({
+                "stdout_bytes": 3072, "stderr_bytes": 7,
+                "stdout_truncated": true, "stderr_truncated": false,
+                "diagnostics": {"stderr": {"head": "copied", "tail": "copied"}}
+            }),
+        )
+        .unwrap();
+        assert_eq!(streams.bytes, 3079);
+        assert_eq!(streams.basis, SourceByteBasis::CommandStreams);
+        let body = adapter_source_baseline(
+            SourceKind::Http,
+            &json!({
+                "response_bytes": 17, "truncated": false
+            }),
+        )
+        .unwrap();
+        assert_eq!(body.bytes, 17);
+        assert_eq!(body.basis, SourceByteBasis::HttpBody);
+        assert!(
+            adapter_source_baseline(
+                SourceKind::Http,
+                &json!({
+                    "response_bytes": 17, "truncated": true
+                })
+            )
+            .is_none()
+        );
+        assert!(
+            adapter_source_baseline(
+                SourceKind::Mcp,
+                &json!({
+                    "response_bytes": 1_000_000, "truncated": false
+                })
+            )
+            .is_none()
+        );
+        assert!(
+            adapter_source_baseline(
+                SourceKind::Cli,
+                &json!({
+                    "stdout_bytes": u64::MAX, "stderr_bytes": 1
+                })
+            )
+            .is_none()
+        );
+        assert_eq!(
+            add_source_baselines(Some(body), Some(body)).unwrap().bytes,
+            34
+        );
+        assert!(add_source_baselines(Some(body), None).is_none());
+        assert!(add_source_baselines(None, Some(body)).is_none());
+        assert!(add_source_baselines(Some(body), Some(streams)).is_none());
+    }
 }

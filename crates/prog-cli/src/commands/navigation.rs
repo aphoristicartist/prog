@@ -77,7 +77,7 @@ fn cursor_context(store: &Store, cursor: &str, requested_path: &str) -> Result<C
 
 pub(crate) fn inspect_cursor(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     args: &InspectArgs,
     ctx: &InvocationContext,
 ) -> Result<InspectResponse> {
@@ -177,7 +177,7 @@ pub(crate) fn inspect_cursor(
 
 pub(crate) fn evidence_cursor(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     args: &EvidenceArgs,
     ctx: &InvocationContext,
 ) -> Result<EvidenceBlock> {
@@ -240,7 +240,7 @@ pub(crate) fn evidence_cursor(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn search_cursor(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     cursor: &str,
     query: Option<String>,
     kind: Option<String>,
@@ -288,7 +288,7 @@ pub(crate) fn search_cursor(
 }
 
 fn cursor_lens(
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     record: &prog_core::CursorRecord,
     warnings: &mut Vec<String>,
 ) -> Option<LensManifest> {

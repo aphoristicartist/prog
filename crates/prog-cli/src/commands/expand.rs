@@ -83,6 +83,7 @@ pub(crate) fn expand_cursor(
         let mut envelope = envelope_for_payload(
             store,
             EnvelopeInput {
+                source_baseline: None,
                 value_scan: None,
                 source_id: record.source_id.clone(),
                 operation: record.operation.clone(),
@@ -128,6 +129,7 @@ pub(crate) fn expand_cursor(
     envelope_for_payload(
         store,
         EnvelopeInput {
+            source_baseline: None,
             value_scan: None,
             source_id: record.source_id.clone(),
             operation: record.operation.clone(),

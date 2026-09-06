@@ -1,6 +1,9 @@
 //! Local command execution, capture, and failure analysis.
 
 use crate::*;
+use prog_adapters::process::{
+    CaptureInterruption, ProcessCapture, capture_process, configure_capture_process,
+};
 use prog_core::normalize_coding_output;
 
 struct RunProcessResult {
@@ -25,7 +28,7 @@ pub(crate) enum RunProcessStatus {
 
 pub(crate) async fn run_command(
     store: &Store,
-    lens_dir: &Path,
+    lens_dir: Option<&Path>,
     args: &RunArgs,
     ctx: &mut InvocationContext,
 ) -> Result<RunEnvelopeResult> {
@@ -90,7 +93,7 @@ pub(crate) async fn run_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    configure_run_process_group(&mut command);
+    configure_capture_process(&mut command);
 
     store.release()?;
     let run = match command.spawn() {
@@ -128,20 +131,7 @@ pub(crate) async fn run_command(
                 .filter(|arg| arg.contains("[REDACTED"))
                 .count(),
         );
-    let combined = run
-        .combined
-        .iter()
-        .enumerate()
-        .map(|(index, chunk)| {
-            let text = redact_run_output_bytes(&chunk.bytes).text;
-            json!({
-                "index": index,
-                "stream": chunk.stream,
-                "text": text,
-                "byte_count": chunk.bytes.len()
-            })
-        })
-        .collect::<Vec<_>>();
+    let combined = redact_run_chunks(&run.combined);
     let failure_sections = detect_run_failure_sections(&run.status, &stdout_text, &stderr_text);
     let provider = normalize_coding_output(
         &args.command,
@@ -181,6 +171,21 @@ pub(crate) async fn run_command(
     }
     let payload_hash = store.put_payload(&redacted_payload)?;
     let payload_bytes = json_len_u64(redacted_payload.as_value())?;
+    // Stream readers count original bytes independently of retained text and
+    // derived head/tail/combined views. Interrupted execution has no known
+    // complete source-output cost and must not advertise savings.
+    let source_baseline = if matches!(run.status, RunProcessStatus::Exited { .. }) {
+        run.stdout
+            .total_bytes
+            .checked_add(run.stderr.total_bytes)
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .map(|bytes| prog_core::SourceByteBaseline {
+                bytes,
+                basis: prog_core::SourceByteBasis::CommandStreams,
+            })
+    } else {
+        None
+    };
     let ttl: i64 = args
         .ttl_seconds
         .try_into()
@@ -309,6 +314,7 @@ pub(crate) async fn run_command(
     let envelope = envelope_for_payload(
         store,
         EnvelopeInput {
+            source_baseline,
             value_scan: Some(value_scan),
             source_id: "run".to_string(),
             operation,
@@ -356,6 +362,7 @@ async fn run_spawned_child(
     max_stdout_bytes: usize,
     max_stderr_bytes: usize,
 ) -> Result<RunProcessResult> {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
     let stdout = child.stdout.take().ok_or_else(|| CoreError::CliTransport {
         operation: "run".to_string(),
         message: "failed to capture stdout".to_string(),
@@ -379,82 +386,49 @@ async fn run_spawned_child(
     ));
     drop(tx);
 
-    let timeout = tokio::time::sleep(Duration::from_millis(timeout_ms));
-    tokio::pin!(timeout);
-    let status = tokio::select! {
-        result = child.wait() => {
-            let status = result.map_err(|error| CoreError::CliTransport {
-                operation: "run".to_string(),
-                message: error.to_string(),
-            })?;
+    let capture = capture_process(
+        child,
+        stdout_task,
+        stderr_task,
+        deadline,
+        termination_signal(),
+    )
+    .await
+    .map_err(|error| CoreError::CliTransport {
+        operation: "run".to_string(),
+        message: error.to_string(),
+    })?;
+    let mut combined = Vec::new();
+    while let Ok(chunk) = rx.try_recv() {
+        combined.push(chunk);
+    }
+    let (stdout, stderr, status) = match capture {
+        ProcessCapture::Complete {
+            status,
+            stdout,
+            stderr,
+        } => (
+            stdout,
+            stderr,
             RunProcessStatus::Exited {
                 success: status.success(),
                 code: status.code(),
                 signal: exit_signal(&status),
-            }
-        }
-        _ = &mut timeout => {
-            kill_run_process_group(&mut child).await;
-            return interrupted_run_result(stdout_task, stderr_task, &mut rx, RunProcessStatus::TimedOut).await;
-        }
-        signal = termination_signal() => {
-            kill_run_process_group(&mut child).await;
-            return interrupted_run_result(
-                stdout_task,
-                stderr_task,
-                &mut rx,
-                RunProcessStatus::Cancelled { signal },
-            ).await;
-        }
+            },
+        ),
+        ProcessCapture::Interrupted {
+            reason,
+            stdout,
+            stderr,
+        } => (
+            stdout.unwrap_or_else(|| capture_from_chunks("stdout", &combined)),
+            stderr.unwrap_or_else(|| capture_from_chunks("stderr", &combined)),
+            match reason {
+                CaptureInterruption::Timeout => RunProcessStatus::TimedOut,
+                CaptureInterruption::Signal(signal) => RunProcessStatus::Cancelled { signal },
+            },
+        ),
     };
-    let stdout = stdout_task
-        .await
-        .map_err(|error| CoreError::CliTransport {
-            operation: "run".to_string(),
-            message: error.to_string(),
-        })?
-        .map_err(|error| CoreError::CliTransport {
-            operation: "run".to_string(),
-            message: error.to_string(),
-        })?;
-    let stderr = stderr_task
-        .await
-        .map_err(|error| CoreError::CliTransport {
-            operation: "run".to_string(),
-            message: error.to_string(),
-        })?
-        .map_err(|error| CoreError::CliTransport {
-            operation: "run".to_string(),
-            message: error.to_string(),
-        })?;
-    let mut combined = Vec::new();
-    while let Ok(chunk) = rx.try_recv() {
-        combined.push(chunk);
-    }
-    Ok(RunProcessResult {
-        stdout,
-        stderr,
-        combined: coalesce_run_chunks(combined),
-        status,
-    })
-}
-
-async fn interrupted_run_result(
-    stdout_task: JoinHandle<std::io::Result<RunCapture>>,
-    stderr_task: JoinHandle<std::io::Result<RunCapture>>,
-    rx: &mut mpsc::UnboundedReceiver<RunChunk>,
-    status: RunProcessStatus,
-) -> Result<RunProcessResult> {
-    let (stdout, stderr) = tokio::join!(
-        finish_run_reader_or_abort(stdout_task),
-        finish_run_reader_or_abort(stderr_task)
-    );
-    let mut combined = Vec::new();
-    while let Ok(chunk) = rx.try_recv() {
-        combined.push(chunk);
-    }
-    let stdout = stdout.unwrap_or_else(|| capture_from_chunks("stdout", &combined));
-    let stderr = stderr.unwrap_or_else(|| capture_from_chunks("stderr", &combined));
     Ok(RunProcessResult {
         stdout,
         stderr,
@@ -508,38 +482,6 @@ fn capture_from_chunks(stream: &'static str, chunks: &[RunChunk]) -> RunCapture 
         total_bytes: bytes.len(),
         bytes,
         truncated: false,
-    }
-}
-
-#[cfg(unix)]
-fn configure_run_process_group(command: &mut TokioCommand) {
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-fn configure_run_process_group(_command: &mut TokioCommand) {}
-
-async fn kill_run_process_group(child: &mut tokio::process::Child) {
-    #[cfg(unix)]
-    {
-        if let Some(pid) = child.id().and_then(|pid| i32::try_from(pid).ok()) {
-            let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
-        }
-    }
-    let _ = child.start_kill();
-    let _ = tokio::time::timeout(Duration::from_millis(100), child.wait()).await;
-}
-
-async fn finish_run_reader_or_abort(
-    mut task: JoinHandle<std::io::Result<RunCapture>>,
-) -> Option<RunCapture> {
-    tokio::select! {
-        result = &mut task => result.ok().and_then(std::result::Result::ok),
-        _ = tokio::time::sleep(Duration::from_millis(25)) => {
-            task.abort();
-            let _ = task.await;
-            None
-        }
     }
 }
 
@@ -606,6 +548,45 @@ fn run_operation_name(argv: &[String]) -> String {
         .to_string()
 }
 
+fn redact_run_chunks(chunks: &[RunChunk]) -> Vec<Value> {
+    // Redact each stream with all of its chunks as context before restoring
+    // interleaving. A key/value split by output on the other stream must not
+    // expose a secret that was removed from the complete stdout/stderr view.
+    let chunk_text = chunks
+        .iter()
+        .map(|chunk| String::from_utf8_lossy(&chunk.bytes))
+        .collect::<Vec<_>>();
+    let mut redacted_chunks = vec![String::new(); chunks.len()];
+    for stream in ["stdout", "stderr"] {
+        let indices = chunks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, chunk)| (chunk.stream == stream).then_some(index))
+            .collect::<Vec<_>>();
+        let fragments = indices
+            .iter()
+            .map(|&index| chunk_text[index].as_ref())
+            .collect::<Vec<_>>();
+        let (redacted, _) = prog_core::redact_sensitive_text_fragments(&fragments);
+        for (index, text) in indices.into_iter().zip(redacted) {
+            redacted_chunks[index] = text.lines().collect::<Vec<_>>().join("\n");
+        }
+    }
+    chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| {
+            let text = &redacted_chunks[index];
+            json!({
+                "index": index,
+                "stream": chunk.stream,
+                "text": text,
+                "byte_count": chunk.bytes.len()
+            })
+        })
+        .collect::<Vec<_>>()
+}
+
 fn run_text_from_capture(capture: &RunCapture) -> RunText {
     let mut text = redact_run_output_bytes(&capture.bytes);
     text.byte_count = capture.total_bytes;
@@ -617,15 +598,8 @@ fn run_text_from_capture(capture: &RunCapture) -> RunText {
 fn redact_run_output_bytes(bytes: &[u8]) -> RunText {
     let utf8_valid = std::str::from_utf8(bytes).is_ok();
     let text = String::from_utf8_lossy(bytes);
-    let mut redactions = 0usize;
-    let lines = text
-        .lines()
-        .map(|line| {
-            let (redacted, count) = prog_core::redact_sensitive_text(line);
-            redactions = redactions.saturating_add(count);
-            redacted
-        })
-        .collect::<Vec<_>>();
+    let (text, redactions) = prog_core::redact_sensitive_text(&text);
+    let lines = text.lines().map(str::to_string).collect::<Vec<_>>();
     let line_count = lines.len();
     let head = lines.iter().take(10).cloned().collect::<Vec<_>>();
     let tail_start = lines.len().saturating_sub(10).max(head.len());
@@ -1509,4 +1483,58 @@ fn redact_inline_secret(arg: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    #[test]
+    fn interleaved_chunks_redact_with_complete_stream_context() {
+        let chunks = vec![
+            RunChunk {
+                stream: "stdout",
+                bytes: br#"{"pass"#.to_vec(),
+            },
+            RunChunk {
+                stream: "stderr",
+                bytes: b"progress one".to_vec(),
+            },
+            RunChunk {
+                stream: "stdout",
+                bytes: br#"word":"FIRST_HALF"#.to_vec(),
+            },
+            RunChunk {
+                stream: "stderr",
+                bytes: b"progress two".to_vec(),
+            },
+            RunChunk {
+                stream: "stdout",
+                bytes: br#" SECOND_HALF","message":"benign"}"#.to_vec(),
+            },
+        ];
+        let output = redact_run_chunks(&chunks);
+        assert_eq!(output.len(), chunks.len());
+        for (index, value) in output.iter().enumerate() {
+            assert_eq!(value["index"], index);
+            assert_eq!(value["stream"], chunks[index].stream);
+            assert_eq!(value["byte_count"], chunks[index].bytes.len());
+        }
+        assert_eq!(output[1]["text"], "progress one");
+        assert_eq!(output[3]["text"], "progress two");
+        let serialized = serde_json::to_string(&output).unwrap();
+        assert!(!serialized.contains("FIRST_HALF"));
+        assert!(!serialized.contains("SECOND_HALF"));
+        assert!(serialized.contains("benign"));
+        let joined = output
+            .iter()
+            .filter(|value| value["stream"] == "stdout")
+            .map(|value| value["text"].as_str().unwrap())
+            .collect::<String>();
+        let parsed: Value = serde_json::from_str(&joined).unwrap();
+        assert_eq!(
+            parsed["password"],
+            "[REDACTED:observed_text_secret][REDACTED:observed_text_secret]"
+        );
+    }
 }

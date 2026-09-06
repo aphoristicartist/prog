@@ -65,7 +65,7 @@ The local observation store carries a **schema identity** — not a compatibilit
 version — at:
 
 - `crates/prog-core/src/store.rs:39`
-- `const STORE_SCHEMA: &str = "prog.store.readback_verification_contract";`
+- `const STORE_SCHEMA: &str = "prog.store.adapter_text_redaction";`
 
 On open, if the persisted `store_schema` key does not equal `STORE_SCHEMA`,
 `prog` **resets the local store** rather than migrating it. This is a deliberate
@@ -89,8 +89,8 @@ Shipped deterministic evaluations live under `fixtures/evals/` and are run as
 ordinary Cargo integration tests (`cargo test --workspace --all-features`).
 They cover:
 
-- **Task-success evals** comparing raw, simple truncation, call-only, and
-  targeted-expansion strategies (see
+- **Known-path recoverability evals** comparing raw, simple truncation,
+  call-only, and explicitly supplied lookup selectors (see
   [`task-success-eval.md`](task-success-eval.md)).
 - **Competitive baselines** against raw context, truncation, native field
   selection, RTK-style grep filtering, Caveman-style terse output, and repeated

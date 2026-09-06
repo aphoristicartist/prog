@@ -1,3 +1,6 @@
+#[path = "support/eval_reports.rs"]
+mod eval_reports;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -95,13 +98,18 @@ fn real_world_demo_suite_covers_painful_tool_outputs() {
     }
 
     if std::env::var_os("PROG_REAL_WORLD_DEMO_UPDATE").is_some() {
-        let docs = report(&metrics, &demos);
-        fs::write(root.join("docs/real-world-demos.md"), docs).unwrap();
         fs::write(
             root.join("fixtures/evals/real-world-demo-metrics.json"),
             serde_json::to_vec_pretty(&metrics).unwrap(),
         )
         .unwrap();
+        let path = root.join("docs/real-world-demos.md");
+        let docs = fs::read_to_string(&path).unwrap();
+        let seeds = docs
+            .find("## Copy-paste seeds\n")
+            .expect("demo seeds heading");
+        fs::write(&path, format!("{}{}", &docs[..seeds], report_seeds(&demos))).unwrap();
+        eval_reports::write_documents(&root);
     } else {
         let checked_in = root.join("fixtures/evals/real-world-demo-metrics.json");
         assert!(
@@ -267,27 +275,8 @@ fn demos() -> Vec<Demo> {
     ]
 }
 
-fn report(metrics: &[DemoMetric], demos: &[Demo]) -> String {
-    let mut output = String::from(
-        "# Real-world demo metrics\n\n\
-         Deterministic local demos for recognizable noisy agent workflows. Token counts use the project heuristic `bytes / 4`, rounded up. `expansion_task_bytes` is the initial `prog call` envelope plus the target `prog expand` envelope.\n\n\
-         See `demos/real-world/README.md` for copy-paste commands and optional credentialed captures that can emit a local report with `demos/real-world/report_payloads.py`.\n\n\
-         Regenerate with `PROG_REAL_WORLD_DEMO_UPDATE=1 cargo test -p prog-cli --test real_world_demos -- --nocapture`.\n\n\
-         | Demo | Raw bytes | call envelope bytes | expansion task bytes | cache hit | Token ratio |\n\
-         |---|---:|---:|---:|---|---:|\n",
-    );
-    for metric in metrics {
-        output.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {:.2}x |\n",
-            metric.id,
-            metric.raw_payload_bytes,
-            metric.call_envelope_bytes,
-            metric.expansion_task_bytes,
-            metric.cache_hit_status,
-            metric.token_ratio
-        ));
-    }
-    output.push_str("\n## Copy-paste seeds\n\n");
+fn report_seeds(demos: &[Demo]) -> String {
+    let mut output = String::from("## Copy-paste seeds\n\n");
     for demo in demos {
         output.push_str("```bash\n");
         output.push_str(demo.snippet);

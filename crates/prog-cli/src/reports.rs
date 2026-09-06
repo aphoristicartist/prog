@@ -116,6 +116,7 @@ pub(crate) struct CallSourceResult {
 }
 
 pub(crate) struct EnvelopeInput {
+    pub(crate) source_baseline: Option<prog_core::SourceByteBaseline>,
     pub(crate) source_id: String,
     pub(crate) operation: String,
     pub(crate) source_kind: Option<String>,

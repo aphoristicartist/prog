@@ -1,8 +1,7 @@
 //! CLI argument and subcommand definitions, split from `main.rs` as part of #183.
 //!
-//! Move-only: behavior, flag names, and the clap surface are byte-identical to
-//! the previous inline definitions. Items are `pub(crate)` so `main.rs` (the
-//! crate root) can consume them via `use crate::cli_args::*;`.
+//! Items are `pub(crate)` so the crate root can compose command dispatch.
+//! Command and argument doc comments are part of the agent-facing help surface.
 
 use std::path::PathBuf;
 
@@ -21,17 +20,18 @@ pub(crate) struct Cli {
     #[arg(long, env = "PROG_DIR", default_value = "./.prog", global = true)]
     pub(crate) dir: PathBuf,
 
-    #[arg(long, env = "PROG_LENS_DIR", default_value = "./lenses", global = true)]
-    pub(crate) lens_dir: PathBuf,
+    /// External lenses.
+    #[arg(long, env = "PROG_LENS_DIR", global = true)]
+    pub(crate) lens_dir: Option<PathBuf>,
 
     #[arg(long, global = true)]
     pub(crate) pretty: bool,
 
-    /// Hard maximum number of bytes written in one model-visible JSON response.
+    /// Hard byte limit for each JSON response.
     #[arg(long, global = true)]
     pub(crate) budget_bytes: Option<u64>,
 
-    /// Approximate token convenience input, converted by the named bytes/4 estimator.
+    /// Approximate token limit, converted with bytes/4.
     #[arg(long, global = true)]
     pub(crate) budget_tokens: Option<u64>,
 
@@ -346,15 +346,15 @@ pub(crate) struct CallArgs {
     #[arg(long)]
     pub(crate) refresh: bool,
 
-    /// Canonical family used to decide whether successive observations may be compared.
+    /// Comparison family for successive observations.
     #[arg(long)]
     pub(crate) comparison_family: Option<String>,
 
-    /// Stable logical scope included in this capture; repeat for collections.
+    /// Declare a captured scope; repeat for collections.
     #[arg(long = "selection-scope")]
     pub(crate) selection_scopes: Vec<String>,
 
-    /// Assert that all supplied selection scopes are exhaustively represented.
+    /// Declare every supplied scope exhaustive.
     #[arg(long, requires = "selection_scopes")]
     pub(crate) selection_exhaustive: bool,
 
@@ -372,6 +372,14 @@ pub(crate) struct ObserveArgs {
     #[arg(long, conflicts_with = "file")]
     pub(crate) stdin: bool,
 
+    /// Artifact byte cap (+1 overflow probe) [default: 16777216].
+    #[arg(long, value_name = "BYTES")]
+    pub(crate) max_input_bytes: Option<u64>,
+
+    /// Acquisition deadline, including stdin EOF [default: 30000 ms].
+    #[arg(long, value_name = "MS", value_parser = clap::value_parser!(u64).range(1..))]
+    pub(crate) timeout_ms: Option<u64>,
+
     #[arg(long)]
     pub(crate) mime: Option<String>,
 
@@ -381,15 +389,15 @@ pub(crate) struct ObserveArgs {
     #[arg(long)]
     pub(crate) lens: Option<String>,
 
-    /// Canonical family used to decide whether successive observations may be compared.
+    /// Comparison family for successive observations.
     #[arg(long)]
     pub(crate) comparison_family: Option<String>,
 
-    /// Stable logical scope included in this capture; repeat for collections.
+    /// Declare a captured scope; repeat for collections.
     #[arg(long = "selection-scope")]
     pub(crate) selection_scopes: Vec<String>,
 
-    /// Assert that all supplied selection scopes are exhaustively represented.
+    /// Declare every supplied scope exhaustive.
     #[arg(long, requires = "selection_scopes")]
     pub(crate) selection_exhaustive: bool,
 
@@ -425,15 +433,15 @@ pub(crate) struct RunArgs {
     #[arg(long)]
     pub(crate) lens: Option<String>,
 
-    /// Canonical family used to decide whether successive observations may be compared.
+    /// Comparison family for successive observations.
     #[arg(long)]
     pub(crate) comparison_family: Option<String>,
 
-    /// Stable logical scope included in this capture; repeat for collections.
+    /// Declare a captured scope; repeat for collections.
     #[arg(long = "selection-scope")]
     pub(crate) selection_scopes: Vec<String>,
 
-    /// Assert that all supplied selection scopes are exhaustively represented.
+    /// Declare every supplied scope exhaustive.
     #[arg(long, requires = "selection_scopes")]
     pub(crate) selection_exhaustive: bool,
 
@@ -510,21 +518,26 @@ pub(crate) struct RecipeArgs {
     #[arg(long)]
     pub(crate) file: Option<PathBuf>,
 
-    #[arg(long, default_value_t = 30_000)]
+    /// Deadline per command/acquisition stage, in milliseconds.
+    #[arg(long, value_name = "MS", default_value_t = 30_000, value_parser = clap::value_parser!(u64).range(1..))]
     pub(crate) timeout_ms: u64,
+
+    /// Artifact byte cap for file/report recipes.
+    #[arg(long, value_name = "BYTES", default_value_t = crate::commands::observe_input::DEFAULT_MAX_INPUT_BYTES)]
+    pub(crate) max_input_bytes: u64,
 
     #[arg(long, default_value_t = 86_400)]
     pub(crate) ttl_seconds: u64,
 
-    /// Canonical family used to decide whether successive observations may be compared.
+    /// Comparison family for successive observations.
     #[arg(long)]
     pub(crate) comparison_family: Option<String>,
 
-    /// Stable logical scope included in this capture; repeat for collections.
+    /// Declare a captured scope; repeat for collections.
     #[arg(long = "selection-scope")]
     pub(crate) selection_scopes: Vec<String>,
 
-    /// Assert that all supplied selection scopes are exhaustively represented.
+    /// Declare every supplied scope exhaustive.
     #[arg(long, requires = "selection_scopes")]
     pub(crate) selection_exhaustive: bool,
 

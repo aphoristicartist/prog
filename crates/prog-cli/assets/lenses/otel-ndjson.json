@@ -1,0 +1,33 @@
+{
+  "schema": "prog.lens_manifest",
+  "id": "otel-ndjson",
+  "match": {"source_id": "observe", "artifact_kind": "ndjson"},
+  "view": {
+    "root": "/records",
+    "limit": 6,
+    "depth": 3,
+    "fields": {
+      "time": "/time",
+      "timestamp": "/timestamp",
+      "severity": "/severityText",
+      "body": "/body",
+      "trace_id": "/traceId",
+      "span_id": "/spanId",
+      "scope": "/scopeName"
+    }
+  },
+  "omit": [
+    {"path": "/records/*/attributes", "reason": "deep_object", "detail": "log-record attributes remain cursor-expandable", "expandable": true},
+    {"path": "/records/*/scope", "reason": "deep_object", "detail": "instrumentation scope details remain cursor-expandable", "expandable": true}
+  ],
+  "findings": [
+    {"kind": "otel_error", "path": "/records/*/severityText", "confidence": 0.96, "reason": "OpenTelemetry log record reports ERROR or FATAL severity", "title": "OpenTelemetry error record", "severity": "error", "contains_any": ["error", "fatal"]},
+    {"kind": "otel_warning", "path": "/records/*/severityText", "confidence": 0.72, "reason": "OpenTelemetry log record reports WARN severity", "title": "OpenTelemetry warning record", "severity": "warning", "contains_any": ["warn"]}
+  ],
+  "next_actions": [
+    {"kind": "expand", "path": "/records/{index}/attributes", "reason": "inspect attributes for the selected log record"},
+    {"kind": "evidence", "path": "/records/{index}", "reason": "cite the selected log record"}
+  ],
+  "invariants": ["severity_comes_from_severitytext", "attributes_remain_expandable", "record_preview_is_bounded"],
+  "fixtures": {"positive": ["fixtures/otel-ndjson-normalized.json"], "negative": ["fixtures/counterexamples/text-log-normalized.json"]}
+}

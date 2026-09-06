@@ -78,17 +78,33 @@ The stable agent-facing workflow has three conceptual operations:
 These compose the existing CLI contracts. They are not a second engine. The
 advanced commands remain available to agents for debugging and recovery.
 
+The [experimental registered host facade](registered-host-facade.md) exposes
+these operations as opt-in DeepSeek Harness tools. Unlike an immutable-result
+hook, a directly requested capture has no earlier successful host result to
+restore: acquisition failures return errors without retrying the source.
+Unknown/TTY/streaming inputs are rejected before launch. Canonical source
+failures remain recoverable observations, with their original failure facts.
+The owner must explicitly enable the layer; the experiment is not yet the
+canonical agent surface.
+
 ## Integration context budget
 
-CI gates the fixed pre-work integration surface: the top-level help, one help
+CI gates the available integration surface: the top-level help, one help
 response for every immediate command, and the portable Agent Skill. The
 current reviewed ceiling is 34,000 bytes. Nested recovery-command help and
 model-visible tool responses are not hidden from accounting; they occur only
 when invoked and are measured by the actual-agent evaluation instead.
 
-A proposed facade must report its fixed schema/instruction cost against this
-same denominator. Replacing three existing commands with three differently
-named wrappers is not, by itself, an integration win.
+Host trials must record the instructions, schemas, help responses, and tool
+results actually delivered in each arm. Available help text is counted in the
+trial only when delivered. A proposed facade must report its fixed
+schema/instruction cost and total task context against that measured baseline.
+
+The [installed coding-loop smoke](installed-coding-loop.md) validates a real
+failure-to-verification sequence through the shipped skill/CLI workflow and
+records command and exported-file bytes. It provides a reproducible workflow
+for the registered-host comparison; actual-agent outcomes require separate
+measurement.
 
 ## Installation contract
 
@@ -123,3 +139,12 @@ missing binary, timeout, non-text content, nested calls, and preservation of an
 already-successful original result. Exact-argv wrappers additionally cover cwd,
 environment, quoting, exit status, signal, timeout, cancellation, streaming,
 and pre-execution fallback.
+
+The DeepSeek native adapter additionally exercises inherited stdout/stderr
+after a capture parent exits, late valid output, incomplete stdin delivery,
+overflow on either output stream,
+pre-aborted signals, short-lived descendants, and descendants outside its
+capture process group. Timeout and cancellation are terminal capture failures;
+closing local pipes does not wait for an escaped descendant. Separate guarded
+host processes verify natural exit after success or fallback, and Linux/macOS
+CI runs these fixtures with the real-binary capture/evidence smoke.

@@ -24,14 +24,14 @@ The fixture inventory distinguishes generated, recorded public-live, and optiona
 
 ## multi_iteration_resolution (`multi_iteration_resolution`)
 
-Fixture source: `generated`. Wall time: 1393 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 483 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 119 | 30 | 3 |
 | simple_truncation | true | 119 | 30 | 3 |
-| prog_envelope | true | 25210 | 6303 | 3 |
-| prog_delta | true | 13676 | 3419 | 5 |
+| prog_envelope | true | 25231 | 6308 | 3 |
+| prog_delta | true | 13682 | 3421 | 5 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
 
@@ -56,14 +56,14 @@ Checks:
 
 ## pytest_multi_iteration_failure_loop (`pytest_loop`)
 
-Fixture source: `generated`. Wall time: 344 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 349 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 1416 | 354 | 2 |
 | simple_truncation | true | 1416 | 354 | 2 |
-| prog_envelope | true | 20200 | 5050 | 3 |
-| prog_delta | true | 22776 | 5694 | 3 |
+| prog_envelope | true | 20216 | 5054 | 3 |
+| prog_delta | true | 22784 | 5696 | 3 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
 
@@ -87,14 +87,14 @@ Checks:
 
 ## cargo_multi_iteration_failure_loop (`cargo_loop`)
 
-Fixture source: `generated`. Wall time: 354 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 353 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 901 | 226 | 2 |
 | simple_truncation | true | 901 | 226 | 2 |
-| prog_envelope | true | 21171 | 5293 | 3 |
-| prog_delta | true | 23588 | 5897 | 3 |
+| prog_envelope | true | 21187 | 5297 | 3 |
+| prog_delta | true | 23596 | 5899 | 3 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
 
@@ -118,7 +118,7 @@ Checks:
 
 ## narrowed_rerun_no_false_resolved (`narrowed_rerun`)
 
-Fixture source: `generated`. Wall time: 293 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 300 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -139,12 +139,12 @@ Checks:
 
 ## realistic_payload_delta (`correctness_and_cost`)
 
-Fixture source: `generated`. Wall time: 1817 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 1753 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 238656 | 59664 | 2 |
-| prog_delta | true | 22425 | 5607 | 3 |
+| prog_delta | true | 22443 | 5611 | 3 |
 
 Evidence available: true; first-view hit: false; comparison coverage: 1/1; fingerprint coverage: 3/3; budget compliant: true; redaction compliant: true; false decisions: 0.
 
@@ -162,12 +162,12 @@ Checks:
 
 ## no_benefit_tiny_payload_control (`no_benefit_control`)
 
-Fixture source: `generated`. Wall time: 139 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 136 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 3 | 1 | 1 |
-| prog_envelope | true | 4801 | 1201 | 1 |
+| prog_envelope | true | 4807 | 1202 | 1 |
 
 Evidence available: true; first-view hit: true; comparison coverage: 0/0; fingerprint coverage: 0/0; budget compliant: true; redaction compliant: true; false decisions: 0.
 
@@ -178,7 +178,7 @@ Checks:
 
 ## stale_evidence_readiness_after_workspace_touch (`stale_workspace_state`)
 
-Fixture source: `generated`. Wall time: 571 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 1381 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
@@ -194,14 +194,14 @@ Checks:
 
 ## derivation_window_moved_finding (`derivation_window_moved_finding`)
 
-Fixture source: `generated`. Wall time: 299 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 447 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 678 | 170 | 2 |
 | simple_truncation | true | 678 | 170 | 2 |
-| prog_envelope | true | 15909 | 3978 | 2 |
-| prog_delta | true | 9138 | 2285 | 3 |
+| prog_envelope | true | 15925 | 3982 | 2 |
+| prog_delta | true | 9146 | 2287 | 3 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
 
@@ -220,14 +220,14 @@ Checks:
 
 ## noisy_log_one_changing_causal_event (`noisy_repeated_log`)
 
-Fixture source: `generated`. Wall time: 347 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 454 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 1526 | 382 | 2 |
 | simple_truncation | true | 1526 | 382 | 2 |
-| prog_envelope | true | 22429 | 5608 | 3 |
-| prog_delta | true | 11138 | 2785 | 3 |
+| prog_envelope | true | 22444 | 5611 | 3 |
+| prog_delta | true | 11145 | 2787 | 3 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
 
@@ -247,14 +247,14 @@ Checks:
 
 ## compiler_diagnostics_reordered_and_shifted (`compiler_static_analysis`)
 
-Fixture source: `generated`. Wall time: 235 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 344 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 844 | 211 | 2 |
 | simple_truncation | true | 844 | 211 | 2 |
-| prog_envelope | true | 15908 | 3977 | 2 |
-| prog_delta | true | 10275 | 2569 | 3 |
+| prog_envelope | true | 15914 | 3979 | 2 |
+| prog_delta | true | 10277 | 2570 | 3 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
 
@@ -273,14 +273,14 @@ Checks:
 
 ## http_error_and_repeated_public_entity (`http_api_snapshot`)
 
-Fixture source: `recorded_public_live`. Wall time: 409 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `recorded_public_live`. Wall time: 526 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 390 | 98 | 3 |
 | simple_truncation | true | 390 | 98 | 3 |
-| prog_envelope | true | 15433 | 3859 | 4 |
-| prog_delta | true | 8998 | 2250 | 3 |
+| prog_envelope | true | 15428 | 3857 | 4 |
+| prog_delta | true | 9004 | 2251 | 3 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
 
@@ -296,14 +296,14 @@ Checks:
 
 ## paginated_api_unchanged_and_changed_pages (`paginated_api`)
 
-Fixture source: `generated`. Wall time: 453 ms (informational; excluded from deterministic correctness baselines).
+Fixture source: `generated`. Wall time: 552 ms (informational; excluded from deterministic correctness baselines).
 
 | Strategy | Available | Delivered bytes | Est. tokens | Calls |
 |---|---:|---:|---:|---:|
 | raw | true | 146 | 37 | 4 |
 | simple_truncation | true | 146 | 37 | 4 |
-| prog_envelope | true | 13749 | 3438 | 4 |
-| prog_delta | true | 10434 | 2609 | 3 |
+| prog_envelope | true | 13758 | 3440 | 4 |
+| prog_delta | true | 10443 | 2611 | 3 |
 | evidence_packet | false | 0 | 0 | 0 |
 | ranked_retrieval | false | 0 | 0 | 0 |
 

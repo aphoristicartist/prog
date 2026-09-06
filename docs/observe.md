@@ -11,6 +11,53 @@ saved to a file, or pasted command output.
 See [Path discovery](paths.md) for filtering omitted regions and using ranked
 `next_actions`.
 
+## Acquisition limits
+
+`observe` reads at most **16 MiB** of artifact input by default and waits at
+most **30 seconds** for acquisition, including stdin EOF. These limits are
+independent of the response disclosure budget and the store retention policy.
+Override them explicitly for a larger or slower artifact:
+
+```bash
+prog observe --file ./large.json --max-input-bytes 33554432 --timeout-ms 60000
+producer | prog observe --stdin --max-input-bytes 1048576 --timeout-ms 5000
+```
+
+Acquisition uses small bounded reads, with at most one extra byte to detect
+an overflow. `--max-input-bytes 0` accepts only an empty input; it does not
+remove the cap. `--timeout-ms` must be positive. An input exactly at the byte
+cap is accepted only when EOF is observed. A producer holding stdin open
+still reaches the acquisition deadline, even if it stops writing at the cap.
+
+Stdin uses nonblocking reads. SIGINT and SIGTERM cancel acquisition and return
+a nonzero exit status with JSON error kind `capture_stopped`. Overflow,
+timeout, and cancellation reject the whole artifact before normalization or
+persistence; no cursor or observation is created. The error's optional
+`capture` field records the stop reason, bytes actually read (including any
+overflow probe), zero stored bytes, and `can_prove_absence: false`. The total
+input size remains unknown without EOF. No input content is included in this
+error. Retry is explicit; `observe` does not rerun the producer.
+
+`--file` accepts regular files. Use stdin for pipes and devices; a FIFO passed
+as `--file` is rejected without waiting for a writer. Regular-file deadline
+and cancellation checks run between bounded reads; filesystem system calls
+still follow the operating system's I/O semantics. Normalization starts only
+after successful acquisition and is outside the acquisition deadline. The
+input cap bounds acquired bytes, while normalization can use more memory.
+
+For a complete artifact, `observation.capture.total_bytes` and `captured_bytes`
+count original input bytes. `stored_bytes` counts the normalized, redacted
+payload; `summary.envelope_bytes` counts delivered stdout. The artifact's
+capture limit is also reported under the top-level `capture_budget`.
+Capture-limit facts remain visible under a small disclosure budget. If required
+metadata cannot fit, the command returns a bounded `budget_too_small` error
+with the required response size. Raising the disclosure budget does not raise
+the acquisition cap.
+
+File and generated-report recipes use the same cap. Their `--max-input-bytes`
+option overrides it, and `--timeout-ms` applies separately to each command or
+artifact acquisition stage. Expanded recipe argv records these limits.
+
 ## Parser/Indexer Pipeline
 
 `prog observe` selects one parser from a deterministic parser/indexer registry.
@@ -45,7 +92,7 @@ content is text-like. Binary-looking input is rejected with a structured error.
 
 ```bash
 prog observe --file ./large.json --mime application/json --name large-json
-prog --lens-dir ./lenses observe --file ./large.json --mime application/json --lens json.items.triage
+prog observe --file ./large.json --mime application/json --lens json.items.triage
 ```
 
 Observation cache entries default to a 24-hour TTL. Override it when a fixture
@@ -68,7 +115,7 @@ prog expand pc1_... --path /items/0/body
 
 ```bash
 cat events.ndjson | prog observe --stdin --mime application/x-ndjson --name events
-cat events.ndjson | prog --lens-dir ./lenses observe --stdin --mime application/x-ndjson --name events --lens observe.ndjson.records
+cat events.ndjson | prog observe --stdin --mime application/x-ndjson --name events --lens observe.ndjson.records
 ```
 
 NDJSON observations are wrapped as:
@@ -107,7 +154,7 @@ lossy and describes their range semantics.
 
 ```bash
 cargo test 2>&1 | prog observe --stdin --mime text/plain --name cargo-test
-cargo test 2>&1 | prog --lens-dir ./lenses observe --stdin --mime text/plain --name cargo-test --lens observe.text.logs
+cargo test 2>&1 | prog observe --stdin --mime text/plain --name cargo-test --lens observe.text.logs
 ```
 
 Text observations expose a bounded head/tail preview plus cursor-backed line

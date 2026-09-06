@@ -72,6 +72,38 @@ The server is started during discovery so `prog` can record the operations and
 their advertised effect annotations. Operations without proven read-only
 annotations remain confirmation-gated.
 
+Each MCP operation owns a stdio connection. The seed's `timeout_ms` applies
+separately to initialization, each request, graceful shutdown, and the final
+stderr drain; it is not one deadline for the entire operation. A shutdown that
+times out stops diagnostic collection immediately. Failed or interrupted
+connections abort their stderr reader and request termination of the owned
+process group, including descendants that retained its pipes. Descendants that
+created a separate process group can survive; local diagnostic collection still
+ends within its bound. Successful shutdown with stderr EOF releases ownership
+without killing background workers that have released the transport pipes.
+
+A received response remains evidence even if stderr collection is interrupted.
+`provenance.adapter.diagnostics.stderr` retains a redacted prefix of at most
+`max_stderr_bytes` and reports:
+
+- `complete` and `stop_reason`: only `eof` proves collection reached the end.
+  Other reasons are `timeout`, `shutdown_timeout`, `shutdown_failed`,
+  `read_error`, `reader_failed`, and `unavailable`.
+- `byte_count`: the exact total after EOF, otherwise `null`.
+  `observed_byte_count` counts bytes actually read and is only a lower bound
+  without EOF; `captured_byte_count` counts retained prefix bytes before
+  redaction.
+- `line_count`: exact only after EOF with the whole stream retained, otherwise
+  `null`. `captured_line_count` counts lines in the retained prefix, including a
+  possible partial final line. `head` and `tail` show at most ten lines each
+  from that prefix; `tail` is not necessarily the end of the source stream.
+- `truncated`: true when collection is incomplete, bytes were discarded at the
+  prefix limit, or lines were omitted between the displayed head and tail.
+
+Incomplete collection also adds a warning. Known-empty stderr has
+`complete: true`, `stop_reason: "eof"`, and `byte_count: 0`; interrupted or
+unavailable collection never claims an empty total.
+
 ## Import Existing Descriptors
 
 `prog discover --import` seeds profiles from descriptors that tools already

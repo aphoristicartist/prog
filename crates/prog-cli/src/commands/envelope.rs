@@ -736,7 +736,7 @@ pub(crate) fn make_envelope(
             envelope_bytes: None,
             extra: Extra::new(),
         },
-        disclosure_verdict: prog_core::DisclosureVerdict::for_sizes(input.payload_bytes, 0),
+        disclosure_verdict: prog_core::DisclosureVerdict::for_baseline(input.source_baseline, 0),
         data_preview: preview,
         schema_hints: input.schema_hints.clone(),
         omitted,
@@ -944,17 +944,21 @@ pub(crate) fn observation_metadata(
 }
 
 pub(crate) fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Result<usize> {
-    // Both fields describe the delivered JSON, including their own encoded
-    // digits. Iterate to the small fixed point rather than estimating from
-    // the much larger cached payload.
+    // Preliminary body accounting for projection/compaction, including these
+    // fields themselves. Final rendering overwrites these counts after adding
+    // transport metadata, requested formatting, and the stdout newline.
     let mut conservative_ratio = f64::INFINITY;
     for _ in 0..16 {
         let bytes = serde_json::to_vec(envelope)?.len();
         let envelope_bytes = bytes.try_into().unwrap_or(u64::MAX);
         let estimated_envelope_tokens = envelope_bytes.saturating_add(3) / 4;
-        let disclosure_verdict =
-            prog_core::DisclosureVerdict::for_sizes(envelope.summary.payload_bytes, envelope_bytes);
-        conservative_ratio = conservative_ratio.min(disclosure_verdict.ratio);
+        let disclosure_verdict = prog_core::DisclosureVerdict::for_baseline(
+            envelope.disclosure_verdict.baseline,
+            envelope_bytes,
+        );
+        if let Some(ratio) = disclosure_verdict.ratio {
+            conservative_ratio = conservative_ratio.min(ratio);
+        }
         if envelope.summary.envelope_bytes == Some(envelope_bytes)
             && envelope.summary.estimated_envelope_tokens == estimated_envelope_tokens
             && envelope.disclosure_verdict == disclosure_verdict
@@ -974,9 +978,13 @@ pub(crate) fn finalize_envelope_bytes(envelope: &mut DisclosureEnvelope) -> Resu
         let bytes = serde_json::to_vec(envelope)?.len();
         let envelope_bytes = bytes.try_into().unwrap_or(u64::MAX);
         let estimated_envelope_tokens = envelope_bytes.saturating_add(3) / 4;
-        let mut disclosure_verdict =
-            prog_core::DisclosureVerdict::for_sizes(envelope.summary.payload_bytes, envelope_bytes);
-        disclosure_verdict.ratio = conservative_ratio;
+        let mut disclosure_verdict = prog_core::DisclosureVerdict::for_baseline(
+            envelope.disclosure_verdict.baseline,
+            envelope_bytes,
+        );
+        if disclosure_verdict.ratio.is_some() {
+            disclosure_verdict.ratio = Some(conservative_ratio);
+        }
         if envelope.summary.envelope_bytes == Some(envelope_bytes)
             && envelope.summary.estimated_envelope_tokens == estimated_envelope_tokens
             && envelope.disclosure_verdict == disclosure_verdict

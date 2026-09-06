@@ -2,18 +2,80 @@
 
 ## Unreleased
 
+- Added an owner-enabled DeepSeek Harness experiment with three registered
+  tools composing canonical observe/evidence/status through the real host
+  policy and subprocess boundary. An installed npm-artifact coding loop checks
+  same-observation evidence and verification parity and records delivered
+  context without making an actual-agent performance claim (#120).
+- Release registered CLI/MCP source process groups on SIGINT/SIGTERM and
+  return a non-retryable cancellation error with uncertain upstream effects.
+
+- Redact quoted JSON secrets in captured text, including escaped values and
+  interleaved stream fragments, before storage and evidence disclosure (#249).
+- Redact multiline CLI and MCP text before line projection; retain absence-proof
+  limits for already-redacted source output and reset earlier local stores.
+- Protect verification obligation metadata at the store boundary: redact
+  descriptions and reject sensitive exact operations or identity constraints.
+  Return the safe declaration to callers and reset older pre-release stores
+  that lack this persistence boundary (#250).
+
+- Applied the native host's shared child-environment filter to `prog` capture
+  helpers, preventing implicit inheritance of provider credentials and managed
+  `DSH_*` identity while retaining ordinary child settings (#274).
+
+- Made native harness capture deadlines, cancellation, and output overflow
+  terminal even after a helper exits with descendant-held pipes. Capture stops
+  terminate its POSIX process group, close local pipes, and preserve the
+  original host result; guarded Linux/macOS fixtures cover cleanup (#269).
+
+- Preserve bounded MCP stderr prefixes when collection is interrupted, report
+  unknown totals instead of fabricated empty diagnostics, and abort owned
+  readers and clean up stalled connection process groups on every exit path.
+  Received responses and explicit MCP task actions remain separate evidence
+  (#271).
+- Added an installed skill/CLI coding-loop smoke using a real Rust failure,
+  exact cached evidence, an external fixture fix, and fresh verification.
+  Narrower, stale, and truncated evidence remain blocking; the report records
+  actual command and exported-file bytes without making agent or facade
+  performance claims (#120).
 - Fixed the `prog-cli` crate tarball so its embedded agent skill is packaged
   inside the crate and verified by the release dry-run build.
+- Stop treating historical verified read-back receipts as passing readiness
+  after supporting evidence is evicted. Readiness checks receipt/intent links
+  and payload availability offline while retaining immutable receipt history
+  (#251).
 - Routed public-benchmark A/B records through the existing actual-agent claim
   gate, with generated Wilson intervals, exact paired McNemar results, explicit
   false-completion/dropout accounting, and the SWE-bench contamination caveat.
   A checked-in synthetic dry run proves incomplete usage stays claim-ineligible
   before any credentialed benchmark spend (#238).
+- Removed grader answer/path access from deterministic retrieval strategies,
+  separated known-path recoverability from unknown-target discovery, and added
+  broad severity and capture-once file baselines. Response ledgers include all
+  exploration and lookup costs; regenerated reports and the README retain
+  insufficient evidence and unavailable strategies without requiring a `prog`
+  win (#256).
+- Generated numerical README claims and evaluation reports from shared saved
+  JSON artifacts, including new token-economics rows. A read-only consistency
+  check detects drift without requiring fresh measurements to match saved
+  costs or changing reviewed ceilings (#257).
+- Measured evidence-acquisition workflows through actual CLI capture, bounded
+  navigation, and evidence/expansion requests. Complete stdout and command
+  ledgers now drive published costs; private grading, failure controls, and
+  separate reviewed ceilings preserve conservative evidence claims (#258).
 - Added JUnit report recipes for Vitest, Playwright, Bun, and Deno plus SARIF
   recipes for Ruff, Biome, and Semgrep. Each recipe exposes the exact argv,
   records the child status, observes one private temporary report through the
   existing `junit`/`sarif` lens, and removes the temporary artifact afterward
   (#241).
+- Bounded `observe` file/stdin acquisition with finite byte and duration
+  limits, signal cancellation, and rejection before normalization/persistence.
+  Complete captures distinguish original input bytes from retained bytes;
+  rejected captures expose conservative typed error facts (#248).
+- Keep capture deadlines active until the immediate child and both output
+  readers finish. Timeout and signal cleanup retain process-group identity
+  after parent exit, bound detached pipe holders, and preserve partial `run`
+  evidence; registered CLI sources keep their structured timeout error (#253).
 - Preregistered the Terminal-Bench 2.0 paired public pilot before any live
   model spend: the benchmark, harness, model, resource-bounded seeded subset,
   raw/prog arm order, stopping rule, analysis, and falsification conditions are
@@ -27,6 +89,9 @@
   Trivy reports, MCP JSON-RPC errors, LLM provider errors, and OpenTelemetry
   records, and enforced that the lens README documents exactly the shipped
   manifests (#240).
+- Bundled the first-party lens pack in the executable so recipes and cursor
+  follow-ups work outside the source checkout. Project lenses override bundled
+  ids by default; explicit lens directories retain exclusive selection (#254).
 - Added the conservative live-trial accounting and claim-gate contract for the
   actual-agent evaluation: provider/model metadata, all fixed and provider
   token fields, calls/reruns/latency, dropouts, per-trial graders, and ordered
@@ -57,6 +122,10 @@
   different key; credential values exist only in the transient hash input.
   Mutating operations are never served from cache, and redacted provenance or
   prefetched pages mark the observation redacted and non-provable.
+- Scoped CLI and MCP stdio cache reuse to a single resolved working directory
+  and inherited environment snapshot, applied unchanged during execution.
+  Changed cwd, PATH, or environment inputs cannot reuse another context's
+  result; transient environment values stay out of metadata (#252).
 - Separated provider and selection completeness (#230): `provider.complete`
   now means bounded normalization of the captured diagnostics, while
   `selection.exhaustive` remains the only authority for absence. A failing

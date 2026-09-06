@@ -69,6 +69,13 @@ Each recipe:
    `sarif`;
 5. ranks the report findings and removes the temporary directory.
 
+Artifact acquisition uses `observe`'s finite 16 MiB default cap. Override it
+with `recipe --max-input-bytes`; `--timeout-ms` applies separately to each
+command and report-acquisition stage. The expanded `observe` argv includes
+both limits. An oversized or interrupted report is rejected with a structured
+error and no report observation, and the private temporary report is removed.
+The already captured command evidence remains available in the store.
+
 If the command produces no report, the recipe returns its bounded process
 evidence with an explicit warning. A non-zero command that did produce a valid
 report returns the report findings and retains the non-zero status under

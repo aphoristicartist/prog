@@ -76,6 +76,12 @@ pub enum CoreError {
     #[error("invalid arguments for '{operation}': {reason}")]
     BadArgs { operation: String, reason: String },
 
+    #[error("{operation} acquisition stopped before EOF; no artifact was persisted")]
+    CaptureStopped {
+        operation: String,
+        capture: Box<crate::CaptureCompleteness>,
+    },
+
     #[error(
         "disclosure budget of {requested_bytes} bytes is too small; at least {minimum_bytes} bytes are required"
     )]
@@ -102,6 +108,9 @@ pub enum CoreError {
 
     #[error("cli transport error for '{operation}': {message}")]
     CliTransport { operation: String, message: String },
+
+    #[error("source call cancelled by signal {signal}; upstream effects may be unknown")]
+    CallCancelled { signal: i32 },
 
     #[error("cli operation '{operation}' exited with code {exit_code}: {stderr_preview}")]
     CliExit {
@@ -170,11 +179,13 @@ impl CoreError {
             CoreError::BadPointer(_) => "bad_pointer",
             CoreError::BadArgs { .. } => "bad_args",
             CoreError::BudgetTooSmall { .. } => "budget_too_small",
+            CoreError::CaptureStopped { .. } => "capture_stopped",
             CoreError::HttpTimeout { .. } => "http_timeout",
             CoreError::HttpTransport { .. } => "http_transport",
             CoreError::HttpStatus { .. } => "http_status",
             CoreError::CliTimeout { .. } => "cli_timeout",
             CoreError::CliTransport { .. } => "cli_transport",
+            CoreError::CallCancelled { .. } => "call_cancelled",
             CoreError::CliExit { .. } => "cli_exit",
             CoreError::McpTimeout { .. } => "mcp_timeout",
             CoreError::McpTransport { .. } => "mcp_transport",
@@ -244,6 +255,9 @@ impl CoreError {
                 "Use an RFC 6901 JSON Pointer such as /items/0/body.".to_string()
             }
             CoreError::BadArgs { .. } => "Fix the named missing or unknown arguments.".to_string(),
+            CoreError::CaptureStopped { .. } => {
+                "Check the input and capture stop reason; provide a complete artifact within --max-input-bytes and --timeout-ms, or explicitly raise those limits.".to_string()
+            }
             CoreError::BudgetTooSmall { minimum_bytes, .. } => {
                 format!("Raise --budget-bytes to at least {minimum_bytes}.")
             }
@@ -262,6 +276,9 @@ impl CoreError {
             }
             CoreError::CliTransport { .. } => {
                 "Check that the executable and working directory exist.".to_string()
+            }
+            CoreError::CallCancelled { .. } => {
+                "Inspect stored evidence and verify upstream state before retrying; interrupted network or mutating work may have taken effect.".to_string()
             }
             CoreError::CliExit { .. } => {
                 "Inspect the bounded stderr preview and adjust the command arguments.".to_string()
@@ -301,6 +318,10 @@ impl CoreError {
                 message: self.to_string(),
                 hint: self.hint(),
                 retryable: matches!(self, CoreError::StorageBusy { .. }),
+                capture: match self {
+                    CoreError::CaptureStopped { capture, .. } => Some((**capture).clone()),
+                    _ => None,
+                },
                 attempts: match self {
                     CoreError::StorageBusy { attempts, .. } => Some(*attempts),
                     _ => None,
@@ -323,6 +344,9 @@ pub struct ErrorBody {
     pub retryable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempts: Option<usize>,
+    /// Acquisition facts for a rejected input; no artifact or cursor was persisted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capture: Option<crate::CaptureCompleteness>,
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;

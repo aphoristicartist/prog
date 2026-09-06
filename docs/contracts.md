@@ -9,6 +9,13 @@ identifies the source and limits that governed source capture when one was
 performed. `storage_budget` identifies the durable retention policy used by the
 local store. See `prog --help` for `--budget-bytes` and `--budget-tokens`.
 
+A rejected `observe` acquisition returns `ErrorBody.kind = "capture_stopped"`
+with an optional typed `capture: CaptureCompleteness` field. It contains no
+cursor: `stored_bytes` is zero, `total_bytes` is unknown without EOF, and
+`can_prove_absence` is false. `prog meta ErrorBody` publishes that field and its
+capture schema. Other error shapes omit it. See [observe.md](observe.md) for
+byte caps, acquisition deadlines, cancellation, and input-byte accounting.
+
 `DisclosureEnvelope.summary` keeps payload cost and immediate envelope cost
 separate. `payload_bytes` is the size of the complete redacted payload retained
 behind the cursor. `envelope_bytes` is the serialized disclosure envelope, and
@@ -111,6 +118,8 @@ The current public contracts include:
 - `DisclosureEnvelope`
 - `DisclosureVerdict`
 - `DisclosureVerdictResult`
+- `SourceByteBaseline`
+- `SourceByteBasis`
 - `EvidenceRef`
 - `InspectResponse`
 - `Finding`
@@ -239,3 +248,32 @@ The CLI integration tests execute the README quickstart against `fixtures/cli/se
 ```bash
 PROG_TOKEN_EVAL_UPDATE=1 cargo test -p prog-cli --test eval -- --nocapture
 ```
+
+### Disclosure cost accounting
+
+The pre-1.0 verdict replaces `payload_bytes` with a nullable `baseline`, makes
+`ratio` nullable, and adds the `unavailable` result. Consumers must handle these
+explicitly. Cached payloads remain readable; old entries have unavailable cost.
+
+`disclosure_verdict.baseline` records original bytes before normalization and
+redaction, with an explicit `basis`: `command_streams` counts stdout and stderr
+once each, `artifact` counts file/stdin bytes, and `http_body` counts decoded body
+bytes without headers. Auto-pagination adds the bodies of acquired pages. Cache
+hits retain the original acquisition baseline; an HTTP 304 compares its empty
+body while preserving the earlier baseline for subsequent cache hits.
+
+MCP SDK-normalized content, interrupted runs, incomplete HTTP bodies, failed page
+acquisition, generated-report recipes, metadata, cursor expansions, and legacy
+cache entries without a baseline return `unavailable`, with null baseline and
+ratio. They make no claim about replacing an original host response. Library
+callers may supply an explicit original count with the `provided` basis.
+
+`summary.payload_bytes` describes normalized, redacted storage independently.
+`summary.envelope_bytes`, `disclosure_verdict.envelope_bytes`, and
+`disclosure_budget.actual_bytes` all equal delivered stdout bytes, including all
+metadata, selected formatting (or compact fallback), and the trailing newline.
+`estimated_envelope_tokens` is only the rounded-up bytes/4 approximation.
+Verdict thresholds use exact integer byte counts; the displayed ratio rounds
+down to hundredths, or a conservative lower approximation if number width cycles
+or the count exceeds floating-point precision. Redaction can require replacement
+even when the verdict is `raw_cheaper` or `unavailable`.

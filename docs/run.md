@@ -13,7 +13,7 @@ Use the first-party lens pack when the command output is noisy and failure
 triage is the goal:
 
 ```bash
-prog --lens-dir ./lenses run --lens run.failures -- cargo test
+prog run --lens run.failures -- cargo test
 ```
 
 The stored payload includes:
@@ -45,6 +45,19 @@ prog run --preserve-exit-code -- cargo test
 On POSIX systems, `SIGINT` and `SIGTERM` cancel the captured process group,
 persist a conservative `cancelled` observation, and return `128 + signal` when
 `--preserve-exit-code` is active. Cancelled evidence cannot prove absence.
+
+`--timeout-ms` sets one deadline for child execution and stdout/stderr drainage.
+It remains active after the immediate child exits if descendants still hold the
+pipes open. Deadline expiry keeps the captured partial evidence, records a
+`timeout` observation that cannot prove absence, and returns `124` when
+`--preserve-exit-code` is active. Signal cancellation also remains active during
+post-exit drainage. Cleanup targets the original process group and bounds reader
+shutdown even when a pipe holder has detached from that group. Store writes and
+envelope rendering follow capture, so total wall time includes that work and
+scheduling/cleanup overhead.
+
+Registered CLI sources use the same execution-and-drainage deadline and retain
+their structured `cli_timeout` error contract.
 
 Use output caps to keep local capture bounded:
 

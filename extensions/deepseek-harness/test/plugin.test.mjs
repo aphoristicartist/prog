@@ -166,6 +166,26 @@ test('redaction forces replacement even when raw output would be cheaper', async
   assert.deepEqual(JSON.parse(actual.content[0].text), envelope)
 })
 
+test('redaction forces replacement when source cost is unavailable', async () => {
+  const envelope = {
+    schema: 'prog.disclosure',
+    cursor: 'pc1_redacted',
+    disclosure_verdict: { result: 'unavailable' },
+    observation: { safety: { redacted_before_persistence: true } },
+  }
+  const script = await mockProg(envelope)
+  const harness = context()
+  apply(harness.ctx, {
+    minBytes: 10,
+    budgetBytes: 4096,
+    progCommand: process.execPath,
+    progArgs: [script],
+  })
+  const actual = await harness.invoke({ name: 'bash' }, result('secret'.repeat(1024)), async () => ({ kind: 'accept' }))
+  assert.equal(actual.kind, 'accept')
+  assert.deepEqual(JSON.parse(actual.content[0].text), envelope)
+})
+
 test('timeout and harness cancellation preserve the original successful result', async () => {
   const script = await slowProg()
   for (const cancel of [false, true]) {

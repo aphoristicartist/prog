@@ -5,9 +5,9 @@ This table maps the RFC 0002 invariant set to executable tests. Property tests r
 | # | Invariant | Harness |
 |---|---|---|
 | I1 | Projection never invents values. Preview leaves must equal the source leaf at that path, be a marker, or be an explicit truncated prefix. | `crates/prog-core/tests/disclosure.rs::projection_never_fabricates_values` |
-| I2 | Persistence-redacted data never reaches disk. | `crates/prog-core/tests/store.rs::persistence_redaction_is_idempotent_and_removes_secret_values`; composed with expansion in `redacted_payload_stays_redacted_through_store_and_expansion`; API boundary in `crates/prog-core/tests/lifecycle.rs::payload_typestate_requires_redaction_before_persistence`; value-pattern redaction of secrets embedded in string values in `crates/prog-core/tests/redaction.rs::{value_embedded_sensitive_name_value_pair_equals_is_redacted,value_embedded_sensitive_name_value_pair_colon_is_redacted,value_scan_never_persists_embedded_high_confidence_secret}` |
+| I2 | Persistence-redacted data never reaches disk. | `crates/prog-core/tests/store.rs::persistence_redaction_is_idempotent_and_removes_secret_values`; composed with expansion in `redacted_payload_stays_redacted_through_store_and_expansion`; API boundary in `crates/prog-core/tests/lifecycle.rs::payload_typestate_requires_redaction_before_persistence`; value-pattern redaction of secrets embedded in string values in `crates/prog-core/tests/redaction.rs::{value_embedded_sensitive_name_value_pair_equals_is_redacted,value_embedded_sensitive_name_value_pair_colon_is_redacted,value_scan_never_persists_embedded_high_confidence_secret,value_embedded_quoted_json_secret_is_redacted}`; quoted capture lifecycle in `crates/prog-cli/tests/cli.rs::run_quoted_json_secrets_stay_redacted_through_storage_and_evidence`; interleaved fragments in `crates/prog-cli/src/commands/run.rs::redaction_tests::interleaved_chunks_redact_with_complete_stream_context`; obligation metadata boundary in `crates/prog-core/tests/obligations.rs::{obligation_metadata_is_redacted_before_storage_and_returned_safely,obligation_semantic_fields_reject_secrets_without_persisting_or_echoing_them}` |
 | I3 | Expansion never escapes the cursor provenance boundary, segment-wise and escaping-aware. A cursor remains bound to its immutable observation even when a later refresh replaces the mutable cache entry. | `crates/prog-core/tests/disclosure.rs::pointer_containment_is_segment_based`; `expansion_rejects_generated_segment_siblings`; unit cases in `expand_rejects_paths_outside_cursor_boundary_segment_wise`; scoped cursor capability tests in `crates/prog-core/tests/lifecycle.rs::{scoped_slice_validates_json_pointer_syntax_and_scope,validated_cursor_creates_expansion_scope_capability}`; refresh regression in `crates/prog-cli/tests/cli.rs::old_cursor_remains_bound_to_its_observation_after_cache_refresh` |
-| I4 | Redaction is idempotent. | `crates/prog-core/tests/store.rs::persistence_redaction_is_idempotent_and_removes_secret_values`; value-scan idempotency (redaction markers are never reclassified as secrets) in `crates/prog-core/src/redaction.rs::tests::apply_persistence_detailed_is_pure_and_idempotent` and `crates/prog-core/tests/redaction.rs::value_scan_is_idempotent` |
+| I4 | Redaction is idempotent. | `crates/prog-core/tests/store.rs::persistence_redaction_is_idempotent_and_removes_secret_values`; value-scan idempotency (redaction markers are never reclassified as secrets) in `crates/prog-core/src/redaction.rs::tests::apply_persistence_detailed_is_pure_and_idempotent` and `crates/prog-core/tests/redaction.rs::{value_scan_is_idempotent,quoted_json_redaction_preserves_structure_and_is_idempotent,quoted_secret_split_at_any_fragment_boundary_is_redacted}`; metadata idempotence in `crates/prog-core/tests/obligations.rs::obligation_metadata_is_redacted_before_storage_and_returned_safely` |
 | I5 | Shape join is commutative, associative, idempotent, monotone; `Unknown` is identity; enum-cap absorption is order-independent. | `crates/prog-core/tests/shape.rs::{join_is_commutative,join_is_associative,join_is_idempotent,unknown_is_join_identity,join_is_monotone_by_absorption,string_enum_absorption_is_associative_at_cap_boundary}` |
 | I6 | Discovery never invokes non-read-only operations. | `crates/prog-cli/tests/cli.rs::probe_skips_effectless_operations_with_i6_warning`; policy refusal units in `crates/prog-core/tests/policy.rs::discovery_refuses_each_unsafe_effect_independently`. Discovery now evaluates `effective_effects(op, trust)`: a *proven* read-only op is probeable under default `trust.auto_upgrade`, and is skipped with the I6 warning when `trust.auto_upgrade=false` (re-gated) — see `crates/prog-core/tests/policy.rs::auto_upgrade_escape_hatch_re_gates_proven_read_only`. |
 | I7 | Mutating, shell-backed, network-backed, and sensitive operations fail closed without flags/trust; `--yes` never substitutes for `trust.allow_shell` or `trust.allow_network`, and effective effects are grounded in the configured adapter so profile metadata cannot understate them. | `crates/prog-core/tests/policy.rs::call_policy_requires_confirmation_and_shell_trust` (confirmation, shell trust, and `network_not_trusted` refusal with and without `--yes`); adapter grounding in `crates/prog-core/tests/policy.rs::adapter_defaults_encode_conservative_source_facts`; CLI integration in `crates/prog-cli/tests/cli.rs::{call_validates_args_and_enforces_effect_policy,http_call_requires_live_network_trust_before_transport}`. Graded-evidence executable coverage: `crates/prog-cli/tests/cli.rs::call_openapi_get_records_auto_upgrade_audit_in_observation_trust` (only *proven* read-only evidence relaxes confirmation) and `call_openapi_get_requires_yes_when_auto_upgrade_disabled_on_profile` (escape hatch re-gates even *proven*). `assumed`/`unproven` stay gated; the relaxation law is `crates/prog-core/tests/policy.rs::effective_effects_relaxes_only_proven_read_only_under_auto_upgrade`. |
@@ -16,8 +16,20 @@ This table maps the RFC 0002 invariant set to executable tests. Property tests r
 | I10 | Findings ranking is pure, deterministic, and order-independent of input key order. | `crates/prog-core/tests/findings_proptest.rs::{ranked_findings_is_pure_and_deterministic,ranking_is_order_independent_of_key_order,ranks_are_contiguous_and_confidences_bounded}`; golden snapshots in `crates/prog-core/tests/fixtures/findings/*.expected.json` |
 | I11 | Auto-pagination never escapes the effect policy or the envelope budget: only read-only/GET operations are followed; PageCaps (pages/bytes/wall) always stop with a continuation; every page is redacted -> inferred -> stored -> projected; the final envelope stays within `max_envelope_bytes`. | `crates/prog-core/tests/pagination.rs::pagination_respects_effect_policy_and_envelope_budget`; CLI end-to-end in `crates/prog-cli/tests/cli.rs::pagination_follows_readonly_and_stops_at_caps`; effect gate in `crates/prog-cli/tests/cli.rs::prog_call_pages_skipped_for_mutating_operation_emits_warning`; page-cursor fail-closed reuse in `crates/prog-core/tests/pagination.rs::{page_cursors_fail_closed_when_missing_or_foreign,page_cursor_fails_closed_when_expired}` |
 | I12 | Inspect, search, evidence, and lens findings read only the cursor's persisted redacted observation payload, remain inside cursor scope, and stay bounded. | `crates/prog-core/tests/navigation.rs::{cached_search_supports_text_regex_key_kind_and_scope,search_and_evidence_are_bounded_and_preserve_redaction,lens_findings_resolve_existing_wildcards_and_reject_path_escape}`; CLI workflows in `crates/prog-cli/tests/navigation.rs::evidence_navigation_workflow_is_offline_scoped_bounded_and_session_backed` and `crates/prog-cli/tests/cli.rs::old_cursor_remains_bound_to_its_observation_after_cache_refresh` |
-| I13 | Session trails contain metadata references only, survive store reopen, cap retained events, and purge with cache privacy state. | `crates/prog-core/tests/store.rs::session_trail_is_persistent_bounded_and_purged_with_cache` |
-| I14 | A `resolved` delta classification implies the finding's evidence is absent from the subject's persisted payload — never merely absent from a bounded derivation window (head/tail slice, rank cap, or traversal cap) over a payload that still contains it, never claimed from a capture that was incompletely executed (timed out or cancelled), and never claimed from a capture redacted at a proof-bearing path (stdout, stderr, argv, or provenance). Bounded delta serialization may omit detail findings but preserves complete status counts and marks truncation. | `crates/prog-core/src/delta.rs::tests::{assess_is_not_provable_when_capture_was_derivation_windowed,redacted_or_metadata_only_evidence_never_proves_absence}`; derivation-bound coverage in `crates/prog-core/tests/findings.rs::{finding_derivation_completeness_covers_windows_node_caps_and_depth_caps,unlimited_ranking_retains_every_candidate_within_the_derivation_bound}`; persisted-capture and delta-call-site coverage in `crates/prog-cli/src/{main.rs::capture_lifecycle_tests::record_capture_marks_windowed_persisted_payloads_non_exhaustive,commands/delta.rs::tests::delta_derives_every_finding_within_the_bounded_payload_traversal}`; CLI end-to-end in `crates/prog-cli/tests/cli.rs::{delta_never_reports_resolved_for_a_finding_that_moved_into_the_derivation_window,cli_call_marks_head_tail_only_text_derivation_incomplete,mcp_call_marks_head_tail_only_text_derivation_incomplete,observe_repeated_file_uses_stable_invocation_identity_and_tracks_moved_findings}`; multi-iteration correctness/budget oracle in `crates/prog-cli/tests/replay_eval.rs::replay_eval_smoke` |
+| I13 | Session trails contain metadata references only, survive store reopen, cap retained events, and purge with cache privacy state. | `crates/prog-core/tests/store.rs::session_trail_is_persistent_bounded_and_purged_with_cache`; obligation metadata is redacted/rejected before persistence in `crates/prog-core/tests/obligations.rs`; reopened CLI/readiness coverage in `crates/prog-cli/tests/cli.rs::obligation_metadata_is_safe_in_declarations_reopened_lists_and_readiness` |
+| I14 | A `resolved` delta classification implies the finding's evidence is absent from the subject's persisted payload — never merely absent from a bounded derivation window (head/tail slice, rank cap, or traversal cap) over a payload that still contains it, never claimed from a capture that was incompletely executed (timed out or cancelled), and never claimed from a capture redacted at a proof-bearing path (stdout, stderr, argv, or provenance). Bounded delta serialization may omit detail findings but preserves complete status counts and marks truncation. | `crates/prog-core/src/delta.rs::tests::{assess_is_not_provable_when_capture_was_derivation_windowed,redacted_or_metadata_only_evidence_never_proves_absence}`; derivation-bound coverage in `crates/prog-core/tests/findings.rs::{finding_derivation_completeness_covers_windows_node_caps_and_depth_caps,unlimited_ranking_retains_every_candidate_within_the_derivation_bound}`; persisted-capture and delta-call-site coverage in `crates/prog-cli/src/{main.rs::capture_lifecycle_tests::record_capture_marks_windowed_persisted_payloads_non_exhaustive,commands/delta.rs::tests::delta_derives_every_finding_within_the_bounded_payload_traversal}`; CLI end-to-end in `crates/prog-cli/tests/cli.rs::{delta_never_reports_resolved_for_a_finding_that_moved_into_the_derivation_window,cli_call_marks_head_tail_only_text_derivation_incomplete,mcp_call_marks_head_tail_only_text_derivation_incomplete,observe_repeated_file_uses_stable_invocation_identity_and_tracks_moved_findings}`; multi-iteration correctness/budget oracle in `crates/prog-cli/tests/replay_eval.rs::replay_eval_smoke`; pre-redacted capture regression in `crates/prog-cli/tests/cli.rs::run_already_redacted_json_cannot_prove_absence` |
+
+## Read-back readiness lifecycle
+
+Historical read-back verification does not prove that its evidence is still
+available. `crates/prog-cli/tests/verification.rs::verified_readback_becomes_unverifiable_after_payload_eviction`
+checks readiness after explicit quota eviction and persisted retention-policy
+eviction across store reopenings, preserving the original verified receipt and
+making no additional source requests. The `readback_tests` module in
+`crates/prog-cli/src/obligation.rs` covers missing records/payloads and metadata-only
+evidence for every supporting role, broken receipt/intent/obligation links,
+non-passing receipt statuses, and exact-value verification without delta's
+`can_prove_absence` requirement.
 
 ## Property strategy
 
@@ -29,6 +41,15 @@ Payloads that come from APIs, CLIs, MCP servers, imported examples, or observed 
 
 ## CI
 
+Process-call cache isolation supplements I9's evidence identity boundary.
+`crates/prog-cli/tests/execution_context.rs` exercises shared stores across
+unset, relative, absolute, and aliased directories; inherited and configured
+environment inputs; PATH lookup; non-UTF-8 values; and MCP tools/resources.
+`secret_environment_values_never_enter_output_errors_or_persisted_metadata`
+checks the I2 boundary for transient context inputs. Adapter unit tests in
+`execution_context.rs` verify that execution applies the frozen snapshot and
+that byte-exact hashing distinguishes missing, empty, and non-UTF-8 values.
+
 `.github/workflows/ci.yml` runs the normal gate:
 
 - `cargo fmt --check`
@@ -37,6 +58,35 @@ Payloads that come from APIs, CLIs, MCP servers, imported examples, or observed 
 - `cargo run -- --help`
 
 Because the property harnesses are ordinary Rust tests, they run in the same CI job as unit and integration tests.
+
+## Capture lifecycle coverage
+
+Multiline diagnostic redaction is exercised before head/tail projection in
+`crates/prog-adapters/tests/cli.rs::multiline_secrets_are_redacted_before_text_is_split_into_lines`
+and `crates/prog-adapters/src/mcp/stderr.rs::tests::multiline_secrets_are_redacted_before_diagnostic_line_projection`.
+`crates/prog-adapters/src/mcp.rs::redaction_tests::multiline_secrets_are_redacted_in_tool_and_resource_text`
+covers the same boundary for MCP text tool results and resources.
+The persisted MCP regression in `crates/prog-cli/tests/mcp_diagnostics.rs` also
+checks that split key/value secrets never enter observation metadata or the
+database (I2).
+`crates/prog-cli/tests/cli.rs::pre_redacted_source_text_never_regains_absence_proof_on_capture_or_cache_hit`
+keeps adapter-redacted or already-marked source output unable to prove absence,
+including after reopening the stored observation and reusing the cache (I14).
+
+I14's timeout/cancellation premise is exercised after immediate-parent exit in
+`crates/prog-cli/tests/capture_lifecycle.rs`: stdout-only, stderr-only, and combined
+pipe holders; same-group and detached descendants; cancellation after the parent
+has been reaped; one absolute deadline; retained partial evidence; and normal
+short-lived descendant output. The registered adapter uses the same lifecycle
+helper and is covered by `crates/prog-adapters/tests/cli.rs::{deadline_covers_exited_parent_and_each_inherited_stream,short_lived_descendant_output_completes_normally,dropping_capture_future_terminates_the_reaped_parents_group}`.
+
+`crates/prog-cli/tests/source_cancellation.rs` exercises SIGINT and SIGTERM
+through registered CLI and MCP calls, including reaped parents and inherited
+stderr holders. Interrupted calls release owned process groups, return a
+non-retryable `call_cancelled` error with explicitly uncertain upstream effects,
+and do not create a successful observation (I14). Native host policy/confirmation
+and cancellation composition are also exercised through the real tool registry
+in `extensions/deepseek-harness/test/facade.test.mjs` (I7, I14).
 
 ## Kani evaluation
 
@@ -50,3 +100,24 @@ The pure functions targeted for future model checking are:
 - `prog_core::pagination::{extract_pagination_hints,next_args_from_hints,merge_page_shapes}`
 
 Kani harnesses are not enabled in this PR because the repository has no pinned Kani toolchain or CI install path; adding one would make the standard gate depend on a non-Cargo setup. The proptest harnesses are intentionally written against pure, dependency-free core functions so they can be moved to feature-gated Kani/PropProof harnesses without rewriting the laws.
+
+## Artifact acquisition coverage (I2, I14)
+
+`crates/prog-cli/tests/observe_acquisition.rs` exercises finite file/stdin
+acquisition before any parser or store write:
+
+- `rejected_json_and_ndjson_are_not_normalized_or_persisted` checks rejected
+  input secrets never reach a persisted payload or observation (I2).
+- `file_and_stdin_boundaries_preserve_complete_evidence_and_reject_overflow`
+  checks rejection cannot create or replace an observation, while an exact
+  complete capture retains cursor-backed evidence (I14).
+- `stalled_stdin_and_exact_cap_without_eof_time_out_without_persistence` and
+  `sigint_and_sigterm_cancel_stalled_stdin_and_restore_flags` check incomplete
+  acquisitions report unknown totals, zero stored bytes, and no ability to
+  prove absence; controlled open producers cannot hold capture indefinitely
+  (I14).
+- `probe_consumes_only_one_extra_byte_and_restores_inherited_flags` verifies
+  the unread pipe suffix, proving that the cap applies during acquisition.
+
+The normal core redaction/idempotence and conservative delta tests remain
+required; an input cap never substitutes for their I2/I4/I14 guarantees.

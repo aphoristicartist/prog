@@ -442,6 +442,8 @@ fn schemas_generate_for_all_public_contracts() {
         "DisclosureEnvelope",
         "DisclosureVerdict",
         "DisclosureVerdictResult",
+        "SourceByteBaseline",
+        "SourceByteBasis",
         "ObservationMetadata",
         "ObservationCompleteness",
         "ObservationFreshness",
@@ -674,4 +676,43 @@ fn source_profile_fixtures_deserialize() {
         assert_eq!(profile.schema, "prog.source_profile");
         assert!(!profile.operations.is_empty());
     }
+}
+
+#[test]
+fn disclosure_verdict_declines_unknown_cost_and_handles_integer_boundaries() {
+    let unknown = DisclosureVerdict::for_baseline(None, 1_000);
+    assert_eq!(unknown.result, DisclosureVerdictResult::Unavailable);
+    assert_eq!(unknown.baseline, None);
+    assert_eq!(unknown.ratio, None);
+    assert_eq!(DisclosureVerdict::for_sizes(1_249, 1_000).ratio, Some(1.24));
+    assert_eq!(DisclosureVerdict::for_sizes(999, 1_000).ratio, Some(0.99));
+    assert_eq!(DisclosureVerdict::for_sizes(1_000, 1_000).ratio, Some(1.0));
+    assert_eq!(
+        DisclosureVerdict::for_sizes(0, 0).result,
+        DisclosureVerdictResult::Neutral
+    );
+    assert_eq!(DisclosureVerdict::for_sizes(0, 0).ratio, None);
+    assert_eq!(
+        DisclosureVerdict::for_sizes(0, 1).result,
+        DisclosureVerdictResult::RawCheaper
+    );
+    // These values are indistinguishable as f64. Classification must still
+    // use integer arithmetic, without overflowing at the u64 boundary.
+    assert_eq!(
+        DisclosureVerdict::for_sizes(u64::MAX - 1, u64::MAX).result,
+        DisclosureVerdictResult::RawCheaper
+    );
+    let denominator = (u64::MAX / 5) * 4;
+    let numerator = (u64::MAX / 5) * 5;
+    assert_eq!(
+        DisclosureVerdict::for_sizes(numerator - 1, denominator).result,
+        DisclosureVerdictResult::Neutral
+    );
+    assert_eq!(
+        DisclosureVerdict::for_sizes(numerator, denominator).result,
+        DisclosureVerdictResult::BoundedWin
+    );
+    let large_ratio = DisclosureVerdict::for_sizes(u64::MAX, 1).ratio.unwrap();
+    assert!(large_ratio.is_finite());
+    assert!(large_ratio < u64::MAX as f64);
 }
