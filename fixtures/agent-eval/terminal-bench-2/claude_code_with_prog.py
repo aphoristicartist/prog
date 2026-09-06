@@ -52,12 +52,11 @@ class ClaudeCodeWithProg(ClaudeCode):
             environment,
             cwd="/app",
             command=(
-                "prog harness install --root /app "
-                "--host agent-skills --host claude-code && "
-                "prog harness doctor --root /app "
-                "--host agent-skills --host claude-code "
-                "> /tmp/prog-harness-doctor.json && "
-                "grep -Eq '\"ready\"[[:space:]]*:[[:space:]]*true' "
-                "/tmp/prog-harness-doctor.json"
+                "prog init --agent claude-code --project --root /app && "
+                "prog init --print-skill --frontmatter yaml "
+                "> /tmp/prog-shipped-skill.md && "
+                "cmp /tmp/prog-shipped-skill.md "
+                "/app/.claude/skills/prog/SKILL.md && "
+                "test -x /app/.claude/prog-hooks/prog-run.sh"
             ),
         )

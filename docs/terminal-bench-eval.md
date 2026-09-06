@@ -10,6 +10,8 @@ The git commit that first contains that file is the preregistration proof. The
 benchmark source, Harbor, Claude Code, Claude model, `prog` release, seed,
 resource-bounded subset, arm order, settings, stopping rule, analysis, and
 falsification conditions are all fixed there before credentialed execution.
+Its `amendments` list records installation corrections made before model
+execution; git history retains the original registration.
 
 ## Design
 
@@ -29,14 +31,25 @@ limit is unavailable rather than fabricated; provider token usage is reported
 afterward when present in both arms.
 
 The `prog` arm subclasses Harbor's Claude Code integration only to upload the
-verified v0.1.1 Linux release and run the shipped `harness install` and `doctor`
-commands. It does not alter the task instruction, agent run method, benchmark
-environment, grader, or retry policy.
+verified v0.1.1 Linux release and run its shipped
+`prog init --agent claude-code --project --root /app` command. Setup checks that
+the installed skill equals that release's `init --print-skill` output and that
+its explicit wrapper is executable. It does not alter the task instruction,
+agent run method, benchmark environment, grader, or retry policy.
+
+The original registration named `harness install`, which v0.1.1 does not expose.
+The [first native Linux installation preflight](https://github.com/aphoristicartist/prog/actions/runs/34005198184/job/101410978802)
+installed stock Claude Code successfully and failed in the `prog` arm with
+`unrecognized subcommand 'harness'`. The recorded amendment uses v0.1.1's
+existing Claude Code integration instead. This measures the released skill and
+explicit wrapper, not a newer harness integration. No model or grader ran
+before this correction, and no release, model, task, or budget pin changed.
 
 ## Preflight without model credentials
 
 Install Harbor 0.22.0 in an isolated environment and ask it to resolve each
-configuration without running trials:
+configuration without running trials. Configuration resolution alone does not
+test container creation or installation:
 
 ```sh
 export PYTHONPATH="$PWD/fixtures/agent-eval/terminal-bench-2"
@@ -61,6 +74,40 @@ PROG_MODIFY_PATH=0 \
 sh install.sh
 export PROG_PILOT_BINARY="$pilot_bin_dir/prog"
 ```
+
+On native x86_64 Linux with Docker and the Docker Compose plugin, exercise the
+official runner's `--install-only` mode before requesting a paid pilot. The
+[`installation preflight workflow`](../.github/workflows/terminal-bench-preflight.yml)
+does this without model credentials. It installs both preregistered arms on
+the first selected task, with agent execution and verification disabled:
+
+```sh
+preflight_dir="$(mktemp -d)/installation"
+uvx --python 3.13.14 --from 'harbor==0.22.0' \
+  python "$PYTHONPATH/install_preflight.py" prepare \
+  --binary "$PROG_PILOT_BINARY" --output "$preflight_dir"
+env -i PATH="$PATH" HOME="$HOME" PYTHONPATH="$PYTHONPATH" \
+  uvx --python 3.13.14 --from 'harbor==0.22.0' harbor run \
+  --config "$preflight_dir/config.json" --install-only
+uvx --python 3.13.14 --from 'harbor==0.22.0' \
+  python "$PYTHONPATH/install_preflight.py" check \
+  --config "$preflight_dir/config.json"
+```
+
+The helper only derives an official configuration and checks Harbor's setup
+receipts; Harbor still owns installation, scheduling, and cleanup. It preserves
+the benchmark commit, harness and release pins, arm settings, and retry policy.
+Use a new output directory for each preflight. Harbor 0.22.0 can exit zero when
+installations fail, so a successful shell exit is insufficient: the receipt
+check must also pass. CI preserves the official job directory and check report
+as artifacts, including failures.
+
+These setup-only receipts are not pilot attempts, dropouts, task grades, or
+evidence of model performance. They establish installation for one task image,
+not readiness of all ten images or availability of the pinned model. AMD64
+images running under emulation on an ARM Docker host are outside this native
+Linux preflight; local setup failures there do not establish a native Linux
+failure. The paid pilot outcome file remains unchanged.
 
 Do not run the credentialed commands until a concrete pilot budget is approved.
 When it is approved, export `ANTHROPIC_API_KEY` and run the same two configs
