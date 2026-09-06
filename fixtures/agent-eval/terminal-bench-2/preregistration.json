@@ -22,8 +22,21 @@
     "max_budget_usd_per_trial": "10.00",
     "prog_version": "0.1.1",
     "prog_target": "x86_64-unknown-linux-gnu",
-    "prog_install_surface": "prog harness install --root /app --host agent-skills --host claude-code"
+    "prog_install_surface": "prog init --agent claude-code --project --root /app"
   },
+  "amendments": [
+    {
+      "id": "released-install-surface-before-model-execution",
+      "stage": "installation_preflight_only",
+      "reason": "The verified v0.1.1 release rejects the harness subcommand. Its shipped Claude Code integration is installed by init instead.",
+      "previous_prog_install_surface": "prog harness install --root /app --host agent-skills --host claude-code",
+      "replacement_prog_install_surface": "prog init --agent claude-code --project --root /app",
+      "evidence": "https://github.com/aphoristicartist/prog/actions/runs/34005198184/job/101410978802",
+      "model_trials_started": 0,
+      "benchmark_outcomes_observed": false,
+      "scope": "Use the existing release's unmodified Claude Code skill and explicit wrapper. Release, harness, model, task selection, settings, budgets, and retry policy remain fixed. No prompt tuning or new integration code."
+    }
+  ],
   "selection": {
     "seed": "prog-terminal-bench-2-cpu-pilot-v1",
     "eligibility": {

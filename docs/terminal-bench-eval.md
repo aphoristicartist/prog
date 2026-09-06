@@ -10,6 +10,8 @@ The git commit that first contains that file is the preregistration proof. The
 benchmark source, Harbor, Claude Code, Claude model, `prog` release, seed,
 resource-bounded subset, arm order, settings, stopping rule, analysis, and
 falsification conditions are all fixed there before credentialed execution.
+Its `amendments` list records installation corrections made before model
+execution; git history retains the original registration.
 
 ## Design
 
@@ -29,9 +31,19 @@ limit is unavailable rather than fabricated; provider token usage is reported
 afterward when present in both arms.
 
 The `prog` arm subclasses Harbor's Claude Code integration only to upload the
-verified v0.1.1 Linux release and run the shipped `harness install` and `doctor`
-commands. It does not alter the task instruction, agent run method, benchmark
-environment, grader, or retry policy.
+verified v0.1.1 Linux release and run its shipped
+`prog init --agent claude-code --project --root /app` command. Setup checks that
+the installed skill equals that release's `init --print-skill` output and that
+its explicit wrapper is executable. It does not alter the task instruction,
+agent run method, benchmark environment, grader, or retry policy.
+
+The original registration named `harness install`, which v0.1.1 does not expose.
+The [first native Linux installation preflight](https://github.com/aphoristicartist/prog/actions/runs/34005198184/job/101410978802)
+installed stock Claude Code successfully and failed in the `prog` arm with
+`unrecognized subcommand 'harness'`. The recorded amendment uses v0.1.1's
+existing Claude Code integration instead. This measures the released skill and
+explicit wrapper, not a newer harness integration. No model or grader ran
+before this correction, and no release, model, task, or budget pin changed.
 
 ## Preflight without model credentials
 

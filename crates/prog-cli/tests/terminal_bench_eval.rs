@@ -33,6 +33,17 @@ fn terminal_bench_pilot_is_fixed_paired_and_result_free_before_execution() {
     );
     assert_eq!(prereg["harness"]["agent_version"], "2.1.241");
     assert_eq!(prereg["harness"]["model_version"], "claude-fable-5");
+    assert_eq!(
+        prereg["harness"]["prog_install_surface"],
+        "prog init --agent claude-code --project --root /app"
+    );
+    let amendment = &prereg["amendments"][0];
+    assert_eq!(amendment["model_trials_started"], 0);
+    assert_eq!(amendment["benchmark_outcomes_observed"], false);
+    assert_eq!(
+        amendment["replacement_prog_install_surface"],
+        prereg["harness"]["prog_install_surface"]
+    );
     assert_eq!(prereg["design"]["trials_per_arm"], 10);
     assert_eq!(prereg["design"]["attempts_per_task_arm"], 1);
     assert_eq!(prereg["design"]["n_concurrent_trials"], 1);
@@ -131,8 +142,9 @@ fn terminal_bench_prog_arm_is_only_a_shipped_install_step() {
     .unwrap();
     assert!(adapter.contains("class ClaudeCodeWithProg(ClaudeCode)"));
     assert!(adapter.contains("await super().install(environment)"));
-    assert!(adapter.contains("prog harness install --root /app"));
-    assert!(adapter.contains("prog harness doctor --root /app"));
+    assert!(adapter.contains("prog init --agent claude-code --project --root /app"));
+    assert!(adapter.contains("prog init --print-skill --frontmatter yaml"));
+    assert!(adapter.contains("cmp /tmp/prog-shipped-skill.md"));
     assert!(!adapter.contains("def run("));
     assert!(!adapter.contains("instruction"));
 }
