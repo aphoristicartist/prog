@@ -17,6 +17,7 @@ or the full `dsh` CLI profile manager.
 ```sh
 cargo build -p prog-cli
 npm ci --ignore-scripts --no-audit --no-fund --prefix extensions/deepseek-harness
+npm rebuild node-pty --prefix extensions/deepseek-harness
 PROG_TEST_BINARY="$PWD/target/debug/prog" npm test --prefix extensions/deepseek-harness
 ```
 

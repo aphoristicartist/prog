@@ -45,12 +45,16 @@ Run the adapter contract tests with:
 
 ```sh
 npm ci --ignore-scripts --no-audit --no-fund --prefix extensions/deepseek-harness
+npm rebuild node-pty --prefix extensions/deepseek-harness
 npm test --prefix extensions/deepseek-harness
 ```
 
 The lockfile pins the tested host packages. The environment regressions use
 synthetic credentials in an isolated host process and inspect a real capture
-child on both replacement and fallback paths.
+child on both replacement and fallback paths. The real host subprocess
+provider imports `node-pty` even for pipe-only tests. The explicit rebuild runs
+only that native dependency's build lifecycle; Linux needs Python 3, Make,
+and a C++ compiler because this pinned package has no Linux prebuild.
 
 ## Experimental registered tools
 

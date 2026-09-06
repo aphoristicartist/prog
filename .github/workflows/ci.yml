@@ -25,6 +25,9 @@ jobs:
       - name: Test native harness extension packages
         run: |
           npm ci --ignore-scripts --no-audit --no-fund --prefix extensions/deepseek-harness
+          # The real host provider imports node-pty even for pipe-only calls.
+          # Build this reviewed native dependency explicitly (Linux has no prebuild).
+          npm rebuild node-pty --prefix extensions/deepseek-harness
           PROG_TEST_BINARY="$PWD/target/debug/prog" npm test --prefix extensions/deepseek-harness
           npm pack --dry-run ./extensions/deepseek-harness
       - run: cargo run -p prog-cli -- --help
@@ -55,6 +58,7 @@ jobs:
       - name: Test native harness lifecycle on macOS
         run: |
           npm ci --ignore-scripts --no-audit --no-fund --prefix extensions/deepseek-harness
+          npm rebuild node-pty --prefix extensions/deepseek-harness
           PROG_TEST_BINARY="$PWD/target/debug/prog" npm test --prefix extensions/deepseek-harness
 
   dirty-checkout-isolation:
