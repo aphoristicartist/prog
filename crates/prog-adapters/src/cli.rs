@@ -509,10 +509,9 @@ fn normalize_stdout(bytes: &[u8], truncated: bool) -> Value {
 
 fn normalize_text(bytes: &[u8], truncated: bool) -> Value {
     let text = String::from_utf8_lossy(bytes);
-    let lines: Vec<String> = text
-        .lines()
-        .map(|line| redact_sensitive_text(line).0)
-        .collect();
+    // Preserve key/value context across lines before projecting the head/tail.
+    let (text, _) = redact_sensitive_text(&text);
+    let lines: Vec<String> = text.lines().map(str::to_string).collect();
     let head: Vec<Value> = lines.iter().take(10).map(|line| json!(line)).collect();
     let tail_start = lines.len().saturating_sub(10).max(head.len());
     let tail: Vec<Value> = lines

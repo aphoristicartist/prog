@@ -135,10 +135,10 @@ impl Drop for StderrDrain {
 
 pub(super) fn normalize_text_capture(capture: &Capture) -> Value {
     let text = String::from_utf8_lossy(&capture.bytes);
-    let lines: Vec<String> = text
-        .lines()
-        .map(|line| redact_sensitive_text(line).0)
-        .collect();
+    // Redaction needs the complete retained context, including a key whose
+    // value starts on the next line. Line projection must happen afterward.
+    let (text, _) = redact_sensitive_text(&text);
+    let lines: Vec<String> = text.lines().map(str::to_string).collect();
     let head: Vec<Value> = lines.iter().take(10).map(|line| json!(line)).collect();
     let tail_start = lines.len().saturating_sub(10).max(head.len());
     let tail: Vec<Value> = lines
@@ -261,6 +261,24 @@ mod tests {
         assert!(value["line_count"].is_null());
         assert_eq!(value["head"][0], "diagnostic marker");
         assert!(!value.to_string().contains("secret-mcp-token"));
+    }
+
+    #[tokio::test]
+    async fn multiline_secrets_are_redacted_before_diagnostic_line_projection() {
+        for suffix in [
+            "\"MULTILINE_SECRET\", \"message\": \"benign\"}\n",
+            "\"MULTILINE_SECRET",
+        ] {
+            let input = format!("diagnostic marker\n{{\"password\":\n{suffix}");
+            let mut drain = StderrDrain::spawn(std::io::Cursor::new(input.into_bytes()), 1024);
+            let capture =
+                guarded(drain.finish(Duration::from_secs(1), StderrStopReason::Timeout)).await;
+            let value = normalize_text_capture(&capture);
+            let rendered = value.to_string();
+            assert!(!rendered.contains("MULTILINE_SECRET"), "{rendered}");
+            assert!(rendered.contains("[REDACTED:observed_text_secret]"));
+            assert_eq!(value["head"][0], "diagnostic marker");
+        }
     }
 
     #[tokio::test]

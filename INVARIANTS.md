@@ -61,6 +61,15 @@ Because the property harnesses are ordinary Rust tests, they run in the same CI 
 
 ## Capture lifecycle coverage
 
+Multiline diagnostic redaction is exercised before head/tail projection in
+`crates/prog-adapters/tests/cli.rs::multiline_secrets_are_redacted_before_text_is_split_into_lines`
+and `crates/prog-adapters/src/mcp/stderr.rs::tests::multiline_secrets_are_redacted_before_diagnostic_line_projection`.
+`crates/prog-adapters/src/mcp.rs::redaction_tests::multiline_secrets_are_redacted_in_tool_and_resource_text`
+covers the same boundary for MCP text tool results and resources.
+The persisted MCP regression in `crates/prog-cli/tests/mcp_diagnostics.rs` also
+checks that split key/value secrets never enter observation metadata or the
+database (I2).
+
 I14's timeout/cancellation premise is exercised after immediate-parent exit in
 `crates/prog-cli/tests/capture_lifecycle.rs`: stdout-only, stderr-only, and combined
 pipe holders; same-group and detached descendants; cancellation after the parent
