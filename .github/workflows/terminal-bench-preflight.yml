@@ -1,0 +1,71 @@
+name: Terminal-Bench installation preflight
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/terminal-bench-preflight.yml'
+      - 'fixtures/agent-eval/terminal-bench-2/**'
+      - 'docs/terminal-bench-eval.md'
+      - 'install.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  attestations: read
+
+jobs:
+  installation:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: ${{ github.workspace }}/fixtures/agent-eval/terminal-bench-2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check native Linux and Docker Compose
+        run: |
+          test "$(uname -sm)" = 'Linux x86_64'
+          test "$(docker info --format '{{.Architecture}}')" = 'x86_64'
+          docker compose version
+      - name: Install isolated pinned Harbor toolchain
+        run: |
+          python3 -m venv "$RUNNER_TEMP/terminal-bench-tools"
+          "$RUNNER_TEMP/terminal-bench-tools/bin/pip" install 'uv==0.11.28'
+          echo "$RUNNER_TEMP/terminal-bench-tools/bin" >> "$GITHUB_PATH"
+      - name: Check receipt validation controls
+        run: uvx --python 3.13.14 --from 'harbor==0.22.0' python -m unittest discover -s "$PYTHONPATH" -p 'test_install_preflight.py' -v
+      - name: Install verified preregistered prog release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROG_VERSION: v0.1.1
+          PROG_TARGET: x86_64-unknown-linux-gnu
+          PROG_INSTALL_DIR: ${{ runner.temp }}/terminal-bench-bin
+          PROG_MODIFY_PATH: '0'
+        run: sh install.sh
+      - name: Prepare credential-free official configuration
+        run: |
+          uvx --python 3.13.14 --from 'harbor==0.22.0' python "$PYTHONPATH/install_preflight.py" prepare \
+            --binary "$RUNNER_TEMP/terminal-bench-bin/prog" \
+            --output "$RUNNER_TEMP/terminal-bench-preflight"
+      - name: Run official Harbor installation only
+        run: |
+          set -o pipefail
+          env -i PATH="$PATH" HOME="$HOME" PYTHONPATH="$PYTHONPATH" \
+            uvx --python 3.13.14 --from 'harbor==0.22.0' harbor run \
+            --config "$RUNNER_TEMP/terminal-bench-preflight/config.json" --install-only \
+            2>&1 | tee "$RUNNER_TEMP/terminal-bench-preflight/harbor.log"
+      - name: Check setup receipts and absence of agent or grader execution
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          uvx --python 3.13.14 --from 'harbor==0.22.0' python "$PYTHONPATH/install_preflight.py" check \
+            --config "$RUNNER_TEMP/terminal-bench-preflight/config.json" \
+            | tee "$RUNNER_TEMP/terminal-bench-preflight/report.json"
+      - name: Preserve official setup evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: terminal-bench-install-only-${{ github.sha }}
+          path: ${{ runner.temp }}/terminal-bench-preflight
+          if-no-files-found: warn
