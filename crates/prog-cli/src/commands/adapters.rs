@@ -834,7 +834,7 @@ pub(crate) fn call_provenance(
     }
 }
 
-fn redaction_marker_count(value: &Value) -> usize {
+pub(crate) fn redaction_marker_count(value: &Value) -> usize {
     match value {
         Value::String(value) => value.match_indices("[REDACTED").count(),
         Value::Array(values) => values.iter().fold(0usize, |count, value| {

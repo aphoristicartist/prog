@@ -19,6 +19,53 @@ use support::*;
 
 struct EtagResponder;
 
+#[test]
+fn pre_redacted_source_text_never_regains_absence_proof_on_capture_or_cache_hit() {
+    for output in ["SYNTHETIC_MULTILINE", "[REDACTED:observed_text_secret]"] {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_arg = dir.path().to_str().unwrap();
+        let script = dir.path().join("source.py");
+        fs::write(
+            &script,
+            format!("print('diagnostic marker\\n{{\"password\":\\n\"{output}\"}}')"),
+        )
+        .unwrap();
+        let added = prog(&[
+            "--dir",
+            dir_arg,
+            "source",
+            "add-cli",
+            "fixture",
+            "--operation",
+            "read",
+            "--read-only",
+            "--",
+            "python3",
+            script.to_str().unwrap(),
+        ]);
+        assert!(added.status.success(), "{}", stdout(&added));
+        for cache_status in ["stored", "hit"] {
+            let result = prog(&["--dir", dir_arg, "call", "fixture", "read", "--args", "{}"]);
+            assert!(result.status.success(), "{}", stdout(&result));
+            let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+            assert_eq!(value["cache"]["status"], cache_status);
+            assert!(!value.to_string().contains("SYNTHETIC_MULTILINE"));
+            assert_eq!(
+                value["observation"]["capture"]["can_prove_absence"], false,
+                "{value}"
+            );
+            assert_eq!(value["observation"]["capture"]["stop_reason"], "redacted");
+            let store = prog_core::Store::open(dir.path()).unwrap();
+            let observation = store
+                .get_observation(value["observation"]["observation_id"].as_str().unwrap())
+                .unwrap()
+                .unwrap();
+            assert!(observation.redacted);
+            assert!(!observation.capture.can_prove_absence);
+        }
+    }
+}
+
 impl Respond for EtagResponder {
     fn respond(&self, request: &Request) -> ResponseTemplate {
         if request.headers.get("if-none-match").is_some() {

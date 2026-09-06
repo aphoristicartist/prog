@@ -386,6 +386,9 @@ async fn call_source_inner(
     let redacted_path_count = redacted
         .redacted_paths
         .len()
+        // Adapters may redact text before line projection. Idempotent core
+        // redaction must not make those existing markers regain proof rights.
+        .max(redaction_marker_count(redacted.payload.as_value()))
         .saturating_add(provenance_redacted_paths);
     let had_redactions = redacted_path_count > 0;
     let value_scan = redacted.value_scan;
@@ -748,6 +751,7 @@ async fn call_source_inner(
                 let page_redacted_paths = page_redacted
                     .redacted_paths
                     .len()
+                    .max(redaction_marker_count(page_redacted.payload.as_value()))
                     .saturating_add(page_provenance_redacted_paths);
                 let page_payload = page_redacted.payload;
                 let page_bytes = json_len_u64(page_payload.as_value())?;

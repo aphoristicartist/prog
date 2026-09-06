@@ -69,6 +69,9 @@ covers the same boundary for MCP text tool results and resources.
 The persisted MCP regression in `crates/prog-cli/tests/mcp_diagnostics.rs` also
 checks that split key/value secrets never enter observation metadata or the
 database (I2).
+`crates/prog-cli/tests/cli.rs::pre_redacted_source_text_never_regains_absence_proof_on_capture_or_cache_hit`
+keeps adapter-redacted or already-marked source output unable to prove absence,
+including after reopening the stored observation and reusing the cache (I14).
 
 I14's timeout/cancellation premise is exercised after immediate-parent exit in
 `crates/prog-cli/tests/capture_lifecycle.rs`: stdout-only, stderr-only, and combined
