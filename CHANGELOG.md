@@ -12,6 +12,8 @@
 
 - Redact quoted JSON secrets in captured text, including escaped values and
   interleaved stream fragments, before storage and evidence disclosure (#249).
+- Redact multiline CLI and MCP text before line projection; retain absence-proof
+  limits for already-redacted source output and reset earlier local stores.
 - Protect verification obligation metadata at the store boundary: redact
   descriptions and reject sensitive exact operations or identity constraints.
   Return the safe declaration to callers and reset older pre-release stores

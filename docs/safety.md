@@ -120,7 +120,10 @@ are never silently rewritten into a different check. The store returns the safe
 declaration for display, preserving system identifiers such as `session_id`.
 
 The pre-release store contract resets older local observation/session stores on
-opening; records written without the obligation metadata boundary are not reused.
+opening; records written without the obligation metadata and multiline adapter
+text boundaries are not reused. CLI output and MCP diagnostics/tool/resource
+text are redacted before line projection, and existing redaction markers keep
+source captures from proving absence, including on cache reuse.
 
 Sensitive operations are not cached. If a persisted payload would contain redacted fields, the envelope includes a warning with the count of redacted paths.
 

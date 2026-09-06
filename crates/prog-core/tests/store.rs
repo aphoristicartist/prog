@@ -73,42 +73,46 @@ fn payloads_survive_across_store_process_boundaries() {
 
 #[test]
 fn existing_or_pre_capture_lifecycle_store_is_reset() {
-    let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("cache");
-    fs::create_dir_all(&cache).unwrap();
-    let db = redb::Database::create(cache.join("data.redb")).unwrap();
-    let write = db.begin_write().unwrap();
-    {
-        const PAYLOADS: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("payloads");
-        const STATE: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("state");
-        let mut payloads = write.open_table(PAYLOADS).unwrap();
-        let mut state = write.open_table(STATE).unwrap();
-        let legacy_payload = br#"{"legacy":true}"#.to_vec();
-        payloads
-            .insert("sha256:legacy", legacy_payload.as_slice())
-            .unwrap();
-        state
-            .insert("store_schema", b"prog.store.capture_lifecycle".as_slice())
-            .unwrap();
+    for schema in [
+        "prog.store.capture_lifecycle",
+        "prog.store.redacted_obligation_metadata",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let db = redb::Database::create(cache.join("data.redb")).unwrap();
+        let write = db.begin_write().unwrap();
+        {
+            const PAYLOADS: redb::TableDefinition<&str, &[u8]> =
+                redb::TableDefinition::new("payloads");
+            const STATE: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("state");
+            let mut payloads = write.open_table(PAYLOADS).unwrap();
+            let mut state = write.open_table(STATE).unwrap();
+            let legacy_payload = br#"{"legacy":true}"#.to_vec();
+            payloads
+                .insert("sha256:legacy", legacy_payload.as_slice())
+                .unwrap();
+            state.insert("store_schema", schema.as_bytes()).unwrap();
+        }
+        write.commit().unwrap();
+        drop(db);
+
+        let store = Store::open(dir.path()).unwrap();
+        assert!(store.get_payload("sha256:legacy").unwrap().is_none());
+
+        // The reset emits an actionable notice naming the store dir and dropped
+        // record count (pure helper, not stderr): "reset" + "rerun" + the count.
+        let notice = store_reset_notice(dir.path(), 2);
+        assert!(notice.contains("reset"), "notice: {notice}");
+        assert!(notice.contains("rerun"), "notice: {notice}");
+        assert!(notice.contains("2 records dropped"), "notice: {notice}");
+        assert!(
+            notice.contains(dir.path().to_str().unwrap()),
+            "notice should name the store dir: {notice}"
+        );
+        // The dropped count flows through verbatim.
+        assert!(!store_reset_notice(dir.path(), 0).contains("2 records dropped"));
     }
-    write.commit().unwrap();
-    drop(db);
-
-    let store = Store::open(dir.path()).unwrap();
-    assert!(store.get_payload("sha256:legacy").unwrap().is_none());
-
-    // The reset emits an actionable notice naming the store dir and dropped
-    // record count (pure helper, not stderr): "reset" + "rerun" + the count.
-    let notice = store_reset_notice(dir.path(), 2);
-    assert!(notice.contains("reset"), "notice: {notice}");
-    assert!(notice.contains("rerun"), "notice: {notice}");
-    assert!(notice.contains("2 records dropped"), "notice: {notice}");
-    assert!(
-        notice.contains(dir.path().to_str().unwrap()),
-        "notice should name the store dir: {notice}"
-    );
-    // The dropped count flows through verbatim.
-    assert!(!store_reset_notice(dir.path(), 0).contains("2 records dropped"));
 }
 
 #[test]
