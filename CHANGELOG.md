@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add offline context-cost analysis for existing competitive, evidence and
+  installed CLI/host ledgers. Charge repeated and failed responses, attribute
+  fields only when bodies exist, keep unknowns explicit, and export no raw
+  prose or argv (#280).
+
 - Require consistent coding-provider completion evidence before declaring
   verification passed. Cross-check pytest reports, Cargo summaries, and actual
   process exits; empty, skipped, early-stopped, malformed, and conflicting runs
