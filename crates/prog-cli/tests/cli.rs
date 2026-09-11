@@ -1433,7 +1433,7 @@ fn pytest_node_id_hint_is_exact_argv_and_never_claims_broader_verification() {
         .unwrap()
         .iter()
         .find(|action| action["kind"] == "rerun")
-        .expect("exact pytest node hint");
+        .unwrap_or_else(|| panic!("exact pytest node hint: {envelope}"));
     assert_eq!(
         hint["argv"],
         json!([
@@ -1490,7 +1490,7 @@ fn go_test_hint_is_an_escaped_exact_argv_recommendation() {
         .unwrap()
         .iter()
         .find(|action| action["derived_from"] == "go_test.failed_name_and_package")
-        .expect("exact Go test hint");
+        .unwrap_or_else(|| panic!("exact Go test hint: {envelope}"));
     assert_eq!(
         hint["argv"],
         json!([

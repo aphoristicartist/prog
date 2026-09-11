@@ -140,6 +140,10 @@ pub(crate) async fn run_command(
         matches!(run.status, RunProcessStatus::Exited { .. })
             && !run.stdout.truncated
             && !run.stderr.truncated,
+        match run.status {
+            RunProcessStatus::Exited { code, .. } => code,
+            _ => None,
+        },
     );
     let payload = run_payload(RunPayloadInput {
         run_id: &run_id,
@@ -232,7 +236,7 @@ pub(crate) async fn run_command(
     );
     capture.budget = capture_budget_for_run(args);
     ctx.set_capture(capture.budget.clone());
-    let selection = if args.selection_scopes.is_empty() {
+    let mut selection = if args.selection_scopes.is_empty() {
         provider.as_ref().map_or_else(
             || selection_coverage(&args.selection_scopes, args.selection_exhaustive),
             |provider| provider.selection.clone(),
@@ -240,6 +244,10 @@ pub(crate) async fn run_command(
     } else {
         selection_coverage(&args.selection_scopes, args.selection_exhaustive)
     };
+    if let Some(provider) = &provider {
+        // Authored scope names cannot override evidence of incomplete selection.
+        selection.exhaustive &= provider.selection.exhaustive;
+    }
     let observation_id = record_capture(
         store,
         payload_hash.clone(),

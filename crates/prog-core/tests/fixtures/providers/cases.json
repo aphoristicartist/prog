@@ -5,6 +5,7 @@
     "stdout": "tests/test_math.py::test_add PASSED\n================ 1 passed in 0.02s ================\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 0,
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_text",
@@ -25,6 +26,7 @@
     "stdout": "noise\nFAILED tests/test_api.py::test_total[€] - AssertionError: wrong total\nPASSED tests/test_api.py::test_other\n================ 1 failed, 1 passed in 0.03s ================\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 1,
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_text",
@@ -48,6 +50,7 @@
     "stdout": "PASSED tests/test_api.py::test_other\nsetup noise\nmore noise\nFAILED tests/test_api.py::test_total[€] - AssertionError: wrong total\n================ 1 failed, 1 passed in 0.08s ================\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 1,
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_text",
@@ -71,6 +74,7 @@
     "stdout": "{\"exitcode\":1,\"summary\":{\"failed\":1,\"passed\":1,\"total\":2},\"tests\":[{\"nodeid\":\"tests/test_api.py::test_other\",\"outcome\":\"passed\",\"call\":{\"outcome\":\"passed\"}},{\"nodeid\":\"tests/test_api.py::test_total[€]\",\"outcome\":\"failed\",\"call\":{\"outcome\":\"failed\",\"crash\":{\"message\":\"AssertionError: wrong total\"}}}]}\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 1,
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_json_report",
@@ -78,8 +82,8 @@
       "selection": {"scopes": ["pytest:tests/test_api.py"], "exhaustive": true},
       "normalized": {
         "tests": [
-          {"node_id": "tests/test_api.py::test_other", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1},
-          {"node_id": "tests/test_api.py::test_total[€]", "status": "failed", "message": "AssertionError: wrong total", "evidence_stream": "stdout", "evidence_line": 2}
+          {"node_id": "tests/test_api.py::test_other", "status": "passed", "evidence_stream": "stdout", "report_pointer": "/tests/0"},
+          {"node_id": "tests/test_api.py::test_total[€]", "status": "failed", "message": "AssertionError: wrong total", "evidence_stream": "stdout", "report_pointer": "/tests/1"}
         ],
         "summary_seen": true,
         "early_terminated": false,
@@ -95,13 +99,14 @@
     "stdout": "{\"exitcode\":0,\"summary\":{\"passed\":1,\"total\":1},\"tests\":[{\"nodeid\":\"tests/test_math.py::test_add\",\"outcome\":\"passed\",\"call\":{\"outcome\":\"passed\"}}]}\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 0,
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_json_report",
       "complete": true,
       "selection": {"scopes": ["pytest:all"], "exhaustive": true},
       "normalized": {
-        "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1}],
+        "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "report_pointer": "/tests/0"}],
         "summary_seen": true,
         "early_terminated": false,
         "targets": [],
@@ -116,13 +121,14 @@
     "stdout": "{\"summary\":{\"passed\":1,\"total\":1},\"tests\":[{\"nodeid\":\"tests/test_math.py::test_add\",\"outcome\":\"passed\"}]}\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 0,
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_json_report",
       "complete": true,
       "selection": {"scopes": ["pytest:all"], "exhaustive": false},
       "normalized": {
-        "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1}],
+        "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "report_pointer": "/tests/0"}],
         "summary_seen": true,
         "early_terminated": false,
         "targets": [],
@@ -132,18 +138,19 @@
     }
   },
   {
-    "name": "pytest-json-report-deselected",
+    "name": "pytest-json-report-deselected-inconsistent-total",
     "argv": ["pytest", "--json-report"],
     "stdout": "{\"exitcode\":0,\"summary\":{\"passed\":1,\"deselected\":2,\"total\":3},\"tests\":[{\"nodeid\":\"tests/test_math.py::test_add\",\"outcome\":\"passed\"}]}\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 0,
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_json_report",
-      "complete": true,
+      "complete": false,
       "selection": {"scopes": ["pytest:all"], "exhaustive": false},
       "normalized": {
-        "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1}],
+        "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "report_pointer": "/tests/0"}],
         "summary_seen": true,
         "early_terminated": true,
         "targets": [],
@@ -158,6 +165,7 @@
     "stdout": "FAILED tests/test_api.py::test_one - AssertionError\nstopping after 1 failures\n================ 1 failed in 0.01s ================\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 1,
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_text",
@@ -177,6 +185,7 @@
     "stdout": "PASSED tests/test_api.py::test_one\n================ 1 passed in 0.01s ================\n",
     "stderr": "",
     "capture_complete": false,
+    "exit_code": 0,
     "expected": {
       "provider": "pytest.v1",
       "input_format": "pytest_text",
@@ -197,11 +206,12 @@
     "stdout": "{\"reason\":\"compiler-message\",\"message\":{\"level\":\"error\",\"message\":\"mismatched types\",\"code\":{\"code\":\"E0308\"},\"spans\":[{\"file_name\":\"src/lib.rs\",\"line_start\":20,\"column_start\":5,\"is_primary\":true,\"label\":\"expected u8\"},{\"file_name\":\"src/lib.rs\",\"line_start\":7,\"column_start\":1,\"is_primary\":false,\"label\":\"defined here\"}]}}\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 101,
     "expected": {
       "provider": "cargo_rustc.v1",
       "input_format": "cargo_rustc_json",
       "complete": true,
-      "selection": {"scopes": ["cargo:check:default"], "exhaustive": true},
+      "selection": {"scopes": ["cargo:check:default"], "exhaustive": false},
       "normalized": {
         "diagnostics": [{"severity": "error", "diagnostic_code": "E0308", "message": "mismatched types", "spans": [{"path": "src/lib.rs", "line": 7, "column": 1, "primary": false, "label": "defined here"}, {"path": "src/lib.rs", "line": 20, "column": 5, "primary": true, "label": "expected u8"}], "evidence_stream": "stdout", "evidence_line": 1}],
         "tests": [],
@@ -219,6 +229,7 @@
     "stdout": "{\"reason\":\"build-finished\",\"success\":true}\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 0,
     "expected": {
       "provider": "cargo_rustc.v1",
       "input_format": "cargo_rustc_json",
@@ -242,11 +253,12 @@
     "stdout": "",
     "stderr": "error[E0308]: mismatched types\n  --> src/lib.rs:99:5\n",
     "capture_complete": true,
+    "exit_code": 1,
     "expected": {
       "provider": "cargo_rustc.v1",
       "input_format": "cargo_rustc_text",
       "complete": true,
-      "selection": {"scopes": ["rustc:src/lib.rs"], "exhaustive": true},
+      "selection": {"scopes": ["rustc:src/lib.rs"], "exhaustive": false},
       "normalized": {
         "diagnostics": [{"severity": "error", "diagnostic_code": "E0308", "message": "mismatched types", "spans": [{"path": "src/lib.rs", "line": 99, "column": 5, "primary": true}], "evidence_stream": "stderr", "evidence_line": 1}],
         "tests": [],
@@ -264,6 +276,7 @@
     "stdout": "running 1 test\ntest module::case ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 101,
     "expected": {
       "provider": "cargo_rustc.v1",
       "input_format": "cargo_libtest_text",
@@ -286,6 +299,7 @@
     "stdout": "running 1 test\ntest module::case ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 101,
     "expected": {
       "provider": "cargo_rustc.v1",
       "input_format": "cargo_libtest_text",
@@ -308,6 +322,7 @@
     "stdout": "{malformed}\ntest module::case ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 101,
     "expected": {
       "provider": "cargo_rustc.v1",
       "input_format": "cargo_libtest_text",
@@ -330,6 +345,7 @@
     "stdout": "FAILED tests/test_api.py::test_one - AssertionError\n1 failed in 0.01s\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 0,
     "expected": null
   },
   {
@@ -338,6 +354,7 @@
     "stdout": "error: formatting difference\n",
     "stderr": "",
     "capture_complete": true,
+    "exit_code": 0,
     "expected": null
   }
 ]

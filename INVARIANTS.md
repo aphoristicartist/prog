@@ -101,6 +101,16 @@ The pure functions targeted for future model checking are:
 
 Kani harnesses are not enabled in this PR because the repository has no pinned Kani toolchain or CI install path; adding one would make the standard gate depend on a non-Cargo setup. The proptest harnesses are intentionally written against pure, dependency-free core functions so they can be moved to feature-gated Kani/PropProof harnesses without rewriting the laws.
 
+## Coding completion coverage (I1, I10, I14)
+
+Coding completion coverage (I1, I10, I14) is mapped in
+[`docs/coding-provider-audit.md`](docs/coding-provider-audit.md).
+`crates/prog-core/tests/coding_provider.rs::observed_exit_and_late_failures_constrain_completion`
+checks contradictory and incomplete provider evidence. CLI
+`coding_verification.rs::{coding_readiness_requires_consistent_and_exhaustive_evidence,coding_delta_never_resolves_from_empty_conflicting_or_late_failure_evidence}`
+checks persisted exact evidence, visible failure diagnostics, no source reruns,
+and refusal to emit unsupported `passed`/`resolved`, with valid success controls.
+
 ## Artifact acquisition coverage (I2, I14)
 
 `crates/prog-cli/tests/observe_acquisition.rs` exercises finite file/stdin

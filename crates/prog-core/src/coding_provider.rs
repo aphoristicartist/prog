@@ -10,6 +10,8 @@ use serde_json::{Value, json};
 
 use crate::SelectionCoverage;
 
+mod verification;
+
 const MAX_PROVIDER_BYTES: usize = 1024 * 1024;
 const MAX_PROVIDER_LINES: usize = 10_000;
 const MAX_PROVIDER_ITEMS: usize = 512;
@@ -62,7 +64,11 @@ struct NormalizedTest {
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
     evidence_stream: &'static str,
-    evidence_line: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence_line: Option<u64>,
+    /// Pointer within the parsed report in `evidence_stream`, not a text line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    report_pointer: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -87,16 +93,18 @@ struct NormalizedDiagnostic {
 }
 
 /// Normalize captured output for the two deliberately supported provider
-/// families. The interface is pure over argv and captured text.
+/// families. The interface is pure over argv, captured text, and the observed
+/// process exit code. An absent exit code cannot establish completion.
 pub fn normalize_coding_output(
     argv: &[String],
     stdout: &str,
     stderr: &str,
     capture_complete: bool,
+    exit_code: Option<i32>,
 ) -> Option<CodingProviderResult> {
     let (lines, input_bytes, bound_hit) = bounded_lines(stdout, stderr);
-    match provider_kind(argv)? {
-        ProviderKind::Pytest { args } => Some(normalize_pytest(
+    let mut result = match provider_kind(argv)? {
+        ProviderKind::Pytest { args } => normalize_pytest(
             args,
             stdout,
             stderr,
@@ -104,16 +112,18 @@ pub fn normalize_coding_output(
             input_bytes,
             bound_hit,
             capture_complete,
-        )),
-        ProviderKind::CargoRust { program, args } => Some(normalize_cargo_rust(
+        ),
+        ProviderKind::CargoRust { program, args } => normalize_cargo_rust(
             program,
             args,
             &lines,
             input_bytes,
             bound_hit,
             capture_complete,
-        )),
-    }
+        ),
+    };
+    verification::constrain_completion(&mut result, argv, stdout, stderr, exit_code);
+    Some(result)
 }
 
 enum ProviderKind<'a> {
@@ -231,7 +241,8 @@ fn normalize_pytest(
                 status,
                 message,
                 evidence_stream: line.stream,
-                evidence_line: line.number.try_into().unwrap_or(u64::MAX),
+                evidence_line: Some(line.number.try_into().unwrap_or(u64::MAX)),
+                report_pointer: None,
             });
         }
     }
@@ -315,6 +326,9 @@ fn normalize_pytest_json(
     let report_tests = report["tests"].as_array().expect("validated pytest tests");
     let mut bound_hit =
         report_tests.len() > MAX_PROVIDER_ITEMS || report_tests.len() > MAX_PROVIDER_LINES;
+    bound_hit |= report["collectors"]
+        .as_array()
+        .is_some_and(|items| items.len() > MAX_PROVIDER_ITEMS);
     let mut tests = Vec::new();
     for (index, test) in report_tests.iter().take(MAX_PROVIDER_ITEMS).enumerate() {
         let Some(node_id) = test.get("nodeid").and_then(Value::as_str) else {
@@ -337,7 +351,8 @@ fn normalize_pytest_json(
             status: status.to_string(),
             message: pytest_json_message(test).map(bounded_text),
             evidence_stream: stream,
-            evidence_line: index.saturating_add(1).try_into().unwrap_or(u64::MAX),
+            evidence_line: None,
+            report_pointer: Some(format!("/tests/{index}")),
         });
     }
     tests.sort();
@@ -379,6 +394,19 @@ fn normalize_pytest_json(
     if bound_hit {
         warnings.push("pytest JSON report was malformed or exceeded provider bounds".to_string());
     }
+    let diagnostics = pytest_json_diagnostics(stream, report);
+    let item_count = tests.len().saturating_add(diagnostics.len());
+    let mut normalized = json!({
+        "tests": tests,
+        "summary_seen": true,
+        "early_terminated": early_terminated,
+        "targets": targets,
+        "exitcode": exitcode,
+        "deselected": deselected
+    });
+    if !diagnostics.is_empty() {
+        normalized["diagnostics"] = Value::Array(diagnostics);
+    }
     provider_result(
         "pytest.v1",
         "pytest_json_report",
@@ -387,18 +415,57 @@ fn normalize_pytest_json(
         selection,
         input_bytes,
         report_tests.len().min(MAX_PROVIDER_LINES),
-        tests.len(),
+        item_count,
         bound_hit,
-        json!({
-            "tests": tests,
-            "summary_seen": true,
-            "early_terminated": early_terminated,
-            "targets": targets,
-            "exitcode": exitcode,
-            "deselected": deselected
-        }),
+        normalized,
         warnings,
     )
+}
+
+fn pytest_json_diagnostics(stream: &str, report: &Value) -> Vec<Value> {
+    let mut diagnostics = Vec::new();
+    for (index, collector) in report["collectors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(MAX_PROVIDER_ITEMS)
+        .enumerate()
+    {
+        if collector["outcome"] == "failed" {
+            diagnostics.push(json!({
+                "severity": "error",
+                "message": bounded_text(collector["longrepr"].as_str().unwrap_or("pytest collection failed")),
+                "node_id": collector["nodeid"].as_str().map(bounded_text),
+                "stage": "collection",
+                "evidence_stream": stream,
+                "report_pointer": format!("/collectors/{index}")
+            }));
+        }
+    }
+    for (index, test) in report["tests"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(MAX_PROVIDER_ITEMS)
+        .enumerate()
+    {
+        if test["outcome"] != "passed" {
+            continue;
+        }
+        for stage in ["setup", "call", "teardown"] {
+            if test[stage]["outcome"] == "failed" {
+                diagnostics.push(json!({
+                    "severity": "error",
+                    "message": bounded_text(test[stage]["longrepr"].as_str().unwrap_or("pytest stage failed despite a passing test outcome")),
+                    "node_id": test["nodeid"].as_str().map(bounded_text),
+                    "stage": stage,
+                    "evidence_stream": stream,
+                    "report_pointer": format!("/tests/{index}/{stage}")
+                }));
+            }
+        }
+    }
+    diagnostics
 }
 
 fn pytest_json_message(test: &Value) -> Option<&str> {
@@ -480,8 +547,12 @@ fn pytest_early_stop_args(args: &[String]) -> bool {
         arg == "-x"
             || arg == "--exitfirst"
             || arg == "--lf"
+            || arg == "--last-failed"
             || arg == "--ff"
+            || arg == "--failed-first"
             || arg == "--sw"
+            || arg == "--stepwise"
+            || arg == "--stepwise-skip"
             || arg.starts_with("--maxfail")
     })
 }
@@ -516,7 +587,7 @@ fn normalize_cargo_rust(
         if trimmed.starts_with('{') {
             match serde_json::from_str::<Value>(trimmed) {
                 Ok(value) => {
-                    structured_seen |=
+                    let known_reason =
                         value
                             .get("reason")
                             .and_then(Value::as_str)
@@ -529,7 +600,12 @@ fn normalize_cargo_rust(
                                         | "compiler-message"
                                 )
                             });
-                    if let Some(diagnostic) = rust_json_diagnostic(&value, line) {
+                    structured_seen |= known_reason;
+                    let diagnostic = rust_json_diagnostic(&value, line);
+                    malformed_structured |= (!known_reason && diagnostic.is_none())
+                        || value["reason"] == "compiler-message" && diagnostic.is_none()
+                        || value["reason"] == "build-finished" && !value["success"].is_boolean();
+                    if let Some(diagnostic) = diagnostic {
                         if diagnostics.len() < MAX_PROVIDER_ITEMS {
                             diagnostics.push(diagnostic);
                         } else {
@@ -875,7 +951,8 @@ fn libtest_line(line: &str, input: &InputLine<'_>) -> Option<NormalizedTest> {
         status: status.to_string(),
         message: None,
         evidence_stream: input.stream,
-        evidence_line: input.number.try_into().unwrap_or(u64::MAX),
+        evidence_line: Some(input.number.try_into().unwrap_or(u64::MAX)),
+        report_pointer: None,
     })
 }
 
@@ -993,13 +1070,14 @@ mod tests {
             "FAILED tests/test_api.py::test_total[€] - AssertionError: nope\n1 failed in 0.1s\n",
             "",
             true,
+            Some(1),
         )
         .unwrap();
         let shifted = normalize_coding_output(
             &argv,
             "noise\nnoise\nFAILED tests/test_api.py::test_total[€] - AssertionError: nope\n1 failed in 0.2s\n",
             "",
-            true,
+            true, Some(1)
         )
         .unwrap();
         assert!(first.complete);
@@ -1025,7 +1103,8 @@ mod tests {
             (strings(&["pytest"]), false),
         ] {
             let result =
-                normalize_coding_output(&argv, "1 passed in 0.1s\n", "", capture_complete).unwrap();
+                normalize_coding_output(&argv, "1 passed in 0.1s\n", "", capture_complete, Some(0))
+                    .unwrap();
             if !capture_complete {
                 assert!(!result.complete);
             } else {
@@ -1046,9 +1125,14 @@ mod tests {
     #[test]
     fn cargo_failure_requires_proven_harness_exhaustion() {
         let output = "test module::case ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n";
-        let broad =
-            normalize_coding_output(&strings(&["cargo", "test", "--lib"]), output, "", true)
-                .unwrap();
+        let broad = normalize_coding_output(
+            &strings(&["cargo", "test", "--lib"]),
+            output,
+            "",
+            true,
+            Some(101),
+        )
+        .unwrap();
         assert!(broad.complete);
         assert!(!broad.selection.exhaustive);
         assert_eq!(broad.normalized["exact_harness"], false);
@@ -1058,6 +1142,7 @@ mod tests {
             output,
             "",
             true,
+            Some(101),
         )
         .unwrap();
         assert!(exact.complete);
@@ -1069,6 +1154,7 @@ mod tests {
             output,
             "",
             true,
+            Some(101),
         )
         .unwrap();
         assert!(all_harnesses.complete);
@@ -1080,6 +1166,7 @@ mod tests {
             "test module::case ... ok\ntest result: ok. 1 passed; 0 failed\n",
             "",
             true,
+            Some(0),
         )
         .unwrap();
         assert!(success.selection.exhaustive);
@@ -1113,7 +1200,7 @@ mod tests {
             &argv,
             r#"{"reason":"compiler-message","message":{"level":"error","message":"mismatched types","code":{"code":"E0308"},"spans":[{"file_name":"src/lib.rs","line_start":20,"column_start":5,"is_primary":true,"label":"expected u8"},{"file_name":"src/lib.rs","line_start":7,"column_start":1,"is_primary":false,"label":"defined here"}]}}"#,
             "",
-            true,
+            true, Some(101)
         )
         .unwrap();
         let text = normalize_coding_output(
@@ -1121,6 +1208,7 @@ mod tests {
             "",
             "error[E0308]: mismatched types\n  --> src/lib.rs:99:5\n",
             true,
+            Some(1),
         )
         .unwrap();
         let structured = &structured.normalized["diagnostics"][0];
@@ -1138,6 +1226,7 @@ mod tests {
             "{malformed}\ntest module::case ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n",
             "",
             true,
+            Some(101),
         )
         .unwrap();
         assert!(!result.complete);
@@ -1153,14 +1242,16 @@ mod tests {
     #[test]
     fn unknown_commands_do_not_claim_a_provider() {
         assert!(
-            normalize_coding_output(&strings(&["custom", "test"]), "error", "", true).is_none()
+            normalize_coding_output(&strings(&["custom", "test"]), "error", "", true, Some(1))
+                .is_none()
         );
     }
 
     #[test]
     fn very_long_line_and_item_flood_hit_bounds_without_partial_parsing() {
         let long_line = "x".repeat(MAX_PROVIDER_BYTES + 32);
-        let long = normalize_coding_output(&strings(&["pytest"]), &long_line, "", true).unwrap();
+        let long =
+            normalize_coding_output(&strings(&["pytest"]), &long_line, "", true, Some(0)).unwrap();
         assert!(long.limits.bound_hit);
         assert_eq!(long.limits.lines_examined, 0);
         assert!(!long.complete);
@@ -1170,7 +1261,8 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         flood.push_str("\n500 passed in 1.0s\n");
-        let flooded = normalize_coding_output(&strings(&["pytest"]), &flood, "", true).unwrap();
+        let flooded =
+            normalize_coding_output(&strings(&["pytest"]), &flood, "", true, Some(0)).unwrap();
         assert!(flooded.limits.bound_hit);
         assert_eq!(flooded.limits.items_emitted, MAX_PROVIDER_ITEMS as u64);
         assert!(!flooded.complete);
@@ -1190,8 +1282,8 @@ mod tests {
             } else {
                 strings(&["pytest", "-q"])
             };
-            let first = normalize_coding_output(&argv, &text, "", capture_complete).unwrap();
-            let second = normalize_coding_output(&argv, &text, "", capture_complete).unwrap();
+            let first = normalize_coding_output(&argv, &text, "", capture_complete, Some(0)).unwrap();
+            let second = normalize_coding_output(&argv, &text, "", capture_complete, Some(0)).unwrap();
             prop_assert_eq!(&first, &second);
             prop_assert!(first.limits.lines_examined <= first.limits.max_lines);
             prop_assert!(first.limits.items_emitted <= first.limits.max_items);

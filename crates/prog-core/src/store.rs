@@ -43,7 +43,7 @@ const STORE_RETRY_MAX_DELAY: Duration = Duration::from_millis(25);
 // Pre-release storage is intentionally reset, rather than migrated, whenever
 // an immutable-record invariant changes. This is a contract identity, not a
 // compatibility version.
-const STORE_SCHEMA: &str = "prog.store.adapter_text_redaction";
+const STORE_SCHEMA: &str = "prog.store.coding_completion_evidence";
 
 #[derive(Debug)]
 pub struct Store {

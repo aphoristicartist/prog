@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add offline context-cost analysis for existing competitive, evidence and
+  installed CLI/host ledgers. Charge repeated and failed responses, attribute
+  fields only when bodies exist, keep unknowns explicit, and export no raw
+  prose or argv (#280).
+
+- Require consistent coding-provider completion evidence before declaring
+  verification passed. Cross-check pytest reports, Cargo summaries, and actual
+  process exits; empty, skipped, early-stopped, malformed, and conflicting runs
+  cannot prove selection exhaustion, even with an explicit exhaustive flag
+  (#281). Reset older local stores whose observations predate these checks.
+
 - Added an owner-enabled DeepSeek Harness experiment with three registered
   tools composing canonical observe/evidence/status through the real host
   policy and subprocess boundary. An installed npm-artifact coding loop checks
