@@ -76,6 +76,7 @@ fn existing_or_pre_capture_lifecycle_store_is_reset() {
     for schema in [
         "prog.store.capture_lifecycle",
         "prog.store.redacted_obligation_metadata",
+        "prog.store.adapter_text_redaction",
     ] {
         let dir = tempfile::tempdir().unwrap();
         let cache = dir.path().join("cache");

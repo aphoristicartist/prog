@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Require consistent coding-provider completion evidence before declaring
+  verification passed. Cross-check pytest reports, Cargo summaries, and actual
+  process exits; empty, skipped, early-stopped, malformed, and conflicting runs
+  cannot prove selection exhaustion, even with an explicit exhaustive flag
+  (#281). Reset older local stores whose observations predate these checks.
+
 - Added an owner-enabled DeepSeek Harness experiment with three registered
   tools composing canonical observe/evidence/status through the real host
   policy and subprocess boundary. An installed npm-artifact coding loop checks
