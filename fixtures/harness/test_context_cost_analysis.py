@@ -34,6 +34,8 @@ class ContextCostAnalysis(unittest.TestCase):
         self.assertEqual(sum(report["known_bytes_by_field"].values()), 2 * n)
         self.assertEqual(report["retrieval_requests"], 2)
         self.assertEqual(report["unique_consulted_refs"], 1)
+        self.assertEqual(report["completed_retrievals"], 2)
+        self.assertEqual(report["repeated_retrievals"], 1)
         self.assertEqual(report["outcome"], "insufficient")
         excerpt_size = len(json.dumps(evidence()["excerpt"], ensure_ascii=False).encode())
         self.assertEqual(report["repeated_excerpt_value_bytes"], 3 * excerpt_size)
@@ -45,6 +47,8 @@ class ContextCostAnalysis(unittest.TestCase):
         report = analysis.summarize([step(evidence()), step(denied, 1), step(denied)])
         self.assertEqual(report["retrieval_requests"], 3)
         self.assertEqual(report["failed_retrievals"], 2)
+        self.assertEqual(report["completed_retrievals"], 1)
+        self.assertEqual(report["repeated_retrievals"], 0)
         self.assertEqual(report["unique_consulted_refs"], 1)
         self.assertGreater(report["known_bytes_by_field"]["notices_and_errors"], 0)
 
@@ -65,6 +69,9 @@ class ContextCostAnalysis(unittest.TestCase):
         self.assertEqual(report["known_bytes_by_field"], {})
         self.assertEqual(report["unclassified_retrievals"], 1)
         self.assertIsNone(report["unique_consulted_refs"])
+        self.assertIsNone(report["completed_retrievals"])
+        self.assertIsNone(report["repeated_retrievals"])
+        self.assertEqual(report["known_completed_retrievals"], 0)
         self.assertIsNone(report["recorded_stderr_bytes"])
 
     def test_incomplete_and_conflicting_ledgers_preserve_unknowns(self):
@@ -80,6 +87,8 @@ class ContextCostAnalysis(unittest.TestCase):
         self.assertEqual(row["recorded_response_bytes"], 0)
         self.assertEqual(row["outcome"], "not_attempted")
         self.assertEqual(row["unique_consulted_refs"], 0)
+        self.assertEqual(row["completed_retrievals"], 0)
+        self.assertEqual(row["repeated_retrievals"], 0)
         self.assertNotIn("unused", json.dumps(row))
 
     def test_host_duplicate_internal_value_is_not_delivered_twice(self):
@@ -103,6 +112,8 @@ class ContextCostAnalysis(unittest.TestCase):
         self.assertEqual(analysis.operation(["/tmp/bin/prog", "--dir", "expand", "run", "--", "prog", "search"]), "run")
         self.assertEqual(analysis.operation(["python3", "-c", "private code", "inspect"]), "other")
         self.assertEqual(analysis.operation(["/tmp/.agents/prog-hooks/prog-run.sh", "cargo", "test"]), "capture")
+        self.assertEqual(analysis.operation(["prog", "--pretty", "--lens-dir", "search", "meta"]), "meta")
+        self.assertEqual(analysis.operation(["prog", "--help"]), "help")
 
     def test_non_json_and_deep_bodies_are_counted_without_fabricating_fields(self):
         for text in ("plain private output\n", "[" * 70 + "0" + "]" * 70):
@@ -123,10 +134,14 @@ class ContextCostAnalysis(unittest.TestCase):
                 self.assertEqual(row["source_row_index"], index)
                 if "counterexample" in source:
                     self.assertEqual(row["graded_counterexample"], source["counterexample"])
+                self.assertEqual(row["reported_artifact_bytes"], source.get("artifact_bytes"))
+                self.assertEqual(row["reported_expansion_count"], source.get("expansion_count"))
         document = json.loads((ROOT / "fixtures/evals/evidence-acquisition-metrics.json").read_text())
         rows = analysis.analyze(document)
         self.assertEqual(len(rows), 3 * len(document["scenarios"]))
         self.assertTrue(all(r["recorded_response_bytes"] is None for r in rows))
+        self.assertTrue(all(r["completed_retrievals"] is None for r in rows))
+        self.assertTrue(all(r["repeated_retrievals"] is None for r in rows))
 
     def test_cli_is_deterministic_and_errors_are_json_without_input_echo(self):
         with tempfile.TemporaryDirectory() as directory:

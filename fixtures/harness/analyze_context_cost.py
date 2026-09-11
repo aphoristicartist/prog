@@ -12,7 +12,8 @@ import sys
 SCHEMA = "prog.context_cost_analysis.v1"
 MAX_INPUT_BYTES = 64 * 1024 * 1024
 OPERATIONS = {"run", "observe", "call", "capture", "inspect", "search", "find",
-              "findings", "evidence", "expand", "paths", "status", "session", "file_read"}
+              "findings", "evidence", "expand", "paths", "status", "session", "file_read",
+              "meta", "help", "init"}
 RETRIEVAL = {"evidence", "expand"}
 STRATEGIES = {"raw_context", "head_tail_truncation", "native_field_selection",
               "rtk_grep_filter", "broad_log_search", "file_capture_search",
@@ -79,12 +80,16 @@ def operation(argv):
         return "capture"
     if not argv or Path(str(argv[0])).name != "prog":
         return "other"
-    takes_value = {"--dir", "--budget-bytes", "--budget-tokens", "--profile", "--lens"}
+    takes_value = {"--dir", "--budget-bytes", "--budget-tokens", "--lens-dir"}
     index = 1
     while index < len(argv):
         token = argv[index]
         if token in takes_value:
             index += 2
+        elif token == "--pretty":
+            index += 1
+        elif token in {"--help", "-h"}:
+            return "help"
         elif token.startswith("--") and "=" in token:
             index += 1
         else:
@@ -122,7 +127,7 @@ def summarize(steps, *, strategy="other", outcome="unavailable", declared_bytes=
     operations = Counter()
     seen_bodies, seen_excerpts, seen_findings, consulted = set(), set(), set(), set()
     profiled = repeated_bodies = repeated_excerpts = repeated_findings = 0
-    requests = failed_reads = unknown_reads = missing_bodies = 0
+    requests = failed_reads = unknown_reads = completed_reads = repeated_reads = missing_bodies = 0
     recorded = 0
     missing_sizes = 0
     stderr_bytes = 0
@@ -189,7 +194,10 @@ def summarize(steps, *, strategy="other", outcome="unavailable", declared_bytes=
             if step.get("is_error") is True or code is not None and code != 0 or has_error:
                 failed_reads += 1
             elif (code == 0 or step.get("is_error") is False) and evidence_identity(body):
-                consulted.add(evidence_identity(body))
+                identity = evidence_identity(body)
+                completed_reads += 1
+                repeated_reads += identity in consulted
+                consulted.add(identity)
             else:
                 unknown_reads += 1
     declared_bytes = number(declared_bytes)
@@ -215,6 +223,10 @@ def summarize(steps, *, strategy="other", outcome="unavailable", declared_bytes=
         "retrieval_requests": requests,
         "failed_retrievals": failed_reads,
         "unclassified_retrievals": unknown_reads,
+        "completed_retrievals": None if unknown_reads else completed_reads,
+        "known_completed_retrievals": completed_reads,
+        "repeated_retrievals": None if unknown_reads else repeated_reads,
+        "known_repeated_retrievals": repeated_reads,
         "unique_consulted_refs": None if unknown_reads else len(consulted),
         "known_unique_consulted_refs": len(consulted),
         "repeated_response_bytes": repeated_bodies,
@@ -286,6 +298,8 @@ def analyze(document):
                 "known_path_recoverability", "deterministic_discovery"} else None
             for field in ("counterexample", "correct", "evidence_available", "available"):
                 row["graded_" + field] = source.get(field) if type(source.get(field)) is bool else None
+            row["reported_artifact_bytes"] = number(source.get("artifact_bytes"))
+            row["reported_expansion_count"] = number(source.get("expansion_count"))
             rows.append(row)
         return rows
     schema = document.get("schema")
@@ -300,6 +314,8 @@ def analyze(document):
                                 declared_calls=scenario.get(strategy + "_tool_calls"))
                 row.update(recorded_response_bytes=None, unprofiled_response_bytes=None,
                            unique_consulted_refs=None, retrieval_requests=None, failed_retrievals=None,
+                           completed_retrievals=None, known_completed_retrievals=None,
+                           repeated_retrievals=None, known_repeated_retrievals=None,
                            known_unique_consulted_refs=None, unclassified_retrievals=None,
                            scope="aggregate_only", reported_approximate_tokens=number(scenario.get(strategy + "_output_tokens")))
                 row["source_scenario_index"] = index
