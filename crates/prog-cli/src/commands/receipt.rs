@@ -69,6 +69,8 @@ fn receipt_targets(store: &Store, args: &ReceiptArgs) -> Result<Vec<ObservationR
 
 /// Shim captures whose receipt has not been read. Each marker is consumed as
 /// it is read, so concurrent hooks do not repeat a receipt indefinitely.
+/// Markers older than the newest `MAX_RECEIPTS` are consumed without a
+/// receipt, so they never surface later as if they were new.
 fn pending_targets(store: &Store) -> Result<Vec<ObservationRecord>> {
     let pending = store
         .dir()
@@ -84,13 +86,14 @@ fn pending_targets(store: &Store) -> Result<Vec<ObservationRecord>> {
         Err(_) => return Ok(Vec::new()),
     };
     markers.sort();
+    let first_reported = markers.len().saturating_sub(MAX_RECEIPTS);
     let mut targets = Vec::new();
-    for (_, marker) in markers.into_iter().rev().take(MAX_RECEIPTS).rev() {
+    for (index, (_, marker)) in markers.into_iter().enumerate() {
         let id = marker
             .file_name()
             .and_then(|name| name.to_str())
             .map(str::to_string);
-        if fs::remove_file(&marker).is_err() {
+        if fs::remove_file(&marker).is_err() || index < first_reported {
             continue;
         }
         if let Some(observation) = id

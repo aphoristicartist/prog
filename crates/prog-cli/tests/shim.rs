@@ -203,6 +203,87 @@ fn shim_capture_is_a_complete_run_observation_even_when_the_agent_tails() {
 }
 
 #[test]
+fn pending_receipts_beyond_the_newest_five_are_dropped_not_replayed_later() {
+    let fixture = Fixture::new();
+    fixture.bash(
+        "for run in 1 2 3 4 5 6 7; do cargo test >/dev/null 2>&1; done",
+        true,
+        &fixture.store,
+    );
+    assert_eq!(fixture.captures(), 7);
+    let pending = || {
+        let receipt = prog(&[
+            "--dir",
+            fixture.store.to_str().unwrap(),
+            "receipt",
+            "--pending",
+        ]);
+        assert!(receipt.status.success(), "{}", stdout(&receipt));
+        let receipt: Value = serde_json::from_slice(&receipt.stdout).unwrap();
+        receipt["receipts"].as_array().unwrap().len()
+    };
+    assert_eq!(pending(), 5);
+    // The two oldest must not surface after some later, unrelated command.
+    assert_eq!(pending(), 0);
+}
+
+#[test]
+fn a_second_shim_directory_on_path_is_skipped_rather_than_looped() {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    let fixture = Fixture::new();
+    let second = fixture._root.path().join("more-shims");
+    let installed = prog(&[
+        "shim",
+        "install",
+        "--dir",
+        second.to_str().unwrap(),
+        "--tool",
+        "cargo",
+    ]);
+    assert!(installed.status.success(), "{}", stdout(&installed));
+    for (first, other) in [(&fixture.shims, &second), (&second, &fixture.shims)] {
+        for (args, expected) in [
+            (&["--version"][..], "cargo 9.9.9 (fake)"),
+            (&["test"][..], "test result: FAILED"),
+        ] {
+            let mut child = Command::new(first.join("cargo"))
+                .args(args)
+                .current_dir(fixture._root.path())
+                .env(
+                    "PATH",
+                    format!(
+                        "{}:{}:{}",
+                        first.display(),
+                        other.display(),
+                        fixture.path(false)
+                    ),
+                )
+                .env("PROG_DIR", &fixture.store)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while child.try_wait().unwrap().is_none() {
+                if std::time::Instant::now() > deadline {
+                    // SAFETY: killing the process group this test created.
+                    unsafe { libc::killpg(child.id() as i32, libc::SIGKILL) };
+                    let _ = child.wait();
+                    panic!("`cargo {args:?}` looped between two shim directories");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            let output = child.wait_with_output().unwrap();
+            let seen = String::from_utf8_lossy(&output.stdout);
+            assert!(seen.contains(expected), "cargo {args:?}: {seen}");
+        }
+    }
+}
+
+#[test]
 fn an_unusable_store_never_changes_the_command() {
     let fixture = Fixture::new();
     let broken = PathBuf::from("/dev/null/not-a-directory");
@@ -284,7 +365,7 @@ fn shim_env_is_idempotent_and_keeps_the_store_outside_the_project() {
             "shim",
             "env",
             "--dir",
-            "/opt/prog shims",
+            "/opt/prog \"shims\" $HOME",
             "--project",
             project.to_str().unwrap(),
             "--shell",
@@ -296,7 +377,8 @@ fn shim_env_is_idempotent_and_keeps_the_store_outside_the_project() {
     let exports = String::from_utf8(output.stdout).unwrap();
     assert!(exports.contains("export PROG_DIR="), "{exports}");
     assert!(!exports.contains(&format!("PROG_DIR={}", project.display())));
-    // Sourcing twice prepends the directory once.
+    // Sourcing twice prepends the directory once, verbatim, even when its
+    // name holds quotes or `$`.
     let path = Command::new("sh")
         .arg("-c")
         .arg(format!("{exports}{exports}printf %s \"$PATH\""))
@@ -305,6 +387,6 @@ fn shim_env_is_idempotent_and_keeps_the_store_outside_the_project() {
         .unwrap();
     assert_eq!(
         String::from_utf8(path.stdout).unwrap(),
-        "/opt/prog shims:/usr/bin:/bin"
+        "/opt/prog \"shims\" $HOME:/usr/bin:/bin"
     );
 }

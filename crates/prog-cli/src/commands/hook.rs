@@ -8,7 +8,10 @@
 //!
 //! Every unexpected condition fails open: no output, exit 0.
 
-use std::{fs, io::Read};
+use std::{
+    fs,
+    io::{Read, Write},
+};
 
 use crate::commands::{
     receipt::receipt_report,
@@ -88,18 +91,25 @@ fn session_start(input: &Value, project: &Path, store_dir: &Path, explicit_store
                 .append(true)
                 .open(env_file)
         {
-            use std::io::Write;
             let _ = file.write_all(exports.as_bytes());
         }
     }
+    // Resume and compaction start the same session again. Keep the first
+    // start, or test runs from before a compaction would escape the gate.
     if let Some(session) = input.get("session_id").and_then(Value::as_str)
         && is_safe_name(session)
     {
         let sessions = store_dir.join(SESSIONS_DIR);
-        if fs::create_dir_all(&sessions).is_ok() {
-            let _ = fs::write(
-                sessions.join(session),
-                Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        if fs::create_dir_all(&sessions).is_ok()
+            && let Ok(mut marker) = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(sessions.join(session))
+        {
+            let _ = marker.write_all(
+                Utc::now()
+                    .to_rfc3339_opts(SecondsFormat::Secs, true)
+                    .as_bytes(),
             );
         }
     }

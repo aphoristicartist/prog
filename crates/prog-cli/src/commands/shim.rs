@@ -158,11 +158,11 @@ pub(crate) fn shim_uninstall(args: &ShimDirArgs) -> Result<Value> {
 /// dedicated store outside the project tree.
 pub(crate) fn shim_env(args: &ShimEnvArgs) -> Value {
     let dir = args.dir.clone().unwrap_or_else(default_shim_dir);
+    // The quoted directory is matched literally in the `case` pattern too, so
+    // quotes or `$` in its name can neither break nor expand the line.
     let quoted = source_shell_quote(&dir.to_string_lossy());
-    let mut exports = format!(
-        "case \":$PATH:\" in *\":{dir}:\"*) ;; *) export PATH={quoted}\":$PATH\" ;; esac\n",
-        dir = dir.display()
-    );
+    let mut exports =
+        format!("case \":$PATH:\" in *:{quoted}:*) ;; *) export PATH={quoted}\":$PATH\" ;; esac\n");
     let store = args.project.as_deref().map(project_store_dir);
     if let Some(store) = &store {
         exports.push_str(&format!(
@@ -209,8 +209,10 @@ fn validate_tool_name(tool: &str) -> Result<()> {
     }
 }
 
-/// The tool this shim stands in for, found later on `PATH` with every entry
-/// that is the shim directory itself skipped.
+/// The tool this shim stands in for: the first executable on `PATH` outside
+/// the shim directory that is not itself a prog shim. Skipping every shim,
+/// not just this directory's, keeps two shim directories on `PATH` from
+/// `exec`ing each other forever.
 fn resolve_real_tool(tool: &str, shim_dir: &Path) -> Option<PathBuf> {
     let shim_dir = shim_dir
         .canonicalize()
@@ -225,9 +227,23 @@ fn resolve_real_tool(tool: &str, shim_dir: &Path) -> Option<PathBuf> {
                     metadata.is_file()
                         && std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o111
                             != 0
-                })
+                }) && !is_prog_shim(candidate)
             })
     })
+}
+
+/// Whether `path` is a script written by `prog shim install`. The header is
+/// on its second line, so only the first bytes are read.
+fn is_prog_shim(path: &Path) -> bool {
+    use std::io::Read;
+
+    let mut head = Vec::with_capacity(256);
+    fs::File::open(path)
+        .and_then(|file| file.take(256).read_to_end(&mut head))
+        .is_ok_and(|_| {
+            head.windows(SHIM_HEADER.len())
+                .any(|window| window == SHIM_HEADER.as_bytes())
+        })
 }
 
 /// Run one tool for a shim script. Never prints anything of its own: the

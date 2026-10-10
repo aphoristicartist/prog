@@ -449,7 +449,10 @@ detection.
 
 ### Claude Code plugin
 
-With `prog` installed, add the plugin from this repository's marketplace:
+The plugin needs a `prog` newer than 0.1.1, which has `prog harness hook`;
+until the next release, install from a checkout of `main`
+(`cargo install --path crates/prog-cli`). With an older `prog` the plugin
+does nothing. Then add the plugin from this repository's marketplace:
 
 ```text
 /plugin install prog --marketplace aphoristicartist/prog

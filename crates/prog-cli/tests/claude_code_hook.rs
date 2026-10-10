@@ -249,6 +249,31 @@ fn stop_gate_blocks_until_the_fix_is_proven_and_the_workspace_is_unchanged() {
 }
 
 #[test]
+fn resume_and_compaction_keep_the_session_start_for_the_stop_gate() {
+    let session = Session::start();
+    session.bash("cargo test --no-fail-fast 2>&1 | tail -1", "baseline");
+    // Timestamps have one-second resolution; make the restart strictly later.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    for source in ["compact", "resume"] {
+        let output = session.hook(
+            json!({"hook_event_name": "SessionStart", "session_id": "s1", "source": source}),
+            false,
+        );
+        assert_eq!(output, "");
+        let blocked = session.stop(false).unwrap_or_else(|| {
+            panic!("a failing run from before `{source}` escaped the stop gate")
+        });
+        assert!(
+            blocked["reason"]
+                .as_str()
+                .unwrap()
+                .contains("latest test run is failing"),
+            "{blocked:#}"
+        );
+    }
+}
+
+#[test]
 fn stop_gate_does_not_accept_a_deleted_failing_test() {
     let session = Session::start();
     session.bash("cargo test --no-fail-fast 2>&1 | tail -1", "baseline");
@@ -257,6 +282,66 @@ fn stop_gate_does_not_accept_a_deleted_failing_test() {
     let reason = blocked["reason"].as_str().unwrap();
     assert!(reason.contains("does not prove"), "{reason}");
     assert!(reason.contains("test population shrank"), "{reason}");
+}
+
+/// The plugin's entry script must stay silent and succeed with any `prog` on
+/// `PATH`: the released 0.1.1 binary has no `harness hook` and answers with a
+/// JSON usage error on stdout and exit status 1.
+#[test]
+fn plugin_script_fails_open_with_an_older_or_broken_prog() {
+    let root = tempfile::tempdir().unwrap();
+    let bin = root.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/prog-claude/scripts/hook.sh");
+    let block = r#"{"decision":"block","reason":"r"}"#;
+    for (fake_prog, expected) in [
+        (
+            r#"echo '{"error":{"kind":"cli_usage"}}'; echo 'error: unrecognized subcommand' >&2; exit 1"#
+                .to_string(),
+            String::new(),
+        ),
+        ("exit 2".to_string(), String::new()),
+        ("kill -SEGV $$".to_string(), String::new()),
+        (
+            format!("cat >/dev/null; printf '%s' '{block}'"),
+            format!("{block}\n"),
+        ),
+    ] {
+        let prog = bin.join("prog");
+        fs::write(&prog, format!("#!/bin/sh\n{fake_prog}\n")).unwrap();
+        fs::set_permissions(&prog, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut child = Command::new("sh")
+            .arg(&script)
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("HOME", root.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(br#"{"hook_event_name":"Stop"}"#)
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{fake_prog}: {:?}", output.status);
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{fake_prog}");
+        assert!(output.stderr.is_empty(), "{fake_prog}");
+    }
+    // No prog anywhere: still silent success.
+    fs::remove_file(bin.join("prog")).unwrap();
+    let output = Command::new("sh")
+        .arg(&script)
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .env("HOME", root.path())
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty() && output.stderr.is_empty());
 }
 
 #[test]

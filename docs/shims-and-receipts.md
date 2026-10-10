@@ -30,7 +30,8 @@ When the shim runs, the shell has already split the command line, so it
 receives the exact argv however the command was written. `prog shim exec`
 then:
 
-1. finds the real tool later on `PATH`, skipping the shim directory;
+1. finds the real tool on `PATH`, skipping the shim directory and any other
+   prog shim (so two shim directories never call each other);
 2. `exec`s it directly unless the [route classifier](../crates/prog-core/src/route.rs)
    marks the argv as progressive (test, build, lint), or the call is nested
    inside another shimmed tool;
@@ -118,7 +119,7 @@ input on stdin:
 
 | Event | What happens |
 |---|---|
-| `SessionStart` | Installs shims, appends `PATH` and a per-project `PROG_DIR` to `CLAUDE_ENV_FILE`, records the session start. The store lives under `~/.local/state/prog/projects/`, outside the project, so captures never count as workspace changes. |
+| `SessionStart` | Installs shims, appends `PATH` and a per-project `PROG_DIR` to `CLAUDE_ENV_FILE`, records when the session first started (resume and compaction keep that time, so earlier runs stay gated). The store lives under `~/.local/state/prog/projects/`, outside the project, so captures never count as workspace changes. |
 | `PostToolUse` / `PostToolUseFailure` (Bash) | Adds pending receipts as `additionalContext`. The tool output itself is never changed. |
 | `Stop` (opt-in) | When the `stop_gate` plugin setting is on, blocks once if the head of any test-run chain from this session is failing or not proven, or if files changed after the last passing run. `stop_hook_active` lets the next stop through, so the agent can always explain and finish. |
 
