@@ -1,3 +1,6 @@
+use std::sync::LazyLock;
+
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -520,6 +523,107 @@ pub fn redact_sensitive_text_fragments(fragments: &[&str]) -> (Vec<String>, usiz
 }
 
 fn sensitive_text_ranges(input: &str) -> Vec<TextSecretRange> {
+    merge_text_ranges(
+        name_value_text_ranges(input)
+            .into_iter()
+            .chain(vendor_token_ranges(input))
+            .collect(),
+    )
+}
+
+/// Sort and coalesce overlapping ranges so fragment redaction can walk them
+/// once, in order.
+fn merge_text_ranges(mut ranges: Vec<TextSecretRange>) -> Vec<TextSecretRange> {
+    ranges.sort_by_key(|range| (range.value_start, range.value_end));
+    let mut merged: Vec<TextSecretRange> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        match merged.last_mut() {
+            Some(last) if range.value_start < last.value_end => {
+                last.value_end = last.value_end.max(range.value_end);
+            }
+            _ => merged.push(range),
+        }
+    }
+    merged
+}
+
+/// Prefix-anchored credential formats issued by common vendors. They are
+/// recognized on their own, without a `name=value` context, because tools
+/// print them in free text (`git push using ghp_…`, `key=sk_live_…`).
+static VENDOR_TOKEN_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    [
+        // GitHub personal, OAuth, user-to-server, server-to-server, refresh.
+        r"\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b",
+        // AWS access key ids.
+        r"\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b",
+        // Anthropic API and admin keys.
+        r"\bsk-ant-(?:api|admin)[0-9]{2}-[A-Za-z0-9_-]{20,}",
+        // OpenAI project/service/admin keys and the legacy marker form.
+        r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}",
+        r"\bsk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}\b",
+        // Slack bot, user, app, refresh, and configuration tokens.
+        r"\bxox[abposr]-[A-Za-z0-9-]{10,}",
+        // Stripe secret and restricted keys.
+        r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}",
+        // GitLab personal access tokens.
+        r"\bglpat-[A-Za-z0-9_-]{20,}",
+        // npm access tokens.
+        r"\bnpm_[A-Za-z0-9]{36}\b",
+        // Google API keys.
+        r"\bAIza[0-9A-Za-z_-]{35}",
+        // Hugging Face access tokens.
+        r"\bhf_[A-Za-z0-9]{34,}",
+        // SendGrid API keys.
+        r"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}",
+    ]
+    .iter()
+    .map(|pattern| Regex::new(pattern).expect("vendor token pattern compiles"))
+    .collect()
+});
+
+/// AWS secret access keys have no prefix. Only a 40-character base64 run that
+/// follows AWS context on the same line qualifies, and it must mix upper- and
+/// lowercase letters so lowercase hex digests (for example Git object ids)
+/// are not mistaken for secrets.
+static AWS_SECRET_CONTEXT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i:aws|akia|asia)[^\n]{0,100}?(?:^|[^A-Za-z0-9/+=])([A-Za-z0-9/+]{40})(?:[^A-Za-z0-9/+=]|$)")
+        .expect("AWS secret context pattern compiles")
+});
+
+fn vendor_token_ranges(input: &str) -> Vec<TextSecretRange> {
+    let mut ranges = Vec::new();
+    for pattern in VENDOR_TOKEN_PATTERNS.iter() {
+        ranges.extend(pattern.find_iter(input).map(|found| TextSecretRange {
+            value_start: found.start(),
+            value_end: found.end(),
+            wrap_marker: false,
+        }));
+    }
+    let mut search = 0;
+    while let Some(captures) = AWS_SECRET_CONTEXT.captures_at(input, search) {
+        let (Some(whole), Some(secret)) = (captures.get(0), captures.get(1)) else {
+            break;
+        };
+        let candidate = secret.as_str();
+        if candidate.bytes().any(|byte| byte.is_ascii_uppercase())
+            && candidate.bytes().any(|byte| byte.is_ascii_lowercase())
+        {
+            ranges.push(TextSecretRange {
+                value_start: secret.start(),
+                value_end: secret.end(),
+                wrap_marker: false,
+            });
+        }
+        search = secret.end().max(whole.start() + 1);
+    }
+    ranges
+}
+
+fn contains_vendor_token(text: &str) -> bool {
+    !vendor_token_ranges(text).is_empty()
+}
+
+fn name_value_text_ranges(input: &str) -> Vec<TextSecretRange> {
     let mut search = 0usize;
     let mut ranges = Vec::new();
     // Count existing sensitive-value markers as redaction evidence as well.
@@ -878,6 +982,7 @@ pub(crate) enum ValueSecretClass {
 /// dependency-free for Kani.
 pub(crate) fn classify_value_secret(text: &str) -> ValueSecretClass {
     if contains_bearer_token(text)
+        || contains_vendor_token(text)
         || contains_pem_block(text)
         || contains_jwt(text)
         || contains_sensitive_url_param(text)
@@ -1096,6 +1201,47 @@ fn contains_sensitive_url_param(text: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// No vendor rule fires on this repository's own code, docs, fixtures,
+    /// or lenses: real-world text full of hashes, ids, and base64 is not
+    /// mistaken for credentials.
+    #[test]
+    fn vendor_token_rules_have_no_false_positives_on_the_repository() {
+        fn walk(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, files);
+                } else {
+                    files.push(path);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut files = Vec::new();
+        for dir in ["crates", "docs", "fixtures", "lenses", "skills"] {
+            walk(&root.join(dir), &mut files);
+        }
+        let mut scanned_bytes = 0usize;
+        let mut hits = Vec::new();
+        for file in &files {
+            let Ok(text) = std::fs::read_to_string(file) else {
+                continue;
+            };
+            scanned_bytes += text.len();
+            if !vendor_token_ranges(&text).is_empty() {
+                hits.push(file.display().to_string());
+            }
+        }
+        assert!(
+            scanned_bytes > 1_000_000,
+            "corpus too small: {scanned_bytes}"
+        );
+        assert!(hits.is_empty(), "vendor rules fired on: {hits:?}");
+    }
 
     #[test]
     fn name_value_pair_detects_equals_form() {

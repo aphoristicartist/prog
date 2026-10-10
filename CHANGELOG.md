@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- Never report a fix that a deleted, skipped, or ignored test could explain:
+  when the Cargo/Rust or pytest provider recorded test results, `prog delta`,
+  obligations, and readiness require the same tests to run again (executed
+  counts from the runner's own summary, plus every baseline-failing test),
+  otherwise the finding stays `unknown` with a reason (#284).
+- Redact vendor-format credentials (GitHub, AWS, Anthropic, OpenAI, Slack,
+  Stripe, GitLab, npm, Google, Hugging Face, SendGrid) in free text and JSON
+  values before persistence; a test keeps the rules free of false positives on
+  this repository (#285).
+- `prog run --timeout-ms 0` disables prog's own deadline; the generated hook
+  wrapper uses it by default so long test suites are no longer killed after
+  30 seconds (#286).
+- `prog delta` reasons no longer list completed scopes as stops, disclose
+  findings that share a fingerprint, and repeat provider remediation such as
+  Cargo's `--no-fail-fast` advice (#287).
+- Added `prog receipt`: a few-hundred-byte verdict (`failing`, `fixed`,
+  `not_proven`, `clean`) compared automatically with the previous run of the
+  same invocation, now linked through `lineage.supersedes_id` (#288).
+- Added `prog shim install|uninstall|env|exec`: PATH shims that capture test,
+  build, and lint runs inside any shell construct with byte-identical output
+  and exit status (#289).
+- Added a Claude Code plugin and marketplace (`plugins/prog-claude`) driven by
+  `prog harness hook claude-code`: shims at session start, receipts after Bash
+  calls, and an opt-in stop gate (#290).
+- Shortened the default Agent Skill from 7,824 to 1,290 bytes around the
+  receipt loop; the full guidance moved to `docs/agent-reference.md` (#292).
+
 - Added an owner-enabled DeepSeek Harness experiment with three registered
   tools composing canonical observe/evidence/status through the real host
   policy and subprocess boundary. An installed npm-artifact coding loop checks

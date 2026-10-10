@@ -69,6 +69,7 @@ use commands::{
     },
     expand::expand_cursor,
     hints::hints_source,
+    hook::{claude_code_hook, read_hook_input},
     init::{doctor_harness, init_integration, install_harness, print_skill_content},
     lenses::{
         load_lens, parse_json_argument, parse_view, validate_lens_matches_call,
@@ -85,10 +86,12 @@ use commands::{
         expansion_next_actions, paths_cursor,
     },
     profiles::*,
+    receipt::receipt_report,
     recipe::run_recipe,
     route::route_command,
     run::{RunProcessStatus, child_exit_code, redact_run_argv, run_command},
     session::{bound_readiness_report, declare_recipe_obligation, readiness_report, session_show},
+    shim::{shim_env, shim_exec, shim_install, shim_uninstall},
     source::{shell_quote, source_command},
     status::status_report,
     update::update_command,
@@ -207,6 +210,30 @@ async fn main() -> ExitCode {
         }
     };
 
+    // A shim must reproduce the wrapped tool exactly, so it runs before any
+    // step that could print prog's own output (budget validation errors).
+    if let Command::Shim {
+        command: ShimCommand::Exec(args),
+    } = &cli.command
+    {
+        let mut ctx = InvocationContext::for_unresolved_budget();
+        return shim_exec(&cli.dir, args, &mut ctx).await;
+    }
+
+    // Host hooks speak the host's protocol on stdout and must never fail the
+    // host: unsupported hosts and every internal problem produce no output.
+    if let Command::Harness {
+        command: HarnessCommand::Hook(args),
+    } = &cli.command
+    {
+        if args.host == "claude-code"
+            && let Some(output) = claude_code_hook(&read_hook_input())
+        {
+            println!("{output}");
+        }
+        return ExitCode::SUCCESS;
+    }
+
     let mut ctx = match resolve_disclosure_budget(&cli) {
         Ok(budget) => InvocationContext::new(budget),
         Err(error) => {
@@ -311,6 +338,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
                 write_success(&report, cli.pretty, ctx)?;
                 Ok(ExitCode::SUCCESS)
             }
+            HarnessCommand::Hook(_) => unreachable!("hooks are dispatched before budgets"),
             HarnessCommand::Doctor(args) => {
                 let report = doctor_harness(args)?;
                 let exit = if report.ready {
@@ -511,6 +539,29 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
             let mut delta = delta_observations(&store, args)?;
             bound_delta_response(&mut delta, ctx.max_envelope_bytes())?;
             write_success(&delta, cli.pretty, ctx)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Shim { command } => {
+            let report = match command {
+                ShimCommand::Install(args) => shim_install(args)?,
+                ShimCommand::Uninstall(args) => shim_uninstall(args)?,
+                ShimCommand::Env(args) => {
+                    let env = shim_env(args);
+                    if args.shell {
+                        print!("{}", env["exports"].as_str().unwrap_or_default());
+                        return Ok(ExitCode::SUCCESS);
+                    }
+                    env
+                }
+                ShimCommand::Exec(_) => unreachable!("shim exec is dispatched before budgets"),
+            };
+            write_success(&report, cli.pretty, ctx)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Receipt(args) => {
+            let store = open_store(&cli.dir, ctx)?;
+            let report = receipt_report(&store, args)?;
+            write_success(&report, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Status(args) => {
@@ -738,14 +789,14 @@ fn capture_budget_for_run(args: &RunArgs) -> CaptureBudget {
             CaptureLimit {
                 scope: "stdout".to_string(),
                 max_bytes: Some(args.max_stdout_bytes as u64),
-                max_duration_ms: Some(args.timeout_ms),
+                max_duration_ms: (args.timeout_ms > 0).then_some(args.timeout_ms),
                 max_work_units: None,
                 extra: Extra::new(),
             },
             CaptureLimit {
                 scope: "stderr".to_string(),
                 max_bytes: Some(args.max_stderr_bytes as u64),
-                max_duration_ms: Some(args.timeout_ms),
+                max_duration_ms: (args.timeout_ms > 0).then_some(args.timeout_ms),
                 max_work_units: None,
                 extra: Extra::new(),
             },

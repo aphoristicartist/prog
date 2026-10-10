@@ -22,6 +22,8 @@ measured three-operation facade; an MCP-only host is unsupported today.
 |---|---|---|---|
 | Auto-detected harness extension | implemented | `prog harness install` | portable skill plus detected adapters |
 | Harness readiness | implemented | `prog harness doctor` | nothing |
+| Claude Code plugin (shims, receipts, opt-in stop gate) | implemented | `/plugin install prog --marketplace aphoristicartist/prog` | Claude Code plugin cache; shims under `~/.local/share/prog/shims`; store under `~/.local/state/prog/projects/` |
+| PATH shims for any shell-based harness | implemented | `prog shim install` and `eval "$(prog shim env --project . --shell)"` | shim scripts only |
 | Codex marketplace plugin | implemented | `codex plugin add prog@personal` after adding this checkout as a marketplace | Codex plugin cache |
 | DeepSeek Harness result plugin | implemented | `dsh plugin --profile web add ./extensions/deepseek-harness` | profile dependency and bundle layer |
 | Portable Agent Skills target | implemented | `prog harness install --host agent-skills` | `.agents/skills/prog/SKILL.md`, `.agents/prog-hooks/*` |
@@ -95,8 +97,9 @@ no-reparse rule. Codex project hooks also require explicit trust review, so
 generated manifest.
 
 TTY, interactive, follow/streaming, nested `prog`, and shell-structural
-invocations pass through. `PROG_HOOK_TIMEOUT_MS` controls the progressive
-capture timeout. If `prog` is unavailable or routing fails before execution,
+invocations pass through. Progressive captures impose no `prog` deadline by
+default (`prog run --timeout-ms 0`), so the harness's own command timeout
+governs long test suites; set `PROG_HOOK_TIMEOUT_MS` to add one. If `prog` is unavailable or routing fails before execution,
 the wrapper emits a small JSON fallback receipt on stderr and runs the exact
 authored argv directly. It never retries after `prog run` starts.
 

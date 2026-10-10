@@ -24,6 +24,51 @@ pub const STATUS_SCHEMA: &str = "prog.status";
 pub type Extra = Map<String, Value>;
 
 pub const ROUTE_SCHEMA: &str = "prog.route";
+pub const RECEIPT_SCHEMA: &str = "prog.receipts";
+
+/// What a receipt says about the latest run of a command. `Fixed` requires the
+/// same absence proof as `prog delta`; a clean rerun that cannot prove it is
+/// `NotProven`, never `Fixed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptVerdict {
+    /// Non-zero exit, timeout, signal, or failing tests.
+    Failing,
+    /// A previous comparable run failed and its failures are provably gone.
+    Fixed,
+    /// A previous comparable run failed; this clean run cannot prove why.
+    NotProven,
+    /// Succeeded with no failing comparable predecessor.
+    Clean,
+}
+
+/// Compact, model-facing summary of one observation (#288). The full envelope
+/// remains addressable through `cursor` or `observation_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct Receipt {
+    pub observation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// The earlier comparable observation this receipt was compared with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compared_with: Option<String>,
+    pub verdict: ReceiptVerdict,
+    pub text: String,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ReceiptList {
+    pub schema: String,
+    pub receipts: Vec<Receipt>,
+    /// All receipt texts joined by newlines: what a harness hook injects.
+    pub text: String,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
 
 /// Advisory capture guidance for an authored argv vector. `Progressive`
 /// means a host may prepend the exact wrapper prefix returned by the route
@@ -1872,6 +1917,9 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<RouteRule>(&mut schemas, "RouteRule")?;
     insert_schema::<RoutePolicy>(&mut schemas, "RoutePolicy")?;
     insert_schema::<RouteAssessment>(&mut schemas, "RouteAssessment")?;
+    insert_schema::<ReceiptVerdict>(&mut schemas, "ReceiptVerdict")?;
+    insert_schema::<Receipt>(&mut schemas, "Receipt")?;
+    insert_schema::<ReceiptList>(&mut schemas, "ReceiptList")?;
     insert_schema::<StatusReport>(&mut schemas, "StatusReport")?;
     insert_schema::<CachePolicy>(&mut schemas, "CachePolicy")?;
     insert_schema::<TrustSettings>(&mut schemas, "TrustSettings")?;

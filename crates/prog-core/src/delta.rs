@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde_json::Value;
+
 use crate::{
     ComparabilityAssessment, DeltaFinding, DeltaFindingStatus, EvidenceAvailability, Extra,
     Finding, OBSERVATION_DELTA_SCHEMA, ObservationDelta, ObservationRecord, ScopeRelationship,
@@ -7,6 +9,125 @@ use crate::{
 };
 
 const MAX_DELTA_FINDINGS: usize = 100;
+const MAX_NAMED_TESTS: usize = 5;
+const MAX_PROVIDER_WARNINGS: usize = 3;
+
+/// Test outcomes a coding provider retained in an observation payload.
+///
+/// `executed` comes from the runner's own completion summary and counts every
+/// test that actually ran, so it is available even when quiet output names
+/// only failing tests. `tests` maps each named test id to its status.
+/// `warnings` are the provider's own explanations of why its selection may be
+/// unproven (for example Cargo's fail-fast), surfaced as delta remediation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TestPopulation {
+    pub tests: BTreeMap<String, String>,
+    pub executed: Option<u64>,
+    pub warnings: Vec<String>,
+}
+
+impl TestPopulation {
+    /// Read `/provider/normalized` from a persisted run payload. `None` when
+    /// the observation has no coding-provider test records.
+    pub fn from_payload(payload: &Value) -> Option<Self> {
+        let normalized = payload.pointer("/provider/normalized")?;
+        let records = normalized.get("tests")?.as_array()?;
+        let tests = records
+            .iter()
+            .filter_map(|record| {
+                Some((
+                    record.get("node_id")?.as_str()?.to_string(),
+                    record.get("status")?.as_str()?.to_string(),
+                ))
+            })
+            .collect();
+        let executed = normalized
+            .pointer("/counts/executed")
+            .and_then(Value::as_u64);
+        let warnings = payload
+            .pointer("/provider/warnings")
+            .and_then(Value::as_array)
+            .map(|warnings| {
+                warnings
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(Self {
+            tests,
+            executed,
+            warnings,
+        })
+    }
+
+    /// Whether passing tests are listed by name (verbose output), so a test
+    /// missing from this population was not run rather than merely unnamed.
+    fn names_passing_tests(&self) -> bool {
+        self.tests.values().any(|status| status == "passed")
+    }
+}
+
+/// Reasons the subject's test population cannot support an absence proof
+/// against the baseline. Empty when the populations are comparable or when
+/// neither side recorded tests.
+///
+/// A disappeared failure only means "fixed" when the same test ran again and
+/// passed. A deleted, skipped, ignored, or deselected test produces the same
+/// clean output as a real fix, so any narrowing of what actually ran blocks
+/// the proof.
+pub fn test_population_reasons(
+    baseline: Option<&TestPopulation>,
+    subject: Option<&TestPopulation>,
+) -> Vec<String> {
+    let Some(baseline) = baseline else {
+        return Vec::new();
+    };
+    let Some(subject) = subject else {
+        return vec![
+            "the baseline recorded test results but the subject recorded none".to_string(),
+        ];
+    };
+    let mut reasons = Vec::new();
+    if let (Some(before), Some(after)) = (baseline.executed, subject.executed)
+        && after < before
+    {
+        reasons.push(format!(
+            "the subject executed {after} tests but the baseline executed {before}; the test population shrank"
+        ));
+    }
+    let mut narrowed = Vec::new();
+    for (test, status) in &baseline.tests {
+        if !matches!(status.as_str(), "failed" | "error") {
+            continue;
+        }
+        match subject.tests.get(test).map(String::as_str) {
+            Some("passed" | "failed" | "error") => {}
+            Some(other) => narrowed.push(format!("{test} ({other})")),
+            None if subject.names_passing_tests() => narrowed.push(format!("{test} (missing)")),
+            None => {}
+        }
+    }
+    if !narrowed.is_empty() {
+        let shown = narrowed
+            .iter()
+            .take(MAX_NAMED_TESTS)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = narrowed.len().saturating_sub(MAX_NAMED_TESTS);
+        reasons.push(format!(
+            "baseline-failing tests did not run again in the subject: {shown}{}",
+            if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            }
+        ));
+    }
+    reasons
+}
 
 pub fn compare_observations(
     baseline: &ObservationRecord,
@@ -14,7 +135,61 @@ pub fn compare_observations(
     baseline_findings: &[Finding],
     subject_findings: &[Finding],
 ) -> ObservationDelta {
-    let assessment = assess(baseline, subject);
+    compare_observations_with_tests(
+        baseline,
+        subject,
+        baseline_findings,
+        subject_findings,
+        None,
+        None,
+    )
+}
+
+/// [`compare_observations`] plus the test-population check: absence is only
+/// provable when every test that ran in the baseline ran again.
+pub fn compare_observations_with_tests(
+    baseline: &ObservationRecord,
+    subject: &ObservationRecord,
+    baseline_findings: &[Finding],
+    subject_findings: &[Finding],
+    baseline_tests: Option<&TestPopulation>,
+    subject_tests: Option<&TestPopulation>,
+) -> ObservationDelta {
+    let mut assessment = assess(baseline, subject);
+    let population_reasons = test_population_reasons(baseline_tests, subject_tests);
+    if !population_reasons.is_empty() {
+        assessment.can_prove_absence = false;
+        assessment.reasons.extend(population_reasons);
+    }
+    if !assessment.can_prove_absence {
+        // The provider already knows how to make its selection provable (for
+        // example `--no-fail-fast`); repeat that remediation where the agent
+        // reads why the comparison failed.
+        for (side, population) in [("baseline", baseline_tests), ("subject", subject_tests)] {
+            for warning in population
+                .map(|population| population.warnings.as_slice())
+                .unwrap_or_default()
+                .iter()
+                .take(MAX_PROVIDER_WARNINGS)
+            {
+                let reason = format!("{side} provider: {warning}");
+                if !assessment.reasons.contains(&reason) {
+                    assessment.reasons.push(reason);
+                }
+            }
+        }
+    }
+    for (side, findings) in [
+        ("baseline", baseline_findings),
+        ("subject", subject_findings),
+    ] {
+        let collisions = fingerprint_collisions(findings);
+        if collisions > 0 {
+            assessment.reasons.push(format!(
+                "{side} has {collisions} findings sharing a fingerprint with another finding; each fingerprint is compared once"
+            ));
+        }
+    }
     let baseline_by_fingerprint = findings_by_fingerprint(baseline_findings);
     let subject_by_fingerprint = findings_by_fingerprint(subject_findings);
     let all: BTreeSet<&String> = baseline_by_fingerprint
@@ -255,7 +430,11 @@ fn capture_reasons(prefix: &str, observation: &ObservationRecord, reasons: &mut 
             capture_stop_reason_name(capture.stop_reason)
         ));
     }
-    for affected in &capture.affected {
+    for affected in capture
+        .affected
+        .iter()
+        .filter(|affected| affected.stop_reason != crate::CaptureStopReason::Complete)
+    {
         reasons.push(format!(
             "{prefix} capture scope '{}' stopped: {}",
             affected.scope,
@@ -330,6 +509,18 @@ fn findings_by_fingerprint(findings: &[Finding]) -> BTreeMap<String, &Finding> {
                 .map(|fingerprint| (fingerprint.clone(), finding))
         })
         .collect()
+}
+
+/// Findings whose fingerprint repeats an earlier finding in the same
+/// observation. They are merged by [`findings_by_fingerprint`]; the count makes
+/// that merge visible instead of silent.
+fn fingerprint_collisions(findings: &[Finding]) -> usize {
+    let mut seen = BTreeSet::new();
+    findings
+        .iter()
+        .filter_map(|finding| finding.fingerprint.as_deref())
+        .filter(|fingerprint| !seen.insert(*fingerprint))
+        .count()
 }
 
 fn delta_priority(status: DeltaFindingStatus) -> u8 {
@@ -448,6 +639,139 @@ mod tests {
             provider: Some("http".to_string()),
             extra: Extra::new(),
         }
+    }
+
+    fn population(tests: &[(&str, &str)], executed: Option<u64>) -> TestPopulation {
+        TestPopulation {
+            tests: tests
+                .iter()
+                .map(|(id, status)| ((*id).to_string(), (*status).to_string()))
+                .collect(),
+            executed,
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_population_reads_provider_records_and_executed_counts() {
+        let payload = json!({"provider": {"normalized": {
+            "tests": [{"node_id": "t::a", "status": "failed"}, {"node_id": "t::b", "status": "passed"}],
+            "counts": {"passed": 1, "failed": 1, "executed": 2}
+        }}});
+        assert_eq!(
+            TestPopulation::from_payload(&payload),
+            Some(population(
+                &[("t::a", "failed"), ("t::b", "passed")],
+                Some(2)
+            ))
+        );
+        assert_eq!(TestPopulation::from_payload(&json!({"stdout": {}})), None);
+    }
+
+    #[test]
+    fn test_population_reasons_block_every_narrowing_and_allow_real_fixes() {
+        let baseline = population(&[("t::a", "failed"), ("t::b", "passed")], Some(2));
+        // A real fix: same tests ran, the failing one passed.
+        let fixed = population(&[("t::a", "passed"), ("t::b", "passed")], Some(2));
+        assert!(test_population_reasons(Some(&baseline), Some(&fixed)).is_empty());
+        // Quiet output: passing tests are unnamed but every test still ran.
+        let quiet_fixed = population(&[], Some(2));
+        assert!(test_population_reasons(Some(&baseline), Some(&quiet_fixed)).is_empty());
+        // Still failing is a persisting finding, not a narrowing.
+        let still = population(&[("t::a", "failed"), ("t::b", "passed")], Some(2));
+        assert!(test_population_reasons(Some(&baseline), Some(&still)).is_empty());
+
+        let deleted = population(&[("t::b", "passed")], Some(1));
+        let reasons = test_population_reasons(Some(&baseline), Some(&deleted)).join("; ");
+        assert!(
+            reasons.contains("executed 1 tests but the baseline executed 2"),
+            "{reasons}"
+        );
+        assert!(reasons.contains("t::a (missing)"), "{reasons}");
+
+        let skipped = population(&[("t::a", "skipped"), ("t::b", "passed")], Some(1));
+        let reasons = test_population_reasons(Some(&baseline), Some(&skipped)).join("; ");
+        assert!(reasons.contains("t::a (skipped)"), "{reasons}");
+
+        let quiet_deleted = population(&[], Some(1));
+        assert!(!test_population_reasons(Some(&baseline), Some(&quiet_deleted)).is_empty());
+
+        let none = test_population_reasons(Some(&baseline), None);
+        assert_eq!(
+            none,
+            vec!["the baseline recorded test results but the subject recorded none".to_string()]
+        );
+        assert!(test_population_reasons(None, Some(&deleted)).is_empty());
+    }
+
+    #[test]
+    fn delta_reasons_skip_completed_scopes_and_disclose_collisions_and_remediation() {
+        let mut baseline = observation("a", "same", true);
+        baseline.capture.affected.push(crate::CaptureScope {
+            scope: "stdout".to_string(),
+            total_bytes: Some(10),
+            captured_bytes: 10,
+            stop_reason: crate::CaptureStopReason::Complete,
+            extra: Extra::new(),
+        });
+        baseline.selection.exhaustive = false;
+        let mut baseline_tests = population(&[("t::a", "failed")], Some(1));
+        baseline_tests.warnings =
+            vec!["use --no-fail-fast to prove selection exhaustion".to_string()];
+        let subject_tests = population(&[("t::a", "passed")], Some(1));
+        let delta = compare_observations_with_tests(
+            &baseline,
+            &observation("b", "same", true),
+            &[finding("dup"), finding("dup")],
+            &[],
+            Some(&baseline_tests),
+            Some(&subject_tests),
+        );
+        let reasons = delta.assessment.reasons.join("; ");
+        assert!(!reasons.contains("stopped: complete"), "{reasons}");
+        assert!(
+            reasons.contains("baseline provider: use --no-fail-fast"),
+            "{reasons}"
+        );
+        assert!(
+            reasons.contains("baseline has 1 findings sharing a fingerprint"),
+            "{reasons}"
+        );
+    }
+
+    #[test]
+    fn narrowed_test_population_never_resolves_a_disappeared_finding() {
+        let baseline_tests = population(&[("t::a", "failed"), ("t::b", "passed")], Some(2));
+        let deleted = population(&[("t::b", "passed")], Some(1));
+        let delta = compare_observations_with_tests(
+            &observation("a", "same", true),
+            &observation("b", "same", true),
+            &[finding("panic")],
+            &[],
+            Some(&baseline_tests),
+            Some(&deleted),
+        );
+        assert!(!delta.assessment.can_prove_absence);
+        assert_eq!(delta.counts.get("resolved"), None);
+        assert_eq!(delta.findings[0].status, DeltaFindingStatus::Unknown);
+        assert!(
+            delta.findings[0]
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("test population shrank"))
+        );
+
+        let fixed = population(&[("t::a", "passed"), ("t::b", "passed")], Some(2));
+        let delta = compare_observations_with_tests(
+            &observation("a", "same", true),
+            &observation("b", "same", true),
+            &[finding("panic")],
+            &[],
+            Some(&baseline_tests),
+            Some(&fixed),
+        );
+        assert!(delta.assessment.can_prove_absence);
+        assert_eq!(delta.findings[0].status, DeltaFindingStatus::Resolved);
     }
 
     #[test]

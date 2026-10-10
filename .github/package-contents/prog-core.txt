@@ -18,6 +18,7 @@ src/pagination.rs
 src/pointer.rs
 src/policy.rs
 src/readback.rs
+src/receipt.rs
 src/redaction.rs
 src/route.rs
 src/shape.rs

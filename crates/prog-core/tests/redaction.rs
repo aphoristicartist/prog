@@ -634,3 +634,80 @@ proptest! {
         prop_assert_eq!(first, second);
     }
 }
+
+/// Fake credentials in vendor formats, assembled at runtime so this source
+/// file never contains a literal token (keeps secret scanners and the clean
+/// corpus check meaningful). Each entry is `(rule, token)`.
+fn fake_vendor_tokens() -> Vec<(&'static str, String)> {
+    let alnum = |len: usize| -> String {
+        "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v2W3x4Y5z6"
+            .chars()
+            .cycle()
+            .take(len)
+            .collect()
+    };
+    vec![
+        ("github classic", format!("gh{}_{}", "p", alnum(36))),
+        (
+            "github fine-grained",
+            format!("github_{}_{}", "pat", alnum(40)),
+        ),
+        ("aws key id", format!("AK{}{}", "IA", "IOSFODNN7EXAMPLE")),
+        ("anthropic", format!("sk-{}-api03-{}", "ant", alnum(60))),
+        ("openai project", format!("sk-{}-{}", "proj", alnum(48))),
+        ("slack", format!("xo{}-123456789012-{}", "xb", alnum(24))),
+        ("stripe", format!("sk_{}_{}", "live", alnum(24))),
+        ("gitlab", format!("gl{}-{}", "pat", alnum(20))),
+        ("npm", format!("np{}_{}", "m", alnum(36))),
+        ("google", format!("AI{}{}", "za", alnum(35))),
+        ("huggingface", format!("h{}_{}", "f", alnum(34))),
+    ]
+}
+
+#[test]
+fn vendor_tokens_in_free_text_are_redacted_and_context_is_kept() {
+    for (rule, token) in fake_vendor_tokens() {
+        let line = format!("INFO pushing with {token} to origin");
+        let (redacted, count) = redact_sensitive_text(&line);
+        assert!(!redacted.contains(&token), "{rule}: {redacted}");
+        assert!(count >= 1, "{rule}: {redacted}");
+        assert_eq!(
+            redacted, "INFO pushing with [REDACTED:observed_text_secret] to origin",
+            "{rule}"
+        );
+        // Idempotent (I4).
+        assert_eq!(redact_sensitive_text(&redacted).0, redacted, "{rule}");
+    }
+    // `key` is not a sensitive name, but the Stripe value format is.
+    let stripe = format!(
+        "ERROR charge failed key=sk_{}_{}",
+        "live", "51Habcdefghijklmnopqrstuv"
+    );
+    assert!(!redact_sensitive_text(&stripe).0.contains("sk_live_"));
+}
+
+#[test]
+fn aws_secret_key_needs_aws_context_and_mixed_case() {
+    let secret = format!("wJalrXUtnFEMI/K7MDENG/{}", "bPxRfiCYEXAMPLEKEY");
+    let key_id = format!("AK{}{}", "IA", "IOSFODNN7EXAMPLE");
+    let line = format!("INFO aws configured with {key_id} and {secret}");
+    let (redacted, _) = redact_sensitive_text(&line);
+    assert!(!redacted.contains(&secret), "{redacted}");
+    assert!(!redacted.contains(&key_id), "{redacted}");
+    // A lowercase Git object id next to AWS context is not a secret.
+    let commit = "3f2a9c1e5b7d4a6f8e0c2b4d6f8a0c2e4b6d8f0a";
+    let (kept, count) = redact_sensitive_text(&format!("aws-sdk pinned at commit {commit}"));
+    assert!(kept.contains(commit), "{kept}");
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn vendor_tokens_in_json_values_never_reach_the_store() {
+    for (rule, token) in fake_vendor_tokens() {
+        let payload = json!({"log": [format!("using {token}")], "note": "benign"});
+        let redacted = RawPayload::new(payload).redact(&RedactionPolicy::default());
+        let serialized = serde_json::to_string(redacted.payload.as_value()).unwrap();
+        assert!(!serialized.contains(&token), "{rule}: {serialized}");
+        assert!(serialized.contains("benign"), "{rule}");
+    }
+}

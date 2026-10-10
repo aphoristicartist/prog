@@ -69,9 +69,21 @@ following hold:
   metadata but removes the ability to re-derive findings.
 - **Selection coverage is exhaustive** — both observations declare at least one
   selection scope and assert `--selection-exhaustive`.
+- **The same tests ran again** — when the Cargo/Rust or pytest coding provider
+  recorded test results, the subject must have executed at least as many tests
+  as the baseline (from the runner's own summary line, so quiet `-q` output
+  counts too), and every baseline-failing test must have run again: a test that
+  is missing, skipped, or ignored in the subject blocks the proof. Deleting or
+  skipping the failing test produces exactly the clean output of a real fix, so
+  it can never be reported as `resolved`.
 
 The assessment always reports `reasons`, so a non-provable comparison explains
-itself rather than failing silently.
+itself rather than failing silently. When a coding provider already knows how
+to make its selection provable, its advice is repeated in `reasons` (for
+example `baseline provider: Cargo's default fail-fast may skip later test
+harnesses after a failure; use ... --no-fail-fast`). Scopes that completed
+normally are not listed as stops, and findings that share a fingerprint within
+one observation are disclosed instead of silently merged.
 
 Pairwise source validity may come from equal scoped HTTP validators, equal
 hashed profile change tokens, or equal hashed MCP modification annotations.

@@ -1,37 +1,37 @@
 {
   "agent-skills": {
-    ".agents/prog-hooks/README.md": "41d58fa6a6415c76ffbceaa7ac88374a4d74662111d1bc0987af94f75eb3ad75",
+    ".agents/prog-hooks/README.md": "f613750a0806f504413606254242883e6bd46c0f6a86221d3764bf50b36e0137",
     ".agents/prog-hooks/manifest.json": "9a5f25e3ffeb3ea20dd576a6f7eab7ec3807a01f69e3cb52c6e87d5b7d783ea7",
-    ".agents/prog-hooks/prog-run.sh": "78319a80c4861f88dc12e57ca9488763ff2725f0e85e0cf05cbadfdcd6541eae",
+    ".agents/prog-hooks/prog-run.sh": "dda88721af931763f8df7ea555e039efcea2abc6ab31dabea8946aacad0478cb",
     ".agents/prog-hooks/uninstall.sh": "79dabdeca624b5d7bd7edf7d72ae3461034d8b81ce9af28fb2cd5a06886ab65a",
-    ".agents/skills/prog/SKILL.md": "5a9771252f1a048d82c4a8ffdc3e8920832b7284cbae437e5b1d22e1dccee9e5"
+    ".agents/skills/prog/SKILL.md": "9f56608ae8cfd8bfe97b8bce79f85eaef540f0a1b02a2d139cbc74da4d526724"
   },
   "codex": {
-    ".codex/prog-hooks/README.md": "bd0194d8d8f4fc0519f100dbc95602e65b810a40a4c3f928c458e3aa8c239a2a",
+    ".codex/prog-hooks/README.md": "5e1886f4439e9812d40aad9fead55e221a80a7fb4fed338e9b1e28c1f1570d86",
     ".codex/prog-hooks/manifest.json": "a09733cc9c0722f459a7d52b2f2a9d61d5a24b1d48ff27836b5e67775bcaa535",
-    ".codex/prog-hooks/prog-run.sh": "0c610997105e3806997025a5f62ab9665ae0d93d39c9fab359ccd2b3bacba0ab",
+    ".codex/prog-hooks/prog-run.sh": "3df50f3639cda9bdfeadf13f730cdfec303876ef945b41c66912392a637b73ab",
     ".codex/prog-hooks/uninstall.sh": "bf07f8cc38335093c81e0781b782b646df4d270afb41b361baae43213011526f",
-    ".agents/skills/prog/SKILL.md": "5a9771252f1a048d82c4a8ffdc3e8920832b7284cbae437e5b1d22e1dccee9e5"
+    ".agents/skills/prog/SKILL.md": "9f56608ae8cfd8bfe97b8bce79f85eaef540f0a1b02a2d139cbc74da4d526724"
   },
   "claude-code": {
-    ".claude/prog-hooks/README.md": "ea89620d0b1b58fcecd2cff17a5e471a8c94c1fae7cd95089e4e205ff7d7baf7",
+    ".claude/prog-hooks/README.md": "22b7e44e8e3637bfe6d0debc49ef9c162a2af556f2fb7b8ba46697b4d5578f30",
     ".claude/prog-hooks/manifest.json": "9e35b316fd70b819d5e87d91212e1819984a51a736f22df5560dbaea52c35f0e",
-    ".claude/prog-hooks/prog-run.sh": "1210fa9676a78ec8b6e7917c7d5211f197cfb37b42f19e05fc710f769293df0e",
+    ".claude/prog-hooks/prog-run.sh": "3cae4d091046832df810f6be8284c70d179a14fa366492b4d74009ea4aaa2ac0",
     ".claude/prog-hooks/uninstall.sh": "17317e1b08f7b07f1bae41f6b7d81377a6880e9b2c5fa1b0ebe504949252ae9f",
-    ".claude/skills/prog/SKILL.md": "5a9771252f1a048d82c4a8ffdc3e8920832b7284cbae437e5b1d22e1dccee9e5"
+    ".claude/skills/prog/SKILL.md": "9f56608ae8cfd8bfe97b8bce79f85eaef540f0a1b02a2d139cbc74da4d526724"
   },
   "cursor": {
-    ".cursor/prog-hooks/README.md": "1b741ccfbb4aa21cc98d9ecc598a98bd71702886a2737ecdf9d7f02876c013b0",
+    ".cursor/prog-hooks/README.md": "90d3bab36d84fed2e40bb3637b10f536f3bebb16e38c3a8b9b9b5de2556306f0",
     ".cursor/prog-hooks/manifest.json": "a434184e527065285b5d8cfd9e7c0375c566094dad75789bd3868707bb20eca3",
-    ".cursor/prog-hooks/prog-run.sh": "ebdb62a3300cbfa3cf74cb78a37bf9d90df3e094ce6e8db0858ec2d90642d5e0",
+    ".cursor/prog-hooks/prog-run.sh": "fa0dc5f01f65cd3431258f3b06351e21dd65beb5cbaca49ca82285d834f03d32",
     ".cursor/prog-hooks/uninstall.sh": "e8f8b5911432da9ffcf9ed24059d03155e6b421252f45ad5afc7bd96f6621d23",
-    ".cursor/rules/prog.mdc": "650b9a2e8b6fbdb66270e355cc3aaed43c20f8e1fc95f77d8b6629f42dec264a"
+    ".cursor/rules/prog.mdc": "b7858e5da36a7399aff3eb73550da39ab3925a5f9c07303c2d8d0b02818032ed"
   },
   "gemini-cli": {
-    ".gemini/prog-hooks/README.md": "b659e17e4340024cac40e08319ea6e6d2994df0512a3f0909d0dd1de02828e49",
+    ".gemini/prog-hooks/README.md": "856c3ff2beaed2221a225fea438b9f7a8a6fa8f1701da667c2d1e101af2f7e60",
     ".gemini/prog-hooks/manifest.json": "9403dee65e2d9ab5a25a2f672db40c1a33b5b799a032cefe11d0bb26077cca06",
-    ".gemini/prog-hooks/prog-run.sh": "e257c0771ac2df8c52e1742d5f41feb811e6eb2f53d2fac116179bf1415ab13d",
+    ".gemini/prog-hooks/prog-run.sh": "770fed27722edb36f0b8df4c698e0c068a58f57ab47f7734312b9125e0b81934",
     ".gemini/prog-hooks/uninstall.sh": "087729265a30980ed67fe446c3638080255adcb661cdc2685069ed62394f0800",
-    ".gemini/skills/prog/SKILL.md": "5a9771252f1a048d82c4a8ffdc3e8920832b7284cbae437e5b1d22e1dccee9e5"
+    ".gemini/skills/prog/SKILL.md": "9f56608ae8cfd8bfe97b8bce79f85eaef540f0a1b02a2d139cbc74da4d526724"
   }
 }

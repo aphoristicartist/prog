@@ -754,7 +754,7 @@ fi
 
 case "$route_output" in
   *'"guidance":"progressive"'*)
-    timeout_ms=${{PROG_HOOK_TIMEOUT_MS:-30000}}
+    timeout_ms=${{PROG_HOOK_TIMEOUT_MS:-0}}
     case "$timeout_ms" in
       ''|*[!0-9]*)
         printf '%s\n' '{{"schema":"prog.integration_error","reason":"PROG_HOOK_TIMEOUT_MS_must_be_an_unsigned_integer"}}' >&2
@@ -786,7 +786,9 @@ Use the wrapper for noisy commands:
 The wrapper calls `prog route` with the exact argv. Progressive guidance runs
 the same argv through `prog run`; raw, passthrough, and unknown guidance execute
 it directly. It never performs semantic substitution or reparses a shell
-string. `PROG_HOOK_TIMEOUT_MS` sets the progressive capture timeout.
+string. Progressive captures impose no prog deadline by default, so the
+harness's own timeout governs long test suites; set `PROG_HOOK_TIMEOUT_MS` to
+add one.
 
 If `prog` is unavailable or classification fails before the command starts, the
 wrapper emits a `prog.integration_fallback` record on stderr and executes the
