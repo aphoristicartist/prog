@@ -360,6 +360,14 @@ raise SystemExit(7)
             .as_ref()
     );
     assert_eq!(child["env"], "inherited");
+    // #286: without PROG_HOOK_TIMEOUT_MS the wrapper imposes no prog deadline,
+    // so the harness's own timeout governs long test suites.
+    assert!(
+        envelope["capture_budget"]["limits"][0]
+            .get("max_duration_ms")
+            .is_none_or(Value::is_null),
+        "{envelope:#}"
+    );
 
     write_executable(
         &tools.join("rustc"),

@@ -115,3 +115,80 @@ fn deepseek_harness_package_declares_a_native_bundle() {
     assert!(implementation.contains("shell: false"));
     assert!(implementation.contains("const decision = await next()"));
 }
+
+#[test]
+fn claude_code_plugin_and_marketplace_are_self_consistent() {
+    let root = repo_root();
+    let plugin_root = root.join("plugins/prog-claude");
+    let plugin = read_json(&plugin_root.join(".claude-plugin/plugin.json"));
+    let marketplace = read_json(&root.join(".claude-plugin/marketplace.json"));
+    assert_eq!(plugin["name"], "prog");
+    assert_eq!(plugin["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(plugin["userConfig"]["stop_gate"]["type"], "boolean");
+    assert_eq!(plugin["userConfig"]["stop_gate"]["default"], false);
+    assert_eq!(marketplace["plugins"][0]["name"], "prog");
+    assert_eq!(marketplace["plugins"][0]["source"], "./plugins/prog-claude");
+
+    // Every hook event routes to the single tested entry point.
+    let hooks = read_json(&plugin_root.join("hooks/hooks.json"));
+    for event in ["SessionStart", "PostToolUse", "PostToolUseFailure", "Stop"] {
+        let command = hooks["hooks"][event][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap_or_else(|| panic!("missing {event} hook"));
+        assert_eq!(
+            command, "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/hook.sh",
+            "{event}"
+        );
+    }
+    for event in ["PostToolUse", "PostToolUseFailure"] {
+        assert_eq!(hooks["hooks"][event][0]["matcher"], "Bash", "{event}");
+    }
+    let script = plugin_root.join("scripts/hook.sh");
+    assert!(
+        fs::read_to_string(&script)
+            .unwrap()
+            .contains("harness hook claude-code")
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_ne!(
+            fs::metadata(&script).unwrap().permissions().mode() & 0o111,
+            0,
+            "hook.sh must be executable"
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(plugin_root.join("skills/prog/SKILL.md")).unwrap(),
+        fs::read_to_string(root.join("skills/prog/SKILL.md")).unwrap()
+    );
+    assert_eq!(
+        fs::read_to_string(plugin_root.join("LICENSE")).unwrap(),
+        fs::read_to_string(root.join("LICENSE")).unwrap()
+    );
+}
+
+/// #292: the default skill teaches one loop; the full guidance lives in
+/// docs/agent-reference.md.
+#[test]
+fn default_skill_stays_small_and_points_to_the_full_reference() {
+    let root = repo_root();
+    let skill = fs::read_to_string(root.join("skills/prog/SKILL.md")).unwrap();
+    assert!(
+        skill.len() <= 1_536,
+        "skill is {} bytes; keep it at or under 1,536",
+        skill.len()
+    );
+    assert!(skill.contains("NOT PROVEN"));
+    assert!(skill.contains("prog evidence"));
+    assert!(skill.contains("docs/agent-reference.md"));
+    let reference = fs::read_to_string(root.join("docs/agent-reference.md")).unwrap();
+    for guidance in [
+        "## Verifying a Fix",
+        "prog session obligation-add",
+        "## Long-Running MCP Tasks",
+        "## EvidenceRefs",
+    ] {
+        assert!(reference.contains(guidance), "reference lost: {guidance}");
+    }
+}

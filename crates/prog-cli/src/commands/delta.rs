@@ -63,21 +63,31 @@ pub(crate) fn compare_observation_ids(
             operation: "delta".to_string(),
             reason: format!("unknown subject observation '{subject_id}'"),
         })?;
-    let baseline_findings = delta_findings_for_observation(store, &baseline)?;
-    let subject_findings = delta_findings_for_observation(store, &subject)?;
-    Ok(prog_core::compare_observations(
+    let baseline_payload = store.get_payload(&baseline.payload_hash)?;
+    let subject_payload = store.get_payload(&subject.payload_hash)?;
+    let baseline_findings = delta_findings_for_observation(&baseline, baseline_payload.as_ref())?;
+    let subject_findings = delta_findings_for_observation(&subject, subject_payload.as_ref())?;
+    let baseline_tests = baseline_payload
+        .as_ref()
+        .and_then(|payload| prog_core::TestPopulation::from_payload(payload.as_value()));
+    let subject_tests = subject_payload
+        .as_ref()
+        .and_then(|payload| prog_core::TestPopulation::from_payload(payload.as_value()));
+    Ok(prog_core::compare_observations_with_tests(
         &baseline,
         &subject,
         &baseline_findings,
         &subject_findings,
+        baseline_tests.as_ref(),
+        subject_tests.as_ref(),
     ))
 }
 
 fn delta_findings_for_observation(
-    store: &Store,
     observation: &prog_core::ObservationRecord,
+    payload: Option<&prog_core::PersistedPayload>,
 ) -> Result<Vec<prog_core::Finding>> {
-    let Some(payload) = store.get_payload(&observation.payload_hash)? else {
+    let Some(payload) = payload else {
         return Ok(Vec::new());
     };
     let mut findings = prog_core::ranked_findings(
@@ -148,7 +158,8 @@ mod tests {
             })
             .unwrap();
 
-        let findings = delta_findings_for_observation(&store, &observation).unwrap();
+        let payload = store.get_payload(&observation.payload_hash).unwrap();
+        let findings = delta_findings_for_observation(&observation, payload.as_ref()).unwrap();
         assert_eq!(
             findings
                 .iter()

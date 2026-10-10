@@ -111,6 +111,9 @@ The current public contracts include:
 - `RouteRule`
 - `RoutePolicy`
 - `RouteAssessment`
+- `ReceiptVerdict`
+- `Receipt`
+- `ReceiptList`
 - `StatusReport`
 - `CachePolicy`
 - `TrustSettings`

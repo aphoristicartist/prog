@@ -325,7 +325,9 @@ disappeared finding is `not_observed` or `unknown`, and the assessment lists the
 reasons why.
 
 That means a narrower rerun cannot clear a broad baseline, and a truncated log
-cannot be mistaken for a clean one.
+cannot be mistaken for a clean one. For test runs, the same tests must also run
+again: a deleted, skipped, or ignored failing test, or fewer executed tests,
+leaves the finding `unknown`, because that output looks exactly like a fix.
 
 Verification obligations turn that into an explicit gate. You commit to the
 success criterion *before* you have the result:
@@ -445,6 +447,41 @@ Code, Gemini CLI, and Cursor adapters are added when their executable or project
 directory is detected. Repeat `--host` for an explicit deployment instead of
 detection.
 
+### Claude Code plugin
+
+The plugin needs a `prog` newer than 0.1.1, which has `prog harness hook`;
+until the next release, install from a checkout of `main`
+(`cargo install --path crates/prog-cli`). With an older `prog` the plugin
+does nothing. Then add the plugin from this repository's marketplace:
+
+```text
+/plugin install prog --marketplace aphoristicartist/prog
+```
+
+On Claude Code releases before 2.1.275, run
+`/plugin marketplace add aphoristicartist/prog` and then
+`/plugin install prog@prog`.
+
+The plugin changes nothing the agent sees in a command's output. At session
+start it puts [PATH shims](docs/shims-and-receipts.md) for `cargo`, `pytest`,
+`go`, `npm`, and other test, build, and lint tools in front of the real ones.
+The shell has already split the command line, so a shim receives the exact argv
+inside pipes, loops, and `cd &&` chains, streams every byte through unchanged,
+and keeps the full output even when the agent pipes it to `tail`. After each
+captured run, a receipt of a few hundred bytes is added to the agent's context:
+
+```text
+prog: `cargo test --no-fail-fast` · exit 0 · 1 passed, 0 failed · full output kept (15 lines)
+vs previous run: NOT PROVEN (the subject executed 1 tests but the baseline executed 2; the test population shrank)
+evidence: prog evidence pc1_… --path /stdout
+```
+
+That receipt is what deleting the failing test produces: the output is green,
+but the fix is not proven. A real fix reads `vs previous run: fixed:
+tests::adds`. The optional **stop gate** (plugin setting `stop_gate`) blocks
+the end of a turn once while this session's latest test run is failing, does
+not prove an earlier failure fixed, or is older than the workspace.
+
 ### Codex plugin
 
 This repository is a Codex marketplace root and ships `plugins/prog`. From a
@@ -527,8 +564,10 @@ The safety model is enforced in code and mapped to executable tests in
 - Raw payloads must cross the redaction boundary before the store accepts them.
   This is a typestate boundary, not a convention: `Store::put_payload` does not
   accept an unredacted value.
-- Secret-like object keys and supported embedded Bearer, PEM, JWT, name/value,
-  and URL-parameter patterns are redacted before persistence.
+- Secret-like object keys, vendor-format credentials (GitHub, AWS, Anthropic,
+  OpenAI, Slack, Stripe, and others; see `docs/safety.md`), and supported
+  embedded Bearer, PEM, JWT, name/value, and URL-parameter patterns are
+  redacted before persistence.
 - Sensitive or non-cacheable operation results are not persisted.
 - Cursor expansion is provenance-scoped and rejects stale, foreign, or expired
   cursors. A pre-release store-contract change resets the local store instead

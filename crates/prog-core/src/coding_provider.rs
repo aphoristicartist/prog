@@ -213,11 +213,16 @@ fn normalize_pytest(
     }
     let mut tests = Vec::new();
     let mut summary_seen = false;
+    // pytest prints its final outcome summary last; keep the last one seen.
+    let mut summary_counts = None;
     let mut early_terminated = pytest_early_stop_args(args);
     for line in lines {
         let trimmed = line.text.trim();
         let lower = trimmed.to_ascii_lowercase();
-        summary_seen |= pytest_summary_line(&lower);
+        if pytest_summary_line(&lower) {
+            summary_seen = true;
+            summary_counts = Some(pytest_summary_counts(&lower));
+        }
         early_terminated |= lower.contains("stopping after")
             || lower.contains("interrupted:")
             || lower.contains("keyboardinterrupt");
@@ -274,6 +279,7 @@ fn normalize_pytest(
         json!({
             "tests": tests,
             "summary_seen": summary_seen,
+            "counts": summary_counts.as_ref().map(SummaryCounts::to_value),
             "early_terminated": early_terminated,
             "targets": targets
         }),
@@ -392,6 +398,7 @@ fn normalize_pytest_json(
         json!({
             "tests": tests,
             "summary_seen": true,
+            "counts": pytest_json_counts(&report["summary"]).to_value(),
             "early_terminated": early_terminated,
             "targets": targets,
             "exitcode": exitcode,
@@ -399,6 +406,18 @@ fn normalize_pytest_json(
         }),
         warnings,
     )
+}
+
+fn pytest_json_counts(summary: &Value) -> SummaryCounts {
+    let mut counts = SummaryCounts::default();
+    if let Some(summary) = summary.as_object() {
+        for (outcome, count) in summary {
+            if let Some(count) = count.as_u64() {
+                counts.add(outcome, count);
+            }
+        }
+    }
+    counts
 }
 
 fn pytest_json_message(test: &Value) -> Option<&str> {
@@ -462,6 +481,75 @@ fn pytest_test_line(line: &str) -> Option<(String, String, Option<String>)> {
     Some((bounded_text(node), status.to_string(), None))
 }
 
+/// Outcome counts reported by a runner's own completion summary. Keys use the
+/// normalized test statuses; `executed` excludes skipped and deselected tests,
+/// so a narrower or partly skipped rerun is visible even when quiet output
+/// lists no passing test names.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct SummaryCounts {
+    passed: u64,
+    failed: u64,
+    error: u64,
+    skipped: u64,
+    xfailed: u64,
+    xpassed: u64,
+}
+
+impl SummaryCounts {
+    fn add(&mut self, outcome: &str, count: u64) {
+        let slot = match outcome {
+            "passed" => &mut self.passed,
+            "failed" => &mut self.failed,
+            "error" | "errors" => &mut self.error,
+            "skipped" | "ignored" => &mut self.skipped,
+            "xfailed" | "xfail" => &mut self.xfailed,
+            "xpassed" | "xpass" => &mut self.xpassed,
+            _ => return,
+        };
+        *slot = slot.saturating_add(count);
+    }
+
+    fn to_value(&self) -> Value {
+        let executed = self
+            .passed
+            .saturating_add(self.failed)
+            .saturating_add(self.error)
+            .saturating_add(self.xfailed)
+            .saturating_add(self.xpassed);
+        json!({
+            "passed": self.passed,
+            "failed": self.failed,
+            "error": self.error,
+            "skipped": self.skipped,
+            "xfailed": self.xfailed,
+            "xpassed": self.xpassed,
+            "executed": executed
+        })
+    }
+}
+
+/// Parse `N outcome` pairs such as `1 failed, 2 passed in 0.03s` (pytest) or
+/// `1 passed; 1 failed; 0 ignored; ...` (libtest). Unknown outcomes are ignored.
+fn add_summary_pairs(counts: &mut SummaryCounts, summary: &str, separator: char) {
+    for part in summary.split(separator) {
+        let mut words = part.split_whitespace();
+        let (Some(number), Some(outcome)) = (words.next(), words.next()) else {
+            continue;
+        };
+        if let Ok(count) = number.parse::<u64>() {
+            counts.add(outcome.trim_end_matches(['.', ',']), count);
+        }
+    }
+}
+
+fn pytest_summary_counts(lower: &str) -> SummaryCounts {
+    let body = lower.trim_matches(|ch: char| ch == '=' || ch.is_whitespace());
+    let body = body.rsplit_once(" in ").map_or(body, |(counts, _)| counts);
+    let mut counts = SummaryCounts::default();
+    add_summary_pairs(&mut counts, body, ',');
+    counts
+}
+
 fn is_pytest_node_id(value: &str) -> bool {
     value.contains(".py::") && !value.contains(char::is_whitespace)
 }
@@ -511,6 +599,7 @@ fn normalize_cargo_rust(
     let mut structured_seen = false;
     let mut test_summary_seen = false;
     let mut test_failure_seen = false;
+    let mut test_counts = SummaryCounts::default();
     for (index, line) in lines.iter().enumerate() {
         let trimmed = line.text.trim();
         if trimmed.starts_with('{') {
@@ -551,6 +640,9 @@ fn normalize_cargo_rust(
         if let Some(summary) = trimmed.strip_prefix("test result:") {
             test_summary_seen = true;
             test_failure_seen |= summary.trim_start().starts_with("FAILED");
+            // `FAILED. 1 passed; 1 failed; 0 ignored; ...` once per harness.
+            let pairs = summary.split_once('.').map_or(summary, |(_, rest)| rest);
+            add_summary_pairs(&mut test_counts, pairs, ';');
         }
         if let Some(diagnostic) = rust_text_diagnostic(lines, index) {
             if diagnostics.len() < MAX_PROVIDER_ITEMS {
@@ -623,6 +715,7 @@ fn normalize_cargo_rust(
             "tests": tests,
             "structured_seen": structured_seen,
             "test_summary_seen": test_summary_seen,
+            "counts": test_summary_seen.then(|| test_counts.to_value()),
             "test_failure_seen": test_failure_seen,
             "exact_harness": exact_harness,
             "no_fail_fast": no_fail_fast

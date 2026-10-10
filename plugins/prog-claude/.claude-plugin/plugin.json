@@ -1,0 +1,22 @@
+{
+  "name": "prog",
+  "displayName": "prog",
+  "version": "0.1.1",
+  "description": "Keeps the full output of test, build, and lint runs, adds a short receipt after each, and never lets 'fixed' be claimed without proof",
+  "author": {
+    "name": "aphoristicartist",
+    "url": "https://github.com/aphoristicartist"
+  },
+  "homepage": "https://github.com/aphoristicartist/prog",
+  "repository": "https://github.com/aphoristicartist/prog",
+  "license": "MIT",
+  "keywords": ["testing", "verification", "tool-results", "evidence"],
+  "userConfig": {
+    "stop_gate": {
+      "type": "boolean",
+      "title": "Stop gate",
+      "description": "Before Claude finishes a turn, block once if this session's latest test run is failing, does not prove an earlier failure fixed, or is older than the workspace",
+      "default": false
+    }
+  }
+}

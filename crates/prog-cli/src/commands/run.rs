@@ -6,11 +6,11 @@ use prog_adapters::process::{
 };
 use prog_core::normalize_coding_output;
 
-struct RunProcessResult {
+pub(crate) struct RunProcessResult {
     stdout: RunCapture,
     stderr: RunCapture,
     combined: Vec<RunChunk>,
-    status: RunProcessStatus,
+    pub(crate) status: RunProcessStatus,
 }
 
 pub(crate) enum RunProcessStatus {
@@ -26,15 +26,44 @@ pub(crate) enum RunProcessStatus {
     SpawnError(String),
 }
 
+/// How `run` obtains the child's output.
+pub(crate) enum RunSpawn {
+    /// Spawn with piped, bounded capture and prog's own deadline (`prog run`).
+    Bounded,
+    /// Output was already streamed through to the caller and captured by a
+    /// PATH shim; only recording remains.
+    Precaptured(PassthroughCapture),
+}
+
+/// A passthrough capture plus the instant it started, so the recorded timing
+/// covers the child's whole run.
+pub(crate) struct PassthroughCapture {
+    pub(crate) result: RunProcessResult,
+    pub(crate) started_at: chrono::DateTime<Utc>,
+    pub(crate) started_instant: Instant,
+}
+
 pub(crate) async fn run_command(
     store: &Store,
     lens_dir: Option<&Path>,
     args: &RunArgs,
     ctx: &mut InvocationContext,
 ) -> Result<RunEnvelopeResult> {
+    run_command_with(store, lens_dir, args, ctx, RunSpawn::Bounded).await
+}
+
+pub(crate) async fn run_command_with(
+    store: &Store,
+    lens_dir: Option<&Path>,
+    args: &RunArgs,
+    ctx: &mut InvocationContext,
+    spawn: RunSpawn,
+) -> Result<RunEnvelopeResult> {
     let cwd = std::env::current_dir()?;
-    let started_at = Utc::now();
-    let started_instant = Instant::now();
+    let (started_at, started_instant) = match &spawn {
+        RunSpawn::Bounded => (Utc::now(), Instant::now()),
+        RunSpawn::Precaptured(capture) => (capture.started_at, capture.started_instant),
+    };
     let argv = args.command.clone();
     let run_sequence = RUN_CAPTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let started_at_nanos = started_at
@@ -86,32 +115,37 @@ pub(crate) async fn run_command(
         }),
     )?;
 
-    let mut command = TokioCommand::new(&args.command[0]);
-    command
-        .args(&args.command[1..])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    configure_capture_process(&mut command);
+    let run = match spawn {
+        RunSpawn::Precaptured(capture) => capture.result,
+        RunSpawn::Bounded => {
+            let mut command = TokioCommand::new(&args.command[0]);
+            command
+                .args(&args.command[1..])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            configure_capture_process(&mut command);
 
-    store.release()?;
-    let run = match command.spawn() {
-        Ok(child) => {
-            run_spawned_child(
-                child,
-                args.timeout_ms,
-                args.max_stdout_bytes,
-                args.max_stderr_bytes,
-            )
-            .await?
+            store.release()?;
+            match command.spawn() {
+                Ok(child) => {
+                    run_spawned_child(
+                        child,
+                        args.timeout_ms,
+                        args.max_stdout_bytes,
+                        args.max_stderr_bytes,
+                    )
+                    .await?
+                }
+                Err(error) => RunProcessResult {
+                    stdout: empty_run_capture("stdout"),
+                    stderr: empty_run_capture("stderr"),
+                    combined: Vec::new(),
+                    status: RunProcessStatus::SpawnError(error.to_string()),
+                },
+            }
         }
-        Err(error) => RunProcessResult {
-            stdout: empty_run_capture("stdout"),
-            stderr: empty_run_capture("stderr"),
-            combined: Vec::new(),
-            status: RunProcessStatus::SpawnError(error.to_string()),
-        },
     };
 
     let ended_at = Utc::now();
@@ -356,13 +390,26 @@ pub(crate) async fn run_command(
     })
 }
 
+/// `--timeout-ms 0` means prog imposes no deadline of its own: the harness
+/// that launched the command owns its timeout. Tokio timers cannot represent
+/// an unbounded instant, so "none" is a deadline far beyond any test suite.
+const NO_RUN_DEADLINE: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+
+fn run_deadline(timeout_ms: u64) -> Duration {
+    if timeout_ms == 0 {
+        NO_RUN_DEADLINE
+    } else {
+        Duration::from_millis(timeout_ms)
+    }
+}
+
 async fn run_spawned_child(
     mut child: tokio::process::Child,
     timeout_ms: u64,
     max_stdout_bytes: usize,
     max_stderr_bytes: usize,
 ) -> Result<RunProcessResult> {
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+    let deadline = tokio::time::Instant::now() + run_deadline(timeout_ms);
     let stdout = child.stdout.take().ok_or_else(|| CoreError::CliTransport {
         operation: "run".to_string(),
         message: "failed to capture stdout".to_string(),
@@ -1483,6 +1530,203 @@ fn redact_inline_secret(arg: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Environment marker set for children of a capturing shim, so a shimmed tool
+/// that invokes another shimmed tool passes straight through.
+pub(crate) const SHIM_ACTIVE_ENV: &str = "PROG_SHIM_ACTIVE";
+
+static PASSTHROUGH_CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+extern "C" fn forward_signal_to_child(signal: libc::c_int) {
+    let child = PASSTHROUGH_CHILD.load(Ordering::SeqCst);
+    if child > 0 {
+        // SAFETY: kill(2) is async-signal-safe.
+        unsafe {
+            libc::kill(child, signal);
+        }
+    }
+}
+
+/// Whether file descriptors 1 and 2 refer to the same open file (the caller
+/// wrote `2>&1`, or both go to one pipe). The child then gets one shared pipe
+/// so stdout/stderr interleaving is exactly what it would have been.
+fn stdout_and_stderr_share_target() -> bool {
+    // SAFETY: fstat writes into a zeroed, correctly sized stat buffer.
+    unsafe {
+        let mut out: libc::stat = std::mem::zeroed();
+        let mut err: libc::stat = std::mem::zeroed();
+        libc::fstat(1, &mut out) == 0
+            && libc::fstat(2, &mut err) == 0
+            && out.st_dev == err.st_dev
+            && out.st_ino == err.st_ino
+    }
+}
+
+/// Run `program` with the exact authored arguments, relaying every byte to the
+/// destination it would have reached without prog, and keep a bounded copy.
+///
+/// Nothing is added to or removed from the relayed streams, the exit status is
+/// reported unchanged, and prog imposes no deadline (the harness owns it). If
+/// the downstream reader goes away (`| head`), that stream's pipe is closed so
+/// the child observes the same broken pipe it would have, and the capture is
+/// marked truncated rather than complete.
+pub(crate) fn capture_passthrough(
+    program: &Path,
+    argv: &[String],
+    max_stdout_bytes: usize,
+    max_stderr_bytes: usize,
+) -> RunProcessResult {
+    use std::io::{Read, Write};
+    use std::os::fd::FromRawFd;
+
+    use std::os::unix::process::CommandExt;
+
+    let merged = stdout_and_stderr_share_target();
+    let mut command = std::process::Command::new(program);
+    // Keep the name the caller typed: multi-call proxies (rustup's `cargo`)
+    // dispatch on argv[0].
+    command
+        .arg0(&argv[0])
+        .args(&argv[1..])
+        .stdin(Stdio::inherit())
+        .env(SHIM_ACTIVE_ENV, "1");
+    let mut sources: Vec<(&'static str, Box<dyn Read + Send>, libc::c_int, usize)> = Vec::new();
+    let spawned = if merged {
+        std::io::pipe().and_then(|(reader, writer)| {
+            let second = writer.try_clone()?;
+            command.stdout(writer).stderr(second);
+            let child = command.spawn()?;
+            // Release the parent's copies of the write end, or the reader
+            // would never see end-of-file.
+            drop(command);
+            sources.push((
+                "stdout",
+                Box::new(reader),
+                1,
+                max_stdout_bytes.saturating_add(max_stderr_bytes),
+            ));
+            Ok(child)
+        })
+    } else {
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        command.spawn().map(|mut child| {
+            if let Some(stdout) = child.stdout.take() {
+                sources.push(("stdout", Box::new(stdout), 1, max_stdout_bytes));
+            }
+            if let Some(stderr) = child.stderr.take() {
+                sources.push(("stderr", Box::new(stderr), 2, max_stderr_bytes));
+            }
+            child
+        })
+    };
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(error) => {
+            return RunProcessResult {
+                stdout: empty_run_capture("stdout"),
+                stderr: empty_run_capture("stderr"),
+                combined: Vec::new(),
+                status: RunProcessStatus::SpawnError(error.to_string()),
+            };
+        }
+    };
+    // Interactive interrupts reach the child through the shared process
+    // group; the shim waits for it like a shell does. Termination aimed at the
+    // shim itself is forwarded.
+    PASSTHROUGH_CHILD.store(child.id() as i32, Ordering::SeqCst);
+    // SAFETY: installing process-wide dispositions with valid handlers.
+    unsafe {
+        libc::signal(libc::SIGINT, libc::SIG_IGN);
+        libc::signal(libc::SIGQUIT, libc::SIG_IGN);
+        let handler = forward_signal_to_child as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        libc::signal(libc::SIGTERM, handler);
+        libc::signal(libc::SIGHUP, handler);
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel::<RunChunk>();
+    let relays = sources
+        .into_iter()
+        .map(|(stream, mut reader, fd, cap)| {
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                // SAFETY: fd 1/2 stay open for the life of the process; the
+                // ManuallyDrop wrapper never closes them.
+                let mut sink =
+                    std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
+                let mut kept = Vec::new();
+                let mut total_bytes = 0usize;
+                let mut truncated = false;
+                let mut buffer = vec![0u8; 64 * 1024];
+                loop {
+                    let read = match reader.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => read,
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(_) => {
+                            truncated = true;
+                            break;
+                        }
+                    };
+                    let chunk = &buffer[..read];
+                    if sink.write_all(chunk).is_err() {
+                        // Downstream closed: stop reading so the child sees
+                        // the broken pipe it would have seen directly.
+                        truncated = true;
+                        total_bytes = total_bytes.saturating_add(read);
+                        break;
+                    }
+                    total_bytes = total_bytes.saturating_add(read);
+                    let room = cap.saturating_sub(kept.len());
+                    if room > 0 {
+                        let stored = read.min(room);
+                        kept.extend_from_slice(&chunk[..stored]);
+                        let _ = tx.send(RunChunk {
+                            stream,
+                            bytes: chunk[..stored].to_vec(),
+                        });
+                    }
+                    if read > room {
+                        truncated = true;
+                    }
+                }
+                drop(reader);
+                RunCapture {
+                    stream,
+                    bytes: kept,
+                    total_bytes,
+                    truncated,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    drop(tx);
+    let mut stdout = empty_run_capture("stdout");
+    let mut stderr = empty_run_capture("stderr");
+    for relay in relays {
+        if let Ok(capture) = relay.join() {
+            match capture.stream {
+                "stderr" => stderr = capture,
+                _ => stdout = capture,
+            }
+        }
+    }
+    let combined = coalesce_run_chunks(rx.into_iter().collect());
+    let status = match child.wait() {
+        Ok(status) => RunProcessStatus::Exited {
+            success: status.success(),
+            code: status.code(),
+            signal: exit_signal(&status),
+        },
+        Err(error) => RunProcessStatus::SpawnError(error.to_string()),
+    };
+    PASSTHROUGH_CHILD.store(0, Ordering::SeqCst);
+    RunProcessResult {
+        stdout,
+        stderr,
+        combined,
+        status,
+    }
 }
 
 #[cfg(test)]

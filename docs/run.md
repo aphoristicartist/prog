@@ -47,7 +47,10 @@ persist a conservative `cancelled` observation, and return `128 + signal` when
 `--preserve-exit-code` is active. Cancelled evidence cannot prove absence.
 
 `--timeout-ms` sets one deadline for child execution and stdout/stderr drainage.
-It remains active after the immediate child exits if descendants still hold the
+The default is 30 seconds; `--timeout-ms 0` disables `prog`'s deadline so the
+calling harness's own command timeout governs long test suites, and the capture
+budget then reports no `max_duration_ms`. The generated hook wrapper uses `0`
+unless `PROG_HOOK_TIMEOUT_MS` is set. The deadline remains active after the immediate child exits if descendants still hold the
 pipes open. Deadline expiry keeps the captured partial evidence, records a
 `timeout` observation that cannot prove absence, and returns `124` when
 `--preserve-exit-code` is active. Signal cancellation also remains active during

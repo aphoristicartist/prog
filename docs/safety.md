@@ -108,8 +108,18 @@ The default value scan also recognizes quoted sensitive JSON keys embedded in
 text, including escaped key names and quoted values. `run` redacts each complete
 stream before deriving text/head/tail views, and uses that stream's full context
 when redacting interleaved output fragments. Explicit markers replace secret
-content; benign quoted fields remain visible. Redaction applies the supported
-name/value policy and does not guarantee detection of arbitrary secret formats.
+content; benign quoted fields remain visible.
+
+Credentials in common vendor formats are recognized on their own, in free text
+and in JSON values, without needing a `name=value` context: GitHub (`ghp_`,
+`gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), AWS access key ids
+(`AKIA`/`ASIA`/...) and secret keys that follow AWS context on the same line,
+Anthropic (`sk-ant-`), OpenAI (`sk-proj-`, `sk-svcacct-`, `sk-admin-`, and the
+legacy marker form), Slack (`xox[abposr]-`), Stripe (`sk_`/`rk_` `live`/`test`),
+GitLab (`glpat-`), npm (`npm_`), Google API keys (`AIza`), Hugging Face (`hf_`),
+and SendGrid (`SG.`). A test keeps these rules free of false positives on this
+repository's code, docs, and fixtures. Redaction still does not guarantee
+detection of arbitrary secret formats.
 
 Verification obligation descriptions and advisory reasons pass through text and
 persistence redaction at `Store::put_obligation`. Extension metadata uses the
