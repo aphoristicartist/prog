@@ -95,6 +95,11 @@ The current public contracts include:
 - `DeltaFindingStatus`
 - `DeltaFinding`
 - `ObservationDelta`
+- `RecordDelta`
+- `RecordDeltaStatus`
+- `CollectionOverview`
+- `SelectResponse`
+- `CoverageReport`
 - `ObligationDeclarer`
 - `VerificationOperation`
 - `VerificationStateRelationship`
@@ -111,6 +116,9 @@ The current public contracts include:
 - `RouteRule`
 - `RoutePolicy`
 - `RouteAssessment`
+- `ReceiptVerdict`
+- `Receipt`
+- `ReceiptList`
 - `StatusReport`
 - `CachePolicy`
 - `TrustSettings`

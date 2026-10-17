@@ -13,6 +13,71 @@
   cannot prove selection exhaustion, even with an explicit exhaustive flag
   (#281). Reset older local stores whose observations predate these checks.
 
+- Added `--format compact` (`PROG_FORMAT`): every response keeps its data,
+  next moves, and every caveat (truncation, redaction, staleness, incomplete
+  capture, warnings) and drops budgets, verdicts, provenance, and templates.
+  The full JSON contract stays the default; the Claude Code plugin selects
+  compact for Claude.
+- `prog run` parses stdout that is one JSON document or JSON Lines into
+  `/stdout/json`, redacted per value, so a secret in one record no longer
+  costs the rest of a single-line document. Test, build, and lint runners are
+  excluded: their output stays verification evidence.
+- Envelopes that show only part of a collection carry an `overview`: field
+  kinds and presence, every value with its count when there are few, number
+  and timestamp ranges, and key candidates. Counts are exact over the stored
+  payload.
+- Added `prog select`: filter (`=`, `!=`, `~`), project nested fields, and page
+  a collection; every row keeps its JSON Pointer, and records whose filter
+  field is redacted are counted as unknown.
+- `prog delta` compares records by key (`--key`, `--records-path`, or
+  inferred): added, removed, and changed records with before and after values.
+  It refuses incomplete captures and duplicate, missing, or redacted keys, and
+  says that "removed" describes the captured collection (I15). Capturing the
+  same command, file, or call again attaches the comparison as
+  `changes_since`, which now falls back to counts instead of disappearing when
+  it does not fit beside the preview.
+- Added `prog coverage`: which records of a collection prog returned in this
+  session, and the index ranges it never returned.
+- Search previews of long strings show the window around the match.
+- A quiet test run (`pytest -q`, `cargo test -q`) can no longer prove a fix:
+  it names only failures, so "the failing test passed" and "the failing test
+  was deleted and another took its place" look the same. The reason asks for a
+  verbose rerun. libtest's closing `failures:` list is now read in quiet mode,
+  and a baseline that counts more failures than it names cannot be matched.
+- The stop gate also blocks once when a session changed files but captured no
+  test run.
+- Added `prog shim list`; `prog harness doctor` reports shim and Claude Code
+  plugin state without making either a readiness blocker.
+- The Agent Skill (1,513 bytes) now teaches both loops: receipts for test runs,
+  and select, expand, delta, and coverage for large captured data.
+
+- Never report a fix that a deleted, skipped, or ignored test could explain:
+  when the Cargo/Rust or pytest provider recorded test results, `prog delta`,
+  obligations, and readiness require the same tests to run again (executed
+  counts from the runner's own summary, plus every baseline-failing test),
+  otherwise the finding stays `unknown` with a reason (#284).
+- Redact vendor-format credentials (GitHub, AWS, Anthropic, OpenAI, Slack,
+  Stripe, GitLab, npm, Google, Hugging Face, SendGrid) in free text and JSON
+  values before persistence; a test keeps the rules free of false positives on
+  this repository (#285).
+- `prog run --timeout-ms 0` disables prog's own deadline; the generated hook
+  wrapper uses it by default so long test suites are no longer killed after
+  30 seconds (#286).
+- `prog delta` reasons no longer list completed scopes as stops, disclose
+  findings that share a fingerprint, and repeat provider remediation such as
+  Cargo's `--no-fail-fast` advice (#287).
+- Added `prog receipt`: a few-hundred-byte verdict (`failing`, `fixed`,
+  `not_proven`, `clean`) compared automatically with the previous run of the
+  same invocation, now linked through `lineage.supersedes_id` (#288).
+- Added `prog shim install|uninstall|env|exec`: PATH shims that capture test,
+  build, and lint runs inside any shell construct with byte-identical output
+  and exit status (#289).
+- Added a Claude Code plugin and marketplace (`plugins/prog-claude`) driven by
+  `prog harness hook claude-code`: shims at session start, receipts after Bash
+  calls, and an opt-in stop gate (#290).
+- Shortened the default Agent Skill from 7,824 to 1,290 bytes around the
+  receipt loop; the full guidance moved to `docs/agent-reference.md` (#292).
+
 - Added an owner-enabled DeepSeek Harness experiment with three registered
   tools composing canonical observe/evidence/status through the real host
   policy and subprocess boundary. An installed npm-artifact coding loop checks

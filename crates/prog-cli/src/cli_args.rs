@@ -35,8 +35,37 @@ pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub(crate) budget_tokens: Option<u64>,
 
+    // Repeated in every subcommand's help, so the text stays short. `compact`
+    // keeps data, next moves, and every caveat; `full` is the JSON contract.
+    /// `full` (default) or `compact`.
+    #[arg(
+        long,
+        env = "PROG_FORMAT",
+        global = true,
+        value_enum,
+        default_value_t = FormatArg::Full,
+        hide_default_value = true,
+        hide_possible_values = true
+    )]
+    pub(crate) format: FormatArg,
+
     #[command(subcommand)]
     pub(crate) command: Command,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum FormatArg {
+    Full,
+    Compact,
+}
+
+impl From<FormatArg> for prog_core::ResponseView {
+    fn from(format: FormatArg) -> Self {
+        match format {
+            FormatArg::Full => Self::Full,
+            FormatArg::Compact => Self::Compact,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -73,6 +102,10 @@ pub(crate) enum Command {
     Cost(CostArgs),
     /// List addressable JSON Pointer paths within a cursor's cached payload.
     Paths(PathsArgs),
+    /// Filter, project, and page the records of a cached collection; each row keeps its JSON Pointer.
+    Select(SelectArgs),
+    /// Report which records of a cached collection prog has returned in this session.
+    Coverage(CoverageArgs),
     /// Rank cached evidence against a goal, without contacting the source.
     Inspect(InspectArgs),
     /// Emit a compact, citable evidence block for one JSON Pointer path.
@@ -85,6 +118,13 @@ pub(crate) enum Command {
     Delta(DeltaArgs),
     /// Summarize verification readiness and an optional observation delta.
     Status(StatusArgs),
+    /// Summarize the latest run as a compact verdict compared with the previous identical run.
+    Receipt(ReceiptArgs),
+    /// Manage PATH shims that capture test and build runs without changing their output.
+    Shim {
+        #[command(subcommand)]
+        command: ShimCommand,
+    },
     /// Verify an externally executed mutation using an independent safe read-back.
     Verification {
         #[command(subcommand)]
@@ -117,6 +157,14 @@ pub(crate) enum HarnessCommand {
     Install(HarnessInstallArgs),
     /// Verify that the binary and selected project adapters are ready for an agent loop.
     Doctor(HarnessDoctorArgs),
+    /// Handle one host hook event from stdin (used by the Claude Code plugin); never fails the host.
+    Hook(HarnessHookArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct HarnessHookArgs {
+    /// Host whose hook protocol is spoken on stdin/stdout; currently `claude-code`.
+    pub(crate) host: String,
 }
 
 #[derive(Debug, Args)]
@@ -412,6 +460,8 @@ pub(crate) struct ObserveArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct RunArgs {
+    /// Kill the command after this many milliseconds; `0` disables prog's
+    /// deadline so the calling harness's own timeout governs long test suites
     #[arg(long, default_value_t = 30_000)]
     pub(crate) timeout_ms: u64,
 
@@ -705,6 +755,49 @@ pub(crate) struct DeltaArgs {
     pub(crate) baseline: String,
     /// Later observation id compared against the baseline.
     pub(crate) subject: String,
+    /// Record key, e.g. `id` or `metadata/uid`; inferred when omitted.
+    #[arg(long)]
+    pub(crate) key: Option<String>,
+    /// Collection to compare by key; inferred when omitted.
+    #[arg(long = "records-path")]
+    pub(crate) records_path: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct SelectArgs {
+    pub(crate) cursor: String,
+
+    /// Collection pointer; defaults to the largest record collection.
+    #[arg(long)]
+    pub(crate) path: Option<String>,
+
+    /// `field=value`, `field!=value`, or `field~text` (substring); repeatable.
+    #[arg(long = "where")]
+    pub(crate) filters: Vec<String>,
+
+    /// Record fields to return, e.g. `number,user/login`.
+    #[arg(long, value_delimiter = ',')]
+    pub(crate) fields: Vec<String>,
+
+    /// Skip this many matching records.
+    #[arg(long, default_value_t = 0)]
+    pub(crate) offset: usize,
+
+    #[arg(long, default_value_t = 20)]
+    pub(crate) limit: usize,
+
+    /// Characters kept per string before a labelled cut.
+    #[arg(long, default_value_t = 200)]
+    pub(crate) max_chars: usize,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct CoverageArgs {
+    pub(crate) cursor: String,
+
+    /// Collection pointer; defaults to the largest record collection.
+    #[arg(long)]
+    pub(crate) path: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -721,6 +814,79 @@ pub(crate) struct StatusArgs {
     /// Defaults to the active session.
     #[arg(long)]
     pub(crate) session_id: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ReceiptArgs {
+    /// Observation to summarize; defaults to the most recent observation.
+    #[arg(conflicts_with = "since")]
+    pub(crate) observation: Option<String>,
+
+    /// Summarize every observation captured at or after this RFC 3339 time
+    /// (at most five, oldest first).
+    #[arg(long, conflicts_with = "pending")]
+    pub(crate) since: Option<String>,
+
+    /// Summarize shim captures not yet reported, then mark them reported.
+    #[arg(long, conflicts_with = "observation")]
+    pub(crate) pending: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ShimCommand {
+    /// Write shim scripts for test and build tools into a directory.
+    Install(ShimInstallArgs),
+    /// Remove shim scripts that prog generated, leaving other files untouched.
+    Uninstall(ShimDirArgs),
+    /// Print the PATH (and optional per-project store) exports that activate the shims.
+    Env(ShimEnvArgs),
+    /// List generated shims, whether they are active on PATH, and what each wraps.
+    List(ShimDirArgs),
+    /// Run one tool on behalf of a generated shim script; prints nothing of its own.
+    Exec(ShimExecArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ShimInstallArgs {
+    /// Shim directory; defaults to $XDG_DATA_HOME/prog/shims (~/.local/share/prog/shims).
+    #[arg(long)]
+    pub(crate) dir: Option<PathBuf>,
+
+    /// Tool to shim; repeat for several. Defaults to common test, build, and lint tools.
+    #[arg(long = "tool")]
+    pub(crate) tools: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ShimDirArgs {
+    /// Shim directory; defaults to $XDG_DATA_HOME/prog/shims.
+    #[arg(long)]
+    pub(crate) dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ShimEnvArgs {
+    /// Shim directory; defaults to $XDG_DATA_HOME/prog/shims.
+    #[arg(long)]
+    pub(crate) dir: Option<PathBuf>,
+
+    /// Project root; adds a PROG_DIR export for a per-project store kept outside the project.
+    #[arg(long)]
+    pub(crate) project: Option<PathBuf>,
+
+    /// Print only the shell export lines (for CLAUDE_ENV_FILE) instead of JSON.
+    #[arg(long)]
+    pub(crate) shell: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ShimExecArgs {
+    /// Directory containing the calling shim; skipped when resolving the real tool.
+    #[arg(long)]
+    pub(crate) shim_dir: PathBuf,
+
+    #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
+    pub(crate) command: Vec<String>,
 }
 
 #[derive(Debug, Subcommand)]

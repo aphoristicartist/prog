@@ -16,8 +16,8 @@ Source: [`task-success-metrics.json`](../fixtures/evals/task-success-metrics.jso
 | simple_truncation | 1 | 13 | 0 | 49205 | 12302 | 0 | 0 | 0 |
 | native_json_selection | 11 | 11 | 2 | 4265 | 1069 | 11 | 0 | 0 |
 | rtk_grep_filter | 13 | 13 | 0 | 3084708 | 771180 | 13 | 0 | 0 |
-| prog_call_only | 1 | 13 | 0 | 87438 | 21866 | 13 | 0 | 6 |
-| prog_expand | 13 | 13 | 0 | 138144 | 34539 | 26 | 13 | 22 |
+| prog_call_only | 1 | 13 | 0 | 94122 | 23536 | 13 | 0 | 6 |
+| prog_expand | 13 | 13 | 0 | 147680 | 36926 | 26 | 13 | 22 |
 
 ## Scenarios
 

@@ -1,0 +1,17 @@
+{
+  "name": "prog",
+  "owner": {
+    "name": "aphoristicartist",
+    "url": "https://github.com/aphoristicartist"
+  },
+  "metadata": {
+    "description": "prog: verified test and build receipts for coding agents"
+  },
+  "plugins": [
+    {
+      "name": "prog",
+      "source": "./plugins/prog-claude",
+      "description": "Keeps the full output of test, build, and lint runs, adds a short receipt after each, and never lets 'fixed' be claimed without proof"
+    }
+  ]
+}

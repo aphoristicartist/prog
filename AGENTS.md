@@ -45,6 +45,10 @@ prog-cli  ──depends on──>  prog-adapters  ──depends on──>  prog-
 | `disclosure.rs` | Projection into a bounded preview; cursor expansion. |
 | `findings.rs` | Deterministic ranking. The largest module; no model calls, ever. |
 | `delta.rs` | Conservative comparison of two observations. |
+| `records.rs` | Keyed record comparison inside a delta; refuses incomplete captures and unusable keys (I15). |
+| `overview.rs` | Counted map of a collection (fields, value counts, ranges, key candidates); values copied verbatim (I1). |
+| `select.rs` | Filter, project, and page a collection; rows keep their JSON Pointers; redacted filter fields are unknown. |
+| `view.rs` | Compact response view: data, moves, and every caveat; never adds a value. |
 | `navigation.rs` | `inspect`, `search`, `find`, `evidence` over cached payloads. |
 | `lens.rs` | Data-only lens manifests. Lenses **cannot execute code**. |
 | `pointer.rs` | RFC 6901 JSON Pointer parsing and containment checks. |
@@ -56,7 +60,7 @@ prog-cli  ──depends on──>  prog-adapters  ──depends on──>  prog-
 
 ## Non-negotiable invariants
 
-[`INVARIANTS.md`](INVARIANTS.md) maps fourteen invariants (I1–I14) to the exact
+[`INVARIANTS.md`](INVARIANTS.md) maps fifteen invariants (I1–I15) to the exact
 tests that execute them. **Read it before changing anything in `prog-core`.**
 The ones that most often catch people:
 

@@ -239,6 +239,13 @@ pub(crate) fn doctor_harness(args: &HarnessDoctorArgs) -> Result<HarnessDoctorRe
         });
     }
 
+    // Optional capture paths: reported, never blocking readiness.
+    let mut warnings = Vec::new();
+    checks.push(shim_doctor_check(&mut warnings));
+    if let Some(check) = claude_plugin_doctor_check() {
+        checks.push(check);
+    }
+
     Ok(HarnessDoctorReport {
         schema: "prog.harness.doctor",
         root: root.to_string_lossy().to_string(),
@@ -246,7 +253,66 @@ pub(crate) fn doctor_harness(args: &HarnessDoctorArgs) -> Result<HarnessDoctorRe
         hosts: selected.iter().map(|target| target.agent.clone()).collect(),
         checks,
         blockers,
-        warnings: Vec::new(),
+        warnings,
+    })
+}
+
+/// Whether PATH shims are installed and active, so test runs are captured
+/// without the agent typing `prog run`.
+fn shim_doctor_check(warnings: &mut Vec<String>) -> HarnessDoctorCheck {
+    let listing = crate::commands::shim::shim_list(&ShimDirArgs { dir: None }).unwrap_or_default();
+    let installed = listing["installed"].as_bool().unwrap_or(false);
+    let on_path = listing["on_path"].as_bool().unwrap_or(false);
+    if let Some(list) = listing["warnings"].as_array() {
+        warnings.extend(list.iter().filter_map(Value::as_str).map(str::to_string));
+    }
+    let (status, detail) = match (installed, on_path) {
+        (true, true) => ("ok", "PATH shims capture test and build runs".to_string()),
+        (true, false) => (
+            "inactive",
+            "shims are installed but not on PATH; see `prog shim env`".to_string(),
+        ),
+        _ => (
+            "absent",
+            "optional: `prog shim install` or the Claude Code plugin captures test runs automatically"
+                .to_string(),
+        ),
+    };
+    HarnessDoctorCheck {
+        name: "shims".to_string(),
+        status,
+        detail,
+    }
+}
+
+/// Whether the prog Claude Code plugin is installed, read from Claude Code's
+/// plugin registry. `None` when no registry exists (Claude Code not in use).
+fn claude_plugin_doctor_check() -> Option<HarnessDoctorCheck> {
+    let config = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")))?;
+    let registry = std::fs::read(config.join("plugins/installed_plugins.json")).ok()?;
+    let registry: Value = serde_json::from_slice(&registry).ok()?;
+    let installed = registry
+        .get("plugins")
+        .and_then(Value::as_object)
+        .is_some_and(|plugins| plugins.keys().any(|name| name.starts_with("prog@")));
+    Some(if installed {
+        HarnessDoctorCheck {
+            name: "claude-code-plugin".to_string(),
+            status: "ok",
+            detail:
+                "installed: receipts after test runs, shims, compact responses, optional stop gate"
+                    .to_string(),
+        }
+    } else {
+        HarnessDoctorCheck {
+            name: "claude-code-plugin".to_string(),
+            status: "absent",
+            detail: "optional: `/plugin marketplace add aphoristicartist/prog`, then `/plugin install prog@prog`"
+                .to_string(),
+        }
     })
 }
 
@@ -754,7 +820,7 @@ fi
 
 case "$route_output" in
   *'"guidance":"progressive"'*)
-    timeout_ms=${{PROG_HOOK_TIMEOUT_MS:-30000}}
+    timeout_ms=${{PROG_HOOK_TIMEOUT_MS:-0}}
     case "$timeout_ms" in
       ''|*[!0-9]*)
         printf '%s\n' '{{"schema":"prog.integration_error","reason":"PROG_HOOK_TIMEOUT_MS_must_be_an_unsigned_integer"}}' >&2
@@ -786,7 +852,9 @@ Use the wrapper for noisy commands:
 The wrapper calls `prog route` with the exact argv. Progressive guidance runs
 the same argv through `prog run`; raw, passthrough, and unknown guidance execute
 it directly. It never performs semantic substitution or reparses a shell
-string. `PROG_HOOK_TIMEOUT_MS` sets the progressive capture timeout.
+string. Progressive captures impose no prog deadline by default, so the
+harness's own timeout governs long test suites; set `PROG_HOOK_TIMEOUT_MS` to
+add one.
 
 If `prog` is unavailable or classification fails before the command starts, the
 wrapper emits a `prog.integration_fallback` record on stderr and executes the

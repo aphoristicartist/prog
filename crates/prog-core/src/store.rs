@@ -36,6 +36,7 @@ const READBACK_RECEIPTS: TableDefinition<&str, &[u8]> = TableDefinition::new("re
 const STATE: TableDefinition<&str, &[u8]> = TableDefinition::new("state");
 const CURRENT_SESSION_KEY: &str = "current_session";
 const STORE_SCHEMA_KEY: &str = "store_schema";
+const LATEST_OBSERVATION_KEY: &str = "latest_observation";
 const STORAGE_BUDGET_KEY: &str = "storage_budget";
 const STORE_OPEN_ATTEMPTS: usize = 200;
 const STORE_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(2);
@@ -147,7 +148,18 @@ pub struct NewSessionEvent {
 
 impl Store {
     pub fn open(dir: impl AsRef<Path>) -> Result<Self> {
-        let dir = dir.as_ref().to_path_buf();
+        Self::open_inner(dir.as_ref(), true)
+    }
+
+    /// Open without writing the pre-release reset notice to stderr. For
+    /// callers whose stderr must stay byte-identical to a wrapped tool's
+    /// output, such as PATH shims.
+    pub fn open_silently(dir: impl AsRef<Path>) -> Result<Self> {
+        Self::open_inner(dir.as_ref(), false)
+    }
+
+    fn open_inner(dir: &Path, announce_reset: bool) -> Result<Self> {
+        let dir = dir.to_path_buf();
         let profiles = dir.join("profiles");
         let cache = dir.join("cache");
         let logs = dir.join("logs");
@@ -233,7 +245,7 @@ impl Store {
                     .map_err(CoreError::storage)?;
             }
             write.commit().map_err(CoreError::storage)?;
-            if store_existed {
+            if store_existed && announce_reset {
                 eprintln!("{}", store_reset_notice(&dir, dropped));
             }
         }
@@ -242,6 +254,11 @@ impl Store {
             dir,
             db: Mutex::new(Some(db)),
         })
+    }
+
+    /// The store's root directory (the `--dir` it was opened with).
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     fn open_database(&self) -> Result<StoreDatabaseGuard<'_>> {
@@ -348,7 +365,7 @@ impl Store {
         validate_observation_input(&input)?;
         let redaction = RedactionPolicy::default();
         let (redacted_extra, _) = redaction.apply_persistence(&Value::Object(input.extra));
-        let record = ObservationRecord {
+        let mut record = ObservationRecord {
             schema: OBSERVATION_SCHEMA.to_string(),
             observation_id: format!("obs_{}", Uuid::new_v4().simple()),
             payload_hash: input.payload_hash,
@@ -376,9 +393,30 @@ impl Store {
             cache_key: input.cache_key,
             extra: redacted_extra.as_object().cloned().unwrap_or_default(),
         };
-        let bytes = serde_json::to_vec(&record)?;
         let db = self.open_database()?;
         let write = db.begin_write().map_err(CoreError::storage)?;
+        {
+            // Link each capture to the previous capture of the same canonical
+            // invocation inside the same write transaction, so "the run before
+            // this one" is an exact pointer rather than a timestamp guess
+            // (`captured_at` has one-second resolution).
+            let mut state = write.open_table(STATE).map_err(CoreError::storage)?;
+            let latest_key = format!("invocation_latest\0{}", record.invocation_fingerprint);
+            let previous = state
+                .get(latest_key.as_str())
+                .map_err(CoreError::storage)?
+                .map(|value| String::from_utf8_lossy(value.value()).into_owned());
+            if record.lineage.supersedes_id.is_none() {
+                record.lineage.supersedes_id = previous;
+            }
+            state
+                .insert(latest_key.as_str(), record.observation_id.as_bytes())
+                .map_err(CoreError::storage)?;
+            state
+                .insert(LATEST_OBSERVATION_KEY, record.observation_id.as_bytes())
+                .map_err(CoreError::storage)?;
+        }
+        let bytes = serde_json::to_vec(&record)?;
         {
             let mut table = write.open_table(OBSERVATIONS).map_err(CoreError::storage)?;
             let mut lineage = write
@@ -396,6 +434,28 @@ impl Store {
         }
         write.commit().map_err(CoreError::storage)?;
         Ok(record)
+    }
+
+    /// The most recently recorded observation, by write order rather than
+    /// the second-resolution `captured_at` timestamp.
+    pub fn latest_observation(&self) -> Result<Option<ObservationRecord>> {
+        let latest = {
+            let db = self.open_read_only_database()?;
+            let read = db.begin_read().map_err(CoreError::storage)?;
+            let state = match read.open_table(STATE) {
+                Ok(state) => state,
+                Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+                Err(error) => return Err(CoreError::storage(error)),
+            };
+            state
+                .get(LATEST_OBSERVATION_KEY)
+                .map_err(CoreError::storage)?
+                .map(|value| String::from_utf8_lossy(value.value()).into_owned())
+        };
+        match latest {
+            Some(id) => self.get_observation(&id),
+            None => Ok(None),
+        }
     }
 
     pub fn get_observation(&self, observation_id: &str) -> Result<Option<ObservationRecord>> {

@@ -12,6 +12,7 @@
       "complete": true,
       "selection": {"scopes": ["pytest:all"], "exhaustive": true},
       "normalized": {
+        "counts": {"passed": 1, "failed": 0, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1}],
         "summary_seen": true,
         "early_terminated": false,
@@ -33,6 +34,7 @@
       "complete": true,
       "selection": {"scopes": ["pytest:tests/test_api.py"], "exhaustive": true},
       "normalized": {
+        "counts": {"passed": 1, "failed": 1, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 2},
         "tests": [
           {"node_id": "tests/test_api.py::test_other", "status": "passed", "evidence_stream": "stdout", "evidence_line": 3},
           {"node_id": "tests/test_api.py::test_total[€]", "status": "failed", "message": "AssertionError: wrong total", "evidence_stream": "stdout", "evidence_line": 2}
@@ -57,6 +59,7 @@
       "complete": true,
       "selection": {"scopes": ["pytest:tests/test_api.py"], "exhaustive": true},
       "normalized": {
+        "counts": {"passed": 1, "failed": 1, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 2},
         "tests": [
           {"node_id": "tests/test_api.py::test_other", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1},
           {"node_id": "tests/test_api.py::test_total[€]", "status": "failed", "message": "AssertionError: wrong total", "evidence_stream": "stdout", "evidence_line": 4}
@@ -81,6 +84,7 @@
       "complete": true,
       "selection": {"scopes": ["pytest:tests/test_api.py"], "exhaustive": true},
       "normalized": {
+        "counts": {"passed": 1, "failed": 1, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 2},
         "tests": [
           {"node_id": "tests/test_api.py::test_other", "status": "passed", "evidence_stream": "stdout", "report_pointer": "/tests/0"},
           {"node_id": "tests/test_api.py::test_total[€]", "status": "failed", "message": "AssertionError: wrong total", "evidence_stream": "stdout", "report_pointer": "/tests/1"}
@@ -106,6 +110,7 @@
       "complete": true,
       "selection": {"scopes": ["pytest:all"], "exhaustive": true},
       "normalized": {
+        "counts": {"passed": 1, "failed": 0, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "report_pointer": "/tests/0"}],
         "summary_seen": true,
         "early_terminated": false,
@@ -128,6 +133,7 @@
       "complete": true,
       "selection": {"scopes": ["pytest:all"], "exhaustive": false},
       "normalized": {
+        "counts": {"passed": 1, "failed": 0, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "report_pointer": "/tests/0"}],
         "summary_seen": true,
         "early_terminated": false,
@@ -150,6 +156,7 @@
       "complete": false,
       "selection": {"scopes": ["pytest:all"], "exhaustive": false},
       "normalized": {
+        "counts": {"passed": 1, "failed": 0, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "tests": [{"node_id": "tests/test_math.py::test_add", "status": "passed", "evidence_stream": "stdout", "report_pointer": "/tests/0"}],
         "summary_seen": true,
         "early_terminated": true,
@@ -172,6 +179,7 @@
       "complete": true,
       "selection": {"scopes": ["pytest:all"], "exhaustive": false},
       "normalized": {
+        "counts": {"passed": 0, "failed": 1, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "tests": [{"node_id": "tests/test_api.py::test_one", "status": "failed", "message": "AssertionError", "evidence_stream": "stdout", "evidence_line": 1}],
         "summary_seen": true,
         "early_terminated": true,
@@ -192,6 +200,7 @@
       "complete": false,
       "selection": {"scopes": ["pytest:all"], "exhaustive": false},
       "normalized": {
+        "counts": {"passed": 1, "failed": 0, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "tests": [{"node_id": "tests/test_api.py::test_one", "status": "passed", "evidence_stream": "stdout", "evidence_line": 1}],
         "summary_seen": true,
         "early_terminated": false,
@@ -213,6 +222,7 @@
       "complete": true,
       "selection": {"scopes": ["cargo:check:default"], "exhaustive": false},
       "normalized": {
+        "counts": null,
         "diagnostics": [{"severity": "error", "diagnostic_code": "E0308", "message": "mismatched types", "spans": [{"path": "src/lib.rs", "line": 7, "column": 1, "primary": false, "label": "defined here"}, {"path": "src/lib.rs", "line": 20, "column": 5, "primary": true, "label": "expected u8"}], "evidence_stream": "stdout", "evidence_line": 1}],
         "tests": [],
         "structured_seen": true,
@@ -236,6 +246,7 @@
       "complete": true,
       "selection": {"scopes": ["cargo:check:default"], "exhaustive": true},
       "normalized": {
+        "counts": null,
         "diagnostics": [],
         "tests": [],
         "structured_seen": true,
@@ -260,6 +271,7 @@
       "complete": true,
       "selection": {"scopes": ["rustc:src/lib.rs"], "exhaustive": false},
       "normalized": {
+        "counts": null,
         "diagnostics": [{"severity": "error", "diagnostic_code": "E0308", "message": "mismatched types", "spans": [{"path": "src/lib.rs", "line": 99, "column": 5, "primary": true}], "evidence_stream": "stderr", "evidence_line": 1}],
         "tests": [],
         "structured_seen": false,
@@ -283,6 +295,7 @@
       "complete": true,
       "selection": {"scopes": ["cargo:test:lib"], "exhaustive": false},
       "normalized": {
+        "counts": {"passed": 0, "failed": 1, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "diagnostics": [],
         "tests": [{"node_id": "module::case", "status": "failed", "evidence_stream": "stdout", "evidence_line": 2}],
         "structured_seen": false,
@@ -306,6 +319,7 @@
       "complete": true,
       "selection": {"scopes": ["cargo:test:lib", "cargo:test:package=fixture"], "exhaustive": true},
       "normalized": {
+        "counts": {"passed": 0, "failed": 1, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "diagnostics": [],
         "tests": [{"node_id": "module::case", "status": "failed", "evidence_stream": "stdout", "evidence_line": 2}],
         "structured_seen": false,
@@ -329,6 +343,7 @@
       "complete": false,
       "selection": {"scopes": ["cargo:test:lib"], "exhaustive": false},
       "normalized": {
+        "counts": {"passed": 0, "failed": 1, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "diagnostics": [],
         "tests": [{"node_id": "module::case", "status": "failed", "evidence_stream": "stdout", "evidence_line": 2}],
         "structured_seen": false,

@@ -2,17 +2,21 @@
 
 use crate::*;
 
-struct CursorContext {
-    record: ValidatedCursor,
+pub(crate) struct CursorContext {
+    pub(crate) record: ValidatedCursor,
     entry: CacheEntryMeta,
     observation: Option<prog_core::ObservationRecord>,
-    payload: PersistedPayload,
-    target_path: String,
+    pub(crate) payload: PersistedPayload,
+    pub(crate) target_path: String,
     age_seconds: u64,
-    cache: CacheInfo,
+    pub(crate) cache: CacheInfo,
 }
 
-fn cursor_context(store: &Store, cursor: &str, requested_path: &str) -> Result<CursorContext> {
+pub(crate) fn cursor_context(
+    store: &Store,
+    cursor: &str,
+    requested_path: &str,
+) -> Result<CursorContext> {
     let record = store.get_cursor(cursor)?;
     let mut entry = store
         .get_entry(&record.cache_key)?

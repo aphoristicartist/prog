@@ -19,6 +19,8 @@ overview and quickstart; contributors and coding agents should read
 | [modern-toolchain-recipes.md](modern-toolchain-recipes.md) | JUnit/SARIF recipes for current test runners and static analyzers. |
 | [harness-extension-protocol.md](harness-extension-protocol.md) | Normative plugin/result lifecycle and adapter requirements. |
 | [integrations.md](integrations.md) | Shipped harness plugins, Agent Skills, wrappers, and MCP stance. |
+| [shims-and-receipts.md](shims-and-receipts.md) | PATH shims, compact receipts, and the Claude Code plugin with its opt-in stop gate. |
+| [agent-reference.md](agent-reference.md) | The full agent guidance behind the short default Agent Skill. |
 | [install.md](install.md) | Verified curl install, manual verification, and explicit self-update. |
 
 ## Verification

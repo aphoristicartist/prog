@@ -151,7 +151,7 @@ fn parse_lens_manifest(path: &Path, raw: &str, context: &str) -> Result<LensMani
                 path.to_string_lossy()
             ),
         }),
-        Some("yaml" | "yml") => serde_yaml_ng::from_str(raw).map_err(|error| CoreError::BadArgs {
+        Some("yaml" | "yml") => serde_saphyr::from_str(raw).map_err(|error| CoreError::BadArgs {
             operation: context.to_string(),
             reason: format!(
                 "lens '{}' must be valid YAML: {error}",
@@ -323,4 +323,46 @@ fn validate_lens_matches(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod yaml_tests {
+    use super::*;
+
+    /// JSON is valid YAML, so every bundled lens must parse to the same
+    /// manifest through either parser.
+    #[test]
+    fn every_bundled_lens_parses_identically_as_yaml() {
+        let lenses = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lenses");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&lenses).unwrap().flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path).unwrap();
+            let from_json = parse_lens_manifest(&path, &raw, "test").unwrap();
+            let from_yaml =
+                parse_lens_manifest(&path.with_extension("yaml"), &raw, "test").unwrap();
+            assert_eq!(from_json, from_yaml, "{}", path.display());
+            checked += 1;
+        }
+        assert!(
+            checked >= 10,
+            "expected the bundled lens pack, found {checked}"
+        );
+    }
+
+    #[test]
+    fn block_yaml_lens_matches_its_json_form() {
+        let json = r#"{"schema": "prog.lens_manifest", "id": "demo", "view": {"root": "/items", "limit": 3},
+            "next_actions": [{"kind": "expand", "path": "/items/{index}/body", "reason": "inspect: body"}],
+            "invariants": ["a", "b"]}"#;
+        let yaml = "schema: prog.lens_manifest\nid: demo\nview:\n  root: /items\n  limit: 3\nnext_actions:\n  - kind: expand\n    path: \"/items/{index}/body\"\n    reason: \"inspect: body\"\ninvariants: [a, b]\n";
+        assert_eq!(
+            parse_lens_manifest(Path::new("demo.json"), json, "test").unwrap(),
+            parse_lens_manifest(Path::new("demo.yaml"), yaml, "test").unwrap()
+        );
+        assert!(parse_lens_manifest(Path::new("bad.yaml"), "not: [valid", "test").is_err());
+    }
 }

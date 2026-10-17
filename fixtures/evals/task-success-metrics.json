@@ -67,7 +67,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 19,
+    "wall_time_ms": 20,
     "public_lookup_path": "/items/42/body",
     "counterexample": false,
     "steps": [
@@ -99,7 +99,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 17,
+    "wall_time_ms": 18,
     "public_lookup_path": "/items/42/body",
     "counterexample": false,
     "steps": [
@@ -127,12 +127,12 @@
     "available": true,
     "evidence_available": false,
     "artifact_bytes": 293500,
-    "response_bytes": 6672,
-    "input_tokens": 1668,
+    "response_bytes": 7173,
+    "input_tokens": 1794,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 257,
+    "wall_time_ms": 287,
     "public_lookup_path": "/items/42/body",
     "counterexample": false,
     "steps": [
@@ -145,7 +145,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6672,
+        "response_bytes": 7173,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -161,12 +161,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 293500,
-    "response_bytes": 10316,
-    "input_tokens": 2579,
+    "response_bytes": 10819,
+    "input_tokens": 2705,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 195,
+    "wall_time_ms": 210,
     "public_lookup_path": "/items/42/body",
     "counterexample": false,
     "steps": [
@@ -179,7 +179,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6582,
+        "response_bytes": 7083,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -192,7 +192,7 @@
           "--path",
           "/items/42/body"
         ],
-        "response_bytes": 3734,
+        "response_bytes": 3736,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -267,7 +267,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 18,
+    "wall_time_ms": 20,
     "public_lookup_path": "/items/128/lookup_code",
     "counterexample": false,
     "steps": [
@@ -299,7 +299,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 16,
+    "wall_time_ms": 17,
     "public_lookup_path": "/items/128/lookup_code",
     "counterexample": false,
     "steps": [
@@ -327,12 +327,12 @@
     "available": true,
     "evidence_available": false,
     "artifact_bytes": 293500,
-    "response_bytes": 6582,
-    "input_tokens": 1646,
+    "response_bytes": 7083,
+    "input_tokens": 1771,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 1,
-    "wall_time_ms": 102,
+    "wall_time_ms": 115,
     "public_lookup_path": "/items/128/lookup_code",
     "counterexample": false,
     "steps": [
@@ -345,7 +345,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6582,
+        "response_bytes": 7083,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -361,12 +361,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 293500,
-    "response_bytes": 9846,
-    "input_tokens": 2462,
+    "response_bytes": 10349,
+    "input_tokens": 2588,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 191,
+    "wall_time_ms": 214,
     "public_lookup_path": "/items/128/lookup_code",
     "counterexample": false,
     "steps": [
@@ -379,7 +379,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6582,
+        "response_bytes": 7083,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -392,7 +392,7 @@
           "--path",
           "/items/128/lookup_code"
         ],
-        "response_bytes": 3264,
+        "response_bytes": 3266,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -467,7 +467,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 19,
+    "wall_time_ms": 20,
     "public_lookup_path": "/items/211/lookup_code",
     "counterexample": false,
     "steps": [
@@ -499,7 +499,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 16,
+    "wall_time_ms": 17,
     "public_lookup_path": "/items/211/lookup_code",
     "counterexample": false,
     "steps": [
@@ -527,12 +527,12 @@
     "available": true,
     "evidence_available": false,
     "artifact_bytes": 293500,
-    "response_bytes": 6582,
-    "input_tokens": 1646,
+    "response_bytes": 7083,
+    "input_tokens": 1771,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 1,
-    "wall_time_ms": 102,
+    "wall_time_ms": 110,
     "public_lookup_path": "/items/211/lookup_code",
     "counterexample": false,
     "steps": [
@@ -545,7 +545,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6582,
+        "response_bytes": 7083,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -561,12 +561,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 293500,
-    "response_bytes": 9846,
-    "input_tokens": 2462,
+    "response_bytes": 10349,
+    "input_tokens": 2588,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 195,
+    "wall_time_ms": 212,
     "public_lookup_path": "/items/211/lookup_code",
     "counterexample": false,
     "steps": [
@@ -579,7 +579,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6582,
+        "response_bytes": 7083,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -592,7 +592,7 @@
           "--path",
           "/items/211/lookup_code"
         ],
-        "response_bytes": 3264,
+        "response_bytes": 3266,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -667,7 +667,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 19,
+    "wall_time_ms": 21,
     "public_lookup_path": "/items/42/body",
     "counterexample": false,
     "steps": [
@@ -699,7 +699,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 17,
+    "wall_time_ms": 19,
     "public_lookup_path": "/items/42/body",
     "counterexample": false,
     "steps": [
@@ -727,12 +727,12 @@
     "available": true,
     "evidence_available": false,
     "artifact_bytes": 292719,
-    "response_bytes": 7085,
-    "input_tokens": 1772,
+    "response_bytes": 7584,
+    "input_tokens": 1896,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 282,
+    "wall_time_ms": 312,
     "public_lookup_path": "/items/42/body",
     "counterexample": false,
     "steps": [
@@ -745,7 +745,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7085,
+        "response_bytes": 7584,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -761,12 +761,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 292719,
-    "response_bytes": 11084,
-    "input_tokens": 2771,
+    "response_bytes": 11583,
+    "input_tokens": 2896,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 200,
+    "wall_time_ms": 225,
     "public_lookup_path": "/items/42/body",
     "counterexample": false,
     "steps": [
@@ -779,7 +779,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6995,
+        "response_bytes": 7494,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -867,7 +867,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 19,
+    "wall_time_ms": 20,
     "public_lookup_path": "/items/128/lookup_code",
     "counterexample": false,
     "steps": [
@@ -927,12 +927,12 @@
     "available": true,
     "evidence_available": false,
     "artifact_bytes": 292719,
-    "response_bytes": 6995,
-    "input_tokens": 1749,
+    "response_bytes": 7494,
+    "input_tokens": 1874,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 1,
-    "wall_time_ms": 103,
+    "wall_time_ms": 116,
     "public_lookup_path": "/items/128/lookup_code",
     "counterexample": false,
     "steps": [
@@ -945,7 +945,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6995,
+        "response_bytes": 7494,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -961,12 +961,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 292719,
-    "response_bytes": 10612,
-    "input_tokens": 2653,
+    "response_bytes": 11111,
+    "input_tokens": 2778,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 200,
+    "wall_time_ms": 225,
     "public_lookup_path": "/items/128/lookup_code",
     "counterexample": false,
     "steps": [
@@ -979,7 +979,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6995,
+        "response_bytes": 7494,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -1067,7 +1067,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 23,
+    "wall_time_ms": 20,
     "public_lookup_path": "/items/211/lookup_code",
     "counterexample": false,
     "steps": [
@@ -1099,7 +1099,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 18,
+    "wall_time_ms": 17,
     "public_lookup_path": "/items/211/lookup_code",
     "counterexample": false,
     "steps": [
@@ -1127,12 +1127,12 @@
     "available": true,
     "evidence_available": false,
     "artifact_bytes": 292719,
-    "response_bytes": 6995,
-    "input_tokens": 1749,
+    "response_bytes": 7494,
+    "input_tokens": 1874,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 1,
-    "wall_time_ms": 104,
+    "wall_time_ms": 118,
     "public_lookup_path": "/items/211/lookup_code",
     "counterexample": false,
     "steps": [
@@ -1145,7 +1145,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6995,
+        "response_bytes": 7494,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -1161,12 +1161,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 292719,
-    "response_bytes": 10612,
-    "input_tokens": 2653,
+    "response_bytes": 11111,
+    "input_tokens": 2778,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 198,
+    "wall_time_ms": 220,
     "public_lookup_path": "/items/211/lookup_code",
     "counterexample": false,
     "steps": [
@@ -1179,7 +1179,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6995,
+        "response_bytes": 7494,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -1327,12 +1327,12 @@
     "available": true,
     "evidence_available": false,
     "artifact_bytes": 292721,
-    "response_bytes": 7605,
-    "input_tokens": 1902,
+    "response_bytes": 8214,
+    "input_tokens": 2054,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 293,
+    "wall_time_ms": 341,
     "public_lookup_path": "/results/42/body",
     "counterexample": false,
     "steps": [
@@ -1345,7 +1345,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7605,
+        "response_bytes": 8214,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -1361,12 +1361,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 292721,
-    "response_bytes": 11484,
-    "input_tokens": 2871,
+    "response_bytes": 12201,
+    "input_tokens": 3051,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 207,
+    "wall_time_ms": 231,
     "public_lookup_path": "/results/42/body",
     "counterexample": false,
     "steps": [
@@ -1379,7 +1379,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7469,
+        "response_bytes": 8078,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -1392,7 +1392,7 @@
           "--path",
           "/results/42/body"
         ],
-        "response_bytes": 4015,
+        "response_bytes": 4123,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -1456,206 +1456,6 @@
   {
     "scenario_id": "mcp-lookup_code-128",
     "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
-    "artifact": "MCP",
-    "task_mode": "known_path_recoverability",
-    "strategy": "native_json_selection",
-    "available": true,
-    "evidence_available": true,
-    "artifact_bytes": 292721,
-    "response_bytes": 15,
-    "input_tokens": 4,
-    "tool_calls": 1,
-    "expansion_count": 0,
-    "cache_hits": 0,
-    "wall_time_ms": 20,
-    "public_lookup_path": "/results/128/lookup_code",
-    "counterexample": false,
-    "steps": [
-      {
-        "command": [
-          "python3",
-          "-c",
-          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
-          "/results/128/lookup_code"
-        ],
-        "response_bytes": 15,
-        "finding_paths": [],
-        "expansion": false,
-        "cache_hit": false
-      }
-    ]
-  },
-  {
-    "scenario_id": "mcp-lookup_code-128",
-    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
-    "artifact": "MCP",
-    "task_mode": "known_path_recoverability",
-    "strategy": "rtk_grep_filter",
-    "available": true,
-    "evidence_available": true,
-    "artifact_bytes": 292721,
-    "response_bytes": 292724,
-    "input_tokens": 73181,
-    "tool_calls": 1,
-    "expansion_count": 0,
-    "cache_hits": 0,
-    "wall_time_ms": 17,
-    "public_lookup_path": "/results/128/lookup_code",
-    "counterexample": false,
-    "steps": [
-      {
-        "command": [
-          "python3",
-          "-c",
-          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
-          "literal",
-          "lookup_code"
-        ],
-        "response_bytes": 292724,
-        "finding_paths": [],
-        "expansion": false,
-        "cache_hit": false
-      }
-    ]
-  },
-  {
-    "scenario_id": "mcp-lookup_code-128",
-    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
-    "artifact": "MCP",
-    "task_mode": "known_path_recoverability",
-    "strategy": "prog_call_only",
-    "available": true,
-    "evidence_available": false,
-    "artifact_bytes": 292721,
-    "response_bytes": 7469,
-    "input_tokens": 1868,
-    "tool_calls": 1,
-    "expansion_count": 0,
-    "cache_hits": 1,
-    "wall_time_ms": 107,
-    "public_lookup_path": "/results/128/lookup_code",
-    "counterexample": false,
-    "steps": [
-      {
-        "command": [
-          "prog",
-          "call",
-          "task_mcp",
-          "search_docs",
-          "--args",
-          "{}"
-        ],
-        "response_bytes": 7469,
-        "finding_paths": [],
-        "expansion": false,
-        "cache_hit": true
-      }
-    ]
-  },
-  {
-    "scenario_id": "mcp-lookup_code-128",
-    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
-    "artifact": "MCP",
-    "task_mode": "known_path_recoverability",
-    "strategy": "prog_expand",
-    "available": true,
-    "evidence_available": true,
-    "artifact_bytes": 292721,
-    "response_bytes": 11008,
-    "input_tokens": 2752,
-    "tool_calls": 2,
-    "expansion_count": 1,
-    "cache_hits": 2,
-    "wall_time_ms": 208,
-    "public_lookup_path": "/results/128/lookup_code",
-    "counterexample": false,
-    "steps": [
-      {
-        "command": [
-          "prog",
-          "call",
-          "task_mcp",
-          "search_docs",
-          "--args",
-          "{}"
-        ],
-        "response_bytes": 7469,
-        "finding_paths": [],
-        "expansion": false,
-        "cache_hit": true
-      },
-      {
-        "command": [
-          "prog",
-          "expand",
-          "$CURSOR",
-          "--path",
-          "/results/128/lookup_code"
-        ],
-        "response_bytes": 3539,
-        "finding_paths": [],
-        "expansion": true,
-        "cache_hit": true
-      }
-    ]
-  },
-  {
-    "scenario_id": "mcp-lookup_code-211",
-    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
-    "artifact": "MCP",
-    "task_mode": "known_path_recoverability",
-    "strategy": "raw",
-    "available": true,
-    "evidence_available": true,
-    "artifact_bytes": 292721,
-    "response_bytes": 292721,
-    "input_tokens": 73181,
-    "tool_calls": 0,
-    "expansion_count": 0,
-    "cache_hits": 0,
-    "wall_time_ms": 0,
-    "public_lookup_path": "/results/211/lookup_code",
-    "counterexample": false,
-    "steps": [
-      {
-        "command": [],
-        "response_bytes": 292721,
-        "finding_paths": [],
-        "expansion": false,
-        "cache_hit": false
-      }
-    ]
-  },
-  {
-    "scenario_id": "mcp-lookup_code-211",
-    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
-    "artifact": "MCP",
-    "task_mode": "known_path_recoverability",
-    "strategy": "simple_truncation",
-    "available": true,
-    "evidence_available": false,
-    "artifact_bytes": 292721,
-    "response_bytes": 4096,
-    "input_tokens": 1024,
-    "tool_calls": 0,
-    "expansion_count": 0,
-    "cache_hits": 0,
-    "wall_time_ms": 0,
-    "public_lookup_path": "/results/211/lookup_code",
-    "counterexample": false,
-    "steps": [
-      {
-        "command": [],
-        "response_bytes": 4096,
-        "finding_paths": [],
-        "expansion": false,
-        "cache_hit": false
-      }
-    ]
-  },
-  {
-    "scenario_id": "mcp-lookup_code-211",
-    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
     "artifact": "MCP",
     "task_mode": "known_path_recoverability",
     "strategy": "native_json_selection",
@@ -1668,6 +1468,206 @@
     "expansion_count": 0,
     "cache_hits": 0,
     "wall_time_ms": 19,
+    "public_lookup_path": "/results/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import json,sys\nv=json.load(sys.stdin)\ntry:\n for p in sys.argv[1].split('/')[1:]:\n  p=p.replace('~1','/').replace('~0','~'); v=v[int(p)] if isinstance(v,list) else v[p]\nexcept (KeyError,IndexError,ValueError,TypeError):\n v=None\nprint(json.dumps(v,separators=(',',':')))",
+          "/results/128/lookup_code"
+        ],
+        "response_bytes": 15,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
+  },
+  {
+    "scenario_id": "mcp-lookup_code-128",
+    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
+    "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
+    "strategy": "rtk_grep_filter",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 292724,
+    "input_tokens": 73181,
+    "tool_calls": 1,
+    "expansion_count": 0,
+    "cache_hits": 0,
+    "wall_time_ms": 17,
+    "public_lookup_path": "/results/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "python3",
+          "-c",
+          "import re,sys\ntext=sys.stdin.read()\npattern=sys.argv[2]\nfor n,line in enumerate(text.splitlines(),1):\n if (re.search(pattern,line) if sys.argv[1]=='regex' else pattern in line):\n  print(str(n)+':'+line)",
+          "literal",
+          "lookup_code"
+        ],
+        "response_bytes": 292724,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
+  },
+  {
+    "scenario_id": "mcp-lookup_code-128",
+    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
+    "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
+    "strategy": "prog_call_only",
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292721,
+    "response_bytes": 8078,
+    "input_tokens": 2020,
+    "tool_calls": 1,
+    "expansion_count": 0,
+    "cache_hits": 1,
+    "wall_time_ms": 120,
+    "public_lookup_path": "/results/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_mcp",
+          "search_docs",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 8078,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      }
+    ]
+  },
+  {
+    "scenario_id": "mcp-lookup_code-128",
+    "prompt": "Find lookup_code for MCP item 128. Public lookup selector: /results/128/lookup_code.",
+    "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
+    "strategy": "prog_expand",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 11725,
+    "input_tokens": 2932,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 2,
+    "wall_time_ms": 231,
+    "public_lookup_path": "/results/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "task_mcp",
+          "search_docs",
+          "--args",
+          "{}"
+        ],
+        "response_bytes": 8078,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": true
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/results/128/lookup_code"
+        ],
+        "response_bytes": 3647,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": true
+      }
+    ]
+  },
+  {
+    "scenario_id": "mcp-lookup_code-211",
+    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
+    "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
+    "strategy": "raw",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 292721,
+    "input_tokens": 73181,
+    "tool_calls": 0,
+    "expansion_count": 0,
+    "cache_hits": 0,
+    "wall_time_ms": 0,
+    "public_lookup_path": "/results/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 292721,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
+  },
+  {
+    "scenario_id": "mcp-lookup_code-211",
+    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
+    "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
+    "strategy": "simple_truncation",
+    "available": true,
+    "evidence_available": false,
+    "artifact_bytes": 292721,
+    "response_bytes": 4096,
+    "input_tokens": 1024,
+    "tool_calls": 0,
+    "expansion_count": 0,
+    "cache_hits": 0,
+    "wall_time_ms": 0,
+    "public_lookup_path": "/results/211/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [],
+        "response_bytes": 4096,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ]
+  },
+  {
+    "scenario_id": "mcp-lookup_code-211",
+    "prompt": "Find lookup_code for MCP item 211. Public lookup selector: /results/211/lookup_code.",
+    "artifact": "MCP",
+    "task_mode": "known_path_recoverability",
+    "strategy": "native_json_selection",
+    "available": true,
+    "evidence_available": true,
+    "artifact_bytes": 292721,
+    "response_bytes": 15,
+    "input_tokens": 4,
+    "tool_calls": 1,
+    "expansion_count": 0,
+    "cache_hits": 0,
+    "wall_time_ms": 20,
     "public_lookup_path": "/results/211/lookup_code",
     "counterexample": false,
     "steps": [
@@ -1727,12 +1727,12 @@
     "available": true,
     "evidence_available": false,
     "artifact_bytes": 292721,
-    "response_bytes": 7469,
-    "input_tokens": 1868,
+    "response_bytes": 8078,
+    "input_tokens": 2020,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 1,
-    "wall_time_ms": 106,
+    "wall_time_ms": 121,
     "public_lookup_path": "/results/211/lookup_code",
     "counterexample": false,
     "steps": [
@@ -1745,7 +1745,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7469,
+        "response_bytes": 8078,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -1761,12 +1761,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 292721,
-    "response_bytes": 11008,
-    "input_tokens": 2752,
+    "response_bytes": 11725,
+    "input_tokens": 2932,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 215,
+    "wall_time_ms": 233,
     "public_lookup_path": "/results/211/lookup_code",
     "counterexample": false,
     "steps": [
@@ -1779,7 +1779,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7469,
+        "response_bytes": 8078,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -1792,7 +1792,7 @@
           "--path",
           "/results/211/lookup_code"
         ],
-        "response_bytes": 3539,
+        "response_bytes": 3647,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -1867,7 +1867,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 19,
+    "wall_time_ms": 20,
     "public_lookup_path": "/items/150/body",
     "counterexample": false,
     "steps": [
@@ -1927,12 +1927,12 @@
     "available": true,
     "evidence_available": false,
     "artifact_bytes": 293500,
-    "response_bytes": 6037,
-    "input_tokens": 1510,
+    "response_bytes": 6730,
+    "input_tokens": 1683,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 283,
+    "wall_time_ms": 332,
     "public_lookup_path": "/items/150/body",
     "counterexample": false,
     "steps": [
@@ -1946,7 +1946,7 @@
           "--name",
           "task-json"
         ],
-        "response_bytes": 6037,
+        "response_bytes": 6730,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -1962,12 +1962,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 293500,
-    "response_bytes": 10758,
-    "input_tokens": 2690,
+    "response_bytes": 12242,
+    "input_tokens": 3061,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 623,
+    "wall_time_ms": 677,
     "public_lookup_path": "/items/150/body",
     "counterexample": false,
     "steps": [
@@ -1981,7 +1981,7 @@
           "--name",
           "task-json"
         ],
-        "response_bytes": 6641,
+        "response_bytes": 7665,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -1994,7 +1994,7 @@
           "--path",
           "/items/150/body"
         ],
-        "response_bytes": 4117,
+        "response_bytes": 4577,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -2088,7 +2088,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 19,
+    "wall_time_ms": 18,
     "public_lookup_path": "/records/170/message",
     "counterexample": false,
     "steps": [
@@ -2116,12 +2116,12 @@
     "available": true,
     "evidence_available": false,
     "artifact_bytes": 153070,
-    "response_bytes": 6000,
-    "input_tokens": 1500,
+    "response_bytes": 6523,
+    "input_tokens": 1631,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 231,
+    "wall_time_ms": 253,
     "public_lookup_path": "/records/170/message",
     "counterexample": false,
     "steps": [
@@ -2135,7 +2135,7 @@
           "--name",
           "task-ndjson"
         ],
-        "response_bytes": 6000,
+        "response_bytes": 6523,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -2151,12 +2151,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 153070,
-    "response_bytes": 10757,
-    "input_tokens": 2690,
+    "response_bytes": 12079,
+    "input_tokens": 3020,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 583,
+    "wall_time_ms": 628,
     "public_lookup_path": "/records/170/message",
     "counterexample": false,
     "steps": [
@@ -2170,7 +2170,7 @@
           "--name",
           "task-ndjson"
         ],
-        "response_bytes": 6605,
+        "response_bytes": 7462,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -2183,7 +2183,7 @@
           "--path",
           "/records/170/message"
         ],
-        "response_bytes": 4152,
+        "response_bytes": 4617,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -2277,7 +2277,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 19,
+    "wall_time_ms": 20,
     "public_lookup_path": "/lines/180/text",
     "counterexample": false,
     "steps": [
@@ -2305,12 +2305,12 @@
     "available": true,
     "evidence_available": false,
     "artifact_bytes": 76849,
-    "response_bytes": 8745,
-    "input_tokens": 2187,
+    "response_bytes": 9191,
+    "input_tokens": 2298,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 240,
+    "wall_time_ms": 266,
     "public_lookup_path": "/lines/180/text",
     "counterexample": false,
     "steps": [
@@ -2324,7 +2324,7 @@
           "--name",
           "task-text"
         ],
-        "response_bytes": 8745,
+        "response_bytes": 9191,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -2340,12 +2340,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 76849,
-    "response_bytes": 13449,
-    "input_tokens": 3363,
+    "response_bytes": 14696,
+    "input_tokens": 3674,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 462,
+    "wall_time_ms": 517,
     "public_lookup_path": "/lines/180/text",
     "counterexample": false,
     "steps": [
@@ -2359,7 +2359,7 @@
           "--name",
           "task-text"
         ],
-        "response_bytes": 9349,
+        "response_bytes": 10132,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -2372,7 +2372,7 @@
           "--path",
           "/lines/180/text"
         ],
-        "response_bytes": 4100,
+        "response_bytes": 4564,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -2447,7 +2447,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 18,
+    "wall_time_ms": 22,
     "public_lookup_path": "/answer",
     "counterexample": true,
     "steps": [
@@ -2479,7 +2479,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 16,
+    "wall_time_ms": 21,
     "public_lookup_path": "/answer",
     "counterexample": true,
     "steps": [
@@ -2507,12 +2507,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 53,
-    "response_bytes": 3202,
-    "input_tokens": 801,
+    "response_bytes": 3397,
+    "input_tokens": 850,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 112,
+    "wall_time_ms": 127,
     "public_lookup_path": "/answer",
     "counterexample": true,
     "steps": [
@@ -2526,7 +2526,7 @@
           "--name",
           "task-tiny"
         ],
-        "response_bytes": 3202,
+        "response_bytes": 3397,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -2542,12 +2542,12 @@
     "available": true,
     "evidence_available": true,
     "artifact_bytes": 53,
-    "response_bytes": 7364,
-    "input_tokens": 1841,
+    "response_bytes": 7690,
+    "input_tokens": 1923,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 179,
+    "wall_time_ms": 189,
     "public_lookup_path": "/answer",
     "counterexample": true,
     "steps": [
@@ -2561,7 +2561,7 @@
           "--name",
           "task-tiny"
         ],
-        "response_bytes": 3806,
+        "response_bytes": 4002,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -2574,7 +2574,7 @@
           "--path",
           "/answer"
         ],
-        "response_bytes": 3558,
+        "response_bytes": 3688,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true

@@ -6,7 +6,7 @@ All arms start from the same fixture artifact outside model context. Source-prof
 
 Broad search uses the declared case-insensitive severity pattern `fatal|panic|error|failed|exception` with word boundaries. The narrow unknown-target grep assumes `ERROR`. File search uses the public known-task term or that broad pattern. Minified JSON can make line search return the entire artifact.
 
-Unknown-target prog retrieval expands the first finding returned in the initial envelope, or calls `inspect --goal root_cause` if none is returned. With no candidate it stops; an incorrect candidate has no oracle fallback. Repeated retrieval uses the same observed path. Known-path retrieval is explicitly assisted recoverability.
+Unknown-target prog retrieval expands the first finding returned in the initial envelope, or calls `inspect --goal root_cause` if none is returned. With no candidate it stops; an incorrect candidate has no oracle fallback. Repeated retrieval uses the same observed path. `prog_compact_retrieve` makes exactly the `prog_retrieve` moves with `--format compact`. Known-path retrieval is explicitly assisted recoverability.
 
 Token counts approximate response bytes/4 rounded up. No model answers are generated: the separate assumed-answer tokens and illustrative Fable prices in JSON are hypothetical, never provider usage. Unavailable arms are excluded from attempted counts; no-answer and missed/unranked evidence remain insufficient rather than being counted as discovery successes.
 
@@ -21,9 +21,10 @@ Source: [`competitive-baseline-metrics.json`](../fixtures/evals/competitive-base
 | file_capture_search | 10 | 10 | 0 | 1200169 | 300046 | 20 |
 | head_tail_truncation | 1 | 10 | 0 | 36921 | 9231 | 0 |
 | native_field_selection | 8 | 8 | 2 | 1688 | 423 | 8 |
-| prog_envelope_only | 1 | 10 | 0 | 66639 | 16664 | 10 |
-| prog_repeated_cache | 10 | 10 | 0 | 150512 | 37629 | 30 |
-| prog_retrieve | 10 | 10 | 0 | 110560 | 27643 | 20 |
+| prog_compact_retrieve | 10 | 10 | 0 | 20792 | 5201 | 20 |
+| prog_envelope_only | 1 | 10 | 0 | 70917 | 17734 | 10 |
+| prog_repeated_cache | 10 | 10 | 0 | 153355 | 38344 | 30 |
+| prog_retrieve | 10 | 10 | 0 | 113707 | 28429 | 20 |
 | raw_context | 10 | 10 | 0 | 1299777 | 324949 | 0 |
 | rtk_grep_filter | 10 | 10 | 0 | 1199796 | 299952 | 10 |
 
@@ -36,9 +37,10 @@ Source: [`competitive-baseline-metrics.json`](../fixtures/evals/competitive-base
 | file_capture_search | 2 | 4 | 0 | 12488 | 3123 | 8 |
 | head_tail_truncation | 0 | 4 | 0 | 16384 | 4096 | 0 |
 | native_field_selection | 0 | 0 | 4 | 0 | 0 | 0 |
-| prog_envelope_only | 0 | 4 | 0 | 36917 | 9231 | 4 |
-| prog_repeated_cache | 2 | 4 | 0 | 109981 | 27496 | 11 |
-| prog_retrieve | 2 | 4 | 0 | 68964 | 17242 | 8 |
+| prog_compact_retrieve | 2 | 4 | 0 | 15590 | 3900 | 8 |
+| prog_envelope_only | 0 | 4 | 0 | 38379 | 9596 | 4 |
+| prog_repeated_cache | 2 | 4 | 0 | 67485 | 16873 | 11 |
+| prog_retrieve | 2 | 4 | 0 | 50534 | 12636 | 8 |
 | raw_context | 3 | 4 | 0 | 568816 | 142205 | 0 |
 | rtk_grep_filter | 0 | 4 | 0 | 12030 | 3009 | 4 |
 
@@ -53,9 +55,10 @@ Source: [`competitive-baseline-metrics.json`](../fixtures/evals/competitive-base
 | unknown-target-buried-fatal | broad_log_search | evidence_available | `none` | 4164 |
 | unknown-target-buried-fatal | file_capture_search | evidence_available | `none` | 4202 |
 | unknown-target-buried-fatal | caveman_terse_output | evidence_available | `none` | 142376 |
-| unknown-target-buried-fatal | prog_envelope_only | insufficient_evidence | `none` | 7010 |
-| unknown-target-buried-fatal | prog_retrieve | evidence_available | `/lines/1200/text` | 20707 |
-| unknown-target-buried-fatal | prog_repeated_cache | evidence_available | `/lines/1200/text` | 34404 |
+| unknown-target-buried-fatal | prog_envelope_only | insufficient_evidence | `none` | 7462 |
+| unknown-target-buried-fatal | prog_retrieve | evidence_available | `/lines/1200/text` | 14298 |
+| unknown-target-buried-fatal | prog_compact_retrieve | evidence_available | `/lines/1200/text` | 4377 |
+| unknown-target-buried-fatal | prog_repeated_cache | evidence_available | `/lines/1200/text` | 19973 |
 | unknown-target-relocated-fatal | raw_context | evidence_available | `none` | 142376 |
 | unknown-target-relocated-fatal | head_tail_truncation | insufficient_evidence | `none` | 4096 |
 | unknown-target-relocated-fatal | native_field_selection | not_attempted | `none` | 0 |
@@ -63,9 +66,10 @@ Source: [`competitive-baseline-metrics.json`](../fixtures/evals/competitive-base
 | unknown-target-relocated-fatal | broad_log_search | evidence_available | `none` | 4162 |
 | unknown-target-relocated-fatal | file_capture_search | evidence_available | `none` | 4200 |
 | unknown-target-relocated-fatal | caveman_terse_output | evidence_available | `none` | 142376 |
-| unknown-target-relocated-fatal | prog_envelope_only | insufficient_evidence | `none` | 7010 |
-| unknown-target-relocated-fatal | prog_retrieve | evidence_available | `/lines/347/text` | 20702 |
-| unknown-target-relocated-fatal | prog_repeated_cache | evidence_available | `/lines/347/text` | 34394 |
+| unknown-target-relocated-fatal | prog_envelope_only | insufficient_evidence | `none` | 10063 |
+| unknown-target-relocated-fatal | prog_retrieve | evidence_available | `/lines/347/text` | 14293 |
+| unknown-target-relocated-fatal | prog_compact_retrieve | evidence_available | `/lines/347/text` | 4374 |
+| unknown-target-relocated-fatal | prog_repeated_cache | evidence_available | `/lines/347/text` | 19963 |
 | unknown-target-unranked | raw_context | evidence_available | `none` | 142375 |
 | unknown-target-unranked | head_tail_truncation | insufficient_evidence | `none` | 4096 |
 | unknown-target-unranked | native_field_selection | not_attempted | `none` | 0 |
@@ -73,9 +77,10 @@ Source: [`competitive-baseline-metrics.json`](../fixtures/evals/competitive-base
 | unknown-target-unranked | broad_log_search | insufficient_evidence | `none` | 4010 |
 | unknown-target-unranked | file_capture_search | insufficient_evidence | `none` | 4048 |
 | unknown-target-unranked | caveman_terse_output | evidence_available | `none` | 142375 |
-| unknown-target-unranked | prog_envelope_only | insufficient_evidence | `none` | 6999 |
-| unknown-target-unranked | prog_retrieve | insufficient_evidence | `/head/0` | 20627 |
-| unknown-target-unranked | prog_repeated_cache | insufficient_evidence | `/head/0` | 34255 |
+| unknown-target-unranked | prog_envelope_only | insufficient_evidence | `none` | 9799 |
+| unknown-target-unranked | prog_retrieve | insufficient_evidence | `/head/0` | 14218 |
+| unknown-target-unranked | prog_compact_retrieve | insufficient_evidence | `/head/0` | 4341 |
+| unknown-target-unranked | prog_repeated_cache | insufficient_evidence | `/head/0` | 19824 |
 | unknown-target-no-answer | raw_context | insufficient_evidence | `none` | 141689 |
 | unknown-target-no-answer | head_tail_truncation | insufficient_evidence | `none` | 4096 |
 | unknown-target-no-answer | native_field_selection | not_attempted | `none` | 0 |
@@ -83,9 +88,10 @@ Source: [`competitive-baseline-metrics.json`](../fixtures/evals/competitive-base
 | unknown-target-no-answer | broad_log_search | insufficient_evidence | `none` | 0 |
 | unknown-target-no-answer | file_capture_search | insufficient_evidence | `none` | 38 |
 | unknown-target-no-answer | caveman_terse_output | insufficient_evidence | `none` | 141689 |
-| unknown-target-no-answer | prog_envelope_only | insufficient_evidence | `none` | 15898 |
-| unknown-target-no-answer | prog_retrieve | insufficient_evidence | `none` | 6928 |
-| unknown-target-no-answer | prog_repeated_cache | insufficient_evidence | `none` | 6928 |
+| unknown-target-no-answer | prog_envelope_only | insufficient_evidence | `none` | 11055 |
+| unknown-target-no-answer | prog_retrieve | insufficient_evidence | `none` | 7725 |
+| unknown-target-no-answer | prog_compact_retrieve | insufficient_evidence | `none` | 2498 |
+| unknown-target-no-answer | prog_repeated_cache | insufficient_evidence | `none` | 7725 |
 
 ## Known-path fixtures
 

@@ -43,6 +43,7 @@ src/commands/discover.rs
 src/commands/envelope.rs
 src/commands/expand.rs
 src/commands/hints.rs
+src/commands/hook.rs
 src/commands/init.rs
 src/commands/lenses.rs
 src/commands/mcp_task.rs
@@ -53,10 +54,13 @@ src/commands/observe.rs
 src/commands/observe_input.rs
 src/commands/paths.rs
 src/commands/profiles.rs
+src/commands/receipt.rs
 src/commands/recipe.rs
 src/commands/route.rs
 src/commands/run.rs
+src/commands/select.rs
 src/commands/session.rs
+src/commands/shim.rs
 src/commands/source.rs
 src/commands/status.rs
 src/commands/update.rs

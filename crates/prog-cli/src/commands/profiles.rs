@@ -31,12 +31,12 @@ pub(crate) fn merge_profiles(
             if operation.pagination.is_none() {
                 operation.pagination = existing.pagination.clone();
             }
-            for key in ["examples"] {
-                if !operation.extra.contains_key(key)
-                    && let Some(value) = existing.extra.get(key)
-                {
-                    operation.extra.insert(key.to_string(), value.clone());
-                }
+            if !operation.extra.contains_key("examples")
+                && let Some(value) = existing.extra.get("examples")
+            {
+                operation
+                    .extra
+                    .insert("examples".to_string(), value.clone());
             }
         }
     }

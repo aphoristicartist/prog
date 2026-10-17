@@ -8,16 +8,21 @@ pub mod importers;
 pub mod lens;
 pub mod lifecycle;
 pub mod navigation;
+pub mod overview;
 pub mod pagination;
 pub mod pointer;
 pub mod policy;
 pub mod readback;
+pub mod receipt;
+pub mod records;
 pub mod redaction;
 pub mod route;
+pub mod select;
 pub mod shape;
 pub mod source_state;
 pub mod store;
 pub mod table;
+pub mod view;
 pub mod workspace;
 
 pub use coding_provider::*;
@@ -29,13 +34,21 @@ pub use findings::*;
 pub use lens::*;
 pub use lifecycle::*;
 pub use navigation::*;
+pub use overview::{find_collection, overview};
 pub use pagination::*;
 pub use policy::*;
 pub use readback::*;
+pub use receipt::*;
+pub use records::*;
 pub use redaction::*;
 pub use route::*;
+pub use select::{
+    FilterOp, SelectFilter, SelectRequest, SelectResult, index_ranges, missing_index_ranges,
+    parse_index_ranges, select_rows,
+};
 pub use shape::*;
 pub use source_state::*;
 pub use store::*;
 pub use table::*;
+pub use view::{ResponseView, compact_view};
 pub use workspace::*;

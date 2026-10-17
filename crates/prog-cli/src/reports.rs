@@ -257,6 +257,9 @@ pub(crate) struct RunPayloadInput<'a> {
     pub(crate) failure_sections: &'a [RunFailureSection],
     pub(crate) provider: Option<&'a prog_core::CodingProviderResult>,
     pub(crate) out: Option<&'a PathBuf>,
+    /// Parsed stdout when it is one JSON document or JSON Lines, with the
+    /// format name (`json` or `ndjson`).
+    pub(crate) stdout_json: Option<(Value, &'static str)>,
 }
 
 #[derive(Clone)]
