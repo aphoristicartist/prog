@@ -15,7 +15,7 @@ prog-adapters = { path = "crates/prog-adapters", version = "0.1.1" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-serde_yaml_ng = "0.10"
+serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
 schemars = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "time", "signal"] }
