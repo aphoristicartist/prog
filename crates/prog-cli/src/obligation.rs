@@ -233,20 +233,28 @@ pub(crate) fn evaluate_obligation(
             }
             Ok(evaluation)
         }
-        (None, None) => match command_success(store, &evidence)? {
-            Some(true) => Ok(obligation_evaluation(
+        (None, None) => match command_outcome(store, &evidence)? {
+            (Some(true), true) => Ok(obligation_evaluation(
+                obligation,
+                VerificationStatus::Unverifiable,
+                vec![
+                    "the coding provider did not prove the selected checks exhaustive".to_string(),
+                ],
+                None,
+            )),
+            (Some(true), false) => Ok(obligation_evaluation(
                 obligation,
                 VerificationStatus::Passed,
                 vec!["a complete command observation exited successfully".to_string()],
                 None,
             )),
-            Some(false) => Ok(obligation_evaluation(
+            (Some(false), _) => Ok(obligation_evaluation(
                 obligation,
                 VerificationStatus::Failed,
                 vec!["the evidence command did not exit successfully".to_string()],
                 None,
             )),
-            None => Ok(obligation_evaluation(
+            (None, _) => Ok(obligation_evaluation(
                 obligation,
                 VerificationStatus::Unknown,
                 vec![
@@ -335,17 +343,29 @@ fn readback_evidence_unavailable(
     Ok(None)
 }
 
-fn command_success(
+/// Read exit truth and coding coverage from the same retained payload snapshot.
+fn command_outcome(
     store: &Store,
     observation: &prog_core::ObservationRecord,
-) -> Result<Option<bool>> {
+) -> Result<(Option<bool>, bool)> {
     let Some(payload) = store.get_payload(&observation.payload_hash)? else {
-        return Ok(None);
+        return Ok((None, false));
     };
-    Ok(payload
+    let success = payload
         .as_value()
         .pointer("/command/success")
-        .and_then(Value::as_bool))
+        .and_then(Value::as_bool);
+    // Generic command observations also have provider identity `cli`. Only
+    // normalized coding evidence declares the additional completion contract.
+    let coding_provider = payload
+        .as_value()
+        .pointer("/provider/schema")
+        .and_then(Value::as_str)
+        == Some("prog.coding_provider");
+    Ok((
+        success,
+        coding_provider && !observation.selection.exhaustive,
+    ))
 }
 
 fn evidence_argv(

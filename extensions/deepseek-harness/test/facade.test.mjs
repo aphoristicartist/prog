@@ -58,10 +58,13 @@ async function host(t, config = {}, policy = {}, installedPlugin = facade) {
   const fibers = []
   const scopes = []
   const spawns = []
+  const scriptInterpreters = new Map()
   class RecordedSubprocess extends LocalSubprocess {
     spawn(spec) {
-      spawns.push({ argv: [...spec.argv], cwd: spec.cwd })
-      return super.spawn(spec)
+      const interpreter = scriptInterpreters.get(spec.argv[0])
+      const argv = interpreter ? [interpreter, ...spec.argv] : spec.argv
+      spawns.push({ argv: [...argv], cwd: spec.cwd })
+      return super.spawn({ ...spec, argv })
     }
   }
   t.after(async () => {
@@ -77,7 +80,7 @@ async function host(t, config = {}, policy = {}, installedPlugin = facade) {
   ]) fibers.push(await ctx.plugin(plugin, options))
   let sequence = 0
   return {
-    ctx, dir, fibers, spawns,
+    ctx, dir, fibers, spawns, scriptInterpreters,
     sessionAgent(cwd) {
       // A protocol caller carrying a real host session/scope; no model driver
       // or actual-agent outcome is simulated or invoked by this fixture.
@@ -442,6 +445,10 @@ if (process.argv[2] === 'holder') {
       if (identity.stdout.includes(script)) process.kill(pid, 'SIGKILL')
     }
   })
+  // This transport fixture exercises real host pipes/process groups. Launch
+  // its script through the exact interpreter so platform-dependent shebang
+  // startup cannot consume the deadline before the pipe scenario begins.
+  source.scriptInterpreters.set(script, process.execPath)
   source.fibers.push(await source.ctx.plugin(facade, { progCommand: script, timeoutMs: 200, graceMs: 1000, budgetBytes: 4096 }))
   return { ...source, state, value }
 }

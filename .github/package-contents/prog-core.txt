@@ -3,6 +3,7 @@ Cargo.lock
 Cargo.toml
 Cargo.toml.orig
 LICENSE
+src/coding_provider/verification.rs
 src/coding_provider.rs
 src/contracts.rs
 src/delta.rs

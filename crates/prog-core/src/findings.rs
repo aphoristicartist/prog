@@ -1972,8 +1972,12 @@ fn is_empty_container(value: &Value) -> bool {
         || matches!(value, Value::Object(map) if map.is_empty())
 }
 
+/// Values that say "none": a field named `error` or `failed` holding one of
+/// these reports the absence of that evidence, not its presence. That
+/// includes zero counters such as `{"failed": 0}`.
 fn is_absent_signal_value(value: &Value) -> bool {
     matches!(value, Value::Null | Value::Bool(false))
+        || value.as_f64() == Some(0.0)
         || value.as_str().is_some_and(str::is_empty)
         || is_empty_container(value)
 }

@@ -65,7 +65,7 @@ The local observation store carries a **schema identity** — not a compatibilit
 version — at:
 
 - `crates/prog-core/src/store.rs:39`
-- `const STORE_SCHEMA: &str = "prog.store.adapter_text_redaction";`
+- `const STORE_SCHEMA: &str = "prog.store.coding_completion_evidence";`
 
 On open, if the persisted `store_schema` key does not equal `STORE_SCHEMA`,
 `prog` **resets the local store** rather than migrating it. This is a deliberate

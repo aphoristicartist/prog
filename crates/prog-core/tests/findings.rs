@@ -1218,3 +1218,20 @@ fn fingerprints_are_derived_after_redaction_and_occurrences_do_not_collapse() {
             .contains("secret-one")
     );
 }
+
+/// A counter named `failed` or `error` that holds zero reports the absence of
+/// failures; it must not outrank real diagnostics as error evidence.
+#[test]
+fn zero_counters_are_not_error_evidence() {
+    let quiet = json!({"counts": {"error": 0, "failed": 0, "xfailed": 0, "passed": 3}});
+    let findings = ranked_findings(&quiet, &FindingOptions::default()).unwrap();
+    assert!(findings.is_empty(), "{findings:#?}");
+
+    let failing = json!({"counts": {"error": 0, "failed": 2, "passed": 1}});
+    let findings = ranked_findings(&failing, &FindingOptions::default()).unwrap();
+    let paths = findings
+        .iter()
+        .map(|finding| finding.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, ["/counts/failed"]);
+}
