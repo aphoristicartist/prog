@@ -6,7 +6,57 @@ pub(crate) fn delta_observations(
     store: &Store,
     args: &DeltaArgs,
 ) -> Result<prog_core::ObservationDelta> {
-    compare_observation_ids(store, &args.baseline, &args.subject)
+    let mut delta = compare_observation_ids(store, &args.baseline, &args.subject)?;
+    let options = prog_core::RecordDeltaOptions {
+        path: args.records_path.as_deref(),
+        key: args.key.as_deref(),
+        ..prog_core::RecordDeltaOptions::default()
+    };
+    delta.records = record_delta_between(store, &args.baseline, &args.subject, &options)?;
+    Ok(delta)
+}
+
+/// Keyed record comparison between two stored observations. Each side looks
+/// for records where its payload keeps them: parsed stdout for a run, the
+/// payload root otherwise. A run without parsed JSON offers no collection.
+pub(crate) fn record_delta_between(
+    store: &Store,
+    baseline_id: &str,
+    subject_id: &str,
+    options: &prog_core::RecordDeltaOptions<'_>,
+) -> Result<Option<prog_core::RecordDelta>> {
+    let (Some(baseline), Some(subject)) = (
+        store.get_observation(baseline_id)?,
+        store.get_observation(subject_id)?,
+    ) else {
+        return Ok(None);
+    };
+    let (Some(baseline_payload), Some(subject_payload)) = (
+        store.get_payload(&baseline.payload_hash)?,
+        store.get_payload(&subject.payload_hash)?,
+    ) else {
+        return Ok(None);
+    };
+    // A pointer that cannot exist in a run payload: searching from it finds
+    // nothing, so bookkeeping arrays are never mistaken for records.
+    const NO_COLLECTION: &str = "/stdout/json";
+    let baseline_root = collection_search_root(baseline_payload.as_value(), "");
+    let subject_root = collection_search_root(subject_payload.as_value(), "");
+    Ok(prog_core::compare_records(
+        prog_core::RecordSide {
+            value: baseline_payload.as_value(),
+            search_root: baseline_root.as_deref().unwrap_or(NO_COLLECTION),
+            capture: &baseline.capture,
+            selection_exhaustive: baseline.selection.exhaustive,
+        },
+        prog_core::RecordSide {
+            value: subject_payload.as_value(),
+            search_root: subject_root.as_deref().unwrap_or(NO_COLLECTION),
+            capture: &subject.capture,
+            selection_exhaustive: subject.selection.exhaustive,
+        },
+        options,
+    ))
 }
 
 /// Keep comparison output inside the caller-visible disclosure budget while
@@ -41,6 +91,24 @@ pub(crate) fn bound_delta_response(
         delta.findings.pop();
         if let Some(compaction) = delta.extra.get_mut("compaction") {
             compaction["retained_findings"] = json!(delta.findings.len());
+        }
+    }
+    // Record lists shrink last, from the least specific list; their counts
+    // stay complete.
+    if let Some(records) = delta.records.as_mut() {
+        while serde_json::to_vec(&*records)?.len() > content_budget / 2
+            && !(records.changed.is_empty()
+                && records.removed.is_empty()
+                && records.added.is_empty())
+        {
+            if !records.changed.is_empty() {
+                records.changed.pop();
+            } else if !records.added.is_empty() {
+                records.added.pop();
+            } else {
+                records.removed.pop();
+            }
+            records.truncated = true;
         }
     }
     Ok(())

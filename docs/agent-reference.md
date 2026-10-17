@@ -12,7 +12,7 @@ exact evidence.
 Prefer this loop:
 
 ```text
-observe/call/run -> ranked findings -> inspect/search -> evidence exact path -> answer with EvidenceRefs
+observe/call/run -> overview + findings -> select/search/inspect -> evidence exact path -> answer with EvidenceRefs
 ```
 
 ## Harness Bootstrap
@@ -54,6 +54,40 @@ observe/call/run -> ranked findings -> inspect/search -> evidence exact path -> 
 - Wrappers stay argv: `pytest -- uv run pytest -q` and `npm-test -- pnpm test`.
 - Use `prog cost` and `prog cache` to inspect stored bytes and retention when a
   session has accumulated many observations.
+
+## Moving Through Captured Data
+
+A capture is immutable and every part of it has a JSON Pointer, so the cursor
+works like a zipper: a small focus, plus moves that return exactly the part
+asked for. The same cursor always returns the same bytes.
+
+- `prog run -- <cmd>` parses stdout that is one JSON document or JSON Lines
+  into `/stdout/json` (test, build, and lint runners excepted: their output
+  stays verification evidence). `prog observe --file` does the same for files.
+- When a collection is only partly shown, the envelope carries an `overview`:
+  each field's kinds, how many records carry it, every value with its count
+  when there are few (`state: open=197, closed=103`), number and timestamp
+  ranges, and `key_candidates` — fields unique in every record. Counting
+  questions are often answered here without another call.
+- `prog select <cursor> --where state=open --where 'labels~bug' --fields
+  number,title,user/login --limit 20` filters (`=`, `!=`, `~` substring),
+  projects, and pages (`--offset`, `next_offset`). Each row carries its path,
+  so `prog evidence <cursor> --path <row path>/body` returns to it. A record
+  whose filter field is redacted is counted as `unknown`, never as matching.
+- `prog expand <cursor> --path <pointer> --limit N` reveals one slice; for a
+  long string, `--limit` is its character count. `prog search` previews show
+  the window around the match.
+- Capture the same command, file, or call again and the envelope's
+  `changes_since.records` lists records added, removed, and changed (with
+  before and after values). `prog delta <old> <new> [--key id]` returns all of
+  them; see [delta](delta.md#record-deltas).
+- `prog coverage <cursor>` reports which records of the collection prog has
+  returned this session and the index ranges it has not. Use it before
+  claiming every record was reviewed.
+- `--format compact` (or `PROG_FORMAT=compact`; the Claude Code plugin sets
+  it) keeps the data, the moves, and every caveat — truncation, redaction,
+  staleness, incomplete capture, warnings — and drops budgets, verdicts,
+  provenance, and templates. `--format full` is the published contract.
 
 ## Verifying a Fix
 

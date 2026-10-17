@@ -11,11 +11,11 @@ Source: [`real-world-demo-metrics.json`](../fixtures/evals/real-world-demo-metri
 
 | Demo | Raw bytes | call envelope bytes | expansion task bytes | cache hit | Token ratio |
 |---|---:|---:|---:|---|---:|
-| github-pr-review | 191790 | 10266 | 14367 | hit | 13.35x |
-| kubectl-events | 145813 | 7950 | 11967 | hit | 12.18x |
-| cloudwatch-logs | 157667 | 7336 | 11371 | hit | 13.86x |
-| jira-triage | 169953 | 9283 | 13333 | hit | 12.74x |
-| mcp-incidents | 150772 | 12120 | 16136 | hit | 9.34x |
+| github-pr-review | 191790 | 10748 | 14849 | hit | 12.91x |
+| kubectl-events | 145813 | 9167 | 13184 | hit | 11.06x |
+| cloudwatch-logs | 157667 | 7814 | 11849 | hit | 13.30x |
+| jira-triage | 169953 | 10043 | 14093 | hit | 12.06x |
+| mcp-incidents | 150772 | 12973 | 17097 | hit | 8.82x |
 <!-- eval:demo-table:end -->
 
 ## Copy-paste seeds

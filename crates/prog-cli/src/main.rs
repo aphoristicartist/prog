@@ -20,23 +20,23 @@ use prog_core::importers::{
 use prog_core::{
     AuthRef, BudgetSource, CacheEntryMeta, CacheInfo, CachePolicy, CacheStatus, CallFlags,
     CallProvenance, CaptureBudget, CaptureCompleteness, CaptureLimit, CaptureScope,
-    CaptureStopReason, CommandHintConfig, CoreError, DISCLOSURE_SCHEMA, DisclosureBudget,
-    DisclosureEnvelope, EffectSet, EvidenceAvailability, EvidenceBlock, EvidenceGrade, EvidenceRef,
-    ExpansionScope, Extra, FindingIdentityContext, FindingOptions, InspectRequest, InspectResponse,
-    LensManifest, NewObservation, NewSessionEvent, NextAction, ObligationDeclarer,
-    ObservationCompleteness, ObservationFreshness, ObservationMetadata, ObservationPayloadStatus,
-    ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion, OperationProfile,
-    PersistedPayload, PreviewPolicy, RawPayload, ReadinessReport, RedactionPolicy, Result,
-    SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions, SearchResponse, SelectionCoverage,
-    SliceRequest, SourceProfile, SourceStateToken, StorageBudget, Store, Summary, TrustSettings,
-    VERIFICATION_SCHEMA, ValidatedCursor, VerificationObligation, VerificationOperation,
-    VerificationStateRelationship, VerificationStatus, build_inspect_response, cache_allowed,
-    call_effect_warnings, canonical_json, check_call, check_discovery, cli_adapter_effects,
-    cli_hardening_effects, effective_effects, evidence_block, expand,
-    finding_derivation_is_complete, http_adapter_effects, http_hardening_effects, infer, join,
-    lens_slice_request, new_cache_entry, project, project_with_lens, public_contract_schemas,
-    ranked_findings_with_lens, render_hints, search_payload_with_lens, slice_value,
-    tighten_effects, validate_lens_manifest,
+    CaptureStopReason, CommandHintConfig, CoreError, CoverageReport, DISCLOSURE_SCHEMA,
+    DisclosureBudget, DisclosureEnvelope, EffectSet, EvidenceAvailability, EvidenceBlock,
+    EvidenceGrade, EvidenceRef, ExpansionScope, Extra, FindingIdentityContext, FindingOptions,
+    InspectRequest, InspectResponse, LensManifest, NewObservation, NewSessionEvent, NextAction,
+    ObligationDeclarer, ObservationCompleteness, ObservationFreshness, ObservationMetadata,
+    ObservationPayloadStatus, ObservationSafety, ObservationTrust, OmissionReason, OmittedRegion,
+    OperationProfile, PersistedPayload, PreviewPolicy, RawPayload, ReadinessReport,
+    RedactionPolicy, Result, SOURCE_PROFILE_SCHEMA, ScopedSlice, SearchOptions, SearchResponse,
+    SelectResponse, SelectionCoverage, SliceRequest, SourceProfile, SourceStateToken,
+    StorageBudget, Store, Summary, TrustSettings, VERIFICATION_SCHEMA, ValidatedCursor,
+    VerificationObligation, VerificationOperation, VerificationStateRelationship,
+    VerificationStatus, build_inspect_response, cache_allowed, call_effect_warnings,
+    canonical_json, check_call, check_discovery, cli_adapter_effects, cli_hardening_effects,
+    effective_effects, evidence_block, expand, finding_derivation_is_complete,
+    http_adapter_effects, http_hardening_effects, infer, join, lens_slice_request, new_cache_entry,
+    project, project_with_lens, public_contract_schemas, ranked_findings_with_lens, render_hints,
+    search_payload_with_lens, slice_value, tighten_effects, validate_lens_manifest,
 };
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -59,7 +59,9 @@ use commands::{
     cache::cache_command,
     call::call_source,
     cost::cost_report,
-    delta::{bound_delta_response, compare_observation_ids, delta_observations},
+    delta::{
+        bound_delta_response, compare_observation_ids, delta_observations, record_delta_between,
+    },
     discover::{discover_from_seed, discover_source, profile_operation},
     envelope::{
         adapter_capture, compact_envelope_to_budget, compact_pagination_extra_to_budget,
@@ -90,8 +92,12 @@ use commands::{
     recipe::run_recipe,
     route::route_command,
     run::{RunProcessStatus, child_exit_code, redact_run_argv, run_command},
+    select::{
+        collection_search_root, coverage_cursor, envelope_covered_extra, select_cursor,
+        visible_items,
+    },
     session::{bound_readiness_report, declare_recipe_obligation, readiness_report, session_show},
-    shim::{shim_env, shim_exec, shim_install, shim_uninstall},
+    shim::{shim_env, shim_exec, shim_install, shim_list, shim_uninstall},
     source::{shell_quote, source_command},
     status::status_report,
     update::update_command,
@@ -135,6 +141,7 @@ pub(crate) struct InvocationContext {
     disclosure: EffectiveDisclosureBudget,
     capture: CaptureBudget,
     storage: StorageBudget,
+    view: prog_core::ResponseView,
 }
 
 impl InvocationContext {
@@ -143,7 +150,13 @@ impl InvocationContext {
             disclosure,
             capture: CaptureBudget::unavailable(),
             storage: StorageBudget::default(),
+            view: prog_core::ResponseView::Full,
         }
+    }
+
+    fn with_view(mut self, view: prog_core::ResponseView) -> Self {
+        self.view = view;
+        self
     }
 
     /// Context for error rendering before the disclosure budget resolves
@@ -235,12 +248,12 @@ async fn main() -> ExitCode {
     }
 
     let mut ctx = match resolve_disclosure_budget(&cli) {
-        Ok(budget) => InvocationContext::new(budget),
+        Ok(budget) => InvocationContext::new(budget).with_view(cli.format.into()),
         Err(error) => {
             return write_error(
                 &error,
                 cli.pretty,
-                &InvocationContext::for_unresolved_budget(),
+                &InvocationContext::for_unresolved_budget().with_view(cli.format.into()),
             );
         }
     };
@@ -534,6 +547,18 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
             write_success(&response, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::Select(args) => {
+            let store = open_store(&cli.dir, ctx)?;
+            let response = select_cursor(&store, args, ctx)?;
+            write_success(&response, cli.pretty, ctx)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Coverage(args) => {
+            let store = open_store(&cli.dir, ctx)?;
+            let report = coverage_cursor(&store, args)?;
+            write_success(&report, cli.pretty, ctx)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Delta(args) => {
             let store = open_store(&cli.dir, ctx)?;
             let mut delta = delta_observations(&store, args)?;
@@ -553,6 +578,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
                     }
                     env
                 }
+                ShimCommand::List(args) => shim_list(args)?,
                 ShimCommand::Exec(_) => unreachable!("shim exec is dispatched before budgets"),
             };
             write_success(&report, cli.pretty, ctx)?;
@@ -746,6 +772,9 @@ fn record_envelope_event(store: &Store, envelope: &mut DisclosureEnvelope, kind:
         .and_then(|observation| observation.observation_id.as_ref())
     {
         extra.insert("observation_id".to_string(), json!(observation_id));
+    }
+    if let Some(covered) = envelope_covered_extra(envelope) {
+        extra.insert("covered".to_string(), covered);
     }
     let _ = store.record_session_event(NewSessionEvent {
         kind: kind.to_string(),
@@ -1007,6 +1036,9 @@ fn render_budgeted_json(mut value: Value, pretty: bool, ctx: &InvocationContext)
     if !value.is_object() {
         value = json!({"result": value});
     }
+    if ctx.view == prog_core::ResponseView::Compact {
+        return render_compact_json(&value, pretty, ctx);
+    }
     let budget = ctx.disclosure.clone();
     let capture_budget = ctx.capture.clone();
     let storage_budget = ctx.storage.clone();
@@ -1049,6 +1081,30 @@ fn render_budgeted_json(mut value: Value, pretty: bool, ctx: &InvocationContext)
     if bytes > budget.effective_bytes {
         return Err(CoreError::BudgetTooSmall {
             requested_bytes: budget.effective_bytes,
+            minimum_bytes: bytes,
+        });
+    }
+    Ok(rendered)
+}
+
+/// Compact responses carry no transport accounting: they exist to be read,
+/// and the full view remains the auditable contract. The byte ceiling still
+/// holds.
+fn render_compact_json(value: &Value, pretty: bool, ctx: &InvocationContext) -> Result<String> {
+    let compact = prog_core::compact_view(value);
+    let budget = ctx.disclosure.effective_bytes;
+    let mut rendered = if pretty {
+        serde_json::to_string_pretty(&compact)?
+    } else {
+        serde_json::to_string(&compact)?
+    };
+    if pretty && rendered.len().saturating_add(1) > budget {
+        rendered = serde_json::to_string(&compact)?;
+    }
+    let bytes = rendered.len().saturating_add(1);
+    if bytes > budget {
+        return Err(CoreError::BudgetTooSmall {
+            requested_bytes: budget,
             minimum_bytes: bytes,
         });
     }

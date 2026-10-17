@@ -8,12 +8,12 @@ Source: [`token-economics-metrics.json`](../fixtures/evals/token-economics-metri
 
 | Fixture | Task | Raw tokens | prog tokens | Ratio |
 |---|---:|---:|---:|---:|
-| HTTP | Discover shape | 137883 | 1629 | 84.6x |
-| HTTP | Count states | 137883 | 5277 | 26.1x |
-| HTTP | Target body | 137883 | 2540 | 54.3x |
-| CLI | Discover shape | 137753 | 1727 | 79.8x |
-| CLI | Count states | 137753 | 5456 | 25.2x |
-| CLI | Target body | 137753 | 2719 | 50.7x |
-| MCP | Discover shape | 137753 | 1865 | 73.9x |
-| MCP | Count states | 137753 | 5605 | 24.6x |
-| MCP | Target body | 137753 | 2834 | 48.6x |
+| HTTP | Discover shape | 137883 | 1736 | 79.4x |
+| HTTP | Count states | 137883 | 5384 | 25.6x |
+| HTTP | Target body | 137883 | 2648 | 52.1x |
+| CLI | Discover shape | 137753 | 1833 | 75.2x |
+| CLI | Count states | 137753 | 5562 | 24.8x |
+| CLI | Target body | 137753 | 2826 | 48.7x |
+| MCP | Discover shape | 137753 | 1999 | 68.9x |
+| MCP | Count states | 137753 | 5766 | 23.9x |
+| MCP | Target body | 137753 | 2995 | 46.0x |

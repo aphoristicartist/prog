@@ -602,6 +602,12 @@ pub(crate) fn envelope_for_payload(
         input.lens.as_ref(),
     )
     .unwrap_or_default();
+    let preview_root = input
+        .slice
+        .path
+        .clone()
+        .unwrap_or_else(|| input.root_path.clone());
+    let overview = collection_overview(input.payload.as_value(), &preview_root);
     for _ in 0..16 {
         let lens_projection = project_with_lens(
             &input.payload,
@@ -610,23 +616,29 @@ pub(crate) fn envelope_for_payload(
             &policy,
             input.lens.as_ref(),
         )?;
-        let envelope = make_envelope(
+        let mut envelope = make_envelope(
             &input,
             lens_projection,
             cursor.clone(),
             findings.clone(),
             observation_record.as_ref(),
         );
+        attach_overview(&mut envelope, overview.as_ref(), &preview_root);
         // Prefer optional delta context at the same disclosure level, but
         // never coarsen primary evidence merely to make that metadata fit.
+        // Detail first, then counts only: the summary that says what changed
+        // is worth more than the preview's last few bytes, and `prog delta`
+        // still returns every finding and record.
         if let Some(changes_since) = &changes_since {
-            let mut with_delta = envelope.clone();
-            with_delta
-                .extra
-                .insert("changes_since".to_string(), changes_since.clone());
-            let bytes = finalize_envelope_bytes(&mut with_delta)?;
-            if bytes <= max_envelope_bytes {
-                return Ok(with_delta);
+            for summary in [changes_since.clone(), changes_since_counts(changes_since)] {
+                let mut with_delta = envelope.clone();
+                with_delta
+                    .extra
+                    .insert("changes_since".to_string(), summary);
+                let bytes = finalize_envelope_bytes(&mut with_delta)?;
+                if bytes <= max_envelope_bytes {
+                    return Ok(with_delta);
+                }
             }
         }
         let mut envelope = envelope;
@@ -648,6 +660,37 @@ pub(crate) fn envelope_for_payload(
     // note explaining it could be evicted by the next stage.
     compact_envelope_to_budget(&mut envelope, max_envelope_bytes)?;
     Ok(envelope)
+}
+
+/// Counted overview of the largest record collection under the preview root,
+/// when the payload holds one.
+fn collection_overview(
+    payload: &Value,
+    preview_root: &str,
+) -> Option<prog_core::CollectionOverview> {
+    let search_root = collection_search_root(payload, preview_root)?;
+    let path = prog_core::find_collection(payload, &search_root)?;
+    prog_core::overview(payload, &path, prog_core::overview::OVERVIEW_MAX_FIELDS)
+}
+
+/// Attach the overview only when the preview hides some of the collection's
+/// items; a fully shown collection needs no map.
+fn attach_overview(
+    envelope: &mut DisclosureEnvelope,
+    overview: Option<&prog_core::CollectionOverview>,
+    preview_root: &str,
+) {
+    let Some(overview) = overview else {
+        return;
+    };
+    let Some(visible) = visible_items(&envelope.data_preview, preview_root, &overview.path) else {
+        return;
+    };
+    if (visible as u64) < overview.items
+        && let Ok(value) = serde_json::to_value(overview)
+    {
+        envelope.extra.insert("overview".to_string(), value);
+    }
 }
 
 pub(crate) fn make_envelope(
@@ -752,6 +795,44 @@ pub(crate) fn make_envelope(
     }
 }
 
+/// Counts-only form of an automatic delta, used when the detailed summary does
+/// not fit beside the preview. Proof status and every count survive.
+fn changes_since_counts(changes_since: &Value) -> Value {
+    let mut summary = Map::new();
+    for key in [
+        "schema",
+        "baseline_observation_id",
+        "subject_observation_id",
+        "counts",
+    ] {
+        if let Some(value) = changes_since.get(key) {
+            summary.insert(key.to_string(), value.clone());
+        }
+    }
+    if let Some(proof) = changes_since.pointer("/assessment/can_prove_absence") {
+        summary.insert(
+            "assessment".to_string(),
+            json!({"can_prove_absence": proof}),
+        );
+    }
+    if let Some(records) = changes_since.get("records") {
+        let mut counts_only = Map::new();
+        for key in ["status", "path", "key", "counts"] {
+            if let Some(value) = records.get(key) {
+                counts_only.insert(key.to_string(), value.clone());
+            }
+        }
+        counts_only.insert("truncated".to_string(), json!(true));
+        summary.insert("records".to_string(), Value::Object(counts_only));
+    }
+    summary.insert("truncated".to_string(), json!(true));
+    summary.insert(
+        "detail".to_string(),
+        json!("counts only; run `prog delta <baseline> <subject>` for findings and records"),
+    );
+    Value::Object(summary)
+}
+
 fn automatic_changes_since(store: &Store, input: &EnvelopeInput) -> Option<Value> {
     let observation_id = input.observation_id.as_deref()?;
     let subject = store.get_observation(observation_id).ok()??;
@@ -764,7 +845,32 @@ fn automatic_changes_since(store: &Store, input: &EnvelopeInput) -> Option<Value
         .ok()??;
     let mut delta =
         compare_observation_ids(store, &baseline.observation_id, observation_id).ok()?;
-    delta.findings.truncate(10);
+    // The summary names what changed: persisting findings are counted but not
+    // listed, at most five changes are listed, and evidence refs are left to
+    // `prog delta`. That keeps it small enough to ride along with the preview.
+    let listed = delta.findings.len();
+    delta
+        .findings
+        .retain(|finding| finding.status != prog_core::DeltaFindingStatus::Persisting);
+    delta.findings.truncate(5);
+    if delta.findings.len() < listed {
+        delta.truncated = true;
+    }
+    for finding in &mut delta.findings {
+        finding.evidence_ref = None;
+    }
+    delta.records = record_delta_between(
+        store,
+        &baseline.observation_id,
+        observation_id,
+        &prog_core::RecordDeltaOptions {
+            list_limit: 5,
+            field_limit: 4,
+            ..prog_core::RecordDeltaOptions::default()
+        },
+    )
+    .ok()
+    .flatten();
     serde_json::to_value(delta).ok()
 }
 
@@ -1069,6 +1175,11 @@ pub(crate) fn compact_envelope_to_budget(
     if over_budget(envelope, budget)? && !envelope.schema_hints.is_empty() {
         envelope.schema_hints.clear();
         dropped.push("schema_hints".to_string());
+    }
+
+    // 3b. overview — counts that `prog select` recomputes from the cursor.
+    if over_budget(envelope, budget)? && envelope.extra.remove("overview").is_some() {
+        dropped.push("overview".to_string());
     }
 
     // 4. omitted — the cursor still addresses everything it described.

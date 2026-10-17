@@ -26,8 +26,12 @@ The stored payload includes:
   diagnostics
 - bounded pytest and Cargo/rustc normalized evidence at `/provider`, when the
   argv matches a supported coding provider
-- cursor-backed expansion paths such as `/stdout/text`, `/stderr/text`, and
-  `/failure_sections/0`
+- parsed records at `/stdout/json` (with `stdout.format` set to `json` or
+  `ndjson`) when stdout is one complete JSON document or JSON Lines and the
+  command is not a test, build, or lint runner; the text copy is kept, and the
+  parsed copy is redacted per value
+- cursor-backed expansion paths such as `/stdout/text`, `/stdout/json/3`,
+  `/stderr/text`, and `/failure_sections/0`
 
 Provider parsing never replaces the raw capture. See
 [coding-output providers](coding-providers.md) for supported formats,

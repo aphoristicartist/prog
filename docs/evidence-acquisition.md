@@ -107,25 +107,25 @@ Source and normalized command traces: [`evidence-cli-metrics.json`](../fixtures/
 
 | Scenario | Strategy | Complete evidence | Calls | Stdout bytes | Approx. tokens |
 |---|---|---|---:|---:|---:|
-| cargo_compile_error | paths | true | 3 | 11548 | 2887 |
-| cargo_compile_error | findings | true | 2 | 7566 | 1892 |
-| cargo_compile_error | inspect | true | 3 | 13853 | 3464 |
-| cargo_test_failure | paths | true | 3 | 11536 | 2884 |
-| cargo_test_failure | findings | true | 2 | 7554 | 1889 |
-| cargo_test_failure | inspect | true | 3 | 13893 | 3474 |
-| noisy_log_root_error | paths | true | 4 | 13358 | 3340 |
-| noisy_log_root_error | findings | true | 2 | 6665 | 1667 |
-| noisy_log_root_error | inspect | true | 3 | 9507 | 2377 |
-| pytest_assertion_failure | paths | true | 3 | 11599 | 2900 |
-| pytest_assertion_failure | findings | true | 2 | 7617 | 1905 |
-| pytest_assertion_failure | inspect | true | 3 | 13913 | 3479 |
-| sarif_security_error | paths | true | 4 | 15567 | 3892 |
-| sarif_security_error | findings | true | 3 | 10359 | 2590 |
-| sarif_security_error | inspect | true | 4 | 11946 | 2987 |
+| cargo_compile_error | paths | true | 3 | 12068 | 3017 |
+| cargo_compile_error | findings | true | 2 | 7826 | 1957 |
+| cargo_compile_error | inspect | true | 3 | 14438 | 3610 |
+| cargo_test_failure | paths | true | 3 | 12055 | 3014 |
+| cargo_test_failure | findings | true | 2 | 7813 | 1954 |
+| cargo_test_failure | inspect | true | 3 | 14477 | 3620 |
+| noisy_log_root_error | paths | true | 4 | 14254 | 3564 |
+| noisy_log_root_error | findings | true | 2 | 7171 | 1793 |
+| noisy_log_root_error | inspect | true | 3 | 10143 | 2536 |
+| pytest_assertion_failure | paths | true | 3 | 12119 | 3030 |
+| pytest_assertion_failure | findings | true | 2 | 7877 | 1970 |
+| pytest_assertion_failure | inspect | true | 3 | 14498 | 3625 |
+| sarif_security_error | paths | true | 4 | 16282 | 4071 |
+| sarif_security_error | findings | true | 3 | 10749 | 2688 |
+| sarif_security_error | inspect | true | 4 | 12401 | 3101 |
 
 | Strategy total | Complete evidence / attempts | Calls | Stdout bytes | Approx. tokens |
 |---|---:|---:|---:|---:|
-| paths | 5/5 | 17 | 63608 | 15903 |
-| findings | 5/5 | 11 | 39761 | 9943 |
-| inspect | 5/5 | 16 | 63112 | 15781 |
+| paths | 5/5 | 17 | 66778 | 16696 |
+| findings | 5/5 | 11 | 41436 | 10362 |
+| inspect | 5/5 | 16 | 65957 | 16492 |
 <!-- eval:evidence-table:end -->

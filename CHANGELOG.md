@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- Added `--format compact` (`PROG_FORMAT`): every response keeps its data,
+  next moves, and every caveat (truncation, redaction, staleness, incomplete
+  capture, warnings) and drops budgets, verdicts, provenance, and templates.
+  The full JSON contract stays the default; the Claude Code plugin selects
+  compact for Claude.
+- `prog run` parses stdout that is one JSON document or JSON Lines into
+  `/stdout/json`, redacted per value, so a secret in one record no longer
+  costs the rest of a single-line document. Test, build, and lint runners are
+  excluded: their output stays verification evidence.
+- Envelopes that show only part of a collection carry an `overview`: field
+  kinds and presence, every value with its count when there are few, number
+  and timestamp ranges, and key candidates. Counts are exact over the stored
+  payload.
+- Added `prog select`: filter (`=`, `!=`, `~`), project nested fields, and page
+  a collection; every row keeps its JSON Pointer, and records whose filter
+  field is redacted are counted as unknown.
+- `prog delta` compares records by key (`--key`, `--records-path`, or
+  inferred): added, removed, and changed records with before and after values.
+  It refuses incomplete captures and duplicate, missing, or redacted keys, and
+  says that "removed" describes the captured collection (I15). Capturing the
+  same command, file, or call again attaches the comparison as
+  `changes_since`, which now falls back to counts instead of disappearing when
+  it does not fit beside the preview.
+- Added `prog coverage`: which records of a collection prog returned in this
+  session, and the index ranges it never returned.
+- Search previews of long strings show the window around the match.
+- A quiet test run (`pytest -q`, `cargo test -q`) can no longer prove a fix:
+  it names only failures, so "the failing test passed" and "the failing test
+  was deleted and another took its place" look the same. The reason asks for a
+  verbose rerun. libtest's closing `failures:` list is now read in quiet mode,
+  and a baseline that counts more failures than it names cannot be matched.
+- The stop gate also blocks once when a session changed files but captured no
+  test run.
+- Added `prog shim list`; `prog harness doctor` reports shim and Claude Code
+  plugin state without making either a readiness blocker.
+- The Agent Skill (1,513 bytes) now teaches both loops: receipts for test runs,
+  and select, expand, delta, and coverage for large captured data.
+
 - Never report a fix that a deleted, skipped, or ignored test could explain:
   when the Cargo/Rust or pytest provider recorded test results, `prog delta`,
   obligations, and readiness require the same tests to run again (executed

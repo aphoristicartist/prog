@@ -600,8 +600,35 @@ fn normalize_cargo_rust(
     let mut test_summary_seen = false;
     let mut test_failure_seen = false;
     let mut test_counts = SummaryCounts::default();
+    // libtest lists failing tests under a closing `failures:` header even in
+    // quiet mode, where no `test <name> ... FAILED` line is printed.
+    let mut in_failure_list = false;
     for (index, line) in lines.iter().enumerate() {
         let trimmed = line.text.trim();
+        if trimmed == "failures:" {
+            in_failure_list = true;
+            continue;
+        }
+        if in_failure_list {
+            match libtest_failure_list_entry(line.text) {
+                Some(name) => {
+                    test_failure_seen = true;
+                    if tests.len() < MAX_PROVIDER_ITEMS {
+                        tests.push(NormalizedTest {
+                            node_id: bounded_text(name),
+                            status: "failed".to_string(),
+                            message: None,
+                            evidence_stream: line.stream,
+                            evidence_line: line.number.try_into().unwrap_or(u64::MAX),
+                        });
+                    } else {
+                        bound_hit = true;
+                    }
+                    continue;
+                }
+                None => in_failure_list = false,
+            }
+        }
         if trimmed.starts_with('{') {
             match serde_json::from_str::<Value>(trimmed) {
                 Ok(value) => {
@@ -952,6 +979,19 @@ fn parse_rust_arrow(line: &str) -> Option<NormalizedSpan> {
         primary: true,
         label: None,
     })
+}
+
+/// One entry of libtest's closing failure list: four spaces, then a test path
+/// and nothing else. The first `failures:` block (captured output) never has
+/// such lines, so its contents end the list instead of joining it.
+fn libtest_failure_list_entry(line: &str) -> Option<&str> {
+    let name = line.strip_prefix("    ")?.trim_end();
+    let valid = !name.is_empty()
+        && !name.starts_with(' ')
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':'));
+    valid.then_some(name)
 }
 
 fn libtest_line(line: &str, input: &InputLine<'_>) -> Option<NormalizedTest> {

@@ -21,6 +21,7 @@ pub(crate) mod receipt;
 pub(crate) mod recipe;
 pub(crate) mod route;
 pub(crate) mod run;
+pub(crate) mod select;
 pub(crate) mod session;
 pub(crate) mod shim;
 pub(crate) mod source;

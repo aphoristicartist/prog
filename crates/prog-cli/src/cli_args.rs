@@ -35,8 +35,37 @@ pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub(crate) budget_tokens: Option<u64>,
 
+    // Repeated in every subcommand's help, so the text stays short. `compact`
+    // keeps data, next moves, and every caveat; `full` is the JSON contract.
+    /// `full` (default) or `compact`.
+    #[arg(
+        long,
+        env = "PROG_FORMAT",
+        global = true,
+        value_enum,
+        default_value_t = FormatArg::Full,
+        hide_default_value = true,
+        hide_possible_values = true
+    )]
+    pub(crate) format: FormatArg,
+
     #[command(subcommand)]
     pub(crate) command: Command,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum FormatArg {
+    Full,
+    Compact,
+}
+
+impl From<FormatArg> for prog_core::ResponseView {
+    fn from(format: FormatArg) -> Self {
+        match format {
+            FormatArg::Full => Self::Full,
+            FormatArg::Compact => Self::Compact,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -73,6 +102,10 @@ pub(crate) enum Command {
     Cost(CostArgs),
     /// List addressable JSON Pointer paths within a cursor's cached payload.
     Paths(PathsArgs),
+    /// Filter, project, and page the records of a cached collection; each row keeps its JSON Pointer.
+    Select(SelectArgs),
+    /// Report which records of a cached collection prog has returned in this session.
+    Coverage(CoverageArgs),
     /// Rank cached evidence against a goal, without contacting the source.
     Inspect(InspectArgs),
     /// Emit a compact, citable evidence block for one JSON Pointer path.
@@ -722,6 +755,49 @@ pub(crate) struct DeltaArgs {
     pub(crate) baseline: String,
     /// Later observation id compared against the baseline.
     pub(crate) subject: String,
+    /// Record key, e.g. `id` or `metadata/uid`; inferred when omitted.
+    #[arg(long)]
+    pub(crate) key: Option<String>,
+    /// Collection to compare by key; inferred when omitted.
+    #[arg(long = "records-path")]
+    pub(crate) records_path: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct SelectArgs {
+    pub(crate) cursor: String,
+
+    /// Collection pointer; defaults to the largest record collection.
+    #[arg(long)]
+    pub(crate) path: Option<String>,
+
+    /// `field=value`, `field!=value`, or `field~text` (substring); repeatable.
+    #[arg(long = "where")]
+    pub(crate) filters: Vec<String>,
+
+    /// Record fields to return, e.g. `number,user/login`.
+    #[arg(long, value_delimiter = ',')]
+    pub(crate) fields: Vec<String>,
+
+    /// Skip this many matching records.
+    #[arg(long, default_value_t = 0)]
+    pub(crate) offset: usize,
+
+    #[arg(long, default_value_t = 20)]
+    pub(crate) limit: usize,
+
+    /// Characters kept per string before a labelled cut.
+    #[arg(long, default_value_t = 200)]
+    pub(crate) max_chars: usize,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct CoverageArgs {
+    pub(crate) cursor: String,
+
+    /// Collection pointer; defaults to the largest record collection.
+    #[arg(long)]
+    pub(crate) path: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -764,6 +840,8 @@ pub(crate) enum ShimCommand {
     Uninstall(ShimDirArgs),
     /// Print the PATH (and optional per-project store) exports that activate the shims.
     Env(ShimEnvArgs),
+    /// List generated shims, whether they are active on PATH, and what each wraps.
+    List(ShimDirArgs),
     /// Run one tool on behalf of a generated shim script; prints nothing of its own.
     Exec(ShimExecArgs),
 }

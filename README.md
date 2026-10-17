@@ -21,12 +21,12 @@ on every turn.
 ```text
                        approximate tokens into the model
   raw fixture        137,883
-  prog task            1,629
+  prog task            1,736
 ```
 
 <sub>HTTP “Discover shape” from [`docs/token-economics.md`](docs/token-economics.md),
 rendered from the [checked-in rows](fixtures/evals/token-economics-metrics.json).
-Ratios across these deterministic fixtures range 24.6x-84.6x.
+Ratios across these deterministic fixtures range 23.9x-79.4x.
 Counts use the bytes/4 approximation, not provider tokens or a promise about your workload.</sub>
 <!-- eval:hero:end -->
 
@@ -51,7 +51,7 @@ Nothing was truncated away. The full redacted payload is still on disk.
 
 - [Install](#install) · [Quickstart](#quickstart)
 - [Why prog](#why-prog) · [Built for loop engineering](#built-for-loop-engineering)
-- [Verifying what changed](#verifying-what-changed) — the part most tools skip
+- [Moving through captured data](#moving-through-captured-data) · [Verifying what changed](#verifying-what-changed) — the part most tools skip
 - [The disclosure envelope](#the-disclosure-envelope) · [Inputs and adapters](#inputs-and-adapters)
 - [Harness extensions and plugins](#harness-extensions-and-plugins) · [Command map](#command-map)
 - [Safety and storage](#safety-and-storage) · [Measured results](#measured-results)
@@ -305,6 +305,37 @@ pagination continuations stay within the source origin. For read-only paginated
 operations, `prog call --pages N` follows supported continuation hints under
 page, byte, wall-time, and envelope caps.
 
+## Moving through captured data
+
+A capture never changes, and every part of it has an address, so a cursor
+works like a zipper over the data: a small focus plus moves that return exactly
+the part asked for. Large API, MCP, file, and command output stops being
+something to reread or re-fetch.
+
+```sh
+prog --format compact run -- gh api repos/cli/cli/issues -f per_page=100
+#  overview (illustrative): 100 records; /state "open=100"; /author_association "NONE=47, MEMBER=46, ...";
+#            /created_at 2026-08-08T21:51:11Z..2026-10-14T15:28:38Z; keys /id, /number
+prog select "$CURSOR" --where 'labels~bug' --fields number,title,user/login --limit 5
+#  rows: [{"path": "/stdout/json/31", "value": {"number": 14550, ...}}, ...], matched 17 of 100
+prog evidence "$CURSOR" --path /stdout/json/31/body       # exact, cited, offline
+prog coverage "$CURSOR"                                    # which records were never returned
+```
+
+- `prog run` parses stdout that is one JSON document or JSON Lines; `prog
+  observe` does the same for files. Test, build, and lint output stays
+  verification evidence.
+- The `overview` counts fields and values exactly over the stored payload, so
+  "how many are open?" is usually answered by the first response.
+- `prog select` filters (`=`, `!=`, `~`), projects nested fields, and pages;
+  every row keeps the JSON Pointer it came from.
+- Running the same command again adds `changes_since`: the records added,
+  removed, and changed, matched by a unique key, with before and after values.
+  `prog delta <old> <new>` lists all of them ([record deltas](docs/delta.md#record-deltas)).
+- `--format compact` (`PROG_FORMAT=compact`) keeps the data, the moves, and
+  every caveat, and drops budgets, verdicts, provenance, and templates. The
+  full JSON contract stays the default.
+
 ## Verifying what changed
 
 Most observation tooling stops at "here is the new output." The hard part of a
@@ -392,7 +423,9 @@ symbolic argv entry in `action_templates`; direct reruns carry exact argv. Use
 ### Direct capture
 
 - `prog run -- <command...>` captures bounded stdout, stderr, combined stream
-  chunks, exit status, timing, and recognized failure sections.
+  chunks, exit status, timing, and recognized failure sections. Stdout that is
+  one JSON document or JSON Lines is also parsed into `/stdout/json`, except
+  for test, build, and lint runners.
 - `prog observe --file ...` and `prog observe --stdin` accept JSON, SARIF,
   NDJSON, JUnit XML, basic HTML, unified diffs, CSV/TSV, Markdown or aligned
   tables, and bounded text fallback observations.
@@ -478,9 +511,12 @@ evidence: prog evidence pc1_… --path /stdout
 
 That receipt is what deleting the failing test produces: the output is green,
 but the fix is not proven. A real fix reads `vs previous run: fixed:
-tests::adds`. The optional **stop gate** (plugin setting `stop_gate`) blocks
-the end of a turn once while this session's latest test run is failing, does
-not prove an earlier failure fixed, or is older than the workspace.
+tests::adds`. Quiet output (`pytest -q`) names only failures, so a quiet rerun
+says NOT PROVEN and asks for a verbose one. The optional **stop gate** (plugin
+setting `stop_gate`) blocks the end of a turn once while this session's latest
+test run is failing, does not prove an earlier failure fixed, or is older than
+the workspace, and when the session changed files but ran no tests at all. The
+plugin also sets `PROG_FORMAT=compact`, so Claude reads compact responses.
 
 ### Codex plugin
 
@@ -537,8 +573,9 @@ Agent Skill plus explicit wrapper, all backed by the same local CLI transport.
 | Register and understand sources | `source add-http`, `source add-cli`, `source add-mcp`, `discover`, `hints` |
 | Call a reusable source | `call` |
 | Navigate cached evidence | `inspect`, `search`, `find`, `evidence`, `paths`, `expand` |
+| Filter, project, and page a collection; count what was returned | `select`, `coverage` |
 | Run a domain workflow | `recipe` |
-| Compare two observations | `delta` |
+| Compare two observations (findings and keyed records) | `delta` |
 | Read facade readiness and optional delta | `status` |
 | Drive long-running MCP tasks | `mcp-task start`, `get`, `result`, `cancel` |
 | Retain investigation metadata | `session start`, `session note`, `session show` |
@@ -553,7 +590,8 @@ every command and subcommand self-describes. Global options are `--dir <DIR>` (`
 `./.prog`), `--lens-dir <DIR>` (`PROG_LENS_DIR`, external lenses only;
 default resolution uses bundled lenses with optional `./lenses` overrides),
 `--budget-bytes <N>` (`PROG_BUDGET_BYTES`), `--budget-tokens <N>`
-(`PROG_BUDGET_TOKENS`), and `--pretty`. The byte budget is authoritative; when
+(`PROG_BUDGET_TOKENS`), `--format full|compact` (`PROG_FORMAT`, default
+`full`), and `--pretty`. The byte budget is authoritative; when
 pretty formatting would exceed it, `prog` emits compact JSON instead.
 
 ## Safety and storage
@@ -604,7 +642,7 @@ not universal promises about model quality, latency, or cost.
 
 <!-- eval:tokens:start -->
 Across the checked-in HTTP, CLI, and MCP tasks, raw-fixture token estimates
-divided by complete `prog` task estimates range from **24.6x-84.6x**. Every
+divided by complete `prog` task estimates range from **23.9x-79.4x**. Every
 task includes its initial envelope and any expansions. Estimates use bytes/4,
 rounded up; these are fixture measurements, not provider token counts. See
 [`docs/token-economics.md`](docs/token-economics.md) and the
@@ -620,9 +658,9 @@ measure complete stdout from capture through navigation and evidence retrieval.
 
 | CLI strategy | Complete evidence / attempts | Tool calls | Approx. output tokens |
 |---|---:|---:|---:|
-| paths | 5/5 | 17 | 15,903 |
-| findings | 5/5 | 11 | 9,943 |
-| inspect | 5/5 | 16 | 15,781 |
+| paths | 5/5 | 17 | 16,696 |
+| findings | 5/5 | 11 | 10,362 |
+| inspect | 5/5 | 16 | 16,492 |
 
 Costs include every initial finding and metadata field, actual bounded path
 listings/searches, and expansions needed after truncated evidence. Tokens use
@@ -637,7 +675,7 @@ provider token usage or actual-agent success rates. See
 
 <!-- eval:demos:start -->
 The 5 checked-in workflow demos report raw-to-envelope-plus-expansion ratios
-from **9.34x to 13.86x**, using the bytes/4 token approximation. These are
+from **8.82x to 13.30x**, using the bytes/4 token approximation. These are
 generated local payloads, not credentialed live service measurements. See
 [`docs/real-world-demos.md`](docs/real-world-demos.md) and the
 [recorded metrics](fixtures/evals/real-world-demo-metrics.json).
@@ -658,7 +696,8 @@ record, its relocated counterpart, an unranked cause, and a no-answer control.
 | `rtk_grep_filter` | 0/4 | 0 | 3,009 |
 | `broad_log_search` | 2/4 | 0 | 3,085 |
 | `file_capture_search` | 2/4 | 0 | 3,123 |
-| `prog_retrieve` | 2/4 | 0 | 17,242 |
+| `prog_retrieve` | 2/4 | 0 | 12,636 |
+| `prog_compact_retrieve` | 2/4 | 0 | 3,900 |
 
 These are deterministic evidence-availability results, not actual-agent task
 success. Raw context counts evidence present in the delivered artifact; a

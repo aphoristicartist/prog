@@ -154,6 +154,90 @@ pub(crate) fn shim_uninstall(args: &ShimDirArgs) -> Result<Value> {
     Ok(json!({"schema": SHIM_SCHEMA, "dir": dir, "removed": removed}))
 }
 
+/// Installed shims, whether each one is what `PATH` resolves first, and which
+/// real tool it runs. Lists only scripts `prog shim install` wrote.
+pub(crate) fn shim_list(args: &ShimDirArgs) -> Result<Value> {
+    let dir = args.dir.clone().unwrap_or_else(default_shim_dir);
+    let canonical_dir = dir.canonicalize().ok();
+    let path_entries = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let on_path = canonical_dir.is_some()
+        && path_entries
+            .iter()
+            .any(|entry| entry.canonicalize().ok() == canonical_dir);
+    let mut paths = fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| is_prog_shim(path))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    paths.sort();
+    let mut warnings = Vec::new();
+    let mut shims = Vec::new();
+    for path in paths {
+        let Some(tool) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let first = path_entries
+            .iter()
+            .filter(|entry| !entry.as_os_str().is_empty())
+            .map(|entry| entry.join(&tool))
+            .find(|candidate| is_executable(candidate));
+        let active = first.and_then(|first| first.canonicalize().ok()) == path.canonicalize().ok();
+        let wraps = resolve_real_tool(&tool, &dir);
+        if wraps.is_none() {
+            warnings.push(format!(
+                "no real `{tool}` found on PATH outside the shim directory"
+            ));
+        }
+        shims.push(json!({"tool": tool, "active": active, "wraps": wraps}));
+    }
+    let marker = fs::read(dir.join(SHIM_MARKER))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+    let prog = marker
+        .as_ref()
+        .and_then(|marker| marker.get("prog"))
+        .cloned();
+    if let Some(prog_path) = prog.as_ref().and_then(Value::as_str)
+        && !Path::new(prog_path).exists()
+    {
+        warnings.push(format!(
+            "shims run {prog_path}, which no longer exists; rerun `prog shim install`"
+        ));
+    }
+    if !shims.is_empty() && !on_path {
+        warnings.push(
+            "the shim directory is not on PATH; activate it with `eval \"$(prog shim env --shell)\"` or the Claude Code plugin"
+                .to_string(),
+        );
+    }
+    Ok(json!({
+        "schema": SHIM_SCHEMA,
+        "dir": dir,
+        "installed": !shims.is_empty(),
+        "on_path": on_path,
+        "prog": prog,
+        "shims": shims,
+        "warnings": warnings,
+    }))
+}
+
+fn is_executable(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|metadata| {
+        metadata.is_file()
+            && std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o111 != 0
+    })
+}
+
 /// Shell lines that activate the shims (idempotently) and, for a project, a
 /// dedicated store outside the project tree.
 pub(crate) fn shim_env(args: &ShimEnvArgs) -> Value {

@@ -90,6 +90,7 @@ impl Session {
             .args(["harness", "hook", "claude-code"])
             .current_dir(self.project.path())
             .env_remove("PROG_DIR")
+            .env_remove("PROG_FORMAT")
             .env("CLAUDE_PROJECT_DIR", self.project.path())
             .env("CLAUDE_ENV_FILE", &self.env_file)
             .env("XDG_DATA_HOME", self.root.join("data"))
@@ -183,6 +184,7 @@ fn session_start_activates_shims_with_a_store_outside_the_project() {
     assert!(exports.contains(&shims.display().to_string()), "{exports}");
     assert!(exports.contains("export PROG_DIR="), "{exports}");
     assert!(shims.join("cargo").is_file());
+    assert!(exports.contains("export PROG_FORMAT=compact"), "{exports}");
     assert!(
         !exports.contains(&format!("PROG_DIR={}", session.project.path().display())),
         "the store must not live inside the project: {exports}"
@@ -246,6 +248,40 @@ fn stop_gate_blocks_until_the_fix_is_proven_and_the_workspace_is_unchanged() {
             .contains("files changed after the last passing test run"),
         "{stale:#}"
     );
+}
+
+#[test]
+fn stop_gate_blocks_changed_files_that_were_never_tested() {
+    let session = Session::start();
+    // Nothing changed and nothing ran: nothing to gate.
+    assert_eq!(session.stop(false), None);
+    fs::write(session.project.path().join("lib.rs"), "fn main() { 1; }\n").unwrap();
+    let blocked = session.stop(false).unwrap();
+    assert_eq!(blocked["decision"], "block");
+    assert!(
+        blocked["reason"]
+            .as_str()
+            .unwrap()
+            .contains("files changed this session but no test run was captured"),
+        "{blocked:#}"
+    );
+    assert_eq!(session.stop(true), None, "blocks at most once in a row");
+    // A passing run after the change satisfies the gate.
+    session.bash("cargo test --no-fail-fast 2>&1 | tail -1", "fixed");
+    assert_eq!(session.stop(false), None);
+}
+
+/// A test run that no provider parses (`npm test`) still means tests ran: the
+/// gate must not claim that none was captured.
+#[test]
+fn stop_gate_never_claims_no_tests_ran_after_an_unparsed_test_run() {
+    let session = Session::start();
+    let npm = session.tools.join("npm");
+    fs::write(&npm, "#!/bin/sh\necho 'Tests: 3 passed, 3 total'\n").unwrap();
+    fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(session.project.path().join("lib.rs"), "fn main() { 2; }\n").unwrap();
+    session.bash("npm test", "fixed");
+    assert_eq!(session.stop(false), None);
 }
 
 #[test]

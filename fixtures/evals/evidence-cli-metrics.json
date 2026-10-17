@@ -15,8 +15,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 11548,
-      "output_tokens": 2887,
+      "response_bytes": 12068,
+      "output_tokens": 3017,
       "tool_calls": 3,
       "steps": [
         {
@@ -31,7 +31,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 5118,
+          "stdout_bytes": 5313,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -53,7 +53,7 @@
             "--depth",
             "2"
           ],
-          "stdout_bytes": 3982,
+          "stdout_bytes": 4242,
           "exit_code": 0,
           "offered_paths": [
             "",
@@ -76,7 +76,7 @@
             "--path",
             "/failure_sections/0"
           ],
-          "stdout_bytes": 2448,
+          "stdout_bytes": 2513,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -99,8 +99,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 7566,
-      "output_tokens": 1892,
+      "response_bytes": 7826,
+      "output_tokens": 1957,
       "tool_calls": 2,
       "steps": [
         {
@@ -115,7 +115,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 5118,
+          "stdout_bytes": 5313,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -133,7 +133,7 @@
             "--path",
             "/failure_sections/0"
           ],
-          "stdout_bytes": 2448,
+          "stdout_bytes": 2513,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -156,8 +156,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 13853,
-      "output_tokens": 3464,
+      "response_bytes": 14438,
+      "output_tokens": 3610,
       "tool_calls": 3,
       "steps": [
         {
@@ -172,7 +172,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 5118,
+          "stdout_bytes": 5313,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -192,7 +192,7 @@
             "--limit",
             "5"
           ],
-          "stdout_bytes": 6287,
+          "stdout_bytes": 6612,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -212,7 +212,7 @@
             "--path",
             "/failure_sections/0"
           ],
-          "stdout_bytes": 2448,
+          "stdout_bytes": 2513,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -235,8 +235,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 11536,
-      "output_tokens": 2884,
+      "response_bytes": 12055,
+      "output_tokens": 3014,
       "tool_calls": 3,
       "steps": [
         {
@@ -251,7 +251,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 5062,
+          "stdout_bytes": 5256,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -273,7 +273,7 @@
             "--depth",
             "2"
           ],
-          "stdout_bytes": 3982,
+          "stdout_bytes": 4242,
           "exit_code": 0,
           "offered_paths": [
             "",
@@ -296,7 +296,7 @@
             "--path",
             "/failure_sections/0"
           ],
-          "stdout_bytes": 2492,
+          "stdout_bytes": 2557,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -319,8 +319,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 7554,
-      "output_tokens": 1889,
+      "response_bytes": 7813,
+      "output_tokens": 1954,
       "tool_calls": 2,
       "steps": [
         {
@@ -335,7 +335,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 5062,
+          "stdout_bytes": 5256,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -353,7 +353,7 @@
             "--path",
             "/failure_sections/0"
           ],
-          "stdout_bytes": 2492,
+          "stdout_bytes": 2557,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -376,8 +376,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 13893,
-      "output_tokens": 3474,
+      "response_bytes": 14477,
+      "output_tokens": 3620,
       "tool_calls": 3,
       "steps": [
         {
@@ -392,7 +392,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 5062,
+          "stdout_bytes": 5256,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -412,7 +412,7 @@
             "--limit",
             "5"
           ],
-          "stdout_bytes": 6339,
+          "stdout_bytes": 6664,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -432,7 +432,7 @@
             "--path",
             "/failure_sections/0"
           ],
-          "stdout_bytes": 2492,
+          "stdout_bytes": 2557,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -455,8 +455,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 13358,
-      "output_tokens": 3340,
+      "response_bytes": 14254,
+      "output_tokens": 3564,
       "tool_calls": 4,
       "steps": [
         {
@@ -471,7 +471,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 4610,
+          "stdout_bytes": 5051,
           "exit_code": 0,
           "offered_paths": [
             "/lines/39/text",
@@ -492,7 +492,7 @@
             "--depth",
             "2"
           ],
-          "stdout_bytes": 5669,
+          "stdout_bytes": 6059,
           "exit_code": 0,
           "offered_paths": [
             "",
@@ -536,7 +536,7 @@
             "--path",
             "/lines/39/text"
           ],
-          "stdout_bytes": 2055,
+          "stdout_bytes": 2120,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -559,8 +559,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 6665,
-      "output_tokens": 1667,
+      "response_bytes": 7171,
+      "output_tokens": 1793,
       "tool_calls": 2,
       "steps": [
         {
@@ -575,7 +575,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 4610,
+          "stdout_bytes": 5051,
           "exit_code": 0,
           "offered_paths": [
             "/lines/39/text",
@@ -592,7 +592,7 @@
             "--path",
             "/lines/39/text"
           ],
-          "stdout_bytes": 2055,
+          "stdout_bytes": 2120,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -615,8 +615,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 9507,
-      "output_tokens": 2377,
+      "response_bytes": 10143,
+      "output_tokens": 2536,
       "tool_calls": 3,
       "steps": [
         {
@@ -631,7 +631,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 4610,
+          "stdout_bytes": 5051,
           "exit_code": 0,
           "offered_paths": [
             "/lines/39/text",
@@ -650,7 +650,7 @@
             "--limit",
             "5"
           ],
-          "stdout_bytes": 2842,
+          "stdout_bytes": 2972,
           "exit_code": 0,
           "offered_paths": [
             "/lines/39/text",
@@ -667,7 +667,7 @@
             "--path",
             "/lines/39/text"
           ],
-          "stdout_bytes": 2055,
+          "stdout_bytes": 2120,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -690,8 +690,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 11599,
-      "output_tokens": 2900,
+      "response_bytes": 12119,
+      "output_tokens": 3030,
       "tool_calls": 3,
       "steps": [
         {
@@ -706,7 +706,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 5117,
+          "stdout_bytes": 5312,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -728,7 +728,7 @@
             "--depth",
             "2"
           ],
-          "stdout_bytes": 3982,
+          "stdout_bytes": 4242,
           "exit_code": 0,
           "offered_paths": [
             "",
@@ -751,7 +751,7 @@
             "--path",
             "/failure_sections/0"
           ],
-          "stdout_bytes": 2500,
+          "stdout_bytes": 2565,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -774,8 +774,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 7617,
-      "output_tokens": 1905,
+      "response_bytes": 7877,
+      "output_tokens": 1970,
       "tool_calls": 2,
       "steps": [
         {
@@ -790,7 +790,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 5117,
+          "stdout_bytes": 5312,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -808,7 +808,7 @@
             "--path",
             "/failure_sections/0"
           ],
-          "stdout_bytes": 2500,
+          "stdout_bytes": 2565,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -831,8 +831,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 13913,
-      "output_tokens": 3479,
+      "response_bytes": 14498,
+      "output_tokens": 3625,
       "tool_calls": 3,
       "steps": [
         {
@@ -847,7 +847,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 5117,
+          "stdout_bytes": 5312,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -867,7 +867,7 @@
             "--limit",
             "5"
           ],
-          "stdout_bytes": 6296,
+          "stdout_bytes": 6621,
           "exit_code": 0,
           "offered_paths": [
             "/failure_sections/0",
@@ -887,7 +887,7 @@
             "--path",
             "/failure_sections/0"
           ],
-          "stdout_bytes": 2500,
+          "stdout_bytes": 2565,
           "exit_code": 0,
           "offered_paths": []
         }
@@ -910,8 +910,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 15567,
-      "output_tokens": 3892,
+      "response_bytes": 16282,
+      "output_tokens": 4071,
       "tool_calls": 4,
       "steps": [
         {
@@ -926,7 +926,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 4137,
+          "stdout_bytes": 4332,
           "exit_code": 0,
           "offered_paths": [
             "/runs/0/results/0"
@@ -946,7 +946,7 @@
             "--depth",
             "2"
           ],
-          "stdout_bytes": 5208,
+          "stdout_bytes": 5533,
           "exit_code": 0,
           "offered_paths": [
             "",
@@ -967,7 +967,7 @@
             "--path",
             "/runs/0/results/0"
           ],
-          "stdout_bytes": 2705,
+          "stdout_bytes": 2770,
           "exit_code": 0,
           "offered_paths": []
         },
@@ -985,7 +985,7 @@
             "--limit",
             "100"
           ],
-          "stdout_bytes": 3517,
+          "stdout_bytes": 3647,
           "exit_code": 0,
           "offered_paths": [
             "/runs/0/results/0"
@@ -1010,8 +1010,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 10359,
-      "output_tokens": 2590,
+      "response_bytes": 10749,
+      "output_tokens": 2688,
       "tool_calls": 3,
       "steps": [
         {
@@ -1026,7 +1026,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 4137,
+          "stdout_bytes": 4332,
           "exit_code": 0,
           "offered_paths": [
             "/runs/0/results/0"
@@ -1042,7 +1042,7 @@
             "--path",
             "/runs/0/results/0"
           ],
-          "stdout_bytes": 2705,
+          "stdout_bytes": 2770,
           "exit_code": 0,
           "offered_paths": []
         },
@@ -1060,7 +1060,7 @@
             "--limit",
             "100"
           ],
-          "stdout_bytes": 3517,
+          "stdout_bytes": 3647,
           "exit_code": 0,
           "offered_paths": [
             "/runs/0/results/0"
@@ -1085,8 +1085,8 @@
       "correct": true,
       "outcome": "evidence_available",
       "stop": "candidate_retrieved",
-      "response_bytes": 11946,
-      "output_tokens": 2987,
+      "response_bytes": 12401,
+      "output_tokens": 3101,
       "tool_calls": 4,
       "steps": [
         {
@@ -1101,7 +1101,7 @@
             "--name",
             "evidence-eval"
           ],
-          "stdout_bytes": 4137,
+          "stdout_bytes": 4332,
           "exit_code": 0,
           "offered_paths": [
             "/runs/0/results/0"
@@ -1119,7 +1119,7 @@
             "--limit",
             "5"
           ],
-          "stdout_bytes": 1587,
+          "stdout_bytes": 1652,
           "exit_code": 0,
           "offered_paths": [
             "/runs/0/results/0"
@@ -1135,7 +1135,7 @@
             "--path",
             "/runs/0/results/0"
           ],
-          "stdout_bytes": 2705,
+          "stdout_bytes": 2770,
           "exit_code": 0,
           "offered_paths": []
         },
@@ -1153,7 +1153,7 @@
             "--limit",
             "100"
           ],
-          "stdout_bytes": 3517,
+          "stdout_bytes": 3647,
           "exit_code": 0,
           "offered_paths": [
             "/runs/0/results/0"

@@ -20,6 +20,8 @@ pub const VERIFICATION_SCHEMA: &str = "prog.verification";
 pub const ACTION_INTENT_SCHEMA: &str = "prog.action_intent";
 pub const READBACK_VERIFICATION_SCHEMA: &str = "prog.readback_verification";
 pub const STATUS_SCHEMA: &str = "prog.status";
+pub const SELECT_SCHEMA: &str = "prog.select";
+pub const COVERAGE_SCHEMA: &str = "prog.coverage";
 
 pub type Extra = Map<String, Value>;
 
@@ -1647,8 +1649,220 @@ pub struct ObservationDelta {
     /// still reflects the full, untruncated comparison.
     #[serde(default)]
     pub truncated: bool,
+    /// Keyed comparison of the records in a collection both payloads carry.
+    /// Absent when neither payload holds a comparable collection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub records: Option<RecordDelta>,
     #[serde(default, flatten)]
     pub extra: Extra,
+}
+
+/// Counted map of one collection inside a persisted payload: which fields its
+/// items carry and how their values are distributed. Counts are exact over
+/// the stored, redacted payload, and every listed value or bound is copied
+/// verbatim from a source leaf (I1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CollectionOverview {
+    /// JSON Pointer of the collection within the payload.
+    pub path: String,
+    pub items: u64,
+    /// JSON kind of each item, counted (`object`, `string`, ...).
+    #[serde(default)]
+    pub item_kinds: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub fields: Vec<FieldOverview>,
+    /// Fields left out of `fields` to keep the overview bounded.
+    #[serde(default)]
+    pub fields_omitted: u64,
+    /// Scalar fields whose values are present and unique in every item, so
+    /// they can address one record (`prog select --where`, `prog delta --key`).
+    #[serde(default)]
+    pub key_candidates: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct FieldOverview {
+    /// JSON Pointer relative to each item.
+    pub field: String,
+    /// Distinct JSON kinds seen at this field, sorted.
+    pub kinds: Vec<String>,
+    /// Number of items that carry the field.
+    pub present: u64,
+    /// Every distinct value with its count, most frequent first. Present only
+    /// when the field holds a few distinct short scalars, so the list is
+    /// always complete when it appears.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<ValueCount>,
+    /// Smallest and largest number or RFC 3339 timestamp seen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ValueCount {
+    pub value: Value,
+    pub count: u64,
+}
+
+/// Whether a keyed record comparison could run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordDeltaStatus {
+    /// Both collections were keyed and compared record by record.
+    Compared,
+    /// No collection exists at the same path in both payloads.
+    NoCollection,
+    /// No field is present, unredacted, and unique in every record on both
+    /// sides; pass `--key` to name one.
+    Unkeyed,
+    /// A capture stopped early, so a missing record proves nothing.
+    Incomplete,
+}
+
+/// Records added, removed, and changed between two captures of a
+/// collection. "Removed" means absent from the subject's captured
+/// collection; it says nothing about records the source did not return
+/// (paging, filters) unless both selections were declared exhaustive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct RecordDelta {
+    pub status: RecordDeltaStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// JSON Pointer of the key field relative to each record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// True when the caller named the key; false when it was inferred.
+    #[serde(default)]
+    pub key_declared: bool,
+    #[serde(default)]
+    pub baseline_items: u64,
+    #[serde(default)]
+    pub subject_items: u64,
+    #[serde(default)]
+    pub counts: RecordCounts,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added: Vec<RecordRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<RecordRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changed: Vec<RecordChange>,
+    /// True when a list was capped; `counts` always covers every record.
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub struct RecordCounts {
+    pub added: u64,
+    pub removed: u64,
+    pub changed: u64,
+    pub unchanged: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct RecordRef {
+    pub key: Value,
+    /// Item pointer in the observation that holds the record.
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct RecordChange {
+    pub key: Value,
+    pub baseline_path: String,
+    pub subject_path: String,
+    pub fields: Vec<FieldChange>,
+    #[serde(default)]
+    pub fields_omitted: u64,
+}
+
+/// One changed leaf. A missing `before` means the field was added; a missing
+/// `after` means it was removed. Long strings are cut to a labelled prefix
+/// and containers are summarized by a marker, never rewritten.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct FieldChange {
+    pub field: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<Value>,
+}
+
+/// Rows of one collection that satisfy every filter, each with the exact
+/// JSON Pointer it lives at, so later moves can address it directly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct SelectResponse {
+    pub schema: String,
+    pub cursor: String,
+    /// Collection pointer the rows were taken from.
+    pub path: String,
+    /// Items in the collection.
+    pub total: u64,
+    /// Items that satisfy every filter.
+    pub matched: u64,
+    /// Items whose filter field is redacted, so they could not be tested.
+    #[serde(default)]
+    pub unknown: u64,
+    pub offset: u64,
+    #[serde(default)]
+    pub rows: Vec<SelectRow>,
+    /// Offset of the next matching row when more remain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_offset: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<String>,
+    #[serde(default)]
+    pub omitted: Vec<OmittedRegion>,
+    #[serde(default)]
+    pub cache: Option<CacheInfo>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default, flatten)]
+    pub extra: Extra,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct SelectRow {
+    pub path: String,
+    pub value: Value,
+}
+
+/// Which items of a collection prog has returned to the caller in the
+/// current session. "Returned" is what prog sent, not what a reader used.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CoverageReport {
+    pub schema: String,
+    pub cursor: String,
+    pub path: String,
+    pub items: u64,
+    pub returned: u64,
+    pub not_returned: u64,
+    /// Inclusive index ranges never returned, such as `5-15`.
+    #[serde(default)]
+    pub not_returned_ranges: Vec<String>,
+    #[serde(default)]
+    pub ranges_truncated: bool,
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -1901,6 +2115,11 @@ pub fn public_contract_schemas() -> crate::Result<Map<String, Value>> {
     insert_schema::<DeltaFindingStatus>(&mut schemas, "DeltaFindingStatus")?;
     insert_schema::<DeltaFinding>(&mut schemas, "DeltaFinding")?;
     insert_schema::<ObservationDelta>(&mut schemas, "ObservationDelta")?;
+    insert_schema::<RecordDelta>(&mut schemas, "RecordDelta")?;
+    insert_schema::<RecordDeltaStatus>(&mut schemas, "RecordDeltaStatus")?;
+    insert_schema::<CollectionOverview>(&mut schemas, "CollectionOverview")?;
+    insert_schema::<SelectResponse>(&mut schemas, "SelectResponse")?;
+    insert_schema::<CoverageReport>(&mut schemas, "CoverageReport")?;
     insert_schema::<ObligationDeclarer>(&mut schemas, "ObligationDeclarer")?;
     insert_schema::<VerificationOperation>(&mut schemas, "VerificationOperation")?;
     insert_schema::<VerificationStateRelationship>(&mut schemas, "VerificationStateRelationship")?;

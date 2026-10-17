@@ -51,7 +51,9 @@ absence. Recording problems are silent: a broken or missing store never
 changes the command's output or status.
 
 `prog shim install` never overwrites a file it did not generate, and
-`prog shim uninstall` removes only generated shims.
+`prog shim uninstall` removes only generated shims. `prog shim list` shows each
+generated shim, whether `PATH` resolves to it first, and the real tool it runs;
+`prog harness doctor` reports the same state without blocking readiness.
 
 ### Evidence
 

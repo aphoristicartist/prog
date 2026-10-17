@@ -282,7 +282,7 @@ impl SearchTraversal {
                 path: path.to_string(),
                 score: round_score(score),
                 match_kind: query_match.kind.to_string(),
-                preview: search_preview(value),
+                preview: self.matcher.preview(value, query_match.kind),
                 field: field.map(str::to_string),
                 finding_kind: semantic.map(|item| item.kind.clone()),
                 line_range: object_line_range(value),
@@ -462,6 +462,39 @@ impl QueryMatcher {
         }
     }
 
+    /// Preview for a hit. A long string matched by value shows the window
+    /// around its first match, labelled with `...` on each cut side, rather
+    /// than a prefix that may not contain the match at all.
+    fn preview(&self, value: &Value, kind: &str) -> Value {
+        let Value::String(text) = value else {
+            return search_preview(value);
+        };
+        if kind != "value" || text.chars().count() <= MAX_PREVIEW_CHARS {
+            return search_preview(value);
+        }
+        let Some(match_start) = self.first_match_start(text) else {
+            return search_preview(value);
+        };
+        let match_char = text[..match_start].chars().count();
+        Value::String(window_chars(text, match_char, MAX_PREVIEW_CHARS))
+    }
+
+    fn first_match_start(&self, text: &str) -> Option<usize> {
+        if let Some(regex) = &self.regex {
+            return regex.find(text).map(|found| found.start());
+        }
+        let query = self.raw.as_deref()?;
+        if self.case_sensitive {
+            return text.find(query);
+        }
+        RegexBuilder::new(&regex::escape(query))
+            .case_insensitive(true)
+            .build()
+            .ok()?
+            .find(text)
+            .map(|found| found.start())
+    }
+
     fn equals(&self, candidate: &str) -> bool {
         let Some(query) = &self.normalized else {
             return false;
@@ -613,6 +646,26 @@ fn truncate_chars(value: &str, limit: usize) -> String {
         .take(limit.saturating_sub(3))
         .collect::<String>();
     output.push_str("...");
+    output
+}
+
+/// `limit` characters of `value` around character `focus`, starting a third
+/// of the window before it. Each cut side is marked with `...`.
+fn window_chars(value: &str, focus: usize, limit: usize) -> String {
+    let total = value.chars().count();
+    let body = limit.saturating_sub(6).max(1);
+    let start = focus
+        .saturating_sub(body / 3)
+        .min(total.saturating_sub(body));
+    let end = (start + body).min(total);
+    let mut output = String::with_capacity(limit + 6);
+    if start > 0 {
+        output.push_str("...");
+    }
+    output.extend(value.chars().skip(start).take(end - start));
+    if end < total {
+        output.push_str("...");
+    }
     output
 }
 

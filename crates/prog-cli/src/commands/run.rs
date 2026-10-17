@@ -175,6 +175,13 @@ pub(crate) async fn run_command_with(
             && !run.stdout.truncated
             && !run.stderr.truncated,
     );
+    // Structured output becomes navigable records. Test, build, and lint
+    // output stays verification evidence, so verdicts never change.
+    let stdout_json = if provider.is_none() && !prog_core::is_verification_command(&args.command) {
+        parse_structured_stdout(&run.stdout, &run.status)
+    } else {
+        None
+    };
     let payload = run_payload(RunPayloadInput {
         run_id: &run_id,
         argv: &args.command,
@@ -190,6 +197,7 @@ pub(crate) async fn run_command_with(
         failure_sections: &failure_sections,
         provider: provider.as_ref(),
         out: args.out.as_ref(),
+        stdout_json,
     });
     let redaction = RedactionPolicy::default();
     let redacted = RawPayload::new(payload).redact(&redaction);
@@ -693,7 +701,7 @@ fn run_payload(input: RunPayloadInput<'_>) -> Value {
             },
             "out": input.out.map(|path| path.to_string_lossy().to_string())
         },
-        "stdout": run_stream_value(input.stdout),
+        "stdout": structured_stream_value(input.stdout, input.stdout_json),
         "stderr": run_stream_value(input.stderr),
         "combined": input.combined,
         "failure_sections": input.failure_sections
@@ -714,6 +722,45 @@ fn run_payload(input: RunPayloadInput<'_>) -> Value {
             .collect::<Vec<_>>(),
         "provider": input.provider
     })
+}
+
+/// Stdout with its parsed records beside the text. Both pass through the same
+/// persistence redaction; the parsed copy is redacted per value, so a secret
+/// in one record never costs the rest of a single-line document.
+fn structured_stream_value(text: &RunText, parsed: Option<(Value, &'static str)>) -> Value {
+    let mut value = run_stream_value(text);
+    if let Some((json, format)) = parsed {
+        value["format"] = json!(format);
+        value["json"] = json;
+    }
+    value
+}
+
+/// Stdout that is one JSON document (object or array) or JSON Lines with at
+/// least two records. Only a complete capture of a process that exited
+/// qualifies, so a truncated or interrupted stream is never half-parsed.
+fn parse_structured_stdout(
+    capture: &RunCapture,
+    status: &RunProcessStatus,
+) -> Option<(Value, &'static str)> {
+    if capture.truncated || !matches!(status, RunProcessStatus::Exited { .. }) {
+        return None;
+    }
+    let text = std::str::from_utf8(&capture.bytes).ok()?.trim();
+    if !text.starts_with(['{', '[']) {
+        return None;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(text) {
+        return (value.is_object() || value.is_array()).then_some((value, "json"));
+    }
+    let mut records = Vec::new();
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if !line.starts_with(['{', '[']) {
+            return None;
+        }
+        records.push(serde_json::from_str::<Value>(line).ok()?);
+    }
+    (records.len() >= 2).then_some((Value::Array(records), "ndjson"))
 }
 
 fn run_stream_value(text: &RunText) -> Value {

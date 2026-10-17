@@ -356,6 +356,56 @@ fn install_never_overwrites_foreign_files_and_uninstall_removes_only_shims() {
 }
 
 #[test]
+fn shim_list_reports_generated_shims_their_activity_and_real_tools() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("shims");
+    let tools = root.path().join("tools");
+    fs::create_dir_all(&tools).unwrap();
+    let real = tools.join("cargo");
+    fs::write(&real, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o755)).unwrap();
+    let installed = prog(&[
+        "shim",
+        "install",
+        "--dir",
+        dir.to_str().unwrap(),
+        "--tool",
+        "cargo",
+    ]);
+    assert!(installed.status.success(), "{}", stdout(&installed));
+    fs::write(dir.join("notes.txt"), "not a shim").unwrap();
+
+    let list = |path: &str| -> Value {
+        let output = Command::new(env!("CARGO_BIN_EXE_prog"))
+            .args(["shim", "list", "--dir", dir.to_str().unwrap()])
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", stdout(&output));
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let active = list(&format!(
+        "{}:{}:/usr/bin:/bin",
+        dir.display(),
+        tools.display()
+    ));
+    assert_eq!(active["installed"], true);
+    assert_eq!(active["on_path"], true);
+    assert_eq!(active["shims"].as_array().unwrap().len(), 1, "{active:#}");
+    assert_eq!(active["shims"][0]["tool"], "cargo");
+    assert_eq!(active["shims"][0]["active"], true);
+    assert_eq!(active["shims"][0]["wraps"], real.to_str().unwrap());
+
+    let inactive = list(&format!("{}:/usr/bin:/bin", tools.display()));
+    assert_eq!(inactive["on_path"], false);
+    assert_eq!(inactive["shims"][0]["active"], false);
+    assert!(
+        inactive["warnings"].to_string().contains("not on PATH"),
+        "{inactive:#}"
+    );
+}
+
+#[test]
 fn shim_env_is_idempotent_and_keeps_the_store_outside_the_project() {
     let root = tempfile::tempdir().unwrap();
     let project = root.path().join("project");

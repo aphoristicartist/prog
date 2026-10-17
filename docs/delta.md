@@ -71,11 +71,19 @@ following hold:
   selection scope and assert `--selection-exhaustive`.
 - **The same tests ran again** — when the Cargo/Rust or pytest coding provider
   recorded test results, the subject must have executed at least as many tests
-  as the baseline (from the runner's own summary line, so quiet `-q` output
-  counts too), and every baseline-failing test must have run again: a test that
-  is missing, skipped, or ignored in the subject blocks the proof. Deleting or
+  as the baseline (from the runner's own summary line), and every
+  baseline-failing test must have run again and passed by name: a test that is
+  missing, skipped, or ignored in the subject blocks the proof. Deleting or
   skipping the failing test produces exactly the clean output of a real fix, so
   it can never be reported as `resolved`.
+- **Each baseline failure is named, and its pass is named too** — quiet output
+  (`pytest -q`, `cargo test -q`) names only failures. "The failing test now
+  passes" and "the failing test was deleted and a new passing test took its
+  place in the count" print the same thing, so a quiet subject cannot prove a
+  fix; the reason says to rerun verbosely (`pytest -v`, `cargo test` without
+  `-q`). Likewise a baseline whose summary counts more failures than it names
+  cannot match the unnamed ones to a later pass. libtest's closing `failures:`
+  list names failing tests even in quiet mode, and is read for that.
 
 The assessment always reports `reasons`, so a non-provable comparison explains
 itself rather than failing silently. When a coding provider already knows how
@@ -188,6 +196,55 @@ That is the intended behavior: a narrow rerun cannot clear a broad baseline.
 
 To bind a specific disappearance to an explicit success criterion, declare a
 verification obligation instead; see [`verification.md`](verification.md).
+
+## Record deltas
+
+When both payloads hold the same collection of records — a JSON array from
+`prog observe`, parsed JSON or JSON Lines stdout from `prog run`, or an API
+response from `prog call` — `prog delta` also compares the records by key and
+returns a `records` block:
+
+```sh
+prog delta "$BEFORE" "$AFTER"                 # key inferred
+prog delta "$BEFORE" "$AFTER" --key number    # key named (a pointer: metadata/uid)
+prog delta "$BEFORE" "$AFTER" --records-path /items
+```
+
+```json
+"records": {
+  "status": "compared",
+  "path": "/stdout/json",
+  "key": "/id",
+  "counts": {"added": 1, "removed": 0, "changed": 3, "unchanged": 297},
+  "added": [{"key": 2000, "path": "/stdout/json/300"}],
+  "changed": [{"key": 1017, "baseline_path": "/stdout/json/16", "subject_path": "/stdout/json/16",
+               "fields": [{"field": "/state", "before": "open", "after": "closed"}]}],
+  "reasons": ["added and removed describe the captured collections only; ..."]
+}
+```
+
+The comparison reads the whole persisted payloads, not a preview, so its counts
+are exact for what was captured. It is conservative in the same way as the
+finding delta:
+
+- The key must be present, unredacted, and unique in every record on both
+  sides; otherwise the status is `unkeyed` and nothing is listed. An inferred
+  key prefers `id`, `uid`, `uuid`, `key`, `number`, `node_id`, `name`, and
+  `slug`, top-level fields first.
+- Either capture stopping early (byte limit, timeout, cancellation) makes the
+  status `incomplete`: a record missing from a cut capture proves nothing.
+  Redaction and windowed finding derivation do not hide records, because the
+  comparison reads every stored record.
+- "Removed" means absent from the subject's *captured* collection. Unless both
+  captures declared an exhaustive selection, the reasons say so: an API that
+  pages or filters results can drop a record that still exists.
+- A record holding redacted values is compared as stored; a change inside a
+  redacted value is not visible, and the reasons count such records.
+
+Capturing the same command, file, or call again in a session attaches the same
+comparison to the new envelope as `changes_since` (only changed findings and
+records are listed, at most five of each; counts are always complete), so rerunning `prog run -- gh api ...` answers "what changed
+since I last looked" without a separate step.
 
 ## Related
 
