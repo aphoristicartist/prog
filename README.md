@@ -3,223 +3,229 @@
 [![CI](https://github.com/aphoristicartist/prog/actions/workflows/ci.yml/badge.svg)](https://github.com/aphoristicartist/prog/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust 1.89+](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](https://www.rust-lang.org)
-[![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS-lightgrey.svg)](#supported-platforms)
+[![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS-lightgrey.svg)](#install)
 
-**An agent-harness extension for bounded, inspectable tool results.**
+**Agents run tools that produce more output than they can read. prog keeps the
+output, gives the agent a map with an address for every part, and never calls
+a fix proven until it is.**
 
-`prog` is built for agents and harnesses to invoke inside a tool loop. The CLI
-is its local JSON transport and recovery surface, not a terminal application a
-human is expected to operate interactively.
+prog is a command-line tool that coding agents call: Claude Code, Codex,
+Cursor, Gemini CLI, or anything else that can run a command. It sits between
+the agent and what the agent runs or reads (test suites, compilers, CLIs,
+HTTP APIs, MCP servers, files, logs) and does three things:
 
-Your agent runs `cargo test`. The output is 130,000 tokens. It needs one error
-line — but it can't know which line until it has read them all.
+- **Lets the agent read 300 records without reading 300 records.** Output is
+  stored once, with secrets removed. The agent gets a small view, exact counts
+  of what is inside (`state: open=5, closed=2`), and an address for every part,
+  then asks for exactly the rows, fields, or lines it needs. Nothing is rerun.
+- **Shows what changed since last time.** Run the same command again and prog
+  lists the records added, removed, and changed, matched by key, with before
+  and after values.
+- **Says "fixed" only when it is proven.** A test fix counts when the same tests
+  ran again and the failing one passed by name. Deleting, skipping, or swapping
+  out the failing test does not pass, and neither does quiet output that cannot
+  show it.
 
-So you truncate, and lose the answer. Or you don't, and pay for the whole log
-on every turn.
+prog does not summarize or compress with a model, and it is not an agent or an
+MCP server. Every value it returns is copied from the captured output (with
+secrets replaced and long strings visibly cut) or counted from it.
 
-<!-- eval:hero:start -->
-```text
-                       approximate tokens into the model
-  raw fixture        137,883
-  prog task            1,736
-```
+> **Status: pre-1.0.** The latest release, v0.1.1 (August 2026), predates
+> `select`, `coverage`, compact output, receipts, PATH shims, and the Claude
+> Code plugin. Until the next release, [install from `main`](#install) to use
+> everything below.
 
-<sub>HTTP “Discover shape” from [`docs/token-economics.md`](docs/token-economics.md),
-rendered from the [checked-in rows](fixtures/evals/token-economics-metrics.json).
-Ratios across these deterministic fixtures range 23.9x-79.4x.
-Counts use the bytes/4 approximation, not provider tokens or a promise about your workload.</sub>
-<!-- eval:hero:end -->
+## Quickstart
 
-The difference isn't compression. `prog` captures the payload **once**, redacts
-it, stores it, and hands back a small envelope describing its *shape* — plus a
-cursor. Everything omitted stays addressable by JSON Pointer, so the next step
-retrieves exactly the evidence it needs **without rerunning the source**.
-
-```text
-capture once -> redact -> bounded envelope -> inspect -> exact evidence -> verify again
-```
+Uses `prog` built from `main` and `python3` (only to read the cursor out of
+the JSON). CI runs this block exactly as written.
 
 ```sh
-prog run -- cargo test          # 1 bounded envelope, ranked findings
-prog inspect "$CURSOR" --goal "find the compile error"
-prog evidence "$CURSOR" --path /failure_sections/0    # exact, cited, offline
+cd "$(mktemp -d)"
+cat > issues.json <<'EOF'
+[
+  {"id": 101, "state": "open",   "title": "Login times out", "labels": ["bug"]},
+  {"id": 102, "state": "closed", "title": "Typo in docs",    "labels": ["docs"]},
+  {"id": 103, "state": "open",   "title": "Crash on save",   "labels": ["bug", "p1"]},
+  {"id": 104, "state": "open",   "title": "Slow search",     "labels": ["perf"]},
+  {"id": 105, "state": "closed", "title": "Bad redirect",    "labels": ["bug"]},
+  {"id": 106, "state": "open",   "title": "Dark mode",       "labels": []},
+  {"id": 107, "state": "open",   "title": "Export to CSV",   "labels": ["feature"]}
+]
+EOF
+
+prog --format compact observe --file issues.json
+CURSOR=$(prog observe --file issues.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["cursor"])')
+prog --format compact select "$CURSOR" --where state=open --where 'labels~bug' --fields id,title
+prog --format compact evidence "$CURSOR" --path /2/title
+
+sed -i.bak 's/"id": 103, "state": "open"/"id": 103, "state": "closed"/' issues.json
+prog --format compact observe --file issues.json
 ```
 
-Nothing was truncated away. The full redacted payload is still on disk.
+What comes back, abridged:
 
-## Contents
+```text
+observe   overview: 7 items; /id 101..107; /state open=5, closed=2; keys /id, /title
+select    matched 2 of 7: /0 {"id": 101, "title": "Login times out"}, /2 {"id": 103, "title": "Crash on save"}
+evidence  "Crash on save"   ref prog://pc1_…#/2/title
+observe   changes_since.records: 1 changed, 6 unchanged; key 103: /state "open" -> "closed"
+```
 
-- [Install](#install) · [Quickstart](#quickstart)
-- [Why prog](#why-prog) · [Built for loop engineering](#built-for-loop-engineering)
-- [Moving through captured data](#moving-through-captured-data) · [Verifying what changed](#verifying-what-changed) — the part most tools skip
-- [The disclosure envelope](#the-disclosure-envelope) · [Inputs and adapters](#inputs-and-adapters)
-- [Harness extensions and plugins](#harness-extensions-and-plugins) · [Command map](#command-map)
-- [Safety and storage](#safety-and-storage) · [Measured results](#measured-results)
-- [When not to use prog](#when-not-to-use-prog) · [Documentation](#documentation)
+The same moves work on a test run (`prog run -- cargo test`), an API
+(`prog run -- gh api repos/OWNER/REPO/issues`), an MCP tool, or a 16 MiB log.
+
+## "Fixed" means proven
+
+With PATH shims active (the Claude Code plugin installs them, or run `prog shim
+install`), the agent runs `cargo test`, `pytest`, `go test`, `npm test`, and
+other test, build, and lint tools as usual, even piped into `tail`. Every byte
+reaches the agent unchanged; prog keeps a full copy and adds a receipt of a
+few hundred bytes after each run:
+
+```text
+prog: `cargo test --no-fail-fast` · exit 0 · 1 passed, 0 failed · full output kept (15 lines)
+vs previous run: NOT PROVEN (the subject executed 1 tests but the baseline executed 2; the test population shrank)
+evidence: prog evidence pc1_… --path /stdout
+```
+
+That is what deleting the failing test looks like: green output, unproven fix.
+A real fix reads `vs previous run: fixed: tests::adds`. prog reports a fix
+only when all of these hold:
+
+- the same command ran the same tests again, and at least as many executed;
+- every test that failed before ran again and passed **by name**. Quiet output
+  (`pytest -q`, `cargo test -q`) names only failures, so prog asks for a
+  verbose rerun instead of guessing;
+- neither capture was cut short, and each run's own summary agrees with its
+  exit code.
+
+A seeded suite ([`false_completion.rs`](crates/prog-cli/tests/false_completion.rs))
+checks that deleted, skipped, ignored, swapped, and quiet-mode tests never come
+out as fixed, and that real fixes still do.
+
+The optional **stop gate** (Claude Code plugin setting `stop_gate`) blocks the
+end of a turn once when the latest test run is failing or unproven, when files
+changed after the last passing run, or when files changed and no test ran. It
+never blocks twice in a row, so the agent can always explain and stop.
+
+For scripted loops, `prog delta <before> <after>` classifies every finding as
+`new`, `persisting`, `resolved`, `not_observed`, or `unknown`, and reports
+`resolved` only when absence is provable. Obligations declared before the
+result is known turn that into a gate that a recipe or harness cannot satisfy
+on its own:
+
+```sh
+prog session obligation-add checkout-fixed --check "checkout error gone" --scope checkout \
+  --origin-observation "$BASELINE" --expected-absent-fingerprint "$FINGERPRINT" \
+  --evidence-observation "$VERIFICATION_RUN"
+prog session show --readiness
+```
+
+Details: [shims and receipts](docs/shims-and-receipts.md),
+[delta](docs/delta.md), [verification](docs/verification.md).
+
+## Moving through large output
+
+`prog run` parses output that is one JSON document or JSON Lines (`gh api`,
+`kubectl get -o json`, `aws`, `curl`) into records; test, build, and lint
+output stays verification evidence. `prog observe` reads files and stdin
+(JSON, NDJSON, SARIF, JUnit, diffs, CSV and other tables, logs, text).
+`prog call` reads registered HTTP, CLI, and MCP sources.
+
+| Move | Command | Returns |
+| --- | --- | --- |
+| Map | the first response | `overview`: each field's kinds, how many records carry it, value counts when values repeat, number and date ranges, and fields unique enough to address a record |
+| Filter and page | `prog select <cursor> --where state=open --where 'labels~bug' --fields number,title --offset 20` | matching rows, each with its JSON Pointer, plus `matched` and `next_offset` |
+| Open one part | `prog evidence <cursor> --path /stdout/json/31/body` | the exact slice and a citable `prog://<cursor>#<path>` ref |
+| Find | `prog search <cursor> "connection reset"`, `prog find <cursor> --kind error`, `prog inspect <cursor> --goal "root cause"` | ranked paths, with previews centered on the match |
+| Check coverage | `prog coverage <cursor>` | which records prog has returned this session, and the ranges it never returned |
+
+Only the capture touches the source; every other move reads the local store.
+`--format compact` (or `PROG_FORMAT=compact`) returns the data, the next moves,
+and every caveat (truncation, redaction, staleness, incomplete capture) and
+leaves out budgets, verdicts, provenance, and templates. The full JSON
+contract, published by `prog meta`, stays the default.
+
+Limits are explicit. `run` keeps up to 1 MiB per stream by default
+(`--max-stdout-bytes`), `observe` up to 16 MiB, and cursors expire after 24
+hours by default. Each response is capped at 16 KiB by default
+(`--budget-bytes`, up to 64 KiB). Anything cut is reported as cut, and a cut
+capture can never prove that something is absent.
+
+## What changed since last time
+
+Capturing the same command, file, or call again attaches `changes_since` to
+the new response: the findings that appeared or disappeared, and the records
+added, removed, and changed. Records are matched by a field that is unique in
+every record (`id`, `uid`, `key`, `number`, `name`, ...) or by `--key`.
+`prog delta <before> <after>` returns the full lists.
+
+The comparison refuses to guess. If either capture was cut short, or the key
+is missing, duplicated, or redacted, it reports `incomplete` or `unkeyed` and
+lists nothing. "Removed" means absent from the captured collection: an API
+that pages or filters its results can drop a record that still exists, and
+the response says so. See [record deltas](docs/delta.md#record-deltas).
 
 ## Install
 
-Install the latest verified binary with `curl` (requires
-[`gh`](https://cli.github.com/) for mandatory build-provenance verification):
+### From `main` (everything in this README)
+
+```sh
+cargo install --locked --git https://github.com/aphoristicartist/prog prog-cli
+```
+
+Requires Rust 1.89 or newer. Until the next release, a build from `main` still
+reports version 0.1.1. Linux (x86_64) and macOS (Apple Silicon and Intel) are
+supported and tested in CI; Windows is not
+([#140](https://github.com/aphoristicartist/prog/issues/140)).
+
+### From the latest release (v0.1.1)
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/releases/latest/download/install.sh | sh
 ```
 
-The installer selects the supported target, downloads into a temporary
-directory, verifies both `SHA256SUMS` and the GitHub build-provenance
-attestation, and only then atomically places `prog` in `~/.local/bin`. Override
-the destination with `PROG_INSTALL_DIR`. It refuses unsupported platforms,
-checksum mismatches, missing attestations, and missing verification tools. If
-the install directory is not already on `PATH`, it adds one idempotent entry to
-the detected zsh, bash, or POSIX-shell profile. Open a new terminal, then
-install the harness extension into a project:
-
-```sh
-prog harness install --root /path/to/project
-prog harness doctor --root /path/to/project
-```
-
-`harness install` places the portable Agent Skill and detected host adapters in
-the project without overwriting existing files. `harness doctor` is the
-machine-readable readiness gate; the integration is usable only when it returns
-`"ready": true`. `prog --help` remains available for harness discovery and
-debugging.
-
-Set `PROG_MODIFY_PATH=0` to leave shell startup files unchanged. Unknown shells
-are never guessed; the installer keeps the verified installation and prints a
-manual PATH instruction instead.
-
-Update a curl-managed installation to the latest verified release explicitly:
-
-```sh
-prog update --yes
-```
-
-`prog update` never runs in the background. Without `--yes` it fails closed
-before network access or filesystem mutation; package-manager installations
-are not overwritten unless an explicit `--install-dir` is supplied. See
-[`docs/install.md`](docs/install.md) for exact-version installs, profile
-selection, manual verification, and the updater trust model.
-
-For sandboxes that cannot install to the host, every release tag also
-publishes a minimal Linux container image; see the container section in
+The installer checks `SHA256SUMS` and the GitHub build-provenance attestation
+(it needs [`gh`](https://cli.github.com/)) before it places `prog` in
+`~/.local/bin`. Later, `prog update --yes` replaces a curl-installed binary
+with the newest verified release. v0.1.1 has capture, navigation, findings,
+delta, and the Agent Skill, but none of the newer features listed above. Exact
+versions, manual verification, and the release container image are in
 [`docs/install.md`](docs/install.md).
 
-For development from a checkout:
+### Connect your agent
 
-```sh
-cargo install --path crates/prog-cli
-```
+- **Claude Code** (needs `prog` from `main`):
 
-Replace `prog` with `cargo run --` in the examples below when developing.
+  ```text
+  /plugin marketplace add aphoristicartist/prog
+  /plugin install prog@prog
+  ```
 
-### Supported platforms
+  At session start the plugin installs the PATH shims, adds a receipt after
+  each captured test run, switches prog to compact output, and offers the
+  opt-in stop gate. It never changes what a command prints.
+- **Codex:** from a checkout, `codex plugin marketplace add /path/to/prog`, then
+  `codex plugin add prog@personal`.
+- **Any agent that reads skills or project instructions:**
+  `prog harness install --root <project>` adds the Agent Skill, plus adapters
+  for Codex, Claude Code, Cursor, and Gemini CLI when it detects them. The
+  integration is ready only when `prog harness doctor --root <project>` returns
+  `"ready": true`.
+- **DeepSeek Harness:** `dsh plugin --profile web add ./extensions/deepseek-harness`
+  replaces a tool result only when the prog envelope is smaller or redaction
+  requires it.
 
-- **Ubuntu 22.04+ on x86_64** and **macOS 15+ on Apple Silicon or Intel** are
-  supported and CI-verified on every push and pull request (formatting, Clippy,
-  full test suite, and an MSRV gate).
-- **Windows is not supported.** The process-group, permissions, and signal
-  semantics `prog` relies on are not implemented for Windows; see
-  [#140](https://github.com/aphoristicartist/prog/issues/140).
-- **MSRV** is pinned at Rust **1.89** (`rust-version = "1.89"` in the workspace
-  `Cargo.toml`) and verified by a dedicated CI job on `rust-toolchain@1.89.0`.
-
-See [`docs/release-notes.md`](docs/release-notes.md) for the full per-release
-reference.
-
-## Quickstart
-
-This repository includes a deterministic CLI fixture. Every command below is
-re-executed by the documentation integration tests, so it stays copy-pasteable.
-
-```sh
-rm -rf /tmp/prog-demo
-prog --dir /tmp/prog-demo --pretty source add-cli demo_cli --operation list --read-only -- python3 fixtures/cli/list_items.py
-prog --dir /tmp/prog-demo --pretty call demo_cli list --args '{}'
-CURSOR=$(prog --dir /tmp/prog-demo call demo_cli list --args '{}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["cursor"])')
-prog --dir /tmp/prog-demo --pretty expand "$CURSOR" --path /items --limit 3 --depth 3
-prog --dir /tmp/prog-demo --pretty inspect "$CURSOR" --goal "find important evidence"
-prog --dir /tmp/prog-demo --pretty search "$CURSOR" "Item 2"
-prog --dir /tmp/prog-demo --pretty hints demo_cli list
-prog --dir /tmp/prog-demo --pretty meta SourceProfile
-```
-
-The source command runs once for the first cache entry. The returned cursor can
-then drive bounded expansion, ranked inspection, and search from the local
-store. `meta` exposes `prog`'s own public contracts through the same envelope
-mechanism.
-
-The default model-visible response budget is 16 KiB. Cached navigation commands
-(`inspect`, `search`, `find`, `evidence`, `paths`, and `expand`) operate on the
-persisted, redacted payload and do not contact the upstream source.
-
-Use `--budget-bytes N` (or `PROG_BUDGET_BYTES=N`) to set a hard stdout ceiling
-for one invocation. `--budget-tokens N` and `PROG_BUDGET_TOKENS=N` are a
-convenience conversion using the explicitly labeled `bytes_div_4_approximate`
-estimator; they are not tokenizer measurements. Command flags override the
-environment, which overrides a source profile's optional
-`disclosure_budget.max_bytes`; a 64 KiB safety ceiling still applies. Every JSON response
-reports its applied `disclosure_budget`, `capture_budget`, and `storage_budget`,
-including actual emitted stdout bytes.
-
-## Why prog
-
-Tool output is often the largest and least predictable input in an agent run:
-test failures, compiler diagnostics, CI logs, diffs, issue lists, API responses,
-and security reports can all exceed what the current step needs.
-
-`prog` provides one consistent result-side contract:
-
-- **Bounded first view.** Data-capturing operations return a
-  `DisclosureEnvelope` with a preview, shape hints, omissions, and findings.
-- **Recoverable detail.** When policy allows the payload to be persisted, the
-  envelope includes a cursor and omitted data remains addressable by JSON
-  Pointer instead of being discarded by truncation.
-- **Offline evidence navigation.** Repeated inspection reads the local cache;
-  commands and APIs are not rerun just to reveal another slice.
-- **Deterministic findings.** Generic and lens-provided findings rank likely
-  failures and evidence paths without model calls.
-- **Redaction before persistence.** Secret-bearing fields and supported secret
-  patterns are removed before payloads enter the store.
-- **Fail-closed execution.** Unknown, mutating, shell-backed, and sensitive
-  operations remain gated by explicit effect and trust policy.
-- **Machine-readable operations.** Operational successes, errors, schemas,
-  evidence blocks, cache receipts, and session trails are JSON; CLI help remains
-  conventional text.
-
-`prog` is most useful when the relevant path is not known before capture, the
-source is expensive or undesirable to rerun, or several loop iterations need
-to inspect the same observation. If the exact field is already known, a native
-API projection or `jq` is usually simpler.
+Adapter paths and manual setup: [`docs/integrations.md`](docs/integrations.md).
 
 ## Built for loop engineering
 
-In this README, **loop engineering** means designing a repeatable agent cycle
-that observes a system, chooses an action, verifies the result, retains useful
-state, and either continues or stops at an explicit gate.
-
-`prog` is not the agent runtime or loop scheduler. It is the observation and
-evidence layer inside that loop:
-
-| Loop move | `prog` surface | What it contributes |
-| --- | --- | --- |
-| Observe | `run`, `observe`, `call`, `recipe` | Captures a command, artifact, API response, or MCP result into one bounded envelope |
-| Orient | envelope `findings`, `inspect`, `search`, `find` | Identifies likely failures and locates relevant cached structure |
-| Focus | `evidence`, `paths`, `expand` | Retrieves a cited path or bounded slice without rerunning the source |
-| Act | external agent or human | Edits code or changes the system; `prog` does not make that decision |
-| Verify | `delta`, `session show --readiness`, rerun `recipe`/`run`/`call` | Produces a fresh observation and compares it conservatively against the baseline |
-| Remember | `session start`, `note`, `show` | Stores redacted goals, notes, and evidence-navigation metadata locally |
-| Stop or approve | external loop or human gate | `prog` reports evidence; it does not merge, deploy, or approve changes |
-
-That separation is useful for loops because raw tool output does not have to be
-placed into every model turn, while the exact evidence remains reachable when a
-later iteration needs it.
+prog is the observation and evidence layer inside an agent loop: observe,
+orient, focus, act, verify, remember, stop. It does not choose actions,
+schedule iterations, or approve changes.
 
 ### Example: fail, inspect, fix, verify
-
-This complete example creates a real Rust compiler error, captures it, retrieves
-the top evidence path, fixes the source, and verifies a fresh run:
 
 ```sh
 rm -rf /tmp/prog-loop
@@ -229,67 +235,42 @@ printf '%s\n' 'fn main() { let value: u32 = "not a number"; println!("{value}");
 RESULT=$(prog --dir /tmp/prog-loop run -- rustc /tmp/prog-loop-demo.rs -o /tmp/prog-loop-demo)
 CURSOR=$(printf '%s' "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["cursor"])')
 TOP_PATH=$(printf '%s' "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["findings"][0]["path"])')
-
 prog --dir /tmp/prog-loop inspect "$CURSOR" --goal "find the compile error" --limit 5
 prog --dir /tmp/prog-loop evidence "$CURSOR" --path "$TOP_PATH"
-```
 
-The source edit is the action step. Verification creates a new observation
-rather than mutating the failed one:
-
-```sh
 printf '%s\n' 'fn main() { let value: u32 = 42; println!("{value}"); }' > /tmp/prog-loop-demo.rs
 prog --dir /tmp/prog-loop run -- rustc /tmp/prog-loop-demo.rs -o /tmp/prog-loop-demo
-prog --dir /tmp/prog-loop run -- /tmp/prog-loop-demo
-prog --dir /tmp/prog-loop session note "compiled and ran the corrected program"
+prog --dir /tmp/prog-loop session note "compiled the corrected program"
 prog --dir /tmp/prog-loop session show
 ```
 
-The session trail records navigation metadata and notes, not copies of payload
-bodies. A loop should decide success from the fresh command status and its own
-acceptance criteria; `prog` does not claim that a ranked finding is a fix.
+The fix is a new observation; the failed one is never modified. The session
+trail keeps navigation metadata and notes, not payload copies.
 
-For real test loops, the first-party recipes add domain lenses and default
-goals while preserving the executed command in the envelope:
+### Recipes and lenses
+
+Recipes run a command or read a file, apply a bundled lens, and rank findings,
+while recording exactly what ran:
 
 ```sh
 prog recipe --timeout-ms 180000 cargo-test -- cargo test
-prog recipe pytest -- pytest -q
-prog recipe npm-test -- npm test
-prog recipe go-test -- go test ./...
+prog recipe pytest -- pytest -v
+prog recipe logs-root-cause --file /tmp/service.log
 ```
 
-### Example: root-cause a saved log
+Recipes: `cargo-test`, `pytest`, `npm-test`, `go-test`, `vitest`,
+`playwright`, `bun-test`, `deno-test`, `ruff`, `biome`, `semgrep`, `gh-issues`,
+`diff-review`, `logs-root-cause`.
 
-```sh
-printf '%s\n' 'INFO checkout started' 'ERROR checkout failed: timeout after 30s' > /tmp/service.log
-RESULT=$(prog --dir /tmp/prog-logs recipe logs-root-cause --file /tmp/service.log)
-CURSOR=$(printf '%s' "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["cursor"])')
-prog --dir /tmp/prog-logs inspect "$CURSOR" --goal "find the root cause" --limit 5
-prog --dir /tmp/prog-logs search "$CURSOR" "timeout" --path /lines
-prog --dir /tmp/prog-logs find "$CURSOR" --kind error
-```
+Bundled lenses cover Cargo, pytest, npm, and Go test output, JUnit, SARIF,
+unified diffs, logs, NDJSON, OpenTelemetry NDJSON, GitHub issues and Actions
+logs, kubectl JSON, Terraform plans, Trivy reports, MCP JSON-RPC errors, and
+LLM API errors. Lenses are data: they select fields, declare omissions, and
+add bounded finding rules, and they cannot run code ([`docs/lenses.md`](docs/lenses.md)).
 
-The log recipe uses the bundled `logs` lens. Search is case-insensitive by
-default; `--regex` enables a size-bounded Rust regex.
+### Registered sources
 
-### Example: review a diff without losing the source hunk
-
-```sh
-git diff --no-ext-diff HEAD^1 HEAD > /tmp/change.diff
-RESULT=$(prog --dir /tmp/prog-diff recipe diff-review --file /tmp/change.diff)
-CURSOR=$(printf '%s' "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["cursor"])')
-prog --dir /tmp/prog-diff inspect "$CURSOR" --goal "find risky changed hunks"
-prog --dir /tmp/prog-diff paths "$CURSOR" --prefix /files --expandable-only
-```
-
-Unified diffs are indexed into structured file and hunk metadata while source
-lines remain available through cursor-backed paths.
-
-### Example: loop over a registered source
-
-Use a source profile when the same HTTP API, CLI, or MCP server will be called
-across multiple iterations:
+Register an HTTP API, CLI, or MCP server once and call it across iterations:
 
 ```sh
 prog source add-cli repository --operation status --read-only -- git status --short
@@ -297,389 +278,29 @@ prog hints repository status
 prog call repository status --args '{}'
 ```
 
-The example marks `git status --short` read-only explicitly. HTTP `GET` source
-operations are read-only and cacheable; non-`GET` operations are
-confirmation-gated and non-cacheable. Any network-backed operation also needs
-`trust.allow_network` in its profile before it can run, and HTTP redirects and
-pagination continuations stay within the source origin. For read-only paginated
-operations, `prog call --pages N` follows supported continuation hints under
-page, byte, wall-time, and envelope caps.
-
-## Moving through captured data
-
-A capture never changes, and every part of it has an address, so a cursor
-works like a zipper over the data: a small focus plus moves that return exactly
-the part asked for. Large API, MCP, file, and command output stops being
-something to reread or re-fetch.
-
-```sh
-prog --format compact run -- gh api repos/cli/cli/issues -f per_page=100
-#  overview (illustrative): 100 records; /state "open=100"; /author_association "NONE=47, MEMBER=46, ...";
-#            /created_at 2026-08-08T21:51:11Z..2026-10-14T15:28:38Z; keys /id, /number
-prog select "$CURSOR" --where 'labels~bug' --fields number,title,user/login --limit 5
-#  rows: [{"path": "/stdout/json/31", "value": {"number": 14550, ...}}, ...], matched 17 of 100
-prog evidence "$CURSOR" --path /stdout/json/31/body       # exact, cited, offline
-prog coverage "$CURSOR"                                    # which records were never returned
-```
-
-- `prog run` parses stdout that is one JSON document or JSON Lines; `prog
-  observe` does the same for files. Test, build, and lint output stays
-  verification evidence.
-- The `overview` counts fields and values exactly over the stored payload, so
-  "how many are open?" is usually answered by the first response.
-- `prog select` filters (`=`, `!=`, `~`), projects nested fields, and pages;
-  every row keeps the JSON Pointer it came from.
-- Running the same command again adds `changes_since`: the records added,
-  removed, and changed, matched by a unique key, with before and after values.
-  `prog delta <old> <new>` lists all of them ([record deltas](docs/delta.md#record-deltas)).
-- `--format compact` (`PROG_FORMAT=compact`) keeps the data, the moves, and
-  every caveat, and drops budgets, verdicts, provenance, and templates. The
-  full JSON contract stays the default.
-
-## Verifying what changed
-
-Most observation tooling stops at "here is the new output." The hard part of a
-loop is the next question: **did the thing I was trying to fix actually go
-away — or did I just not look where it was?**
-
-Raw output cannot distinguish those. `prog delta` refuses to.
-
-```sh
-prog delta "$BASELINE_OBSERVATION" "$SUBJECT_OBSERVATION"
-```
-
-Each finding is classified `new`, `persisting`, `resolved`, `not_observed`, or
-`unknown`. A finding is only `resolved` when absence is **provable** — same
-canonical invocation, same comparison family, complete captures on both sides,
-compatible normalization, and exhaustive selection scope. Otherwise a
-disappeared finding is `not_observed` or `unknown`, and the assessment lists the
-reasons why.
-
-That means a narrower rerun cannot clear a broad baseline, and a truncated log
-cannot be mistaken for a clean one. For test runs, the same tests must also run
-again: a deleted, skipped, or ignored failing test, or fewer executed tests,
-leaves the finding `unknown`, because that output looks exactly like a fix.
-
-Verification obligations turn that into an explicit gate. You commit to the
-success criterion *before* you have the result:
-
-```sh
-prog session obligation-add checkout-fixed \
-  --check "checkout error no longer present" --scope checkout \
-  --origin-observation "$BASELINE" --expected-absent-fingerprint "$FINGERPRINT" \
-  --evidence-observation "$VERIFICATION_RUN"
-
-prog session show --readiness
-```
-
-`ready` is true only when every required obligation passed. Obligations are
-immutable once declared, and only user declarations can be *required* — a
-recipe or harness cannot authorize its own success. Of the nine possible
-statuses, exactly one is `passed`; the rest are distinct ways of saying "not
-proven", including `unverifiable` for truncated evidence and `stale` for a
-changed workspace.
-
-See [`docs/delta.md`](docs/delta.md) and
-[`docs/verification.md`](docs/verification.md).
-
-## The disclosure envelope
-
-`call`, `run`, `observe`, `recipe`, `expand`, and `meta` return the same
-top-level disclosure contract. Navigation commands such as `inspect`, `search`,
-and `evidence` have smaller dedicated JSON contracts.
-
-```json
-{
-  "schema": "prog.disclosure",
-  "source_id": "...",
-  "operation": "...",
-  "summary": {
-    "kind": "...",
-    "payload_bytes": 0,
-    "estimated_envelope_tokens": 0,
-    "envelope_bytes": 0
-  },
-  "data_preview": {},
-  "schema_hints": {},
-  "omitted": [],
-  "findings": [],
-  "cursor": "pc1_...",
-  "cache": { "status": "stored", "ttl_seconds": 86400 },
-  "capture_budget": { "source": "default", "limits": [] },
-  "storage_budget": { "source": "default" },
-  "next_actions": [],
-  "action_templates": {}
-}
-```
-
-The values above illustrate field shape only. `schema_hints` describe the full
-payload, `omitted` explains what the preview withheld, and `next_actions`
-references machine-readable follow-ups. Cursor-backed actions select one
-symbolic argv entry in `action_templates`; direct reruns carry exact argv. Use
-`prog meta DisclosureEnvelope` for the generated contract schema.
-
-## Inputs and adapters
-
-### Direct capture
-
-- `prog run -- <command...>` captures bounded stdout, stderr, combined stream
-  chunks, exit status, timing, and recognized failure sections. Stdout that is
-  one JSON document or JSON Lines is also parsed into `/stdout/json`, except
-  for test, build, and lint runners.
-- `prog observe --file ...` and `prog observe --stdin` accept JSON, SARIF,
-  NDJSON, JUnit XML, basic HTML, unified diffs, CSV/TSV, Markdown or aligned
-  tables, and bounded text fallback observations.
-- Binary-looking observations are rejected with a structured error.
-
-### Reusable sources
-
-- HTTP source profiles with explicit methods, URLs, parameters, auth references,
-  pagination hints, and effect policy.
-- Local CLI source profiles stored as argv rather than shell command strings.
-- MCP tools and resources consumed as upstream sources through the MCP adapter,
-  including long-running tasks via [`prog mcp-task`](docs/mcp-tasks.md).
-- OpenAPI, JSON Schema, and CLI-help imports with bounded schema depth and
-  graded effect evidence.
-
-### First-party recipes
-
-```text
-cargo-test  pytest  npm-test  go-test  gh-issues  diff-review  logs-root-cause
-```
-
-Recipes are thin, deterministic compositions of `run` or `observe`, a
-first-party lens, and `inspect`. They do not start an agent or hide the expanded
-command; the envelope records the command and recommended next evidence action.
-
-### First-party lens coverage
-
-The binary includes data-only lenses for Cargo, pytest, npm, Go tests,
-JUnit, SARIF, GitHub issues, kubectl JSON, unified diffs, logs, run streams,
-NDJSON records, and generic JSON item triage. Lens manifests can select fields,
-declare omissions and next actions, and contribute bounded finding rules. They
-cannot execute code.
-
-## Harness extensions and plugins
-
-The preferred installation unit is a harness plugin or extension. Every format
-derives from the same disclosure, redaction, persistence, evidence, and
-verification contract in
-[`docs/harness-extension-protocol.md`](docs/harness-extension-protocol.md).
-Wrappers are discovery mechanisms, not independent implementations.
-
-Install every detected project adapter in one operation:
-
-```sh
-prog harness install --dry-run --root /path/to/project
-prog harness install --root /path/to/project
-prog harness doctor --root /path/to/project
-```
-
-The universal `.agents/skills/prog` target is always installed. Codex, Claude
-Code, Gemini CLI, and Cursor adapters are added when their executable or project
-directory is detected. Repeat `--host` for an explicit deployment instead of
-detection.
-
-### Claude Code plugin
-
-The plugin needs a `prog` newer than 0.1.1, which has `prog harness hook`;
-until the next release, install from a checkout of `main`
-(`cargo install --path crates/prog-cli`). With an older `prog` the plugin
-does nothing. Then add the plugin from this repository's marketplace:
-
-```text
-/plugin install prog --marketplace aphoristicartist/prog
-```
-
-On Claude Code releases before 2.1.275, run
-`/plugin marketplace add aphoristicartist/prog` and then
-`/plugin install prog@prog`.
-
-The plugin changes nothing the agent sees in a command's output. At session
-start it puts [PATH shims](docs/shims-and-receipts.md) for `cargo`, `pytest`,
-`go`, `npm`, and other test, build, and lint tools in front of the real ones.
-The shell has already split the command line, so a shim receives the exact argv
-inside pipes, loops, and `cd &&` chains, streams every byte through unchanged,
-and keeps the full output even when the agent pipes it to `tail`. After each
-captured run, a receipt of a few hundred bytes is added to the agent's context:
-
-```text
-prog: `cargo test --no-fail-fast` · exit 0 · 1 passed, 0 failed · full output kept (15 lines)
-vs previous run: NOT PROVEN (the subject executed 1 tests but the baseline executed 2; the test population shrank)
-evidence: prog evidence pc1_… --path /stdout
-```
-
-That receipt is what deleting the failing test produces: the output is green,
-but the fix is not proven. A real fix reads `vs previous run: fixed:
-tests::adds`. Quiet output (`pytest -q`) names only failures, so a quiet rerun
-says NOT PROVEN and asks for a verbose one. The optional **stop gate** (plugin
-setting `stop_gate`) blocks the end of a turn once while this session's latest
-test run is failing, does not prove an earlier failure fixed, or is older than
-the workspace, and when the session changed files but ran no tests at all. The
-plugin also sets `PROG_FORMAT=compact`, so Claude reads compact responses.
-
-### Codex plugin
-
-This repository is a Codex marketplace root and ships `plugins/prog`. From a
-checkout:
-
-```sh
-codex plugin marketplace add /path/to/prog
-codex plugin add prog@personal
-```
-
-The plugin includes the canonical Agent Skill, dependency doctor, and exact-
-argv wrapper. It deliberately does not parse Codex shell-command strings.
-
-### DeepSeek Harness plugin
-
-`extensions/deepseek-harness` is a native `tools/post-execute` plugin. It
-captures the accepted immutable tool result, never reruns the tool, and replaces
-the result only when the `prog` envelope is cheaper or redaction requires it.
-
-```sh
-dsh plugin --profile web add ./extensions/deepseek-harness
-```
-
-### Generated project adapters
-
-The legacy single-host command remains available for compatibility:
-
-```sh
-prog init --agent codex --project --dry-run
-prog init --agent codex --project
-prog init --agent agents-md --project
-prog init --print-skill --frontmatter yaml
-```
-
-Built-in values are `agent-skills`, `agents-md`, `codex`, `claude-code`,
-`cursor`, and `gemini-cli`. Additional targets come from validated JSON passed
-with `--manifest-dir`, so they do not require a `prog` release. Existing files
-are never silently overwritten. See
-[`docs/integrations.md`](docs/integrations.md) for the exact paths.
-
-`prog` can consume MCP as an upstream source, but **prog itself does not expose
-an MCP server mode**. The durable integration surface is a native result plugin
-when the host provides a lossless replacement boundary, otherwise the portable
-Agent Skill plus explicit wrapper, all backed by the same local CLI transport.
-
-## Command map
-
-| Workflow | Commands |
-| --- | --- |
-| Install and verify the harness extension | `harness install`, `harness doctor` |
-| Capture one command or artifact | `run`, `observe` |
-| Classify exact argv without executing it | `route` |
-| Register and understand sources | `source add-http`, `source add-cli`, `source add-mcp`, `discover`, `hints` |
-| Call a reusable source | `call` |
-| Navigate cached evidence | `inspect`, `search`, `find`, `evidence`, `paths`, `expand` |
-| Filter, project, and page a collection; count what was returned | `select`, `coverage` |
-| Run a domain workflow | `recipe` |
-| Compare two observations (findings and keyed records) | `delta` |
-| Read facade readiness and optional delta | `status` |
-| Drive long-running MCP tasks | `mcp-task start`, `get`, `result`, `cancel` |
-| Retain investigation metadata | `session start`, `session note`, `session show` |
-| Gate on verification criteria | `verification begin`, `verification readback`, `session obligation-add`, `session obligation-list`, `session show --readiness` |
-| Inspect storage and economics | `cache`, `cost` |
-| Inspect public contracts | `meta` |
-| Install one legacy host adapter | `init` |
-| Update a curl-managed binary | `update --yes` |
-
-Harnesses can run `prog <command> --help` for the complete argument surface;
-every command and subcommand self-describes. Global options are `--dir <DIR>` (`PROG_DIR`, default
-`./.prog`), `--lens-dir <DIR>` (`PROG_LENS_DIR`, external lenses only;
-default resolution uses bundled lenses with optional `./lenses` overrides),
-`--budget-bytes <N>` (`PROG_BUDGET_BYTES`), `--budget-tokens <N>`
-(`PROG_BUDGET_TOKENS`), `--format full|compact` (`PROG_FORMAT`, default
-`full`), and `--pretty`. The byte budget is authoritative; when
-pretty formatting would exceed it, `prog` emits compact JSON instead.
-
-## Safety and storage
-
-The safety model is enforced in code and mapped to executable tests in
-[`INVARIANTS.md`](INVARIANTS.md).
-
-- Raw payloads must cross the redaction boundary before the store accepts them.
-  This is a typestate boundary, not a convention: `Store::put_payload` does not
-  accept an unredacted value.
-- Secret-like object keys, vendor-format credentials (GitHub, AWS, Anthropic,
-  OpenAI, Slack, Stripe, and others; see `docs/safety.md`), and supported
-  embedded Bearer, PEM, JWT, name/value, and URL-parameter patterns are
-  redacted before persistence.
-- Sensitive or non-cacheable operation results are not persisted.
-- Cursor expansion is provenance-scoped and rejects stale, foreign, or expired
-  cursors. A pre-release store-contract change resets the local store instead
-  of interpreting stale cursor records.
-- Discovery probes only operations allowed by the read-only effect policy.
-- Mutating operations require `--yes`; shell-backed and network-backed
-  operations additionally require their source-profile trust flag
-  (`trust.allow_shell`, `trust.allow_network`) even with `--yes`.
-- Traversal, search, findings, pagination, command capture, and envelopes have
-  explicit bounds.
-- `cache retention` persists independent payload-byte and age limits which are
-  enforced on every cache write; evicted evidence remains metadata-only.
-- `cache purge --all` removes cache state and session trails while preserving
-  the retention policy.
-- Parallel processes may share one `--dir`: `prog` releases the database while
-  waiting on commands or upstream sources, retries brief redb contention with
-  bounded backoff, and reports exhausted contention as retryable
-  `storage_busy` JSON with the attempt count. The default `./.prog` is relative
-  to the current working directory, so agents launched from separate Git
-  worktree roots already receive separate stores. Set `PROG_DIR` explicitly
-  only when evidence and cursors are intended to be shared across worktrees.
-
-Source profiles can be committed when they contain stable configuration and
-environment references rather than literal credentials. The `.prog/` runtime
-store contains captured payloads and is ignored by this repository.
-
-## Measured results
-
-All numbers below come from checked-in deterministic fixtures and use the
-project heuristic of bytes / 4, rounded up. They are regression measurements,
-not universal promises about model quality, latency, or cost.
-
-### Token-economics fixtures
-
-<!-- eval:tokens:start -->
-Across the checked-in HTTP, CLI, and MCP tasks, raw-fixture token estimates
-divided by complete `prog` task estimates range from **23.9x-79.4x**. Every
-task includes its initial envelope and any expansions. Estimates use bytes/4,
-rounded up; these are fixture measurements, not provider token counts. See
-[`docs/token-economics.md`](docs/token-economics.md) and the
-[measurement rows](fixtures/evals/token-economics-metrics.json).
-<!-- eval:tokens:end -->
-
-### Evidence-acquisition fixtures
-
-<!-- eval:evidence:start -->
-The 5 checked-in evidence-acquisition scenarios rank the expected causal
-path first in **5/5** component checks. Separate actual CLI workflows
-measure complete stdout from capture through navigation and evidence retrieval.
-
-| CLI strategy | Complete evidence / attempts | Tool calls | Approx. output tokens |
-|---|---:|---:|---:|
-| paths | 5/5 | 17 | 16,696 |
-| findings | 5/5 | 11 | 10,362 |
-| inspect | 5/5 | 16 | 16,492 |
-
-Costs include every initial finding and metadata field, actual bounded path
-listings/searches, and expansions needed after truncated evidence. Tokens use
-bytes/4 rounded up per workflow; these are deterministic CLI regressions, not
-provider token usage or actual-agent success rates. See
-[`docs/evidence-acquisition.md`](docs/evidence-acquisition.md),
-[component checks](fixtures/evals/evidence-acquisition-metrics.json), and
-[CLI measurements and command traces](fixtures/evals/evidence-cli-metrics.json).
-<!-- eval:evidence:end -->
-
-### Deterministic workflow demos
-
-<!-- eval:demos:start -->
-The 5 checked-in workflow demos report raw-to-envelope-plus-expansion ratios
-from **8.82x to 13.30x**, using the bytes/4 token approximation. These are
-generated local payloads, not credentialed live service measurements. See
-[`docs/real-world-demos.md`](docs/real-world-demos.md) and the
-[recorded metrics](fixtures/evals/real-world-demo-metrics.json).
-<!-- eval:demos:end -->
+HTTP `GET` operations are read-only and cacheable. Operations that are not
+read-only need `--yes`, and shell- or network-backed sources also need their
+trust flag (`trust.allow_shell`, `trust.allow_network`) even with `--yes`. For
+read-only paginated operations, `prog call --pages N` follows
+continuation hints under page, byte, time, and response caps. MCP tools,
+resources, and long-running tasks ([`prog mcp-task`](docs/mcp-tasks.md)) are
+read through the same adapter. Setup, OpenAPI and JSON Schema import, and a
+tour using the bundled fixture: [`docs/source-setup.md`](docs/source-setup.md).
+
+## Results
+
+Measured on deterministic fixtures in this repository. Every number below is
+generated from saved runs (`scripts/regenerate-eval-docs.sh`), not written by
+hand. Tokens are estimated as bytes ÷ 4. None of these are live agent trials.
+
+The fair comparison is with what agents already do: save the output and grep
+it, or select the field directly. On finding an unknown cause, prog with
+`--format compact` finds as much as grep on a saved file at a similar cost, and
+less than reading everything raw. When the field is already known, a native
+selector or `jq` is cheaper (see the known-path table in
+[`docs/competitive-baselines.md`](docs/competitive-baselines.md)). prog's
+advantage is not token count; it is stable addresses, keyed diffs, and
+verification that refuses unproven claims.
 
 ### Deterministic retrieval correctness
 
@@ -712,68 +333,121 @@ Known-path results, assumptions, and command traces are recorded in
 
 ### Correctness, not just savings
 
-[`docs/replay-eval.md`](docs/replay-eval.md) replays whole multi-iteration
-trajectories behind an oracle that must never observe a false `resolved`,
-false-fresh, or false-`passed` classification. That report deliberately makes
-**no savings claim** — its payloads are tiny enough that envelope overhead costs
-more than raw output, which is exactly the small-payload caveat documented
-below.
+[`docs/replay-eval.md`](docs/replay-eval.md) replays multi-iteration
+trajectories behind an oracle that must never see a false `resolved`,
+false-fresh, or false-`passed` result, and makes no savings claim: its
+payloads are small enough that envelopes cost more than raw output. The
+false-completion suite above covers the same rule for test runs.
+
+### Compared with pasting raw output
+
+<!-- eval:hero:start -->
+```text
+                       approximate tokens into the model
+  raw fixture        137,883
+  prog task            1,736
+```
+
+<sub>HTTP “Discover shape” from [`docs/token-economics.md`](docs/token-economics.md),
+rendered from the [checked-in rows](fixtures/evals/token-economics-metrics.json).
+Ratios across these deterministic fixtures range 23.9x-79.4x.
+Counts use the bytes/4 approximation, not provider tokens or a promise about your workload.</sub>
+<!-- eval:hero:end -->
+
+<!-- eval:tokens:start -->
+Across the checked-in HTTP, CLI, and MCP tasks, raw-fixture token estimates
+divided by complete `prog` task estimates range from **23.9x-79.4x**. Every
+task includes its initial envelope and any expansions. Estimates use bytes/4,
+rounded up; these are fixture measurements, not provider token counts. See
+[`docs/token-economics.md`](docs/token-economics.md) and the
+[measurement rows](fixtures/evals/token-economics-metrics.json).
+<!-- eval:tokens:end -->
+
+<!-- eval:demos:start -->
+The 5 checked-in workflow demos report raw-to-envelope-plus-expansion ratios
+from **8.82x to 13.30x**, using the bytes/4 token approximation. These are
+generated local payloads, not credentialed live service measurements. See
+[`docs/real-world-demos.md`](docs/real-world-demos.md) and the
+[recorded metrics](fixtures/evals/real-world-demo-metrics.json).
+<!-- eval:demos:end -->
+
+### Ranking the cause
+
+<!-- eval:evidence:start -->
+The 5 checked-in evidence-acquisition scenarios rank the expected causal
+path first in **5/5** component checks. Separate actual CLI workflows
+measure complete stdout from capture through navigation and evidence retrieval.
+
+| CLI strategy | Complete evidence / attempts | Tool calls | Approx. output tokens |
+|---|---:|---:|---:|
+| paths | 5/5 | 17 | 16,696 |
+| findings | 5/5 | 11 | 10,362 |
+| inspect | 5/5 | 16 | 16,492 |
+
+Costs include every initial finding and metadata field, actual bounded path
+listings/searches, and expansions needed after truncated evidence. Tokens use
+bytes/4 rounded up per workflow; these are deterministic CLI regressions, not
+provider token usage or actual-agent success rates. See
+[`docs/evidence-acquisition.md`](docs/evidence-acquisition.md),
+[component checks](fixtures/evals/evidence-acquisition-metrics.json), and
+[CLI measurements and command traces](fixtures/evals/evidence-cli-metrics.json).
+<!-- eval:evidence:end -->
 
 ## When not to use prog
 
-Use the simplest precise tool available. `prog` is usually the wrong layer when:
+- The output is already small and clear: an envelope adds bytes.
+- You know the exact field: a native selector, API query, or `jq` is cheaper.
+- The product is an interactive terminal or live stream.
+- The host can only call MCP servers and cannot run a command, install a skill,
+  or use a hook.
+- You need an orchestrator, scheduler, merge policy, or deployment approval.
+- One expansion would return almost the whole artifact anyway.
 
-- the payload is already smaller and clearer than an envelope;
-- a native field selector, exact API query, or known `jq` expression returns
-  the required value directly;
-- an interactive TTY or live streaming output is the product experience;
-- the host can only call MCP servers and cannot invoke a CLI, install a skill,
-  or use an explicit hook;
-- the loop needs an orchestrator, scheduler, isolated worktrees, merge policy,
-  or deployment approval rather than an evidence layer;
-- one expansion would reveal almost the entire artifact anyway.
+## Safety
 
-The comparison report includes cases where native field selection and direct
-queries beat `prog`: [`docs/positioning.md`](docs/positioning.md) and
-[`docs/competitive-baselines.md`](docs/competitive-baselines.md).
+The rules below are enforced in code and mapped to executable tests in
+[`INVARIANTS.md`](INVARIANTS.md).
 
-## Documentation
+- **Redaction before persistence.** Payloads must pass redaction before the
+  store accepts them; the store's API does not take an unredacted value.
+  Secret-like keys, vendor credentials (GitHub, AWS, Anthropic, OpenAI, Slack,
+  Stripe, and others), and embedded Bearer tokens, PEM keys, JWTs, and
+  `name=secret` pairs are removed ([`docs/safety.md`](docs/safety.md)).
+- **Fail closed.** Mutating operations need `--yes`; shell- and network-backed
+  sources also need their trust flag, even with `--yes`. Discovery only probes
+  operations proven read-only.
+- **Bounded everywhere.** Capture, traversal, search, findings, pagination,
+  and responses all have explicit limits, and hitting one is reported.
+- **Local.** The store is `./.prog` by default (`--dir` or `PROG_DIR`), with
+  retention limits enforced on every write (`prog cache retention`) and
+  `prog cache purge --all` to clear it. Parallel processes can share a store.
 
-### Start here
+## Reference
 
-- [End-to-end walkthroughs](docs/walkthroughs.md)
-- [Evidence navigation](docs/evidence-navigation.md)
-- [Running commands](docs/run.md)
-- [Observing files and stdin](docs/observe.md)
-- [Adding HTTP and CLI sources](docs/source-setup.md)
-- [Agent integrations](docs/integrations.md)
+| Workflow | Commands |
+| --- | --- |
+| Install and verify the agent integration | `harness install`, `harness doctor`, `shim install`, `shim list` |
+| Capture a command or artifact | `run`, `observe`, `recipe` |
+| Register and call a source | `source add-http`, `source add-cli`, `source add-mcp`, `discover`, `hints`, `call` |
+| Navigate a capture | `select`, `evidence`, `expand`, `search`, `find`, `inspect`, `paths`, `coverage` |
+| Compare and verify | `receipt`, `delta`, `status`, `session obligation-add`, `session show --readiness`, `verification begin`, `verification readback` |
+| Goals and notes for an investigation | `session start`, `session note`, `session show` |
+| Long-running MCP tasks | `mcp-task start`, `get`, `result`, `cancel` |
+| Storage, cost, and contracts | `cache`, `cost`, `meta` |
+| Update a curl-installed binary | `update --yes` |
+| Classify argv without running it; legacy single-host install | `route`, `init` |
 
-### Verification
+Every command documents itself with `--help`. Global options: `--dir`
+(`PROG_DIR`, default `./.prog`), `--format full|compact` (`PROG_FORMAT`),
+`--budget-bytes` (`PROG_BUDGET_BYTES`), `--budget-tokens`
+(`PROG_BUDGET_TOKENS`), `--lens-dir` (`PROG_LENS_DIR`), and `--pretty`.
 
-- [Conservative observation delta](docs/delta.md)
-- [Verification obligations and readiness](docs/verification.md)
-- [Actual-agent evaluation and claim gate](docs/agent-eval.md)
-- [Long-running MCP tasks](docs/mcp-tasks.md)
-
-### Contracts and safety
-
-- [Disclosure contracts](docs/contracts.md)
-- [Safety and trust model](docs/safety.md)
-- [Cache lifecycle](docs/cache.md)
-- [Lens manifests and packs](docs/lenses.md)
-- [Executable invariants](INVARIANTS.md)
-
-### Evaluation
-
-- [Token economics](docs/token-economics.md)
-- [Evidence acquisition](docs/evidence-acquisition.md)
-- [Known-path recoverability evaluation](docs/task-success-eval.md)
-- [Replay and correctness](docs/replay-eval.md)
-- [Competitive baselines](docs/competitive-baselines.md)
-- [Real-world-shaped local demos](docs/real-world-demos.md)
-
-The complete reference set is under [`docs/`](docs/). Contributors and coding
-agents should start with [`AGENTS.md`](AGENTS.md).
+Documentation: [walkthroughs](docs/walkthroughs.md) ·
+[evidence navigation](docs/evidence-navigation.md) · [run](docs/run.md) ·
+[observe](docs/observe.md) · [sources](docs/source-setup.md) ·
+[integrations](docs/integrations.md) · [agent reference](docs/agent-reference.md) ·
+[contracts](docs/contracts.md) · [safety](docs/safety.md) · [cache](docs/cache.md) ·
+[lenses](docs/lenses.md) · [evaluations](docs/evaluation-docs.md) · [all docs](docs/).
 
 ## Development
 
@@ -781,26 +455,18 @@ agents should start with [`AGENTS.md`](AGENTS.md).
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-cargo run -- --help
 ```
 
-The CI workflow runs formatting, Clippy with warnings denied, the full default
-test suite, and a CLI help smoke test. Property tests, golden findings,
-documentation examples, the 360-scenario transport matrix, and checked-in evals
-run through ordinary Cargo integration tests.
-
-Note that the documentation itself is executable: `docs_examples.rs` re-runs the
-quickstart above and asserts that specific claims remain present in this file.
-Editing the README can fail the test suite. See [`AGENTS.md`](AGENTS.md).
+CI runs these on Ubuntu and macOS (Apple Silicon and Intel), plus a Rust 1.89
+build, dependency-advisory and license checks (`cargo deny`), a crate-package
+check, and the native harness extension tests. The documentation is
+executable: `docs_examples.rs` runs this README's quickstart and checks that
+key claims stay present, so editing the README can fail the suite.
+Contributors and coding agents start with [`AGENTS.md`](AGENTS.md).
 
 ## Project boundaries
 
-- `prog` is not a general-purpose HTTP proxy or transparent cache.
-- `prog` is not an agent runtime, autonomous coding loop, or deployment system.
-- `prog` has no interactive UI.
-- No MCP server mode exists for the first release; #216 defers reconsideration
-  until the measured three-operation facade in #120 exists. MCP is supported as
-  an upstream adapter.
-
-`prog` keeps the first observation small, makes omitted evidence recoverable,
-and gives repeated engineering loops a stable way to inspect what already ran.
+- Not an HTTP proxy, transparent cache, agent runtime, autonomous coding loop,
+  or deployment system, and no interactive UI.
+- No MCP server mode: prog is not an MCP server. It reads MCP servers as
+  upstream sources, and agents use it through the CLI, a skill, and hooks.

@@ -253,6 +253,12 @@ impl FieldStats {
 
     fn into_overview(self, field: String) -> FieldOverview {
         let mut values = self.values.unwrap_or_default();
+        // A distribution says something only when a value repeats. Distinct
+        // identifiers and titles are listed by the key candidates or, for
+        // numbers and timestamps, summarized by their range instead.
+        if self.present > 1 && values.iter().all(|(_, count)| *count == 1) {
+            values.clear();
+        }
         // Most frequent first; equal counts keep first-seen order.
         values.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
         let (min, max) = if values.is_empty() {
@@ -452,6 +458,24 @@ mod tests {
             .iter()
             .position(|field| field.field.matches('/').count() == 2);
         assert!(last_top < first_nested);
+    }
+
+    #[test]
+    fn distinct_values_become_a_range_instead_of_a_list() {
+        let overview = overview(&issues(), "", OVERVIEW_MAX_FIELDS).expect("array");
+        let id = field(&overview, "/id");
+        assert!(id.values.is_empty());
+        assert_eq!(
+            (id.min.clone(), id.max.clone()),
+            (Some(json!(11)), Some(json!(13)))
+        );
+        assert!(field(&overview, "/title").values.is_empty());
+        let single = overview_of_one();
+        assert_eq!(field(&single, "/state").values.len(), 1);
+    }
+
+    fn overview_of_one() -> CollectionOverview {
+        overview(&json!([{"state": "open"}]), "", OVERVIEW_MAX_FIELDS).expect("array")
     }
 
     #[test]

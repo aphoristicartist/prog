@@ -1691,8 +1691,8 @@ pub struct FieldOverview {
     /// Number of items that carry the field.
     pub present: u64,
     /// Every distinct value with its count, most frequent first. Present only
-    /// when the field holds a few distinct short scalars, so the list is
-    /// always complete when it appears.
+    /// when the field holds a few distinct short scalars and at least one of
+    /// them repeats, so the list is always complete when it appears.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<ValueCount>,
     /// Smallest and largest number or RFC 3339 timestamp seen.
