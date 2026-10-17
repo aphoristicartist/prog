@@ -4,7 +4,8 @@
 //! It never modifies a tool's output. It activates PATH shims, injects the
 //! compact receipt of new captures as `additionalContext`, and, only when the
 //! user enables it, blocks the end of a turn once while this session's latest
-//! test run is failing, unproven, or older than the workspace.
+//! test run is failing, unproven, or older than the workspace, or while the
+//! session has changed files without running any test.
 //!
 //! Every unexpected condition fails open: no output, exit 0.
 
@@ -92,6 +93,11 @@ fn session_start(input: &Value, project: &Path, store_dir: &Path, explicit_store
                 .open(env_file)
         {
             let _ = file.write_all(exports.as_bytes());
+            // Claude reads prog's responses; scripts that need the full
+            // contract can still pass `--format full`. A user's choice wins.
+            if std::env::var_os("PROG_FORMAT").is_none() {
+                let _ = file.write_all(b"export PROG_FORMAT=compact\n");
+            }
         }
     }
     // Resume and compaction start the same session again. Keep the first
@@ -106,11 +112,14 @@ fn session_start(input: &Value, project: &Path, store_dir: &Path, explicit_store
                 .create_new(true)
                 .open(sessions.join(session))
         {
-            let _ = marker.write_all(
-                Utc::now()
-                    .to_rfc3339_opts(SecondsFormat::Secs, true)
-                    .as_bytes(),
-            );
+            // The workspace as the session found it lets the stop gate tell
+            // "nothing to test" from "changed files, never tested".
+            let workspace = prog_core::capture_workspace(project);
+            let marker_value = json!({
+                "started_at": Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+                "workspace": workspace.applicable.then_some(workspace),
+            });
+            let _ = marker.write_all(marker_value.to_string().as_bytes());
         }
     }
 }
@@ -155,12 +164,12 @@ fn stop_gate(input: &Value, store_dir: &Path) -> Option<String> {
     if !is_safe_name(session) {
         return None;
     }
-    let started = fs::read_to_string(store_dir.join(SESSIONS_DIR).join(session)).ok()?;
-    let started = chrono::DateTime::parse_from_rfc3339(started.trim()).ok()?;
+    let marker = fs::read_to_string(store_dir.join(SESSIONS_DIR).join(session)).ok()?;
+    let (started, session_workspace) = parse_session_marker(&marker)?;
     let store = Store::open_silently(store_dir).ok()?;
     // Test runs captured this session; each command's reruns form a lineage
     // chain, and only the head of every chain says where things stand now.
-    let runs = store
+    let session_captures = store
         .list_observations(100)
         .ok()?
         .observations
@@ -169,6 +178,12 @@ fn stop_gate(input: &Value, store_dir: &Path) -> Option<String> {
             chrono::DateTime::parse_from_rfc3339(&observation.captured_at)
                 .is_ok_and(|captured| captured >= started)
         })
+        .collect::<Vec<_>>();
+    // A test, build, or lint run whose output no provider parses (`npm test`,
+    // `go test`) still means tests ran; it only cannot be judged here.
+    let unjudged_verification_run = session_captures.iter().any(is_verification_run);
+    let runs = session_captures
+        .into_iter()
         .filter_map(|observation| {
             let payload = store.get_payload(&observation.payload_hash).ok()??;
             TestPopulation::from_payload(payload.as_value())?;
@@ -197,8 +212,22 @@ fn stop_gate(input: &Value, store_dir: &Path) -> Option<String> {
             receipt.text
         ));
     }
+    // No test ran this session: block only if the session changed files.
+    let Some((newest, _)) = heads.first() else {
+        if unjudged_verification_run {
+            return None;
+        }
+        let workspace = session_workspace?;
+        let current = workspace
+            .root
+            .as_deref()
+            .map(prog_core::capture_workspace)?;
+        let comparison = prog_core::compare_workspace(&workspace, &current);
+        return (comparison.validity == prog_core::WorkspaceValidity::Changed).then(|| {
+            "prog stop gate: files changed this session but no test run was captured; run the tests, or tell the user plainly that they were not run.".to_string()
+        });
+    };
     // Every chain is green: make sure nothing changed after the newest run.
-    let (newest, _) = heads.first()?;
     let captured_workspace = newest.workspace_state.as_ref()?;
     if !captured_workspace.applicable {
         return None;
@@ -211,6 +240,48 @@ fn stop_gate(input: &Value, store_dir: &Path) -> Option<String> {
     (comparison.validity == prog_core::WorkspaceValidity::Changed).then(|| {
         "prog stop gate: files changed after the last passing test run; rerun the tests (or tell the user they were not rerun) before finishing.".to_string()
     })
+}
+
+/// Whether an observation is a `run` of a test, build, or lint command,
+/// judged from its recorded (redacted) argv.
+fn is_verification_run(observation: &prog_core::ObservationRecord) -> bool {
+    observation.source_id == "run"
+        && observation
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.extra.get("run"))
+            .and_then(|run| run.get("argv"))
+            .and_then(Value::as_array)
+            .is_some_and(|argv| {
+                let argv = argv
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                prog_core::is_verification_command(&argv)
+            })
+}
+
+/// Session start time and, when the project is a Git worktree, the
+/// workspace at that time. Markers written before the workspace was recorded
+/// hold only an RFC 3339 timestamp.
+fn parse_session_marker(
+    marker: &str,
+) -> Option<(
+    chrono::DateTime<chrono::FixedOffset>,
+    Option<prog_core::WorkspaceState>,
+)> {
+    let marker = marker.trim();
+    if !marker.starts_with('{') {
+        return Some((chrono::DateTime::parse_from_rfc3339(marker).ok()?, None));
+    }
+    let value: Value = serde_json::from_str(marker).ok()?;
+    let started = chrono::DateTime::parse_from_rfc3339(value.get("started_at")?.as_str()?).ok()?;
+    let workspace = value
+        .get("workspace")
+        .filter(|workspace| !workspace.is_null())
+        .and_then(|workspace| serde_json::from_value(workspace.clone()).ok());
+    Some((started, workspace))
 }
 
 fn receipt_for_head(

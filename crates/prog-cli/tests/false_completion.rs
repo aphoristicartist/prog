@@ -55,29 +55,41 @@ elif state == "deleted":
 elif state == "ignored":
     harness([("tests::adds", "ignored"), ("tests::muls", "ok")],
             "ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s", False)
+elif state == "swapped":
+    harness([("tests::muls", "ok"), ("tests::subs", "ok")],
+            "ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s", False)
 else:
     raise SystemExit("unknown state " + state)
 "#;
 
-/// A fake quiet `pytest -q`: passing tests are never named, only counted.
+/// A fake `pytest`. With `-q` passing tests are never named, only counted;
+/// with `-v` every test is named with its outcome.
 const FAKE_PYTEST: &str = r#"#!/usr/bin/env python3
 import sys
 from pathlib import Path
 state = Path(__file__).with_name("state").read_text().strip()
+verbose = "-v" in sys.argv
+def report(tests, summary):
+    if verbose:
+        for name, outcome in tests:
+            print("tests/test_math.py::%s %s" % (name, outcome))
+    else:
+        print("".join({"PASSED": ".", "FAILED": "F", "SKIPPED": "s"}[o] for _, o in tests).ljust(53) + "[100%]")
+    for name, outcome in tests:
+        if outcome == "FAILED":
+            print("FAILED tests/test_math.py::%s - AssertionError: assert 5 == 4" % name)
+    print(summary)
 if state == "baseline":
-    print("F.                                                    [100%]")
-    print("FAILED tests/test_math.py::test_add - AssertionError: assert 5 == 4")
-    print("1 failed, 1 passed in 0.01s")
+    report([("test_add", "FAILED"), ("test_mul", "PASSED")], "1 failed, 1 passed in 0.01s")
     sys.exit(1)
 if state == "fixed":
-    print("..                                                    [100%]")
-    print("2 passed in 0.01s")
+    report([("test_add", "PASSED"), ("test_mul", "PASSED")], "2 passed in 0.01s")
 elif state == "deleted":
-    print(".                                                     [100%]")
-    print("1 passed in 0.01s")
+    report([("test_mul", "PASSED")], "1 passed in 0.01s")
 elif state == "ignored":
-    print("s.                                                    [100%]")
-    print("1 passed, 1 skipped in 0.01s")
+    report([("test_add", "SKIPPED"), ("test_mul", "PASSED")], "1 passed, 1 skipped in 0.01s")
+elif state == "swapped":
+    report([("test_mul", "PASSED"), ("test_sub", "PASSED")], "2 passed in 0.01s")
 else:
     raise SystemExit("unknown state " + state)
 "#;
@@ -194,16 +206,41 @@ fn cargo_quiet_deleted_test_is_caught_by_executed_counts() {
     let argv = [cargo.executable.as_str(), "test", "-q", "--no-fail-fast"];
     let (_store, delta) = scenario(&cargo, &argv, "deleted");
     assert_fake_fix_is_not_provable(&delta, "executed 1 tests but the baseline executed 2");
-    let (_store, fixed) = scenario(&cargo, &argv, "fixed");
-    assert_real_fix_is_provable(&fixed);
+}
+
+/// Quiet output names only failures, so "the failing test passed" and "the
+/// failing test was deleted and another took its place" print the same
+/// thing. Neither is a proven fix; the reason says how to get one.
+#[test]
+fn quiet_runs_cannot_prove_a_fix_and_say_how_to_get_one() {
+    let cargo = Tool::new("cargo", FAKE_CARGO);
+    let argv = [cargo.executable.as_str(), "test", "-q", "--no-fail-fast"];
+    for state in ["fixed", "swapped"] {
+        let (_store, delta) = scenario(&cargo, &argv, state);
+        assert_fake_fix_is_not_provable(&delta, "quiet output does not name passing tests");
+        assert_fake_fix_is_not_provable(&delta, "rerun verbosely");
+    }
+    let pytest = Tool::new("pytest", FAKE_PYTEST);
+    let argv = [pytest.executable.as_str(), "-q"];
+    for state in ["fixed", "swapped"] {
+        let (_store, delta) = scenario(&pytest, &argv, state);
+        assert_fake_fix_is_not_provable(&delta, "tests/test_math.py::test_add cannot be shown");
+    }
 }
 
 #[test]
-fn pytest_quiet_real_fix_is_resolved() {
+fn verbose_runs_prove_a_real_fix_and_catch_a_swapped_test() {
     let pytest = Tool::new("pytest", FAKE_PYTEST);
-    let argv = [pytest.executable.as_str(), "-q"];
+    let argv = [pytest.executable.as_str(), "-v"];
     let (_store, delta) = scenario(&pytest, &argv, "fixed");
     assert_real_fix_is_provable(&delta);
+    let (_store, delta) = scenario(&pytest, &argv, "swapped");
+    assert_fake_fix_is_not_provable(&delta, "tests/test_math.py::test_add (missing)");
+
+    let cargo = Tool::new("cargo", FAKE_CARGO);
+    let argv = [cargo.executable.as_str(), "test", "--no-fail-fast"];
+    let (_store, delta) = scenario(&cargo, &argv, "swapped");
+    assert_fake_fix_is_not_provable(&delta, "tests::adds (missing)");
 }
 
 #[test]

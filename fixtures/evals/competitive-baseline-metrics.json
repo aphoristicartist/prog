@@ -83,7 +83,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 19,
+    "wall_time_ms": 22,
     "illustrative_model_cost_usd": 0.00516,
     "oracle_path": "/items/42/body",
     "selected_path": null,
@@ -120,7 +120,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 20,
+    "wall_time_ms": 19,
     "illustrative_model_cost_usd": 0.48313,
     "oracle_path": "/items/42/body",
     "selected_path": null,
@@ -200,7 +200,7 @@
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 44,
+    "wall_time_ms": 47,
     "illustrative_model_cost_usd": 0.48322,
     "oracle_path": "/items/42/body",
     "selected_path": null,
@@ -279,14 +279,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 191966,
-    "response_bytes": 6674,
-    "input_tokens": 1669,
+    "response_bytes": 7175,
+    "input_tokens": 1794,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 295,
-    "illustrative_model_cost_usd": 0.01669,
+    "wall_time_ms": 309,
+    "illustrative_model_cost_usd": 0.01794,
     "oracle_path": "/items/42/body",
     "selected_path": null,
     "counterexample": false,
@@ -300,7 +300,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6674,
+        "response_bytes": 7175,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -318,14 +318,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191966,
-    "response_bytes": 10328,
-    "input_tokens": 2582,
+    "response_bytes": 10831,
+    "input_tokens": 2708,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 212,
-    "illustrative_model_cost_usd": 0.02902,
+    "wall_time_ms": 238,
+    "illustrative_model_cost_usd": 0.03028,
     "oracle_path": "/items/42/body",
     "selected_path": "/items/42/body",
     "counterexample": false,
@@ -339,7 +339,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6584,
+        "response_bytes": 7085,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -352,10 +352,68 @@
           "--path",
           "/items/42/body"
         ],
-        "response_bytes": 3744,
+        "response_bytes": 3746,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
+      }
+    ],
+    "notes": [
+      "exact selector is supplied publicly; this measures recoverability"
+    ]
+  },
+  {
+    "scenario_id": "http-body-42",
+    "prompt": "Read body for HTTP API item 42. Public lookup selector: /items/42/body.",
+    "artifact": "HTTP API",
+    "task_mode": "known_path_recoverability",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 191966,
+    "response_bytes": 1692,
+    "input_tokens": 423,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 203,
+    "illustrative_model_cost_usd": 0.007430000000000001,
+    "oracle_path": "/items/42/body",
+    "selected_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "baseline_http",
+          "list",
+          "--args",
+          "{}",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1276,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/42/body",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 416,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": false
       }
     ],
     "notes": [
@@ -372,14 +430,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191966,
-    "response_bytes": 14072,
-    "input_tokens": 3518,
+    "response_bytes": 14577,
+    "input_tokens": 3645,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 3,
-    "wall_time_ms": 263,
-    "illustrative_model_cost_usd": 0.038380000000000004,
+    "wall_time_ms": 259,
+    "illustrative_model_cost_usd": 0.039650000000000005,
     "oracle_path": "/items/42/body",
     "selected_path": "/items/42/body",
     "counterexample": false,
@@ -393,7 +451,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6584,
+        "response_bytes": 7085,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -406,7 +464,7 @@
           "--path",
           "/items/42/body"
         ],
-        "response_bytes": 3744,
+        "response_bytes": 3746,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -419,7 +477,7 @@
           "--path",
           "/items/42/body"
         ],
-        "response_bytes": 3744,
+        "response_bytes": 3746,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -550,7 +608,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 20,
+    "wall_time_ms": 19,
     "illustrative_model_cost_usd": 0.48313,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": null,
@@ -590,7 +648,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 20,
+    "wall_time_ms": 21,
     "illustrative_model_cost_usd": 0.0,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": null,
@@ -630,7 +688,7 @@
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 44,
+    "wall_time_ms": 46,
     "illustrative_model_cost_usd": 0.48322,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": null,
@@ -709,14 +767,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 191966,
-    "response_bytes": 6584,
-    "input_tokens": 1646,
+    "response_bytes": 7085,
+    "input_tokens": 1772,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 1,
-    "wall_time_ms": 80,
-    "illustrative_model_cost_usd": 0.01646,
+    "wall_time_ms": 93,
+    "illustrative_model_cost_usd": 0.01772,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": null,
     "counterexample": false,
@@ -730,7 +788,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6584,
+        "response_bytes": 7085,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -748,14 +806,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191966,
-    "response_bytes": 9860,
-    "input_tokens": 2465,
+    "response_bytes": 10363,
+    "input_tokens": 2591,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 194,
-    "illustrative_model_cost_usd": 0.02785,
+    "wall_time_ms": 185,
+    "illustrative_model_cost_usd": 0.02911,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": "/items/128/lookup_code",
     "counterexample": false,
@@ -769,7 +827,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6584,
+        "response_bytes": 7085,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -782,10 +840,68 @@
           "--path",
           "/items/128/lookup_code"
         ],
-        "response_bytes": 3276,
+        "response_bytes": 3278,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
+      }
+    ],
+    "notes": [
+      "exact selector is supplied publicly; this measures recoverability"
+    ]
+  },
+  {
+    "scenario_id": "http-lookup_code-128",
+    "prompt": "Read lookup_code for HTTP API item 128. Public lookup selector: /items/128/lookup_code.",
+    "artifact": "HTTP API",
+    "task_mode": "known_path_recoverability",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 191966,
+    "response_bytes": 1488,
+    "input_tokens": 372,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 187,
+    "illustrative_model_cost_usd": 0.006920000000000001,
+    "oracle_path": "/items/128/lookup_code",
+    "selected_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "baseline_http",
+          "list",
+          "--args",
+          "{}",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1276,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/128/lookup_code",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 212,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": false
       }
     ],
     "notes": [
@@ -802,14 +918,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191966,
-    "response_bytes": 13136,
-    "input_tokens": 3284,
+    "response_bytes": 13641,
+    "input_tokens": 3411,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 3,
-    "wall_time_ms": 244,
-    "illustrative_model_cost_usd": 0.03604,
+    "wall_time_ms": 277,
+    "illustrative_model_cost_usd": 0.03731,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": "/items/128/lookup_code",
     "counterexample": false,
@@ -823,7 +939,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6584,
+        "response_bytes": 7085,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -836,7 +952,7 @@
           "--path",
           "/items/128/lookup_code"
         ],
-        "response_bytes": 3276,
+        "response_bytes": 3278,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -849,7 +965,7 @@
           "--path",
           "/items/128/lookup_code"
         ],
-        "response_bytes": 3276,
+        "response_bytes": 3278,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -1020,7 +1136,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 22,
+    "wall_time_ms": 20,
     "illustrative_model_cost_usd": 0.0,
     "oracle_path": "/items/190/lookup_code",
     "selected_path": null,
@@ -1060,7 +1176,7 @@
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 45,
+    "wall_time_ms": 46,
     "illustrative_model_cost_usd": 0.48322,
     "oracle_path": "/items/190/lookup_code",
     "selected_path": null,
@@ -1139,14 +1255,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 191966,
-    "response_bytes": 6584,
-    "input_tokens": 1646,
+    "response_bytes": 7085,
+    "input_tokens": 1772,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 1,
-    "wall_time_ms": 88,
-    "illustrative_model_cost_usd": 0.01646,
+    "wall_time_ms": 127,
+    "illustrative_model_cost_usd": 0.01772,
     "oracle_path": "/items/190/lookup_code",
     "selected_path": null,
     "counterexample": false,
@@ -1160,7 +1276,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6584,
+        "response_bytes": 7085,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -1178,14 +1294,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191966,
-    "response_bytes": 9860,
-    "input_tokens": 2465,
+    "response_bytes": 10363,
+    "input_tokens": 2591,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 185,
-    "illustrative_model_cost_usd": 0.02785,
+    "wall_time_ms": 183,
+    "illustrative_model_cost_usd": 0.02911,
     "oracle_path": "/items/190/lookup_code",
     "selected_path": "/items/190/lookup_code",
     "counterexample": false,
@@ -1199,7 +1315,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6584,
+        "response_bytes": 7085,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -1212,10 +1328,68 @@
           "--path",
           "/items/190/lookup_code"
         ],
-        "response_bytes": 3276,
+        "response_bytes": 3278,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
+      }
+    ],
+    "notes": [
+      "exact selector is supplied publicly; this measures recoverability"
+    ]
+  },
+  {
+    "scenario_id": "http-lookup_code-190",
+    "prompt": "Read lookup_code for HTTP API item 190. Public lookup selector: /items/190/lookup_code.",
+    "artifact": "HTTP API",
+    "task_mode": "known_path_recoverability",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 191966,
+    "response_bytes": 1488,
+    "input_tokens": 372,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 190,
+    "illustrative_model_cost_usd": 0.006920000000000001,
+    "oracle_path": "/items/190/lookup_code",
+    "selected_path": "/items/190/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "baseline_http",
+          "list",
+          "--args",
+          "{}",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1276,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/190/lookup_code",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 212,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": false
       }
     ],
     "notes": [
@@ -1232,14 +1406,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191966,
-    "response_bytes": 13136,
-    "input_tokens": 3284,
+    "response_bytes": 13641,
+    "input_tokens": 3411,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 3,
-    "wall_time_ms": 296,
-    "illustrative_model_cost_usd": 0.03604,
+    "wall_time_ms": 277,
+    "illustrative_model_cost_usd": 0.03731,
     "oracle_path": "/items/190/lookup_code",
     "selected_path": "/items/190/lookup_code",
     "counterexample": false,
@@ -1253,7 +1427,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 6584,
+        "response_bytes": 7085,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -1266,7 +1440,7 @@
           "--path",
           "/items/190/lookup_code"
         ],
-        "response_bytes": 3276,
+        "response_bytes": 3278,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -1279,7 +1453,7 @@
           "--path",
           "/items/190/lookup_code"
         ],
-        "response_bytes": 3276,
+        "response_bytes": 3278,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -1450,7 +1624,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 21,
+    "wall_time_ms": 20,
     "illustrative_model_cost_usd": 0.0,
     "oracle_path": "/items/42/body",
     "selected_path": null,
@@ -1569,14 +1743,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 191305,
-    "response_bytes": 7091,
-    "input_tokens": 1773,
+    "response_bytes": 7589,
+    "input_tokens": 1898,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 261,
-    "illustrative_model_cost_usd": 0.01773,
+    "wall_time_ms": 292,
+    "illustrative_model_cost_usd": 0.01898,
     "oracle_path": "/items/42/body",
     "selected_path": null,
     "counterexample": false,
@@ -1590,7 +1764,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7091,
+        "response_bytes": 7589,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -1608,14 +1782,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191305,
-    "response_bytes": 11104,
-    "input_tokens": 2776,
+    "response_bytes": 11602,
+    "input_tokens": 2901,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 176,
-    "illustrative_model_cost_usd": 0.03096,
+    "wall_time_ms": 206,
+    "illustrative_model_cost_usd": 0.03221,
     "oracle_path": "/items/42/body",
     "selected_path": "/items/42/body",
     "counterexample": false,
@@ -1629,7 +1803,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7001,
+        "response_bytes": 7499,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -1657,19 +1831,77 @@
     "prompt": "Read body for CLI item 42. Public lookup selector: /items/42/body.",
     "artifact": "CLI",
     "task_mode": "known_path_recoverability",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 191305,
+    "response_bytes": 1687,
+    "input_tokens": 422,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 193,
+    "illustrative_model_cost_usd": 0.0074199999999999995,
+    "oracle_path": "/items/42/body",
+    "selected_path": "/items/42/body",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "baseline_cli",
+          "list",
+          "--args",
+          "{}",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1271,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/42/body",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 416,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": false
+      }
+    ],
+    "notes": [
+      "exact selector is supplied publicly; this measures recoverability"
+    ]
+  },
+  {
+    "scenario_id": "cli-body-42",
+    "prompt": "Read body for CLI item 42. Public lookup selector: /items/42/body.",
+    "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_repeated_cache",
     "available": true,
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191305,
-    "response_bytes": 15207,
-    "input_tokens": 3802,
+    "response_bytes": 15705,
+    "input_tokens": 3927,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 3,
-    "wall_time_ms": 274,
-    "illustrative_model_cost_usd": 0.04122,
+    "wall_time_ms": 280,
+    "illustrative_model_cost_usd": 0.04247,
     "oracle_path": "/items/42/body",
     "selected_path": "/items/42/body",
     "counterexample": false,
@@ -1683,7 +1915,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7001,
+        "response_bytes": 7499,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -1803,7 +2035,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 21,
+    "wall_time_ms": 20,
     "illustrative_model_cost_usd": 0.0032400000000000003,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": null,
@@ -1880,7 +2112,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 19,
+    "wall_time_ms": 21,
     "illustrative_model_cost_usd": 0.0,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": null,
@@ -1920,7 +2152,7 @@
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 42,
+    "wall_time_ms": 46,
     "illustrative_model_cost_usd": 0.48157,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": null,
@@ -1999,14 +2231,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 191305,
-    "response_bytes": 7001,
-    "input_tokens": 1751,
+    "response_bytes": 7499,
+    "input_tokens": 1875,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 1,
-    "wall_time_ms": 110,
-    "illustrative_model_cost_usd": 0.01751,
+    "wall_time_ms": 111,
+    "illustrative_model_cost_usd": 0.01875,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": null,
     "counterexample": false,
@@ -2020,7 +2252,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7001,
+        "response_bytes": 7499,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -2038,14 +2270,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191305,
-    "response_bytes": 10634,
-    "input_tokens": 2659,
+    "response_bytes": 11132,
+    "input_tokens": 2783,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 186,
-    "illustrative_model_cost_usd": 0.02979,
+    "wall_time_ms": 195,
+    "illustrative_model_cost_usd": 0.031030000000000002,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": "/items/128/lookup_code",
     "counterexample": false,
@@ -2059,7 +2291,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7001,
+        "response_bytes": 7499,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -2087,19 +2319,77 @@
     "prompt": "Read lookup_code for CLI item 128. Public lookup selector: /items/128/lookup_code.",
     "artifact": "CLI",
     "task_mode": "known_path_recoverability",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 191305,
+    "response_bytes": 1482,
+    "input_tokens": 371,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 184,
+    "illustrative_model_cost_usd": 0.00691,
+    "oracle_path": "/items/128/lookup_code",
+    "selected_path": "/items/128/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "baseline_cli",
+          "list",
+          "--args",
+          "{}",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1271,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/128/lookup_code",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 211,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": false
+      }
+    ],
+    "notes": [
+      "exact selector is supplied publicly; this measures recoverability"
+    ]
+  },
+  {
+    "scenario_id": "cli-lookup_code-128",
+    "prompt": "Read lookup_code for CLI item 128. Public lookup selector: /items/128/lookup_code.",
+    "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_repeated_cache",
     "available": true,
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191305,
-    "response_bytes": 14267,
-    "input_tokens": 3567,
+    "response_bytes": 14765,
+    "input_tokens": 3692,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 3,
-    "wall_time_ms": 263,
-    "illustrative_model_cost_usd": 0.03887,
+    "wall_time_ms": 279,
+    "illustrative_model_cost_usd": 0.04012,
     "oracle_path": "/items/128/lookup_code",
     "selected_path": "/items/128/lookup_code",
     "counterexample": false,
@@ -2113,7 +2403,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7001,
+        "response_bytes": 7499,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -2310,7 +2600,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 20,
+    "wall_time_ms": 19,
     "illustrative_model_cost_usd": 0.0,
     "oracle_path": "/items/190/lookup_code",
     "selected_path": null,
@@ -2429,14 +2719,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 191305,
-    "response_bytes": 7001,
-    "input_tokens": 1751,
+    "response_bytes": 7499,
+    "input_tokens": 1875,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 1,
-    "wall_time_ms": 111,
-    "illustrative_model_cost_usd": 0.01751,
+    "wall_time_ms": 101,
+    "illustrative_model_cost_usd": 0.01875,
     "oracle_path": "/items/190/lookup_code",
     "selected_path": null,
     "counterexample": false,
@@ -2450,7 +2740,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7001,
+        "response_bytes": 7499,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -2468,14 +2758,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191305,
-    "response_bytes": 10634,
-    "input_tokens": 2659,
+    "response_bytes": 11132,
+    "input_tokens": 2783,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 2,
-    "wall_time_ms": 166,
-    "illustrative_model_cost_usd": 0.02979,
+    "wall_time_ms": 190,
+    "illustrative_model_cost_usd": 0.031030000000000002,
     "oracle_path": "/items/190/lookup_code",
     "selected_path": "/items/190/lookup_code",
     "counterexample": false,
@@ -2489,7 +2779,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7001,
+        "response_bytes": 7499,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -2517,19 +2807,77 @@
     "prompt": "Read lookup_code for CLI item 190. Public lookup selector: /items/190/lookup_code.",
     "artifact": "CLI",
     "task_mode": "known_path_recoverability",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 191305,
+    "response_bytes": 1482,
+    "input_tokens": 371,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 185,
+    "illustrative_model_cost_usd": 0.00691,
+    "oracle_path": "/items/190/lookup_code",
+    "selected_path": "/items/190/lookup_code",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "call",
+          "baseline_cli",
+          "list",
+          "--args",
+          "{}",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1271,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/items/190/lookup_code",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 211,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": false
+      }
+    ],
+    "notes": [
+      "exact selector is supplied publicly; this measures recoverability"
+    ]
+  },
+  {
+    "scenario_id": "cli-lookup_code-190",
+    "prompt": "Read lookup_code for CLI item 190. Public lookup selector: /items/190/lookup_code.",
+    "artifact": "CLI",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_repeated_cache",
     "available": true,
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 191305,
-    "response_bytes": 14267,
-    "input_tokens": 3567,
+    "response_bytes": 14765,
+    "input_tokens": 3692,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 3,
-    "wall_time_ms": 259,
-    "illustrative_model_cost_usd": 0.03887,
+    "wall_time_ms": 280,
+    "illustrative_model_cost_usd": 0.04012,
     "oracle_path": "/items/190/lookup_code",
     "selected_path": "/items/190/lookup_code",
     "counterexample": false,
@@ -2543,7 +2891,7 @@
           "--args",
           "{}"
         ],
-        "response_bytes": 7001,
+        "response_bytes": 7499,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": true
@@ -2689,7 +3037,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 18,
+    "wall_time_ms": 19,
     "illustrative_model_cost_usd": 0.00398,
     "oracle_path": "/lines/180/text",
     "selected_path": null,
@@ -2729,7 +3077,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 18,
+    "wall_time_ms": 19,
     "illustrative_model_cost_usd": 0.00398,
     "oracle_path": "/lines/180/text",
     "selected_path": null,
@@ -2769,7 +3117,7 @@
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 46,
+    "wall_time_ms": 43,
     "illustrative_model_cost_usd": 0.00408,
     "oracle_path": "/lines/180/text",
     "selected_path": null,
@@ -2848,14 +3196,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 67211,
-    "response_bytes": 9184,
-    "input_tokens": 2296,
+    "response_bytes": 9630,
+    "input_tokens": 2408,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 222,
-    "illustrative_model_cost_usd": 0.02296,
+    "wall_time_ms": 245,
+    "illustrative_model_cost_usd": 0.02408,
     "oracle_path": "/lines/180/text",
     "selected_path": null,
     "counterexample": false,
@@ -2870,7 +3218,7 @@
           "--name",
           "baseline-log"
         ],
-        "response_bytes": 9184,
+        "response_bytes": 9630,
         "finding_paths": [
           "/lines/180/text"
         ],
@@ -2890,14 +3238,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 67211,
-    "response_bytes": 16065,
-    "input_tokens": 4017,
+    "response_bytes": 15600,
+    "input_tokens": 3900,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 436,
-    "illustrative_model_cost_usd": 0.04337,
+    "wall_time_ms": 471,
+    "illustrative_model_cost_usd": 0.0422,
     "oracle_path": "/lines/180/text",
     "selected_path": "/lines/180/text",
     "counterexample": false,
@@ -2912,7 +3260,7 @@
           "--name",
           "baseline-log"
         ],
-        "response_bytes": 10658,
+        "response_bytes": 10584,
         "finding_paths": [
           "/lines/180/text"
         ],
@@ -2927,7 +3275,7 @@
           "--path",
           "/lines/180/text"
         ],
-        "response_bytes": 5407,
+        "response_bytes": 5016,
         "finding_paths": [
           "/lines/180/text"
         ],
@@ -2944,19 +3292,82 @@
     "prompt": "Read the failing log trace id. Public lookup selector: /lines/180/text.",
     "artifact": "Text log",
     "task_mode": "known_path_recoverability",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 67211,
+    "response_bytes": 4647,
+    "input_tokens": 1162,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 462,
+    "illustrative_model_cost_usd": 0.01482,
+    "oracle_path": "/lines/180/text",
+    "selected_path": "/lines/180/text",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "text/plain",
+          "--name",
+          "baseline-log",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 3541,
+        "finding_paths": [
+          "/lines/180/text"
+        ],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/lines/180/text",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1106,
+        "finding_paths": [
+          "/lines/180/text"
+        ],
+        "expansion": true,
+        "cache_hit": false
+      }
+    ],
+    "notes": [
+      "exact selector is supplied publicly; this measures recoverability"
+    ]
+  },
+  {
+    "scenario_id": "log-line-180",
+    "prompt": "Read the failing log trace id. Public lookup selector: /lines/180/text.",
+    "artifact": "Text log",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_repeated_cache",
     "available": true,
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 67211,
-    "response_bytes": 21472,
-    "input_tokens": 5368,
+    "response_bytes": 20616,
+    "input_tokens": 5154,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 2,
-    "wall_time_ms": 595,
-    "illustrative_model_cost_usd": 0.05688,
+    "wall_time_ms": 615,
+    "illustrative_model_cost_usd": 0.054740000000000004,
     "oracle_path": "/lines/180/text",
     "selected_path": "/lines/180/text",
     "counterexample": false,
@@ -2971,7 +3382,7 @@
           "--name",
           "baseline-log"
         ],
-        "response_bytes": 10658,
+        "response_bytes": 10584,
         "finding_paths": [
           "/lines/180/text"
         ],
@@ -2986,7 +3397,7 @@
           "--path",
           "/lines/180/text"
         ],
-        "response_bytes": 5407,
+        "response_bytes": 5016,
         "finding_paths": [
           "/lines/180/text"
         ],
@@ -3001,7 +3412,7 @@
           "--path",
           "/lines/180/text"
         ],
-        "response_bytes": 5407,
+        "response_bytes": 5016,
         "finding_paths": [
           "/lines/180/text"
         ],
@@ -3123,7 +3534,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 18,
+    "wall_time_ms": 19,
     "illustrative_model_cost_usd": 0.00331,
     "oracle_path": "/lines/100/text",
     "selected_path": null,
@@ -3282,14 +3693,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 33148,
-    "response_bytes": 7929,
-    "input_tokens": 1983,
+    "response_bytes": 8375,
+    "input_tokens": 2094,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 155,
-    "illustrative_model_cost_usd": 0.01983,
+    "wall_time_ms": 180,
+    "illustrative_model_cost_usd": 0.02094,
     "oracle_path": "/lines/100/text",
     "selected_path": null,
     "counterexample": false,
@@ -3304,7 +3715,7 @@
           "--name",
           "baseline-diff"
         ],
-        "response_bytes": 7929,
+        "response_bytes": 8375,
         "finding_paths": [
           "/head/0",
           "/lines/0/text"
@@ -3325,14 +3736,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 33148,
-    "response_bytes": 14674,
-    "input_tokens": 3669,
+    "response_bytes": 14632,
+    "input_tokens": 3658,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 270,
-    "illustrative_model_cost_usd": 0.03989,
+    "wall_time_ms": 301,
+    "illustrative_model_cost_usd": 0.03978,
     "oracle_path": "/lines/100/text",
     "selected_path": "/lines/100/text",
     "counterexample": false,
@@ -3347,7 +3758,7 @@
           "--name",
           "baseline-diff"
         ],
-        "response_bytes": 9396,
+        "response_bytes": 9533,
         "finding_paths": [
           "/head/0",
           "/lines/0/text"
@@ -3363,7 +3774,7 @@
           "--path",
           "/lines/100/text"
         ],
-        "response_bytes": 5278,
+        "response_bytes": 5099,
         "finding_paths": [
           "/head/0",
           "/lines/0/text"
@@ -3381,19 +3792,84 @@
     "prompt": "Read the added sentinel value. Public lookup selector: /lines/100/text.",
     "artifact": "Unified diff",
     "task_mode": "known_path_recoverability",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 33148,
+    "response_bytes": 4205,
+    "input_tokens": 1052,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 299,
+    "illustrative_model_cost_usd": 0.01372,
+    "oracle_path": "/lines/100/text",
+    "selected_path": "/lines/100/text",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "text/x-diff",
+          "--name",
+          "baseline-diff",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 3034,
+        "finding_paths": [
+          "/head/0",
+          "/lines/0/text"
+        ],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/lines/100/text",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1171,
+        "finding_paths": [
+          "/head/0",
+          "/lines/0/text"
+        ],
+        "expansion": true,
+        "cache_hit": false
+      }
+    ],
+    "notes": [
+      "exact selector is supplied publicly; this measures recoverability"
+    ]
+  },
+  {
+    "scenario_id": "diff-added-sentinel",
+    "prompt": "Read the added sentinel value. Public lookup selector: /lines/100/text.",
+    "artifact": "Unified diff",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_repeated_cache",
     "available": true,
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 33148,
-    "response_bytes": 19952,
-    "input_tokens": 4988,
+    "response_bytes": 19731,
+    "input_tokens": 4933,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 2,
-    "wall_time_ms": 370,
-    "illustrative_model_cost_usd": 0.05308,
+    "wall_time_ms": 409,
+    "illustrative_model_cost_usd": 0.05253,
     "oracle_path": "/lines/100/text",
     "selected_path": "/lines/100/text",
     "counterexample": false,
@@ -3408,7 +3884,7 @@
           "--name",
           "baseline-diff"
         ],
-        "response_bytes": 9396,
+        "response_bytes": 9533,
         "finding_paths": [
           "/head/0",
           "/lines/0/text"
@@ -3424,7 +3900,7 @@
           "--path",
           "/lines/100/text"
         ],
-        "response_bytes": 5278,
+        "response_bytes": 5099,
         "finding_paths": [
           "/head/0",
           "/lines/0/text"
@@ -3440,7 +3916,7 @@
           "--path",
           "/lines/100/text"
         ],
-        "response_bytes": 5278,
+        "response_bytes": 5099,
         "finding_paths": [
           "/head/0",
           "/lines/0/text"
@@ -3537,7 +4013,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 21,
+    "wall_time_ms": 20,
     "illustrative_model_cost_usd": 0.00329,
     "oracle_path": "/runs/0/results/90/message/text",
     "selected_path": null,
@@ -3574,7 +4050,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 19,
+    "wall_time_ms": 18,
     "illustrative_model_cost_usd": 0.12708,
     "oracle_path": "/runs/0/results/90/message/text",
     "selected_path": null,
@@ -3654,7 +4130,7 @@
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 38,
+    "wall_time_ms": 41,
     "illustrative_model_cost_usd": 0.12717,
     "oracle_path": "/runs/0/results/90/message/text",
     "selected_path": null,
@@ -3733,14 +4209,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 49548,
-    "response_bytes": 5373,
-    "input_tokens": 1344,
+    "response_bytes": 5567,
+    "input_tokens": 1392,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 173,
-    "illustrative_model_cost_usd": 0.01344,
+    "wall_time_ms": 179,
+    "illustrative_model_cost_usd": 0.01392,
     "oracle_path": "/runs/0/results/90/message/text",
     "selected_path": null,
     "counterexample": false,
@@ -3755,7 +4231,7 @@
           "--name",
           "baseline-report"
         ],
-        "response_bytes": 5373,
+        "response_bytes": 5567,
         "finding_paths": [
           "/runs/0/results/90"
         ],
@@ -3775,14 +4251,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 49548,
-    "response_bytes": 10000,
-    "input_tokens": 2500,
+    "response_bytes": 10325,
+    "input_tokens": 2582,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 289,
-    "illustrative_model_cost_usd": 0.028200000000000003,
+    "wall_time_ms": 325,
+    "illustrative_model_cost_usd": 0.02902,
     "oracle_path": "/runs/0/results/90/message/text",
     "selected_path": "/runs/0/results/90/message/text",
     "counterexample": false,
@@ -3797,7 +4273,7 @@
           "--name",
           "baseline-report"
         ],
-        "response_bytes": 5977,
+        "response_bytes": 6172,
         "finding_paths": [
           "/runs/0/results/90"
         ],
@@ -3812,7 +4288,7 @@
           "--path",
           "/runs/0/results/90/message/text"
         ],
-        "response_bytes": 4023,
+        "response_bytes": 4153,
         "finding_paths": [
           "/runs/0/results/90"
         ],
@@ -3829,19 +4305,82 @@
     "prompt": "Read the critical SARIF report message. Public lookup selector: /runs/0/results/90/message/text.",
     "artifact": "Structured report",
     "task_mode": "known_path_recoverability",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 49548,
+    "response_bytes": 1650,
+    "input_tokens": 413,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 339,
+    "illustrative_model_cost_usd": 0.00733,
+    "oracle_path": "/runs/0/results/90/message/text",
+    "selected_path": "/runs/0/results/90/message/text",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "application/json",
+          "--name",
+          "baseline-report",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1057,
+        "finding_paths": [
+          "/runs/0/results/90"
+        ],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/runs/0/results/90/message/text",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 593,
+        "finding_paths": [
+          "/runs/0/results/90"
+        ],
+        "expansion": true,
+        "cache_hit": false
+      }
+    ],
+    "notes": [
+      "exact selector is supplied publicly; this measures recoverability"
+    ]
+  },
+  {
+    "scenario_id": "sarif-report-message",
+    "prompt": "Read the critical SARIF report message. Public lookup selector: /runs/0/results/90/message/text.",
+    "artifact": "Structured report",
+    "task_mode": "known_path_recoverability",
     "strategy": "prog_repeated_cache",
     "available": true,
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 49548,
-    "response_bytes": 14023,
-    "input_tokens": 3506,
+    "response_bytes": 14478,
+    "input_tokens": 3620,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 2,
-    "wall_time_ms": 387,
-    "illustrative_model_cost_usd": 0.03826,
+    "wall_time_ms": 426,
+    "illustrative_model_cost_usd": 0.039400000000000004,
     "oracle_path": "/runs/0/results/90/message/text",
     "selected_path": "/runs/0/results/90/message/text",
     "counterexample": false,
@@ -3856,7 +4395,7 @@
           "--name",
           "baseline-report"
         ],
-        "response_bytes": 5977,
+        "response_bytes": 6172,
         "finding_paths": [
           "/runs/0/results/90"
         ],
@@ -3871,7 +4410,7 @@
           "--path",
           "/runs/0/results/90/message/text"
         ],
-        "response_bytes": 4023,
+        "response_bytes": 4153,
         "finding_paths": [
           "/runs/0/results/90"
         ],
@@ -3886,7 +4425,7 @@
           "--path",
           "/runs/0/results/90/message/text"
         ],
-        "response_bytes": 4023,
+        "response_bytes": 4153,
         "finding_paths": [
           "/runs/0/results/90"
         ],
@@ -3982,7 +4521,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 19,
+    "wall_time_ms": 20,
     "illustrative_model_cost_usd": 0.0032600000000000003,
     "oracle_path": "/answer",
     "selected_path": null,
@@ -4019,7 +4558,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 16,
+    "wall_time_ms": 18,
     "illustrative_model_cost_usd": 0.00335,
     "oracle_path": "/answer",
     "selected_path": null,
@@ -4059,7 +4598,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 16,
+    "wall_time_ms": 18,
     "illustrative_model_cost_usd": 0.0,
     "oracle_path": "/answer",
     "selected_path": null,
@@ -4099,7 +4638,7 @@
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 37,
+    "wall_time_ms": 42,
     "illustrative_model_cost_usd": 0.0034400000000000003,
     "oracle_path": "/answer",
     "selected_path": null,
@@ -4178,14 +4717,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 57,
-    "response_bytes": 3218,
-    "input_tokens": 805,
+    "response_bytes": 3413,
+    "input_tokens": 854,
     "assumed_answer_tokens": 64,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 102,
-    "illustrative_model_cost_usd": 0.01125,
+    "wall_time_ms": 105,
+    "illustrative_model_cost_usd": 0.01174,
     "oracle_path": "/answer",
     "selected_path": null,
     "counterexample": true,
@@ -4200,7 +4739,7 @@
           "--name",
           "baseline-tiny"
         ],
-        "response_bytes": 3218,
+        "response_bytes": 3413,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -4218,14 +4757,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 57,
-    "response_bytes": 7401,
-    "input_tokens": 1851,
+    "response_bytes": 7727,
+    "input_tokens": 1932,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 135,
-    "illustrative_model_cost_usd": 0.02171,
+    "wall_time_ms": 163,
+    "illustrative_model_cost_usd": 0.022520000000000002,
     "oracle_path": "/answer",
     "selected_path": "/answer",
     "counterexample": true,
@@ -4240,7 +4779,7 @@
           "--name",
           "baseline-tiny"
         ],
-        "response_bytes": 3822,
+        "response_bytes": 4018,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -4253,10 +4792,69 @@
           "--path",
           "/answer"
         ],
-        "response_bytes": 3579,
+        "response_bytes": 3709,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
+      }
+    ],
+    "notes": [
+      "exact selector is supplied publicly; this measures recoverability"
+    ]
+  },
+  {
+    "scenario_id": "tiny-baseline-counterexample",
+    "prompt": "Read the tiny baseline answer. Public lookup selector: /answer.",
+    "artifact": "Tiny JSON",
+    "task_mode": "known_path_recoverability",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 57,
+    "response_bytes": 971,
+    "input_tokens": 243,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 154,
+    "illustrative_model_cost_usd": 0.00563,
+    "oracle_path": "/answer",
+    "selected_path": "/answer",
+    "counterexample": true,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "application/json",
+          "--name",
+          "baseline-tiny",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 503,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/answer",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 468,
+        "finding_paths": [],
+        "expansion": true,
+        "cache_hit": false
       }
     ],
     "notes": [
@@ -4273,14 +4871,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 57,
-    "response_bytes": 10980,
-    "input_tokens": 2745,
+    "response_bytes": 11436,
+    "input_tokens": 2859,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 2,
-    "wall_time_ms": 197,
-    "illustrative_model_cost_usd": 0.03065,
+    "wall_time_ms": 234,
+    "illustrative_model_cost_usd": 0.03179,
     "oracle_path": "/answer",
     "selected_path": "/answer",
     "counterexample": true,
@@ -4295,7 +4893,7 @@
           "--name",
           "baseline-tiny"
         ],
-        "response_bytes": 3822,
+        "response_bytes": 4018,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -4308,7 +4906,7 @@
           "--path",
           "/answer"
         ],
-        "response_bytes": 3579,
+        "response_bytes": 3709,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -4321,7 +4919,7 @@
           "--path",
           "/answer"
         ],
-        "response_bytes": 3579,
+        "response_bytes": 3709,
         "finding_paths": [],
         "expansion": true,
         "cache_hit": true
@@ -4441,7 +5039,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 23,
+    "wall_time_ms": 19,
     "illustrative_model_cost_usd": 0.01003,
     "oracle_path": "/lines/1200/text",
     "selected_path": null,
@@ -4481,7 +5079,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 22,
+    "wall_time_ms": 20,
     "illustrative_model_cost_usd": 0.01361,
     "oracle_path": "/lines/1200/text",
     "selected_path": null,
@@ -4521,7 +5119,7 @@
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 41,
+    "wall_time_ms": 45,
     "illustrative_model_cost_usd": 0.01371,
     "oracle_path": "/lines/1200/text",
     "selected_path": null,
@@ -4600,14 +5198,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 142376,
-    "response_bytes": 7010,
-    "input_tokens": 1753,
+    "response_bytes": 7462,
+    "input_tokens": 1866,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 546,
-    "illustrative_model_cost_usd": 0.01753,
+    "wall_time_ms": 597,
+    "illustrative_model_cost_usd": 0.01866,
     "oracle_path": "/lines/1200/text",
     "selected_path": null,
     "counterexample": false,
@@ -4622,7 +5220,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 7010,
+        "response_bytes": 7462,
         "finding_paths": [
           "/lines/1200/text",
           "/head/0",
@@ -4644,14 +5242,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 142376,
-    "response_bytes": 20707,
-    "input_tokens": 5177,
+    "response_bytes": 14298,
+    "input_tokens": 3575,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 995,
-    "illustrative_model_cost_usd": 0.05497,
+    "wall_time_ms": 1099,
+    "illustrative_model_cost_usd": 0.03895,
     "oracle_path": "/lines/1200/text",
     "selected_path": "/lines/1200/text",
     "counterexample": false,
@@ -4666,7 +5264,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 7010,
+        "response_bytes": 8623,
         "finding_paths": [
           "/lines/1200/text",
           "/head/0",
@@ -4683,7 +5281,7 @@
           "--path",
           "/lines/1200/text"
         ],
-        "response_bytes": 13697,
+        "response_bytes": 5675,
         "finding_paths": [
           "/lines/1200/text",
           "/head/0",
@@ -4702,19 +5300,86 @@
     "prompt": "Find the root cause of the failure in this log.",
     "artifact": "Text log",
     "task_mode": "deterministic_discovery",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 142376,
+    "response_bytes": 4377,
+    "input_tokens": 1095,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 1080,
+    "illustrative_model_cost_usd": 0.01415,
+    "oracle_path": "/lines/1200/text",
+    "selected_path": "/lines/1200/text",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "text/plain",
+          "--name",
+          "baseline-unknown-target",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 2976,
+        "finding_paths": [
+          "/lines/1200/text",
+          "/head/0",
+          "/tail/5"
+        ],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/lines/1200/text",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1401,
+        "finding_paths": [
+          "/lines/1200/text",
+          "/head/0",
+          "/tail/5"
+        ],
+        "expansion": true,
+        "cache_hit": false
+      }
+    ],
+    "notes": [
+      "expand the first returned finding; inspect only if the first view has no findings"
+    ]
+  },
+  {
+    "scenario_id": "unknown-target-buried-fatal",
+    "prompt": "Find the root cause of the failure in this log.",
+    "artifact": "Text log",
+    "task_mode": "deterministic_discovery",
     "strategy": "prog_repeated_cache",
     "available": true,
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 142376,
-    "response_bytes": 34404,
-    "input_tokens": 8601,
+    "response_bytes": 19973,
+    "input_tokens": 4994,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 2,
-    "wall_time_ms": 1264,
-    "illustrative_model_cost_usd": 0.08921,
+    "wall_time_ms": 1400,
+    "illustrative_model_cost_usd": 0.05314,
     "oracle_path": "/lines/1200/text",
     "selected_path": "/lines/1200/text",
     "counterexample": false,
@@ -4729,7 +5394,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 7010,
+        "response_bytes": 8623,
         "finding_paths": [
           "/lines/1200/text",
           "/head/0",
@@ -4746,7 +5411,7 @@
           "--path",
           "/lines/1200/text"
         ],
-        "response_bytes": 13697,
+        "response_bytes": 5675,
         "finding_paths": [
           "/lines/1200/text",
           "/head/0",
@@ -4763,7 +5428,7 @@
           "--path",
           "/lines/1200/text"
         ],
-        "response_bytes": 13697,
+        "response_bytes": 5675,
         "finding_paths": [
           "/lines/1200/text",
           "/head/0",
@@ -4967,7 +5632,7 @@
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 40,
+    "wall_time_ms": 42,
     "illustrative_model_cost_usd": 0.0137,
     "oracle_path": "/lines/347/text",
     "selected_path": null,
@@ -5046,14 +5711,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 142376,
-    "response_bytes": 7010,
-    "input_tokens": 1753,
+    "response_bytes": 10063,
+    "input_tokens": 2516,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 708,
-    "illustrative_model_cost_usd": 0.01753,
+    "wall_time_ms": 772,
+    "illustrative_model_cost_usd": 0.02516,
     "oracle_path": "/lines/347/text",
     "selected_path": null,
     "counterexample": false,
@@ -5068,7 +5733,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 7010,
+        "response_bytes": 10063,
         "finding_paths": [
           "/lines/347/text",
           "/head/0",
@@ -5090,14 +5755,14 @@
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 142376,
-    "response_bytes": 20702,
-    "input_tokens": 5176,
+    "response_bytes": 14293,
+    "input_tokens": 3574,
     "assumed_answer_tokens": 64,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 996,
-    "illustrative_model_cost_usd": 0.05496,
+    "wall_time_ms": 1093,
+    "illustrative_model_cost_usd": 0.03894,
     "oracle_path": "/lines/347/text",
     "selected_path": "/lines/347/text",
     "counterexample": false,
@@ -5112,7 +5777,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 7010,
+        "response_bytes": 8623,
         "finding_paths": [
           "/lines/347/text",
           "/head/0",
@@ -5129,7 +5794,7 @@
           "--path",
           "/lines/347/text"
         ],
-        "response_bytes": 13692,
+        "response_bytes": 5670,
         "finding_paths": [
           "/lines/347/text",
           "/head/0",
@@ -5148,19 +5813,86 @@
     "prompt": "Find the root cause of the failure in this log.",
     "artifact": "Text log",
     "task_mode": "deterministic_discovery",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": true,
+    "outcome": "evidence_available",
+    "artifact_bytes": 142376,
+    "response_bytes": 4374,
+    "input_tokens": 1094,
+    "assumed_answer_tokens": 64,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 1075,
+    "illustrative_model_cost_usd": 0.01414,
+    "oracle_path": "/lines/347/text",
+    "selected_path": "/lines/347/text",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "text/plain",
+          "--name",
+          "baseline-unknown-target",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 2975,
+        "finding_paths": [
+          "/lines/347/text",
+          "/head/0",
+          "/tail/5"
+        ],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/lines/347/text",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1399,
+        "finding_paths": [
+          "/lines/347/text",
+          "/head/0",
+          "/tail/5"
+        ],
+        "expansion": true,
+        "cache_hit": false
+      }
+    ],
+    "notes": [
+      "expand the first returned finding; inspect only if the first view has no findings"
+    ]
+  },
+  {
+    "scenario_id": "unknown-target-relocated-fatal",
+    "prompt": "Find the root cause of the failure in this log.",
+    "artifact": "Text log",
+    "task_mode": "deterministic_discovery",
     "strategy": "prog_repeated_cache",
     "available": true,
     "evidence_available": true,
     "outcome": "evidence_available",
     "artifact_bytes": 142376,
-    "response_bytes": 34394,
-    "input_tokens": 8599,
+    "response_bytes": 19963,
+    "input_tokens": 4991,
     "assumed_answer_tokens": 64,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 2,
-    "wall_time_ms": 1285,
-    "illustrative_model_cost_usd": 0.08918999999999999,
+    "wall_time_ms": 1392,
+    "illustrative_model_cost_usd": 0.053110000000000004,
     "oracle_path": "/lines/347/text",
     "selected_path": "/lines/347/text",
     "counterexample": false,
@@ -5175,7 +5907,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 7010,
+        "response_bytes": 8623,
         "finding_paths": [
           "/lines/347/text",
           "/head/0",
@@ -5192,7 +5924,7 @@
           "--path",
           "/lines/347/text"
         ],
-        "response_bytes": 13692,
+        "response_bytes": 5670,
         "finding_paths": [
           "/lines/347/text",
           "/head/0",
@@ -5209,7 +5941,7 @@
           "--path",
           "/lines/347/text"
         ],
-        "response_bytes": 13692,
+        "response_bytes": 5670,
         "finding_paths": [
           "/lines/347/text",
           "/head/0",
@@ -5333,7 +6065,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 18,
+    "wall_time_ms": 26,
     "illustrative_model_cost_usd": 0.01003,
     "oracle_path": "/lines/1200/text",
     "selected_path": null,
@@ -5373,7 +6105,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 18,
+    "wall_time_ms": 21,
     "illustrative_model_cost_usd": 0.01003,
     "oracle_path": "/lines/1200/text",
     "selected_path": null,
@@ -5413,7 +6145,7 @@
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 41,
+    "wall_time_ms": 44,
     "illustrative_model_cost_usd": 0.01012,
     "oracle_path": "/lines/1200/text",
     "selected_path": null,
@@ -5492,14 +6224,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 142375,
-    "response_bytes": 6999,
-    "input_tokens": 1750,
+    "response_bytes": 9799,
+    "input_tokens": 2450,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 718,
-    "illustrative_model_cost_usd": 0.0175,
+    "wall_time_ms": 781,
+    "illustrative_model_cost_usd": 0.0245,
     "oracle_path": "/lines/1200/text",
     "selected_path": null,
     "counterexample": false,
@@ -5514,7 +6246,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 6999,
+        "response_bytes": 9799,
         "finding_paths": [
           "/head/0",
           "/tail/5",
@@ -5536,14 +6268,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 142375,
-    "response_bytes": 20627,
-    "input_tokens": 5157,
+    "response_bytes": 14218,
+    "input_tokens": 3555,
     "assumed_answer_tokens": 0,
     "tool_calls": 2,
     "expansion_count": 1,
     "cache_hits": 1,
-    "wall_time_ms": 1007,
-    "illustrative_model_cost_usd": 0.05157,
+    "wall_time_ms": 1092,
+    "illustrative_model_cost_usd": 0.03555,
     "oracle_path": "/lines/1200/text",
     "selected_path": "/head/0",
     "counterexample": false,
@@ -5558,7 +6290,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 6999,
+        "response_bytes": 8612,
         "finding_paths": [
           "/head/0",
           "/tail/5",
@@ -5575,7 +6307,7 @@
           "--path",
           "/head/0"
         ],
-        "response_bytes": 13628,
+        "response_bytes": 5606,
         "finding_paths": [
           "/head/0",
           "/tail/5",
@@ -5594,19 +6326,86 @@
     "prompt": "Find the root cause of the failure in this log.",
     "artifact": "Text log",
     "task_mode": "deterministic_discovery",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": false,
+    "outcome": "insufficient_evidence",
+    "artifact_bytes": 142375,
+    "response_bytes": 4341,
+    "input_tokens": 1086,
+    "assumed_answer_tokens": 0,
+    "tool_calls": 2,
+    "expansion_count": 1,
+    "cache_hits": 0,
+    "wall_time_ms": 1097,
+    "illustrative_model_cost_usd": 0.01086,
+    "oracle_path": "/lines/1200/text",
+    "selected_path": "/head/0",
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "text/plain",
+          "--name",
+          "baseline-unknown-target",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 2973,
+        "finding_paths": [
+          "/head/0",
+          "/tail/5",
+          "/lines/0/text"
+        ],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "expand",
+          "$CURSOR",
+          "--path",
+          "/head/0",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 1368,
+        "finding_paths": [
+          "/head/0",
+          "/tail/5",
+          "/lines/0/text"
+        ],
+        "expansion": true,
+        "cache_hit": false
+      }
+    ],
+    "notes": [
+      "expand the first returned finding; inspect only if the first view has no findings"
+    ]
+  },
+  {
+    "scenario_id": "unknown-target-unranked",
+    "prompt": "Find the root cause of the failure in this log.",
+    "artifact": "Text log",
+    "task_mode": "deterministic_discovery",
     "strategy": "prog_repeated_cache",
     "available": true,
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 142375,
-    "response_bytes": 34255,
-    "input_tokens": 8564,
+    "response_bytes": 19824,
+    "input_tokens": 4956,
     "assumed_answer_tokens": 0,
     "tool_calls": 3,
     "expansion_count": 2,
     "cache_hits": 2,
-    "wall_time_ms": 1282,
-    "illustrative_model_cost_usd": 0.08564,
+    "wall_time_ms": 1415,
+    "illustrative_model_cost_usd": 0.04956,
     "oracle_path": "/lines/1200/text",
     "selected_path": "/head/0",
     "counterexample": false,
@@ -5621,7 +6420,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 6999,
+        "response_bytes": 8612,
         "finding_paths": [
           "/head/0",
           "/tail/5",
@@ -5638,7 +6437,7 @@
           "--path",
           "/head/0"
         ],
-        "response_bytes": 13628,
+        "response_bytes": 5606,
         "finding_paths": [
           "/head/0",
           "/tail/5",
@@ -5655,7 +6454,7 @@
           "--path",
           "/head/0"
         ],
-        "response_bytes": 13628,
+        "response_bytes": 5606,
         "finding_paths": [
           "/head/0",
           "/tail/5",
@@ -5779,7 +6578,7 @@
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 18,
+    "wall_time_ms": 19,
     "illustrative_model_cost_usd": 0.0,
     "oracle_path": null,
     "selected_path": null,
@@ -5859,7 +6658,7 @@
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 39,
+    "wall_time_ms": 42,
     "illustrative_model_cost_usd": 0.0001,
     "oracle_path": null,
     "selected_path": null,
@@ -5938,14 +6737,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 141689,
-    "response_bytes": 15898,
-    "input_tokens": 3975,
+    "response_bytes": 11055,
+    "input_tokens": 2764,
     "assumed_answer_tokens": 0,
     "tool_calls": 1,
     "expansion_count": 0,
     "cache_hits": 0,
-    "wall_time_ms": 708,
-    "illustrative_model_cost_usd": 0.03975,
+    "wall_time_ms": 773,
+    "illustrative_model_cost_usd": 0.02764,
     "oracle_path": null,
     "selected_path": null,
     "counterexample": false,
@@ -5960,7 +6759,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 15898,
+        "response_bytes": 11055,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -5978,14 +6777,14 @@
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 141689,
-    "response_bytes": 6928,
-    "input_tokens": 1732,
+    "response_bytes": 7725,
+    "input_tokens": 1932,
     "assumed_answer_tokens": 0,
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 1,
-    "wall_time_ms": 916,
-    "illustrative_model_cost_usd": 0.01732,
+    "wall_time_ms": 972,
+    "illustrative_model_cost_usd": 0.01932,
     "oracle_path": null,
     "selected_path": null,
     "counterexample": false,
@@ -6000,7 +6799,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 6382,
+        "response_bytes": 7179,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false
@@ -6029,19 +6828,79 @@
     "prompt": "Find the root cause of the failure in this log.",
     "artifact": "Text log",
     "task_mode": "deterministic_discovery",
+    "strategy": "prog_compact_retrieve",
+    "available": true,
+    "evidence_available": false,
+    "outcome": "insufficient_evidence",
+    "artifact_bytes": 141689,
+    "response_bytes": 2498,
+    "input_tokens": 625,
+    "assumed_answer_tokens": 0,
+    "tool_calls": 2,
+    "expansion_count": 0,
+    "cache_hits": 0,
+    "wall_time_ms": 983,
+    "illustrative_model_cost_usd": 0.00625,
+    "oracle_path": null,
+    "selected_path": null,
+    "counterexample": false,
+    "steps": [
+      {
+        "command": [
+          "prog",
+          "observe",
+          "--stdin",
+          "--mime",
+          "text/plain",
+          "--name",
+          "baseline-unknown-target",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 2398,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      },
+      {
+        "command": [
+          "prog",
+          "inspect",
+          "$CURSOR",
+          "--goal",
+          "root_cause",
+          "--format",
+          "compact"
+        ],
+        "response_bytes": 100,
+        "finding_paths": [],
+        "expansion": false,
+        "cache_hit": false
+      }
+    ],
+    "notes": [
+      "expand the first returned finding; inspect only if the first view has no findings",
+      "no candidate was returned; insufficient evidence, with no exact-path fallback"
+    ]
+  },
+  {
+    "scenario_id": "unknown-target-no-answer",
+    "prompt": "Find the root cause of the failure in this log.",
+    "artifact": "Text log",
+    "task_mode": "deterministic_discovery",
     "strategy": "prog_repeated_cache",
     "available": true,
     "evidence_available": false,
     "outcome": "insufficient_evidence",
     "artifact_bytes": 141689,
-    "response_bytes": 6928,
-    "input_tokens": 1732,
+    "response_bytes": 7725,
+    "input_tokens": 1932,
     "assumed_answer_tokens": 0,
     "tool_calls": 2,
     "expansion_count": 0,
     "cache_hits": 1,
-    "wall_time_ms": 919,
-    "illustrative_model_cost_usd": 0.01732,
+    "wall_time_ms": 984,
+    "illustrative_model_cost_usd": 0.01932,
     "oracle_path": null,
     "selected_path": null,
     "counterexample": false,
@@ -6056,7 +6915,7 @@
           "--name",
           "baseline-unknown-target"
         ],
-        "response_bytes": 6382,
+        "response_bytes": 7179,
         "finding_paths": [],
         "expansion": false,
         "cache_hit": false

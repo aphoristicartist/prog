@@ -676,7 +676,7 @@ fn assert_measurement_contract(metrics: &[BaselineMetric]) {
         if metric.task_mode == "known_path_recoverability"
             && matches!(
                 metric.strategy.as_str(),
-                "prog_retrieve" | "prog_repeated_cache"
+                "prog_retrieve" | "prog_compact_retrieve" | "prog_repeated_cache"
             )
         {
             assert!(

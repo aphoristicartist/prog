@@ -17,7 +17,7 @@ use std::{
 };
 
 pub const SEVERITY_PATTERN: &str = r"(?i)\b(fatal|panic|error|failed|exception)\b";
-pub const STRATEGIES: [&str; 10] = [
+pub const STRATEGIES: [&str; 11] = [
     "raw_context",
     "head_tail_truncation",
     "native_field_selection",
@@ -27,6 +27,7 @@ pub const STRATEGIES: [&str; 10] = [
     "caveman_terse_output",
     "prog_envelope_only",
     "prog_retrieve",
+    "prog_compact_retrieve",
     "prog_repeated_cache",
 ];
 
@@ -279,27 +280,50 @@ pub fn run(root: &Path, input: &StrategyInput, strategy: &str) -> Execution {
             result.notes.push("capture once to a local file, then search it; receipt and search stdout are both counted".to_string());
             result
         }
-        "prog_envelope_only" | "prog_retrieve" | "prog_repeated_cache" => {
-            run_prog(root, input, strategy)
-        }
+        "prog_envelope_only"
+        | "prog_retrieve"
+        | "prog_compact_retrieve"
+        | "prog_repeated_cache" => run_prog(root, input, strategy),
         _ => panic!("unknown strategy {strategy}"),
     }
 }
 
 fn run_prog(root: &Path, input: &StrategyInput, strategy: &str) -> Execution {
+    // The compact arm makes the same moves as `prog_retrieve`; only the
+    // response format differs, so the comparison isolates its byte cost.
+    let compact = strategy == "prog_compact_retrieve";
+    let data_key = if compact { "data" } else { "data_preview" };
+    let with_format = |args: &[&'_ str]| -> Vec<String> {
+        let mut argv = args
+            .iter()
+            .map(|arg| (*arg).to_string())
+            .collect::<Vec<_>>();
+        if compact {
+            argv.extend(["--format".to_string(), "compact".to_string()]);
+        }
+        argv
+    };
     let mut result = Execution::default();
     let initial = match &input.source {
         Source::Call {
             source_id,
             operation,
-        } => result.prog(root, &["call", source_id, operation, "--args", "{}"], None),
+        } => result.prog(
+            root,
+            &refs(&with_format(&[
+                "call", source_id, operation, "--args", "{}",
+            ])),
+            None,
+        ),
         Source::Observe { name, mime, bytes } => result.prog(
             root,
-            &["observe", "--stdin", "--mime", mime, "--name", name],
+            &refs(&with_format(&[
+                "observe", "--stdin", "--mime", mime, "--name", name,
+            ])),
             Some(bytes),
         ),
     };
-    result.evidence = serde_json::to_vec(&initial["data_preview"]).unwrap();
+    result.evidence = serde_json::to_vec(&initial[data_key]).unwrap();
     if strategy == "prog_envelope_only" {
         return result;
     }
@@ -316,7 +340,11 @@ fn run_prog(root: &Path, input: &StrategyInput, strategy: &str) -> Execution {
         // initial response supplies none; no oracle-controlled retry is possible.
         let mut selected = first_finding_path(&initial);
         if selected.is_none() {
-            let inspected = result.prog(root, &["inspect", cursor, "--goal", "root_cause"], None);
+            let inspected = result.prog(
+                root,
+                &refs(&with_format(&["inspect", cursor, "--goal", "root_cause"])),
+                None,
+            );
             selected = first_finding_path(&inspected);
         }
         result.notes.push(
@@ -326,8 +354,12 @@ fn run_prog(root: &Path, input: &StrategyInput, strategy: &str) -> Execution {
         selected
     };
     if let Some(path) = selected {
-        let expanded = result.prog(root, &["expand", cursor, "--path", &path], None);
-        result.evidence = serde_json::to_vec(&expanded["data_preview"]).unwrap();
+        let expanded = result.prog(
+            root,
+            &refs(&with_format(&["expand", cursor, "--path", &path])),
+            None,
+        );
+        result.evidence = serde_json::to_vec(&expanded[data_key]).unwrap();
         if strategy == "prog_repeated_cache" {
             let repeated = result.prog(root, &["expand", cursor, "--path", &path], None);
             result.evidence = serde_json::to_vec(&repeated["data_preview"]).unwrap();
@@ -340,6 +372,10 @@ fn run_prog(root: &Path, input: &StrategyInput, strategy: &str) -> Execution {
         );
     }
     result
+}
+
+fn refs(argv: &[String]) -> Vec<&str> {
+    argv.iter().map(String::as_str).collect()
 }
 
 pub fn first_finding_path(value: &Value) -> Option<String> {

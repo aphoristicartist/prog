@@ -95,6 +95,11 @@ The current public contracts include:
 - `DeltaFindingStatus`
 - `DeltaFinding`
 - `ObservationDelta`
+- `RecordDelta`
+- `RecordDeltaStatus`
+- `CollectionOverview`
+- `SelectResponse`
+- `CoverageReport`
 - `ObligationDeclarer`
 - `VerificationOperation`
 - `VerificationStateRelationship`

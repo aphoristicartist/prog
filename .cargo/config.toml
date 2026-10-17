@@ -1,0 +1,5 @@
+# Tests assert prog's full JSON contract. The Claude Code plugin exports
+# PROG_FORMAT=compact into agent shells, so pin the full format for every
+# process Cargo starts; an explicit `--format` flag still wins.
+[env]
+PROG_FORMAT = { value = "full", force = true }

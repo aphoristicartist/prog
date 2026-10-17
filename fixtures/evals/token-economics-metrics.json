@@ -6,55 +6,55 @@
       "fixture": "HTTP",
       "task": "Discover shape",
       "raw_bytes": 551530,
-      "prog_bytes": 6515
+      "prog_bytes": 6943
     },
     {
       "fixture": "HTTP",
       "task": "Count states",
       "raw_bytes": 551530,
-      "prog_bytes": 21105
+      "prog_bytes": 21535
     },
     {
       "fixture": "HTTP",
       "task": "Target body",
       "raw_bytes": 551530,
-      "prog_bytes": 10159
+      "prog_bytes": 10589
     },
     {
       "fixture": "CLI",
       "task": "Discover shape",
       "raw_bytes": 551009,
-      "prog_bytes": 6905
+      "prog_bytes": 7331
     },
     {
       "fixture": "CLI",
       "task": "Count states",
       "raw_bytes": 551009,
-      "prog_bytes": 21821
+      "prog_bytes": 22247
     },
     {
       "fixture": "CLI",
       "task": "Target body",
       "raw_bytes": 551009,
-      "prog_bytes": 10876
+      "prog_bytes": 11302
     },
     {
       "fixture": "MCP",
       "task": "Discover shape",
       "raw_bytes": 551011,
-      "prog_bytes": 7457
+      "prog_bytes": 7993
     },
     {
       "fixture": "MCP",
       "task": "Count states",
       "raw_bytes": 551011,
-      "prog_bytes": 22419
+      "prog_bytes": 23063
     },
     {
       "fixture": "MCP",
       "task": "Target body",
       "raw_bytes": 551011,
-      "prog_bytes": 11336
+      "prog_bytes": 11980
     }
   ]
 }

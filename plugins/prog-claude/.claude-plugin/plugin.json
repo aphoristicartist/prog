@@ -15,7 +15,7 @@
     "stop_gate": {
       "type": "boolean",
       "title": "Stop gate",
-      "description": "Before Claude finishes a turn, block once if this session's latest test run is failing, does not prove an earlier failure fixed, or is older than the workspace",
+      "description": "Before Claude finishes a turn, block once if this session's latest test run is failing, does not prove an earlier failure fixed, or is older than the workspace, or if files changed but no tests ran",
       "default": false
     }
   }

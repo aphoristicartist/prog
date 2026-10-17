@@ -58,6 +58,7 @@ src/commands/receipt.rs
 src/commands/recipe.rs
 src/commands/route.rs
 src/commands/run.rs
+src/commands/select.rs
 src/commands/session.rs
 src/commands/shim.rs
 src/commands/source.rs

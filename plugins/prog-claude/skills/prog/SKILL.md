@@ -1,28 +1,29 @@
 ---
 name: prog
-description: Read prog receipts after test, build, and lint runs; fetch exact evidence with prog evidence; never claim a fix prog has not proven.
+description: Capture large command, API, MCP, and file output once and move through it with select, expand, and evidence; read receipts after test runs and never claim a fix prog has not proven.
 ---
 
 # prog
 
-prog records test, build, and lint runs (cargo, pytest, go, npm, ...) and adds
-a short receipt after each. Run commands normally; `| tail` is fine, because
-the full output is kept.
+prog keeps the full output and returns a small view plus a cursor. Move
+through the cursor instead of rerunning or rereading.
 
+Test, build, and lint runs (cargo, pytest, go, npm, ...) get a receipt.
 Prefer this loop: run, read the receipt, use `prog evidence` for detail, and
-claim only what the receipt proves.
+claim only what the receipt proves. `fixed: X` is proven. `NOT PROVEN
+(reason)`: a test was deleted, skipped, unnamed in quiet output, or fewer
+ran. Rerun the full command verbosely, or tell the user it is not verified.
 
-- `exit N · P passed, F failed: ids` and `first failure:` say what broke.
-- `vs previous run: fixed: X`: the same command ran the same tests and X
-  passed. That is proven.
-- `NOT PROVEN (reason)`: a test was deleted, skipped, or ignored, fewer tests
-  ran, or fail-fast stopped early. Rerun the full command (such as
-  `cargo test --no-fail-fast`) or tell the user it is not verified.
+Large or messy data: `prog run -- gh api ...` or `prog observe --file f.json`.
+The `overview` maps the records: fields, value counts, keys. Then:
+- `prog select <cursor> --where state=open --fields id,title`; rows keep paths
+- `prog expand <cursor> --path /3/body --limit 2000`; `prog search <cursor> text`;
+  `prog inspect <cursor> --goal <goal>` ranks findings
+- rerun the same command later: `changes_since` lists changed records, and
+  `prog delta <old> <new>` lists all of them
+- `prog coverage <cursor>` names the records not yet returned
 
-The receipt's `prog evidence <cursor> --path <path>` returns the exact slice
-offline. Cite it as `EvidenceRef: prog://<cursor>#<path>`. `prog receipt`
-repeats the latest verdict. Without receipts, use `prog run -- <command>`; for
-files, `prog observe --file <path>`, then `prog inspect <cursor> --goal <goal>`.
-
-MCP is optional: prog is a CLI plus this skill. More: `prog --help` and
-docs/agent-reference.md in the prog repository.
+Pass `--format compact` for smaller responses (the Claude Code plugin sets
+it). Cite as `EvidenceRef: prog://<cursor>#<path>`. MCP is optional: prog is a
+CLI plus this skill. More: `prog --help` and docs/agent-reference.md in the
+prog repository.

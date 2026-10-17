@@ -38,6 +38,8 @@ fn immediate_agent_surface_stays_below_the_reviewed_context_budget() {
             "update",
             "cost",
             "paths",
+            "select",
+            "coverage",
             "inspect",
             "evidence",
             "search",

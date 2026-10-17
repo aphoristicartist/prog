@@ -12,7 +12,7 @@ deliberate; do not duplicate it here, or the two will drift.
 1. Read [`AGENTS.md`](AGENTS.md) for the layering rules and the
    conservative-answer rule.
 2. Read [`INVARIANTS.md`](INVARIANTS.md) if you are touching `prog-core`.
-   Thirteen invariants map to executable tests; do not weaken a test to make a
+   Fifteen invariants map to executable tests; do not weaken a test to make a
    change pass.
 
 ## Things that surprise agents in this repo

@@ -26,6 +26,7 @@ pub fn competitive_readme_section(metrics: &Value) -> String {
         "broad_log_search",
         "file_capture_search",
         "prog_retrieve",
+        "prog_compact_retrieve",
     ] {
         let rows = metrics
             .iter()
@@ -302,7 +303,7 @@ pub fn competitive_report(metrics: &Value) -> String {
          This is a deterministic evidence-availability experiment, not actual-agent task success. Known-path tasks publish their selector; unknown-target strategies receive only the task and artifact. The grader's path and answer are consulted only after execution. No strategy receives answer-derived grep terms.\n\n\
          All arms start from the same fixture artifact outside model context. Source-profile discovery/setup is excluded. Raw context discloses that artifact; filters transform it; file capture writes it once and returns a receipt before searching; prog returns a capture envelope before retrieval. Every strategy response (including exploration, receipt, retrieval, and repeated retrieval) contributes to response bytes and tool-call counts. These are disclosure costs, not end-to-end live acquisition or latency comparisons. Python implements the declared JSON/line filters with actual argv and stdout; it is not the RTK or jq executable.\n\n\
          Broad search uses the declared case-insensitive severity pattern `fatal|panic|error|failed|exception` with word boundaries. The narrow unknown-target grep assumes `ERROR`. File search uses the public known-task term or that broad pattern. Minified JSON can make line search return the entire artifact.\n\n\
-         Unknown-target prog retrieval expands the first finding returned in the initial envelope, or calls `inspect --goal root_cause` if none is returned. With no candidate it stops; an incorrect candidate has no oracle fallback. Repeated retrieval uses the same observed path. Known-path retrieval is explicitly assisted recoverability.\n\n\
+         Unknown-target prog retrieval expands the first finding returned in the initial envelope, or calls `inspect --goal root_cause` if none is returned. With no candidate it stops; an incorrect candidate has no oracle fallback. Repeated retrieval uses the same observed path. `prog_compact_retrieve` makes exactly the `prog_retrieve` moves with `--format compact`. Known-path retrieval is explicitly assisted recoverability.\n\n\
          Token counts approximate response bytes/4 rounded up. No model answers are generated: the separate assumed-answer tokens and illustrative Fable prices in JSON are hypothetical, never provider usage. Unavailable arms are excluded from attempted counts; no-answer and missed/unranked evidence remain insufficient rather than being counted as discovery successes.\n\n\
          Source: [`competitive-baseline-metrics.json`](../fixtures/evals/competitive-baseline-metrics.json). Refresh measurements with `PROG_BASELINE_EVAL_UPDATE=1 cargo test -p prog-cli --test competitive_baselines -- --nocapture`. Render reviewed artifacts with `scripts/regenerate-eval-docs.sh --write`; `--check` detects documentation drift without running measurements.\n\n",
     );

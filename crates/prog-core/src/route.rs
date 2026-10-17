@@ -81,6 +81,39 @@ fn assessment(
     }
 }
 
+/// Whether argv runs a test, build, type-check, or lint tool. Their output is
+/// verification evidence with its own parsers and verdicts, so it is never
+/// reinterpreted as a generic record collection, even when it is JSON.
+pub fn is_verification_command(argv: &[String]) -> bool {
+    let Some(program) = argv.first().and_then(|value| program_name(value)) else {
+        return false;
+    };
+    let first = argv.get(1).map(String::as_str);
+    match program {
+        "pytest" | "py.test" | "jest" | "vitest" | "mocha" | "rustc" | "tsc" | "mypy"
+        | "pyright" | "eslint" | "ruff" | "biome" | "cargo" | "make" | "ctest" | "gradle"
+        | "mvn" | "rspec" | "phpunit" => true,
+        "go" => first.is_some_and(|arg| matches!(arg, "test" | "build" | "vet")),
+        "deno" => first.is_some_and(|arg| matches!(arg, "test" | "lint" | "check")),
+        "npm" | "pnpm" | "yarn" | "bun" => {
+            first.is_some_and(|arg| matches!(arg, "test" | "run" | "exec" | "x"))
+        }
+        "npx" | "bunx" | "uv" | "uvx" | "poetry" | "python" | "python3" => argv
+            .iter()
+            .skip(1)
+            .filter_map(|arg| program_name(arg))
+            .any(|arg| {
+                matches!(
+                    arg,
+                    "pytest" | "jest" | "vitest" | "mypy" | "ruff" | "eslint" | "tsc" | "unittest"
+                )
+            }),
+        "playwright" => first == Some("test"),
+        "dotnet" => first.is_some_and(|arg| matches!(arg, "test" | "build")),
+        _ => false,
+    }
+}
+
 fn program_name(value: &str) -> Option<&str> {
     Path::new(value).file_name()?.to_str()
 }
@@ -177,6 +210,40 @@ fn tiny_command(program: &str, args: &[String]) -> bool {
                 Some("--version" | "-V")
             )
     )
+}
+
+#[cfg(test)]
+mod verification_command_tests {
+    use super::*;
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|part| (*part).to_string()).collect()
+    }
+
+    #[test]
+    fn test_and_build_runners_are_verification_commands() {
+        for command in [
+            &["go", "test", "-json", "./..."][..],
+            &["/usr/bin/cargo", "test"],
+            &["npx", "vitest", "run"],
+            &["uv", "run", "pytest", "-q"],
+            &["python3", "-m", "pytest"],
+            &["npm", "test"],
+            &["jest", "--json"],
+        ] {
+            assert!(is_verification_command(&argv(command)), "{command:?}");
+        }
+        for command in [
+            &["gh", "api", "repos/o/r/issues"][..],
+            &["kubectl", "get", "pods", "-o", "json"],
+            &["curl", "-s", "https://example.com"],
+            &["go", "list", "-json"],
+            &["python3", "export.py"],
+            &[],
+        ] {
+            assert!(!is_verification_command(&argv(command)), "{command:?}");
+        }
+    }
 }
 
 #[cfg(test)]

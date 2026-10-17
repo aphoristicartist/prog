@@ -23,6 +23,8 @@ const MAX_PROVIDER_WARNINGS: usize = 3;
 pub struct TestPopulation {
     pub tests: BTreeMap<String, String>,
     pub executed: Option<u64>,
+    /// Failed plus errored tests according to the run's own summary.
+    pub failing: Option<u64>,
     pub warnings: Vec<String>,
 }
 
@@ -44,6 +46,12 @@ impl TestPopulation {
         let executed = normalized
             .pointer("/counts/executed")
             .and_then(Value::as_u64);
+        let failing = normalized.get("counts").and_then(|counts| {
+            let failed = counts.get("failed").and_then(Value::as_u64);
+            let errors = counts.get("error").and_then(Value::as_u64);
+            (failed.is_some() || errors.is_some())
+                .then(|| failed.unwrap_or(0).saturating_add(errors.unwrap_or(0)))
+        });
         let warnings = payload
             .pointer("/provider/warnings")
             .and_then(Value::as_array)
@@ -58,6 +66,7 @@ impl TestPopulation {
         Some(Self {
             tests,
             executed,
+            failing,
             warnings,
         })
     }
@@ -97,7 +106,20 @@ pub fn test_population_reasons(
             "the subject executed {after} tests but the baseline executed {before}; the test population shrank"
         ));
     }
+    let named_failing = baseline
+        .tests
+        .values()
+        .filter(|status| matches!(status.as_str(), "failed" | "error"))
+        .count() as u64;
+    if let Some(failing) = baseline.failing
+        && failing > named_failing
+    {
+        reasons.push(format!(
+            "the baseline names {named_failing} of its {failing} failing tests, so the rest cannot be matched to a later pass; rerun verbosely"
+        ));
+    }
     let mut narrowed = Vec::new();
+    let mut unnamed = Vec::new();
     for (test, status) in &baseline.tests {
         if !matches!(status.as_str(), "failed" | "error") {
             continue;
@@ -106,8 +128,28 @@ pub fn test_population_reasons(
             Some("passed" | "failed" | "error") => {}
             Some(other) => narrowed.push(format!("{test} ({other})")),
             None if subject.names_passing_tests() => narrowed.push(format!("{test} (missing)")),
-            None => {}
+            // Quiet output names only failures. An unnamed test may have
+            // passed, or been deleted while another test took its place in
+            // the count; the output cannot tell these apart.
+            None => unnamed.push(test.clone()),
         }
+    }
+    if !unnamed.is_empty() {
+        let shown = unnamed
+            .iter()
+            .take(MAX_NAMED_TESTS)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = unnamed.len().saturating_sub(MAX_NAMED_TESTS);
+        reasons.push(format!(
+            "quiet output does not name passing tests, so {shown}{} cannot be shown to have passed; rerun verbosely (pytest -v, cargo test without -q, go test -v)",
+            if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            }
+        ));
     }
     if !narrowed.is_empty() {
         let shown = narrowed
@@ -271,6 +313,7 @@ pub fn compare_observations_with_tests(
         findings,
         counts,
         truncated,
+        records: None,
         extra: Extra::new(),
     }
 }
@@ -648,6 +691,7 @@ mod tests {
                 .map(|(id, status)| ((*id).to_string(), (*status).to_string()))
                 .collect(),
             executed,
+            failing: None,
             warnings: Vec::new(),
         }
     }
@@ -658,13 +702,9 @@ mod tests {
             "tests": [{"node_id": "t::a", "status": "failed"}, {"node_id": "t::b", "status": "passed"}],
             "counts": {"passed": 1, "failed": 1, "executed": 2}
         }}});
-        assert_eq!(
-            TestPopulation::from_payload(&payload),
-            Some(population(
-                &[("t::a", "failed"), ("t::b", "passed")],
-                Some(2)
-            ))
-        );
+        let mut expected = population(&[("t::a", "failed"), ("t::b", "passed")], Some(2));
+        expected.failing = Some(1);
+        assert_eq!(TestPopulation::from_payload(&payload), Some(expected));
         assert_eq!(TestPopulation::from_payload(&json!({"stdout": {}})), None);
     }
 
@@ -674,9 +714,31 @@ mod tests {
         // A real fix: same tests ran, the failing one passed.
         let fixed = population(&[("t::a", "passed"), ("t::b", "passed")], Some(2));
         assert!(test_population_reasons(Some(&baseline), Some(&fixed)).is_empty());
-        // Quiet output: passing tests are unnamed but every test still ran.
-        let quiet_fixed = population(&[], Some(2));
-        assert!(test_population_reasons(Some(&baseline), Some(&quiet_fixed)).is_empty());
+        // Quiet output names only failures. A fix and a swap (the failing
+        // test deleted while a new passing test keeps the count) print the
+        // same thing, so neither proves the fix; rerunning verbosely does.
+        let quiet = population(&[], Some(2));
+        let reasons = test_population_reasons(Some(&baseline), Some(&quiet)).join("; ");
+        assert!(
+            reasons.contains("quiet output does not name passing tests, so t::a cannot be shown"),
+            "{reasons}"
+        );
+        assert!(reasons.contains("rerun verbosely"), "{reasons}");
+        let swapped = population(&[("t::b", "passed"), ("t::new", "passed")], Some(2));
+        let reasons = test_population_reasons(Some(&baseline), Some(&swapped)).join("; ");
+        assert!(reasons.contains("t::a (missing)"), "{reasons}");
+        // A baseline that counts more failures than it names cannot match
+        // the unnamed ones to a later pass, whatever the subject shows.
+        let mut counted = population(&[("t::b", "passed")], Some(2));
+        counted.failing = Some(1);
+        let reasons = test_population_reasons(Some(&counted), Some(&fixed)).join("; ");
+        assert!(
+            reasons.contains("names 0 of its 1 failing tests"),
+            "{reasons}"
+        );
+        let mut named = baseline.clone();
+        named.failing = Some(1);
+        assert!(test_population_reasons(Some(&named), Some(&fixed)).is_empty());
         // Still failing is a persisting finding, not a narrowing.
         let still = population(&[("t::a", "failed"), ("t::b", "passed")], Some(2));
         assert!(test_population_reasons(Some(&baseline), Some(&still)).is_empty());
