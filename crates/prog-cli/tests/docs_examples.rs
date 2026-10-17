@@ -47,6 +47,54 @@ fn json(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("stdout should be JSON")
 }
 
+/// The README promises that CI runs its quickstart exactly as written: run the
+/// first `sh` block under `## Quickstart` verbatim, with this build on PATH.
+#[test]
+fn readme_quickstart_block_runs_as_written() {
+    let readme = std::fs::read_to_string(repo_root().join("README.md")).unwrap();
+    let section = readme
+        .split_once("\n## Quickstart\n")
+        .expect("README has a Quickstart section")
+        .1;
+    let block = section
+        .split_once("```sh\n")
+        .and_then(|(_, rest)| rest.split_once("\n```"))
+        .expect("Quickstart has an sh block")
+        .0;
+    let bin_dir = Path::new(env!("CARGO_BIN_EXE_prog")).parent().unwrap();
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let workdir = tempfile::tempdir().unwrap();
+    let output = Command::new("bash")
+        .args(["-euo", "pipefail", "-c", block])
+        .current_dir(workdir.path())
+        .env("PATH", path)
+        .env("TMPDIR", workdir.path())
+        .env_remove("PROG_DIR")
+        .env_remove("PROG_FORMAT")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let text = stdout(&output);
+    for expected in [
+        r#""/id":"integer; 101..107""#,
+        r#""/state":"string; open=5, closed=2""#,
+        r#""matched":2"#,
+        r#""value":{"id":103,"title":"Crash on save"}"#,
+        r#""excerpt":"Crash on save""#,
+        r#""counts":{"added":0,"removed":0,"changed":1,"unchanged":6}"#,
+        r#""fields":[{"field":"/state","before":"open","after":"closed"}]"#,
+    ] {
+        assert!(
+            text.contains(expected),
+            "quickstart output lacks {expected}:\n{text}"
+        );
+    }
+}
+
 #[test]
 fn readme_cli_quickstart_commands_stay_copy_pasteable() {
     let root = repo_root();
@@ -517,12 +565,23 @@ fn docs_keep_acceptance_topics_visible() {
         "Redaction before persistence",
         "No MCP server mode",
         "source add-cli repository",
-        "prog --dir /tmp/prog-demo --pretty source add-cli",
-        "prog --dir /tmp/prog-demo --pretty meta SourceProfile",
     ] {
         assert!(
             readme.contains(expected),
             "README should mention {expected}"
+        );
+    }
+    // The fixture tour moved from the README to the source setup guide; the
+    // commands `readme_cli_quickstart_commands_stay_copy_pasteable` replays
+    // must stay documented there.
+    let source_setup = std::fs::read_to_string(root.join("docs/source-setup.md")).unwrap();
+    for expected in [
+        "prog --dir /tmp/prog-demo --pretty source add-cli",
+        "prog --dir /tmp/prog-demo --pretty meta SourceProfile",
+    ] {
+        assert!(
+            source_setup.contains(expected),
+            "docs/source-setup.md should mention {expected}"
         );
     }
 

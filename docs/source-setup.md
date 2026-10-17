@@ -4,6 +4,30 @@
 Generated seeds are returned in the command output so agents and humans can
 review exactly what was persisted.
 
+## Tour With The Bundled Fixture
+
+From a checkout, this registers the repository's deterministic CLI fixture
+(30 JSON items with large `body` fields), calls it once, and navigates the
+cached result. `crates/prog-cli/tests/docs_examples.rs` runs the same flow.
+
+```sh
+rm -rf /tmp/prog-demo
+prog --dir /tmp/prog-demo --pretty source add-cli demo_cli --operation list --read-only -- python3 fixtures/cli/list_items.py
+prog --dir /tmp/prog-demo --pretty call demo_cli list --args '{}'
+CURSOR=$(prog --dir /tmp/prog-demo call demo_cli list --args '{}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["cursor"])')
+prog --dir /tmp/prog-demo --pretty expand "$CURSOR" --path /items --limit 3 --depth 3
+prog --dir /tmp/prog-demo --pretty inspect "$CURSOR" --goal "find important evidence"
+prog --dir /tmp/prog-demo --pretty search "$CURSOR" "Item 2"
+prog --dir /tmp/prog-demo --pretty hints demo_cli list
+prog --dir /tmp/prog-demo --pretty meta SourceProfile
+```
+
+The command runs once, for the first cache entry; the second `call` is served
+from the cache. The cursor then drives expansion, ranked inspection, and search
+from the local store without contacting the source. `meta` returns prog's own
+public contracts through the same envelope. [`cache.md`](cache.md) continues
+with this store.
+
 ## HTTP From A URL
 
 ```bash
