@@ -214,7 +214,15 @@ fn coding_delta_never_resolves_from_empty_conflicting_or_late_failure_evidence()
             false,
         ),
         ("skipped", "1 passed, 1 skipped in 0.01s", "", 0, false),
-        ("completed", "1 passed in 0.01s", "", 0, true),
+        // Quiet output cannot name the formerly failing test as passed.
+        ("quiet-completed", "1 passed in 0.01s", "", 0, false),
+        (
+            "completed",
+            "test_api.py::test_original PASSED\n1 passed in 0.01s",
+            "",
+            0,
+            true,
+        ),
     ] {
         let directory = workspace();
         let dir = directory.path().to_str().unwrap();
