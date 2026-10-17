@@ -255,6 +255,23 @@ fn pytest_text(
     Completion::Consistent
 }
 
+/// Cargo's closing notice for failed test targets: `test failed, to rerun
+/// pass <target>` by default, or `N target(s) failed:` (followed by the
+/// target list) under `--no-fail-fast`. It reports failed tests, not a
+/// compilation failure.
+fn is_cargo_test_failure_notice(message: &str) -> bool {
+    if message
+        .strip_prefix("test failed, to rerun pass ")
+        .is_some_and(|target| !target.is_empty())
+    {
+        return true;
+    }
+    message.split_once(' ').is_some_and(|(count, rest)| {
+        count.parse::<u64>().is_ok_and(|count| count > 0)
+            && matches!(rest, "target failed:" | "targets failed:")
+    })
+}
+
 fn cargo_rust(
     result: &CodingProviderResult,
     program: &str,
@@ -307,11 +324,9 @@ fn cargo_rust(
                 && !(test_invocation
                     && failed > 0
                     && diagnostic["diagnostic_code"].is_null()
-                    && diagnostic["message"].as_str().is_some_and(|message| {
-                        message
-                            .strip_prefix("test failed, to rerun pass ")
-                            .is_some_and(|target| !target.is_empty())
-                    }))
+                    && diagnostic["message"]
+                        .as_str()
+                        .is_some_and(is_cargo_test_failure_notice))
         });
     let observed_failure = result.normalized["tests"]
         .as_array()
@@ -344,4 +359,23 @@ fn cargo_rust(
         );
     }
     Completion::Consistent
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_cargo_test_failure_notice;
+
+    #[test]
+    fn cargo_failure_notices_from_both_modes_are_test_failures() {
+        assert!(is_cargo_test_failure_notice(
+            "test failed, to rerun pass `--lib`"
+        ));
+        assert!(is_cargo_test_failure_notice("1 target failed:"));
+        assert!(is_cargo_test_failure_notice("3 targets failed:"));
+        assert!(!is_cargo_test_failure_notice("test failed, to rerun pass "));
+        assert!(!is_cargo_test_failure_notice("0 targets failed:"));
+        assert!(!is_cargo_test_failure_notice(
+            "could not compile `demo` (lib)"
+        ));
+    }
 }
