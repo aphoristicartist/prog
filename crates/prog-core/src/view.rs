@@ -188,8 +188,9 @@ fn trim_described_collection(data: &mut Value, root: &str, path: &str) -> Option
     }
     let shown = items.len();
     items.truncate(OVERVIEW_PREVIEW_ITEMS);
+    let label = if path.is_empty() { "(root)" } else { path };
     Some(format!(
-        "{path}: compact view shows {OVERVIEW_PREVIEW_ITEMS} of the {shown} previewed items; see overview"
+        "{label}: compact view shows {OVERVIEW_PREVIEW_ITEMS} of the {shown} previewed items; see overview"
     ))
 }
 
@@ -756,11 +757,9 @@ mod tests {
         assert_eq!(compact["overview"]["keys"], json!(["/number"]));
         assert_eq!(compact["data"], json!([{"n": 1}, {"n": 2}]));
         let omitted = compact["omitted"].as_array().unwrap();
-        assert!(
-            omitted[0]
-                .as_str()
-                .unwrap()
-                .contains("shows 2 of the 5 previewed items")
+        assert_eq!(
+            omitted[0],
+            "(root): compact view shows 2 of the 5 previewed items; see overview"
         );
         assert_eq!(omitted[1], "(root): 300 items, showing 5");
         assert_eq!(
