@@ -202,6 +202,41 @@ fn shim_capture_is_a_complete_run_observation_even_when_the_agent_tails() {
     assert_eq!(again["receipts"].as_array().unwrap().len(), 0);
 }
 
+/// A progressive tool that runs another shimmed tool (`npm test` running
+/// `cargo test`) is captured once, as the outer command; the nested call runs
+/// straight through, so the same output is never recorded twice.
+#[test]
+fn nested_shimmed_calls_pass_straight_through() {
+    let fixture = Fixture::new();
+    let npm = fixture.tools.join("npm");
+    fs::write(&npm, "#!/bin/sh\ncargo test\n").unwrap();
+    fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).unwrap();
+    let installed = prog(&[
+        "shim",
+        "install",
+        "--dir",
+        fixture.shims.to_str().unwrap(),
+        "--tool",
+        "npm",
+    ]);
+    assert!(installed.status.success(), "{}", stdout(&installed));
+    let unused_store = fixture.store.with_file_name("unused-store");
+    let raw = fixture.bash("npm test 2>&1 | tail -2", false, &unused_store);
+    let shimmed = fixture.bash("npm test 2>&1 | tail -2", true, &fixture.store);
+    assert_eq!(raw, shimmed);
+    assert_eq!(fixture.captures(), 1, "only the outer command is captured");
+    let receipt = prog(&[
+        "--dir",
+        fixture.store.to_str().unwrap(),
+        "receipt",
+        "--pending",
+    ]);
+    assert!(receipt.status.success(), "{}", stdout(&receipt));
+    let receipt: Value = serde_json::from_slice(&receipt.stdout).unwrap();
+    let text = receipt["text"].as_str().unwrap();
+    assert!(text.starts_with("prog: `npm test`"), "{text}");
+}
+
 #[test]
 fn pending_receipts_beyond_the_newest_five_are_dropped_not_replayed_later() {
     let fixture = Fixture::new();
