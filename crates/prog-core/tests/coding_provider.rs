@@ -243,3 +243,115 @@ fn cargo_failure_footer_preserves_exact_harness_exhaustion() {
         assert_eq!(result.selection.exhaustive, exhaustive, "{result:#?}");
     }
 }
+
+/// Runner-reported skips are recorded as the only selection gap (so a rerun
+/// that skips the same named tests can still prove a fix), but never when a
+/// filter, a deselection, an empty run, or an early stop is also a gap.
+#[test]
+fn runner_reported_skips_are_marked_only_when_they_are_the_only_gap() {
+    let libtest = |lines: &str, summary: &str| format!("{lines}test result: {summary}\n");
+    let cases = [
+        (
+            "cargo ignored",
+            vec!["cargo", "test", "--no-fail-fast"],
+            libtest(
+                "test tests::adds ... ok\ntest tests::slow ... ignored\n",
+                "ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+            ),
+            Some(0),
+            true,
+        ),
+        (
+            "cargo ignored with a reason",
+            vec!["cargo", "test", "--no-fail-fast"],
+            libtest(
+                "test tests::adds ... ok\ntest tests::slow ... ignored, needs network\n",
+                "ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+            ),
+            Some(0),
+            true,
+        ),
+        (
+            "cargo ignored and filtered",
+            vec!["cargo", "test", "adds"],
+            libtest(
+                "test tests::adds ... ok\ntest tests::slow ... ignored\n",
+                "ok. 1 passed; 0 failed; 1 ignored; 0 measured; 3 filtered out; finished in 0.00s",
+            ),
+            Some(0),
+            false,
+        ),
+        (
+            "pytest skipped",
+            vec!["pytest", "-v"],
+            "t.py::test_a PASSED\nt.py::test_b SKIPPED (linux only)\n1 passed, 1 skipped in 0.01s\n"
+                .to_string(),
+            Some(0),
+            true,
+        ),
+        (
+            "pytest skipped and deselected",
+            vec!["pytest", "-v", "-k", "a"],
+            "t.py::test_a PASSED\n1 passed, 1 skipped, 2 deselected in 0.01s\n".to_string(),
+            Some(0),
+            false,
+        ),
+        (
+            "pytest only skipped",
+            vec!["pytest", "-v"],
+            "t.py::test_b SKIPPED (linux only)\n1 skipped in 0.01s\n".to_string(),
+            Some(0),
+            false,
+        ),
+        (
+            "pytest skipped after an early stop",
+            vec!["pytest", "-x", "-v"],
+            "t.py::test_a PASSED\nt.py::test_b SKIPPED (linux only)\n1 passed, 1 skipped in 0.01s\n"
+                .to_string(),
+            Some(0),
+            false,
+        ),
+    ];
+    for (name, argv, stdout, exit_code, marked) in cases {
+        let argv = argv.into_iter().map(str::to_string).collect::<Vec<_>>();
+        let result = normalize_coding_output(&argv, &stdout, "", true, exit_code).unwrap();
+        assert!(!result.selection.exhaustive, "{name}: {result:#?}");
+        assert_eq!(
+            result.selection.excludes_only_skipped_tests(),
+            marked,
+            "{name}: {result:#?}"
+        );
+        if marked {
+            let skipped = result.normalized["tests"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|test| test["status"] == "skipped")
+                .count();
+            assert_eq!(skipped, 1, "{name}: the skipped test is named");
+            assert!(
+                result
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("the same")),
+                "{name}: {:?}",
+                result.warnings
+            );
+        }
+    }
+    let json_report = json!({
+        "exitcode": 0,
+        "summary": {"passed": 1, "skipped": 1, "total": 2, "collected": 2},
+        "tests": [
+            {"nodeid": "t.py::test_a", "outcome": "passed"},
+            {"nodeid": "t.py::test_b", "outcome": "skipped"}
+        ]
+    })
+    .to_string();
+    let argv = ["pytest", "--json-report"].map(str::to_string);
+    let result = normalize_coding_output(&argv, &json_report, "", true, Some(0)).unwrap();
+    assert!(
+        result.selection.excludes_only_skipped_tests(),
+        "{result:#?}"
+    );
+}

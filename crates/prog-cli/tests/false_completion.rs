@@ -58,6 +58,21 @@ elif state == "ignored":
 elif state == "swapped":
     harness([("tests::muls", "ok"), ("tests::subs", "ok")],
             "ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s", False)
+# A suite with a permanently ignored test (#297).
+elif state == "skip-baseline":
+    harness([("tests::adds", "FAILED"), ("tests::muls", "ok"), ("tests::slow", "ignored, needs network")],
+            "FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s", True)
+    print("error: 1 target failed:", file=sys.stderr)
+    sys.exit(101)
+elif state == "skip-fixed":
+    harness([("tests::adds", "ok"), ("tests::muls", "ok"), ("tests::slow", "ignored, needs network")],
+            "ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s", False)
+elif state == "skip-hidden":
+    harness([("tests::adds", "ignored"), ("tests::muls", "ok"), ("tests::slow", "ignored, needs network")],
+            "ok. 1 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s", False)
+elif state == "skip-swapped":
+    harness([("tests::adds", "ok"), ("tests::muls", "ignored"), ("tests::slow", "ok")],
+            "ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s", False)
 else:
     raise SystemExit("unknown state " + state)
 "#;
@@ -90,6 +105,13 @@ elif state == "ignored":
     report([("test_add", "SKIPPED"), ("test_mul", "PASSED")], "1 passed, 1 skipped in 0.01s")
 elif state == "swapped":
     report([("test_mul", "PASSED"), ("test_sub", "PASSED")], "2 passed in 0.01s")
+elif state == "skip-baseline":
+    report([("test_add", "FAILED"), ("test_mul", "PASSED"), ("test_linux", "SKIPPED")],
+           "1 failed, 1 passed, 1 skipped in 0.01s")
+    sys.exit(1)
+elif state == "skip-fixed":
+    report([("test_add", "PASSED"), ("test_mul", "PASSED"), ("test_linux", "SKIPPED")],
+           "2 passed, 1 skipped in 0.01s")
 else:
     raise SystemExit("unknown state " + state)
 "#;
@@ -149,9 +171,18 @@ fn reasons(delta: &Value) -> String {
 
 /// Run baseline then the edited state with identical argv; return the delta.
 fn scenario(tool: &Tool, argv: &[&str], edited_state: &str) -> (tempfile::TempDir, Value) {
+    scenario_from(tool, argv, "baseline", edited_state)
+}
+
+fn scenario_from(
+    tool: &Tool,
+    argv: &[&str],
+    baseline_state: &str,
+    edited_state: &str,
+) -> (tempfile::TempDir, Value) {
     let store = tempfile::tempdir().unwrap();
     let dir = store.path().to_str().unwrap().to_string();
-    tool.set_state("baseline");
+    tool.set_state(baseline_state);
     let baseline = run(&dir, argv);
     tool.set_state(edited_state);
     let subject = run(&dir, argv);
@@ -251,6 +282,46 @@ fn pytest_deleted_or_skipped_failing_test_is_not_resolved() {
         let (_store, delta) = scenario(&pytest, &argv, state);
         assert_fake_fix_is_not_provable(&delta, "test population shrank");
     }
+}
+
+/// #297: a suite with a permanently ignored or skipped test used to make
+/// every real fix unprovable. When both runs skip exactly the same named
+/// tests, the skipped tests ran in neither run and the fix is provable.
+#[test]
+fn a_fix_is_provable_when_both_runs_skip_the_same_named_tests() {
+    let cargo = Tool::new("cargo", FAKE_CARGO);
+    let argv = [cargo.executable.as_str(), "test", "--no-fail-fast"];
+    let (_store, delta) = scenario_from(&cargo, &argv, "skip-baseline", "skip-fixed");
+    assert_real_fix_is_provable(&delta);
+    assert!(
+        reasons(&delta).contains("both runs skipped the same 1 named tests"),
+        "{}",
+        reasons(&delta)
+    );
+
+    let pytest = Tool::new("pytest", FAKE_PYTEST);
+    let argv = [pytest.executable.as_str(), "-v"];
+    let (_store, delta) = scenario_from(&pytest, &argv, "skip-baseline", "skip-fixed");
+    assert_real_fix_is_provable(&delta);
+}
+
+/// Changing what is skipped is still a narrowed population, and a skip the
+/// output does not name cannot be matched, so none of these prove a fix.
+#[test]
+fn changing_or_unnamed_skips_never_prove_a_fix() {
+    let cargo = Tool::new("cargo", FAKE_CARGO);
+    let argv = [cargo.executable.as_str(), "test", "--no-fail-fast"];
+    let (_store, delta) = scenario_from(&cargo, &argv, "skip-baseline", "skip-hidden");
+    assert_fake_fix_is_not_provable(&delta, "tests::adds (skipped)");
+    let (_store, delta) = scenario_from(&cargo, &argv, "skip-baseline", "skip-swapped");
+    assert_fake_fix_is_not_provable(&delta, "--include-ignored");
+    let (_store, delta) = scenario(&cargo, &argv, "skip-fixed");
+    assert_fake_fix_is_not_provable(&delta, "selection coverage is unknown or not exhaustive");
+
+    let pytest = Tool::new("pytest", FAKE_PYTEST);
+    let argv = [pytest.executable.as_str(), "-q"];
+    let (_store, delta) = scenario_from(&pytest, &argv, "skip-baseline", "skip-fixed");
+    assert_fake_fix_is_not_provable(&delta, "pytest -v");
 }
 
 /// The readiness gate inherits the comparison: an obligation declared against

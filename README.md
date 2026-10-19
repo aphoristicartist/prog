@@ -97,12 +97,14 @@ only when all of these hold:
 - every test that failed before ran again and passed **by name**. Quiet output
   (`pytest -q`, `cargo test -q`) names only failures, so prog asks for a
   verbose rerun instead of guessing;
+- any skipped or ignored tests are the same, by name, in both runs: a test
+  skipped in both ran in neither, so it cannot hide the failure;
 - neither capture was cut short, and each run's own summary agrees with its
   exit code.
 
-A seeded suite ([`false_completion.rs`](crates/prog-cli/tests/false_completion.rs))
-checks that deleted, skipped, ignored, swapped, and quiet-mode tests never come
-out as fixed, and that real fixes still do.
+A [seeded suite](docs/false-completion.md) checks that deleted, skipped,
+ignored, swapped, and quiet-mode tests never come out as fixed, and that real
+fixes still do.
 
 The optional **stop gate** (Claude Code plugin setting `stop_gate`) blocks the
 end of a turn once when the latest test run is failing or unproven, when files

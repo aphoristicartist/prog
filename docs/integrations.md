@@ -22,7 +22,7 @@ measured three-operation facade; an MCP-only host is unsupported today.
 |---|---|---|---|
 | Auto-detected harness extension | implemented | `prog harness install` | portable skill plus detected adapters |
 | Harness readiness | implemented | `prog harness doctor` | nothing |
-| Claude Code plugin (shims, receipts, opt-in stop gate) | implemented | `/plugin install prog --marketplace aphoristicartist/prog` | Claude Code plugin cache; shims under `~/.local/share/prog/shims`; store under `~/.local/state/prog/projects/` |
+| Claude Code plugin (shims, receipts, opt-in stop gate) | implemented | `/plugin marketplace add aphoristicartist/prog`, then `/plugin install prog@prog` | Claude Code plugin cache; shims under `~/.local/share/prog/shims`; store under `~/.local/state/prog/projects/` |
 | PATH shims for any shell-based harness | implemented | `prog shim install` and `eval "$(prog shim env --project . --shell)"` | shim scripts only |
 | Codex marketplace plugin | implemented | `codex plugin add prog@personal` after adding this checkout as a marketplace | Codex plugin cache |
 | DeepSeek Harness result plugin | implemented | `dsh plugin --profile web add ./extensions/deepseek-harness` | profile dependency and bundle layer |

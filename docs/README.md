@@ -53,6 +53,7 @@ overview and quickstart; contributors and coding agents should read
 | [token-economics.md](token-economics.md) | Raw-vs-prog token ratios across fixtures. |
 | [task-success-eval.md](task-success-eval.md) | Known-path recoverability evaluation. |
 | [replay-eval.md](replay-eval.md) | Multi-iteration replay oracle for delta and readiness correctness. |
+| [false-completion.md](false-completion.md) | Seeded fake fixes (deleted, skipped, swapped, quiet tests) that must never count as fixed. |
 | [agent-eval.md](agent-eval.md) | Actual-agent claim gate status and false-completion grader replay. |
 | [terminal-bench-eval.md](terminal-bench-eval.md) | Preregistered Terminal-Bench 2.0 paired public pilot. |
 | [competitive-baselines.md](competitive-baselines.md) | Comparisons, including cases prog loses. |

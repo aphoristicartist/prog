@@ -17,7 +17,11 @@ scope/exhaustiveness declaration also cannot override contrary provider evidence
 Completion validation now checks the observed process exit against pytest text
 summaries, JSON counters and detailed outcomes, and Cargo summaries. It refuses
 exhaustiveness for empty, skipped, deselected, interrupted, malformed, mixed, or
-conflicting evidence. Compiler errors cannot prove that later checks completed.
+conflicting evidence. When runner-reported skips are the only gap, the selection
+records `excludes_skipped_tests` so that a delta against a run that skipped the
+same named tests can still prove a fix ([#297](https://github.com/aphoristicartist/prog/issues/297));
+on its own such a run still cannot pass a required check. Compiler errors cannot
+prove that later checks completed.
 Normal complete failing test runs retain their existing exhaustive-selection
 behavior when the selected harness scope is provable.
 

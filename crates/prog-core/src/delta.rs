@@ -25,6 +25,11 @@ pub struct TestPopulation {
     pub executed: Option<u64>,
     /// Failed plus errored tests according to the run's own summary.
     pub failing: Option<u64>,
+    /// Skipped or ignored tests according to the run's own summary.
+    pub skipped: Option<u64>,
+    /// Ids of every test record whose status is `skipped`, sorted, with
+    /// repeats kept (two harnesses can each skip a `tests::slow`).
+    pub skipped_tests: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -34,6 +39,12 @@ impl TestPopulation {
     pub fn from_payload(payload: &Value) -> Option<Self> {
         let normalized = payload.pointer("/provider/normalized")?;
         let records = normalized.get("tests")?.as_array()?;
+        let mut skipped_tests = records
+            .iter()
+            .filter(|record| record.get("status").and_then(Value::as_str) == Some("skipped"))
+            .filter_map(|record| record.get("node_id")?.as_str().map(ToOwned::to_owned))
+            .collect::<Vec<_>>();
+        skipped_tests.sort();
         let tests = records
             .iter()
             .filter_map(|record| {
@@ -52,6 +63,9 @@ impl TestPopulation {
             (failed.is_some() || errors.is_some())
                 .then(|| failed.unwrap_or(0).saturating_add(errors.unwrap_or(0)))
         });
+        let skipped = normalized
+            .pointer("/counts/skipped")
+            .and_then(Value::as_u64);
         let warnings = payload
             .pointer("/provider/warnings")
             .and_then(Value::as_array)
@@ -67,6 +81,8 @@ impl TestPopulation {
             tests,
             executed,
             failing,
+            skipped,
+            skipped_tests,
             warnings,
         })
     }
@@ -187,6 +203,33 @@ pub fn compare_observations(
     )
 }
 
+/// How many tests both runs skipped, when skips are the only gap in either
+/// selection and both runs name exactly the same skipped tests (with the
+/// same repeats) as their own summaries count.
+///
+/// A test skipped in both runs ran in neither, so it cannot hide a baseline
+/// finding. Anything else stays unproven: a test skipped in only one run, a
+/// skip the output does not name (`pytest -q`), a filter, or an early stop.
+fn shared_skipped_tests(
+    baseline: &ObservationRecord,
+    subject: &ObservationRecord,
+    baseline_tests: Option<&TestPopulation>,
+    subject_tests: Option<&TestPopulation>,
+) -> Option<u64> {
+    if !(baseline.selection.excludes_only_skipped_tests()
+        && subject.selection.excludes_only_skipped_tests())
+    {
+        return None;
+    }
+    let (before, after) = (baseline_tests?, subject_tests?);
+    let skipped = before.skipped?;
+    (skipped > 0
+        && after.skipped == Some(skipped)
+        && before.skipped_tests.len() as u64 == skipped
+        && before.skipped_tests == after.skipped_tests)
+        .then_some(skipped)
+}
+
 /// [`compare_observations`] plus the test-population check: absence is only
 /// provable when every test that ran in the baseline ran again.
 pub fn compare_observations_with_tests(
@@ -197,7 +240,8 @@ pub fn compare_observations_with_tests(
     baseline_tests: Option<&TestPopulation>,
     subject_tests: Option<&TestPopulation>,
 ) -> ObservationDelta {
-    let mut assessment = assess(baseline, subject);
+    let shared_skips = shared_skipped_tests(baseline, subject, baseline_tests, subject_tests);
+    let mut assessment = assess(baseline, subject, shared_skips);
     let population_reasons = test_population_reasons(baseline_tests, subject_tests);
     if !population_reasons.is_empty() {
         assessment.can_prove_absence = false;
@@ -318,7 +362,17 @@ pub fn compare_observations_with_tests(
     }
 }
 
-fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> ComparabilityAssessment {
+/// `shared_skips` is [`shared_skipped_tests`]: when set, both selections
+/// count as exhaustive for the tests that ran.
+fn assess(
+    baseline: &ObservationRecord,
+    subject: &ObservationRecord,
+    shared_skips: Option<u64>,
+) -> ComparabilityAssessment {
+    let selection_exhaustive = |observation: &ObservationRecord| {
+        observation.selection.exhaustive
+            || shared_skips.is_some() && observation.selection.excludes_only_skipped_tests()
+    };
     let invocation_match = baseline.invocation_fingerprint == subject.invocation_fingerprint;
     let comparison_family_match = baseline.comparison_family == subject.comparison_family;
     let subject_identity =
@@ -351,8 +405,18 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
     if !comparison_family_match {
         reasons.push("comparison families differ".to_string());
     }
-    capture_reasons("baseline", baseline, &mut reasons);
-    capture_reasons("subject", subject, &mut reasons);
+    capture_reasons(
+        "baseline",
+        baseline,
+        selection_exhaustive(baseline),
+        &mut reasons,
+    );
+    capture_reasons(
+        "subject",
+        subject,
+        selection_exhaustive(subject),
+        &mut reasons,
+    );
     if !baseline.capture.can_prove_absence || !subject.capture.can_prove_absence {
         reasons.push("one or both observations are incomplete or truncated".to_string());
     }
@@ -365,12 +429,16 @@ fn assess(baseline: &ObservationRecord, subject: &ObservationRecord) -> Comparab
     if !payloads_available {
         reasons.push("one or both redacted payloads are no longer available".to_string());
     }
-    let selection_covers_absence = baseline.selection.exhaustive
-        && subject.selection.exhaustive
+    let selection_covers_absence = selection_exhaustive(baseline)
+        && selection_exhaustive(subject)
         && !normalized_scopes(baseline).is_empty()
         && !normalized_scopes(subject).is_empty();
     if !selection_covers_absence {
         reasons.push("selection coverage is unknown or not exhaustive".to_string());
+    } else if let Some(skipped) = shared_skips {
+        reasons.push(format!(
+            "both runs skipped the same {skipped} named tests; absence is proven only for the tests that ran"
+        ));
     }
     let can_prove_absence = invocation_match
         && comparison_family_match
@@ -465,7 +533,12 @@ fn path_is_within_scope(path: &str, scope: &str) -> bool {
             .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
-fn capture_reasons(prefix: &str, observation: &ObservationRecord, reasons: &mut Vec<String>) {
+fn capture_reasons(
+    prefix: &str,
+    observation: &ObservationRecord,
+    selection_exhaustive: bool,
+    reasons: &mut Vec<String>,
+) {
     let capture = &observation.capture;
     if capture.stop_reason != crate::CaptureStopReason::Complete {
         reasons.push(format!(
@@ -484,7 +557,7 @@ fn capture_reasons(prefix: &str, observation: &ObservationRecord, reasons: &mut 
             capture_stop_reason_name(affected.stop_reason)
         ));
     }
-    if !observation.selection.scopes.is_empty() && !observation.selection.exhaustive {
+    if !observation.selection.scopes.is_empty() && !selection_exhaustive {
         reasons.push(format!("{prefix} selection is not exhaustive"));
     }
 }
@@ -692,8 +765,33 @@ mod tests {
                 .collect(),
             executed,
             failing: None,
+            skipped: None,
+            skipped_tests: Vec::new(),
             warnings: Vec::new(),
         }
+    }
+
+    /// A run in which every selected test ran except the named skips.
+    fn skipping_run(id: &str) -> ObservationRecord {
+        let mut run = observation(id, "same", true);
+        run.selection.exhaustive = false;
+        run.selection.extra.insert(
+            crate::SELECTION_EXCLUDES_SKIPPED_TESTS.to_string(),
+            Value::Bool(true),
+        );
+        run
+    }
+
+    fn with_skips(mut tests: TestPopulation, counted: u64, named: &[&str]) -> TestPopulation {
+        tests.skipped = Some(counted);
+        tests.skipped_tests = named.iter().map(|name| (*name).to_string()).collect();
+        tests.skipped_tests.sort();
+        for name in named {
+            tests
+                .tests
+                .insert((*name).to_string(), "skipped".to_string());
+        }
+        tests
     }
 
     #[test]
@@ -834,6 +932,99 @@ mod tests {
         );
         assert!(delta.assessment.can_prove_absence);
         assert_eq!(delta.findings[0].status, DeltaFindingStatus::Resolved);
+    }
+
+    /// #297: one ignored or skipped test used to make every real fix
+    /// unprovable. A test both runs skipped ran in neither, so the fix is
+    /// provable; any other skip still blocks the proof.
+    #[test]
+    fn shared_named_skips_prove_a_fix_and_every_other_skip_does_not() {
+        let compare = |baseline: &ObservationRecord,
+                       subject: &ObservationRecord,
+                       before: &TestPopulation,
+                       after: &TestPopulation| {
+            compare_observations_with_tests(
+                baseline,
+                subject,
+                &[finding("panic")],
+                &[],
+                Some(before),
+                Some(after),
+            )
+        };
+        let failing = with_skips(
+            population(&[("t::a", "failed"), ("t::b", "passed")], Some(2)),
+            1,
+            &["t::slow"],
+        );
+        let fixed = with_skips(
+            population(&[("t::a", "passed"), ("t::b", "passed")], Some(2)),
+            1,
+            &["t::slow"],
+        );
+        let delta = compare(&skipping_run("a"), &skipping_run("b"), &failing, &fixed);
+        assert!(delta.assessment.can_prove_absence, "{:?}", delta.assessment);
+        assert_eq!(delta.findings[0].status, DeltaFindingStatus::Resolved);
+        let reasons = delta.assessment.reasons.join("; ");
+        assert!(
+            reasons.contains("both runs skipped the same 1 named tests"),
+            "{reasons}"
+        );
+        assert!(!reasons.contains("not exhaustive"), "{reasons}");
+
+        let refused = |before: &TestPopulation,
+                       after: &TestPopulation,
+                       baseline: &ObservationRecord,
+                       subject: &ObservationRecord| {
+            let delta = compare(baseline, subject, before, after);
+            assert!(
+                !delta.assessment.can_prove_absence,
+                "{:?}",
+                delta.assessment
+            );
+            assert_ne!(delta.findings[0].status, DeltaFindingStatus::Resolved);
+        };
+        let (a, b) = (skipping_run("a"), skipping_run("b"));
+        // The failing test itself skipped in the subject.
+        let hidden = with_skips(
+            population(&[("t::b", "passed")], Some(1)),
+            2,
+            &["t::a", "t::slow"],
+        );
+        refused(&failing, &hidden, &a, &b);
+        // A different test skipped while the count stays the same.
+        let swapped = with_skips(
+            population(&[("t::a", "passed"), ("t::slow", "passed")], Some(2)),
+            1,
+            &["t::b"],
+        );
+        refused(&failing, &swapped, &a, &b);
+        // Quiet output counts the skip without naming it.
+        let mut unnamed_before = failing.clone();
+        unnamed_before.skipped_tests.clear();
+        let mut unnamed_after = fixed.clone();
+        unnamed_after.skipped_tests.clear();
+        refused(&unnamed_before, &unnamed_after, &a, &b);
+        // Two harnesses that each skip a `t::slow` versus one that skips it once.
+        let twice = with_skips(fixed.clone(), 2, &["t::slow", "t::slow"]);
+        refused(&failing, &twice, &a, &b);
+        // A skip in only one run: the baseline was exhaustive.
+        let full_baseline = population(
+            &[
+                ("t::a", "failed"),
+                ("t::b", "passed"),
+                ("t::slow", "passed"),
+            ],
+            Some(3),
+        );
+        refused(&full_baseline, &fixed, &observation("a", "same", true), &b);
+        // Skips plus another gap (an early stop, a filter) on either side.
+        let mut early = observation("b", "same", true);
+        early.selection.exhaustive = false;
+        refused(&failing, &fixed, &a, &early);
+        // Without test populations nothing can be matched.
+        let delta = compare_observations(&a, &b, &[finding("panic")], &[]);
+        assert!(!delta.assessment.can_prove_absence);
     }
 
     #[test]

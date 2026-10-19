@@ -776,3 +776,87 @@ fn external_manifest_adds_a_target_and_cannot_escape_the_project_root() {
     );
     assert!(!project.path().parent().unwrap().join("outside.md").exists());
 }
+
+/// #290: `harness doctor` reports PATH shim and Claude Code plugin state from
+/// the shim directory, `PATH`, and Claude Code's plugin registry. Both are
+/// optional channels, so neither state blocks readiness.
+#[test]
+fn harness_doctor_reports_shim_and_claude_plugin_state() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().to_str().unwrap();
+    let installed = prog(&[
+        "harness",
+        "install",
+        "--host",
+        "agent-skills",
+        "--root",
+        root,
+    ]);
+    assert!(installed.status.success(), "{}", stdout(&installed));
+    let home = tempfile::tempdir().unwrap();
+    let data = home.path().join("data");
+    let claude = home.path().join("claude");
+    let shims = data.join("prog/shims");
+    let doctor = |path: &str| -> Value {
+        let output = prog_with_env(
+            &[
+                "harness",
+                "doctor",
+                "--host",
+                "agent-skills",
+                "--root",
+                root,
+            ],
+            &[
+                ("HOME", home.path().to_str().unwrap()),
+                ("XDG_DATA_HOME", data.to_str().unwrap()),
+                ("CLAUDE_CONFIG_DIR", claude.to_str().unwrap()),
+                ("PATH", path),
+            ],
+        );
+        assert!(output.status.success(), "{}", stdout(&output));
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["ready"], true, "{report:#}");
+        report
+    };
+    let status = |report: &Value, name: &str| {
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["name"] == name)
+            .map(|check| check["status"].as_str().unwrap().to_string())
+    };
+    let base_path = std::env::var("PATH").unwrap();
+
+    let report = doctor(&base_path);
+    assert_eq!(status(&report, "shims").as_deref(), Some("absent"));
+    // No Claude Code registry: Claude Code is not in use, so no check.
+    assert_eq!(status(&report, "claude-code-plugin"), None);
+
+    let shim_install = prog(&[
+        "shim",
+        "install",
+        "--dir",
+        shims.to_str().unwrap(),
+        "--tool",
+        "cargo",
+    ]);
+    assert!(shim_install.status.success(), "{}", stdout(&shim_install));
+    let report = doctor(&base_path);
+    assert_eq!(status(&report, "shims").as_deref(), Some("inactive"));
+    let report = doctor(&format!("{}:{base_path}", shims.display()));
+    assert_eq!(status(&report, "shims").as_deref(), Some("ok"));
+
+    let registry = claude.join("plugins/installed_plugins.json");
+    fs::create_dir_all(registry.parent().unwrap()).unwrap();
+    fs::write(&registry, r#"{"version":2,"plugins":{"other@market":[]}}"#).unwrap();
+    let report = doctor(&base_path);
+    assert_eq!(
+        status(&report, "claude-code-plugin").as_deref(),
+        Some("absent")
+    );
+    fs::write(&registry, r#"{"version":2,"plugins":{"prog@prog":[]}}"#).unwrap();
+    let report = doctor(&base_path);
+    assert_eq!(status(&report, "claude-code-plugin").as_deref(), Some("ok"));
+}

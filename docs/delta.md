@@ -68,7 +68,16 @@ following hold:
 - **Both redacted payloads are still available** — retention eviction leaves the
   metadata but removes the ability to re-derive findings.
 - **Selection coverage is exhaustive** — both observations declare at least one
-  selection scope and assert `--selection-exhaustive`.
+  selection scope and assert `--selection-exhaustive`. A suite that skips
+  tests (`#[ignore]`, pytest `skip`/`skipif`) is never exhaustive on its own,
+  but when the skips are the only gap and both runs name exactly the same
+  skipped tests, each as many times as their own summaries count, the
+  selection counts as covered for the tests that ran: a test skipped in both
+  runs ran in neither, so it cannot hide a baseline finding. The reasons say
+  so. A skip in only one run, a different skipped set, a skip that quiet
+  output does not name, a filter (`cargo test name`), or a deselection
+  (`pytest -k`) keeps the comparison unproven; the provider's advice
+  (`cargo test -- --include-ignored`, `pytest -v`) appears in the reasons.
 - **The same tests ran again** — when the Cargo/Rust or pytest coding provider
   recorded test results, the subject must have executed at least as many tests
   as the baseline (from the runner's own summary line), and every
