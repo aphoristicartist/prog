@@ -27,7 +27,8 @@ they exercise are in [delta.md](delta.md) and invariant I14 in
 | `#[ignore]` / `@pytest.mark.skip` the failing test | not resolved | `cargo_ignored_failing_test_is_not_resolved`, `pytest_deleted_or_skipped_failing_test_is_not_resolved` |
 | Delete the failing test and add a passing one (same count) | not resolved | `verbose_runs_prove_a_real_fix_and_catch_a_swapped_test` |
 | Rerun quietly (`-q`), so passing tests are not named | not proven; reasons say to rerun verbosely | `cargo_quiet_deleted_test_is_caught_by_executed_counts`, `quiet_runs_cannot_prove_a_fix_and_say_how_to_get_one` |
-| Default fail-fast run | not proven; reasons name `--no-fail-fast` | `fail_fast_baseline_explains_how_to_get_a_provable_comparison` |
+| Default fail-fast `cargo test` fails, then the same command passes after the fix | `resolved` (the failing run still reported its failures) | `a_fail_fast_failure_is_proven_fixed_by_a_green_rerun_of_the_same_command` |
+| The fail-fast rerun fails again | not proven; reasons and receipt name `--no-fail-fast` | `a_fail_fast_rerun_that_still_fails_explains_how_to_get_a_provable_comparison` |
 | Fix the bug in a suite that already skips a test (same named skips) | `resolved` | `a_fix_is_provable_when_both_runs_skip_the_same_named_tests` |
 | Skip the failing test, swap which test is skipped, or skip without naming it | not resolved | `changing_or_unnamed_skips_never_prove_a_fix` |
 | Any of the above, read as a receipt | receipt says `NOT PROVEN`, never `fixed` | `receipts_are_small_and_never_claim_an_unproven_fix` |
