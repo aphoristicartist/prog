@@ -1583,6 +1583,22 @@ pub struct SelectionCoverage {
     pub extra: Extra,
 }
 
+/// `SelectionCoverage` extra set by a coding provider when every selected
+/// test ran except those the runner itself reported as skipped or ignored.
+/// The selection stays non-exhaustive: one such run cannot show the suite
+/// passed. A delta may still prove absence against a run that skipped exactly
+/// the same named tests (see [`crate::compare_observations_with_tests`]).
+pub const SELECTION_EXCLUDES_SKIPPED_TESTS: &str = "excludes_skipped_tests";
+
+impl SelectionCoverage {
+    /// Whether runner-reported skips are the only reason this selection is
+    /// not exhaustive.
+    pub fn excludes_only_skipped_tests(&self) -> bool {
+        !self.exhaustive
+            && self.extra.get(SELECTION_EXCLUDES_SKIPPED_TESTS) == Some(&Value::Bool(true))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeltaFindingStatus {

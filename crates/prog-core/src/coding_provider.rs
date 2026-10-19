@@ -1077,7 +1077,8 @@ fn libtest_line(line: &str, input: &InputLine<'_>) -> Option<NormalizedTest> {
     let status = match status.trim() {
         "ok" => "passed",
         "FAILED" => "failed",
-        "ignored" => "skipped",
+        // `#[ignore = "reason"]` prints `ignored, reason`.
+        status if status == "ignored" || status.starts_with("ignored, ") => "skipped",
         _ => return None,
     };
     Some(NormalizedTest {

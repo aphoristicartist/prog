@@ -289,6 +289,19 @@ pub(crate) async fn run_command_with(
     if let Some(provider) = &provider {
         // Authored scope names cannot override evidence of incomplete selection.
         selection.exhaustive &= provider.selection.exhaustive;
+        // Runner-reported skips stay the only gap only when the author did
+        // not declare a non-exhaustive selection of their own.
+        let declared_exhaustive = args.selection_scopes.is_empty() || args.selection_exhaustive;
+        if declared_exhaustive && provider.selection.excludes_only_skipped_tests() {
+            selection.extra.insert(
+                prog_core::SELECTION_EXCLUDES_SKIPPED_TESTS.to_string(),
+                Value::Bool(true),
+            );
+        } else {
+            selection
+                .extra
+                .remove(prog_core::SELECTION_EXCLUDES_SKIPPED_TESTS);
+        }
     }
     let observation_id = record_capture(
         store,

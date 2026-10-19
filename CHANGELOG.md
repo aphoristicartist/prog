@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A real fix in a suite that skips tests is provable again. One `#[ignore]`
+  or pytest skip made every delta unprovable, so receipts said `NOT PROVEN`
+  and the stop gate blocked after every real fix. A comparison now counts the
+  selection as covered when skips are its only gap and both runs name exactly
+  the same skipped tests; any other skip still blocks the proof, and a single
+  run with skips still cannot pass a required check on its own. libtest's
+  `ignored, <reason>` lines now name the ignored test (#297).
+
 - Add offline context-cost analysis for existing competitive, evidence and
   installed CLI/host ledgers. Charge repeated and failed responses, attribute
   fields only when bodies exist, keep unknowns explicit, and export no raw

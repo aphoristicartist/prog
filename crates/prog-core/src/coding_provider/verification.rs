@@ -6,6 +6,8 @@ use super::*;
 
 enum Completion {
     Consistent,
+    /// Consistent, except that the runner reported skipped or ignored tests.
+    Skipped(&'static str),
     Unproven(&'static str),
     Conflicting(&'static str),
 }
@@ -36,6 +38,18 @@ pub(super) fn constrain_completion(
     };
     match completion {
         Completion::Consistent => {}
+        Completion::Skipped(reason) => {
+            // Mark the skip as the only gap only when nothing else (an early
+            // stop, a bound) had already made the selection non-exhaustive.
+            if result.selection.exhaustive {
+                result.selection.extra.insert(
+                    crate::SELECTION_EXCLUDES_SKIPPED_TESTS.to_string(),
+                    Value::Bool(true),
+                );
+            }
+            result.selection.exhaustive = false;
+            result.warnings.push(reason.to_string());
+        }
         Completion::Unproven(reason) => {
             result.selection.exhaustive = false;
             result.warnings.push(reason.to_string());
@@ -137,14 +151,14 @@ fn pytest_json(stdout: &str, stderr: &str, exit_code: Option<i32>) -> Completion
     if matches!(exit_code, Some(0 | 1)) && (exit_code == Some(0)) != (failed == 0) {
         return Completion::Conflicting("pytest JSON outcomes disagree with the process exit");
     }
-    if tests.is_empty()
-        || deselected != Some(0)
-        || outcomes.get("skipped").is_some_and(|n| *n > 0)
-        || !matches!(exit_code, Some(0 | 1))
-    {
+    let skipped = outcomes.get("skipped").copied().unwrap_or(0);
+    if tests.len() as u64 == skipped || deselected != Some(0) || !matches!(exit_code, Some(0 | 1)) {
         return Completion::Unproven(
             "pytest selected tests were empty, skipped, deselected, or interrupted",
         );
+    }
+    if skipped > 0 {
+        return Completion::Skipped(PYTEST_SKIPPED);
     }
     Completion::Consistent
 }
@@ -245,12 +259,14 @@ fn pytest_text(
             .saturating_add(get("xfailed"))
             .saturating_add(get("xpassed"))
             == 0
-        || get("skipped") > 0
         || get("deselected") > 0
     {
         return Completion::Unproven(
             "pytest selected tests were empty, skipped, deselected, or interrupted",
         );
+    }
+    if get("skipped") > 0 {
+        return Completion::Skipped(PYTEST_SKIPPED);
     }
     Completion::Consistent
 }
@@ -284,7 +300,8 @@ fn cargo_rust(
         && cargo_subcommand(args).is_some_and(|(_, subcommand)| subcommand == "test");
     let mut passed = 0u64;
     let mut failed = 0u64;
-    let mut skipped = false;
+    let mut ignored = false;
+    let mut filtered = false;
     let mut structured_failure = false;
     for line in stdout.lines().chain(stderr.lines()) {
         let text = line.trim();
@@ -312,8 +329,9 @@ fn cargo_rust(
         }
         passed = passed.saturating_add(*p);
         failed = failed.saturating_add(*f);
-        skipped |= parsed.get("ignored").is_some_and(|n| *n > 0)
-            || parsed.get("filtered out").is_some_and(|n| *n > 0);
+        ignored |= parsed.get("ignored").is_some_and(|n| *n > 0);
+        // libtest never names filtered-out tests, so a filter stays unproven.
+        filtered |= parsed.get("filtered out").is_some_and(|n| *n > 0);
     }
     let compile_failure = result.normalized["diagnostics"]
         .as_array()
@@ -352,14 +370,21 @@ fn cargo_rust(
         || compile_failure
         || structured_failure
         || exit_code != Some(0) && failed == 0
-        || test_invocation && (passed.saturating_add(failed) == 0 || skipped)
+        || test_invocation && (passed.saturating_add(failed) == 0 || filtered)
     {
         return Completion::Unproven(
             "Cargo/rustc completion is unproven: empty or skipped tests, incomplete compilation, or an unexplained process exit",
         );
     }
+    if test_invocation && ignored {
+        return Completion::Skipped(
+            "Cargo ignored some tests, so this run alone does not show every test passed; a fix is provable against a run that ignored the same named tests, or run them with `cargo test -- --include-ignored`",
+        );
+    }
     Completion::Consistent
 }
+
+const PYTEST_SKIPPED: &str = "pytest skipped some tests, so this run alone does not show every test passed; a fix is provable against a run that skipped the same tests, named with `pytest -v`";
 
 #[cfg(test)]
 mod tests {
