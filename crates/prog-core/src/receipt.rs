@@ -238,7 +238,7 @@ fn comparison(
             .iter()
             .find(|reason| reason.contains("test"))
             .or_else(|| delta.assessment.reasons.first())
-            .map(|reason| truncate(reason, MAX_DETAIL_CHARS))
+            .map(|reason| truncate(&actionable(reason), MAX_DETAIL_CHARS))
             .unwrap_or_else(|| "comparison is not provable".to_string());
         return Some(format!("vs previous run: NOT PROVEN ({reason})"));
     }
@@ -323,6 +323,16 @@ fn named(tests: &[String]) -> String {
         0 => shown,
         more => format!("{shown} +{more} more"),
     }
+}
+
+/// A provider reason (`baseline provider: <why>; <what to do>`) is shown as
+/// its advice, so the bounded receipt keeps the part an agent can act on.
+fn actionable(reason: &str) -> String {
+    ["baseline provider: ", "subject provider: "]
+        .iter()
+        .find_map(|prefix| reason.strip_prefix(prefix))
+        .and_then(|warning| warning.rsplit_once("; "))
+        .map_or_else(|| reason.to_string(), |(_, advice)| advice.to_string())
 }
 
 fn truncate(text: &str, limit: usize) -> String {

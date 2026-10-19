@@ -378,13 +378,13 @@ fn cargo_rust(
     }
     if test_invocation && ignored {
         return Completion::Skipped(
-            "Cargo ignored some tests, so this run alone does not show every test passed; a fix is provable against a run that ignored the same named tests, or run them with `cargo test -- --include-ignored`",
+            "Cargo ignored some tests, so this run alone does not prove the suite passed; to prove a fix, rerun ignoring the same tests or add `-- --include-ignored`",
         );
     }
     Completion::Consistent
 }
 
-const PYTEST_SKIPPED: &str = "pytest skipped some tests, so this run alone does not show every test passed; a fix is provable against a run that skipped the same tests, named with `pytest -v`";
+const PYTEST_SKIPPED: &str = "pytest skipped some tests, so this run alone does not prove the suite passed; to prove a fix, rerun skipping the same tests, named by `pytest -v`";
 
 #[cfg(test)]
 mod tests {

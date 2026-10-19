@@ -46,8 +46,11 @@ permits absence claims:
   report without `exitcode` or with deselected tests, or a failing Cargo
   test invocation without one exact package+harness target or
   `--no-fail-fast` keep normalization complete but mark selection
-  non-exhaustive. Non-exhaustive selection cannot authorize `resolved`
-  either; the warning names the unproven side.
+  non-exhaustive. A non-exhaustive subject cannot authorize `resolved`; the
+  warning names the unproven side. A non-exhaustive baseline can, against an
+  exhaustive rerun of the same command, because it still reports every
+  failure it saw (see [delta.md](delta.md)). Runner-reported skips mark the
+  selection `excludes_skipped_tests` when they are its only gap.
 
 Targets become explicit selection scopes. A targeted pytest run is exhaustive
 only for that target, never for a broader suite. Cargo target flags likewise
