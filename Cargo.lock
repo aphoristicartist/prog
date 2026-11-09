@@ -1113,6 +1113,7 @@ dependencies = [
  "prog-adapters",
  "prog-core",
  "proptest",
+ "regex",
  "schemars",
  "serde",
  "serde-saphyr",

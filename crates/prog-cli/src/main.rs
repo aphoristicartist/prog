@@ -70,6 +70,7 @@ use commands::{
         source_kind_provider, source_state_from_response,
     },
     expand::expand_cursor,
+    harness_log::harness_log_report,
     hints::hints_source,
     hook::{claude_code_hook, read_hook_input},
     init::{doctor_harness, init_integration, install_harness, print_skill_content},
@@ -352,6 +353,11 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
                 Ok(ExitCode::SUCCESS)
             }
             HarnessCommand::Hook(_) => unreachable!("hooks are dispatched before budgets"),
+            HarnessCommand::Log(args) => {
+                let report = harness_log_report(args)?;
+                write_success(&report, cli.pretty, ctx)?;
+                Ok(ExitCode::SUCCESS)
+            }
             HarnessCommand::Doctor(args) => {
                 let report = doctor_harness(args)?;
                 let exit = if report.ready {
