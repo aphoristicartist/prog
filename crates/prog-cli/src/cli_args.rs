@@ -120,8 +120,6 @@ pub(crate) enum Command {
     Status(StatusArgs),
     /// Summarize the latest run as a compact verdict compared with the previous identical run.
     Receipt(ReceiptArgs),
-    /// Launch Codex with prog's PATH shims, a sandbox-writable store, and optionally the stop gate; arguments after it go to `codex` unchanged.
-    Codex(CodexArgs),
     /// Manage PATH shims that capture test and build runs without changing their output.
     Shim {
         #[command(subcommand)]
@@ -161,21 +159,23 @@ pub(crate) enum HarnessCommand {
     Doctor(HarnessDoctorArgs),
     /// Handle one host hook event from stdin (used by the Claude Code plugin); never fails the host.
     Hook(HarnessHookArgs),
-    /// Show the local log of hook decisions (stop-gate blocks, receipts, uncaptured test commands), or summarize it.
+    /// Show or summarize the local log of hook decisions.
     Log(HarnessLogArgs),
+    /// Launch Codex with prog's shims, a sandbox-writable store, and optionally the stop gate.
+    Codex(CodexArgs),
 }
 
 #[derive(Debug, Args)]
 pub(crate) struct CodexArgs {
-    /// Enable the stop gate for this Codex session (sets `PROG_STOP_GATE=1` for its hooks).
+    /// Enable the stop gate (`PROG_STOP_GATE=1`).
     #[arg(long)]
     pub(crate) stop_gate: bool,
 
-    /// Do not pass `-c allow_login_shell=false` and the sandbox `writable_roots` override; configure both yourself.
+    /// Skip the `allow_login_shell` and `writable_roots` overrides.
     #[arg(long)]
     pub(crate) keep_codex_config: bool,
 
-    /// Arguments for `codex`, passed through unchanged (for example `exec "fix the failing test"`).
+    /// Arguments for `codex`, unchanged.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub(crate) args: Vec<String>,
 }

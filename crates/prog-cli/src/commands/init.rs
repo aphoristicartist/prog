@@ -340,7 +340,7 @@ fn codex_hooks_doctor_check() -> Option<HarnessDoctorCheck> {
     let (status, detail) = match (configured, trusted) {
         (false, _) => (
             "absent",
-            "optional: install the prog Codex plugin (plugins/prog) and launch with `prog codex`".to_string(),
+            "optional: install the prog Codex plugin (plugins/prog) and launch with `prog harness codex`".to_string(),
         ),
         (true, 0) => (
             "untrusted",
@@ -349,7 +349,7 @@ fn codex_hooks_doctor_check() -> Option<HarnessDoctorCheck> {
         (true, count) => (
             "ok",
             format!(
-                "prog's Codex hooks are configured, with {count} trust entr{} in config.toml (Codex verifies the hashes; rerun /hooks after updating prog). Launch with `prog codex` so shims and the store work under the sandbox",
+                "prog's Codex hooks are configured, with {count} trust entr{} in config.toml (Codex verifies the hashes; rerun /hooks after updating prog). Launch with `prog harness codex` so shims and the store work under the sandbox",
                 if count == 1 { "y" } else { "ies" }
             ),
         ),

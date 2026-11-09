@@ -1,7 +1,7 @@
 //! Codex hooks (#304), driven with stdin payloads shaped by Codex 0.167's
 //! pinned hook schemas (`codex-rs/hooks/schema/generated/*.command.input.schema.json`:
 //! every required field present), shell commands run with the environment the
-//! `prog codex` launcher sets, and hook-output JSON read from stdout.
+//! `prog harness codex` launcher sets, and hook-output JSON read from stdout.
 
 use std::{
     fs,
@@ -327,7 +327,7 @@ fn launch(
 ) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_prog"));
     command
-        .arg("codex")
+        .args(["harness", "codex"])
         .args(args)
         .current_dir(project)
         .env_remove("PROG_DIR")

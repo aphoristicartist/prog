@@ -24,7 +24,7 @@ measured three-operation facade; an MCP-only host is unsupported today.
 | Harness readiness | implemented | `prog harness doctor` | nothing |
 | Claude Code plugin (shims, receipts, opt-in stop gate) | implemented | `/plugin marketplace add aphoristicartist/prog`, then `/plugin install prog@prog` | Claude Code plugin cache; shims under `~/.local/share/prog/shims`; store under `~/.local/state/prog/projects/` |
 | PATH shims for any shell-based harness | implemented | `prog shim install` and `eval "$(prog shim env --project . --shell)"` | shim scripts only |
-| Codex marketplace plugin (skill, receipts, uncaptured-test notice, opt-in stop gate) | implemented | `codex plugin add prog@personal` after adding this checkout as a marketplace; trust its hooks in `/hooks`; launch with `prog codex [--stop-gate]` | Codex plugin cache; shims under `~/.local/share/prog/shims`; store under `~/.local/state/prog/projects/` |
+| Codex marketplace plugin (skill, receipts, uncaptured-test notice, opt-in stop gate) | implemented | `codex plugin add prog@personal` after adding this checkout as a marketplace; trust its hooks in `/hooks`; launch with `prog harness codex [--stop-gate]` | Codex plugin cache; shims under `~/.local/share/prog/shims`; store under `~/.local/state/prog/projects/` |
 | DeepSeek Harness result plugin | implemented | `dsh plugin --profile web add ./extensions/deepseek-harness` | profile dependency and bundle layer |
 | Portable Agent Skills target | implemented | `prog harness install --host agent-skills` | `.agents/skills/prog/SKILL.md`, `.agents/prog-hooks/*` |
 | Codex project skill and hooks | implemented | `prog init --agent codex --project` | `.agents/skills/prog/SKILL.md`, `.codex/prog-hooks/*` |
@@ -54,7 +54,7 @@ Claude Code. Three Codex specifics:
   hooks without a warning. `prog harness doctor` reports `codex_hooks` as
   `absent`, `untrusted`, or `ok` (a trust entry exists; Codex verifies its
   hash).
-- **Launch with `prog codex`.** Codex has no `CLAUDE_ENV_FILE`. The launcher
+- **Launch with `prog harness codex`.** Codex has no `CLAUDE_ENV_FILE`. The launcher
   installs the shims, puts them first on `PATH`, points `PROG_DIR` at the
   project's store, and passes `-c allow_login_shell=false` (a login shell
   re-runs your profile, which can put Homebrew and `~/.local/bin` ahead of the
@@ -63,7 +63,7 @@ Claude Code. Three Codex specifics:
   override replaces any `writable_roots` you configured, so use
   `--keep-codex-config` and add the store directory yourself if you have
   some). Everything after the launcher's own flags goes to `codex` unchanged:
-  `prog codex --stop-gate exec "fix the failing test"`.
+  `prog harness codex --stop-gate exec "fix the failing test"`.
 - **The stop gate is enabled by `PROG_STOP_GATE=1`**, which `--stop-gate` sets
   for the session.
 

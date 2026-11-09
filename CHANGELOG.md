@@ -63,7 +63,7 @@
   captured.
 
 - Codex support (#304): the Codex plugin now registers `SessionStart`,
-  `PostToolUse`, and `Stop` hooks (`prog harness hook codex`), and `prog codex`
+  `PostToolUse`, and `Stop` hooks (`prog harness hook codex`), and `prog harness codex`
   launches Codex with the shims first on `PATH`, `PROG_DIR` set, a non-login
   shell (`-c allow_login_shell=false`; a login profile put Homebrew tools ahead
   of the shims), and prog's store as a sandbox writable root (the

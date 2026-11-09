@@ -254,7 +254,10 @@ async fn main() -> ExitCode {
 
     // The Codex launcher replaces this process with `codex`; it only returns
     // on failure.
-    if let Command::Codex(args) = &cli.command {
+    if let Command::Harness {
+        command: HarnessCommand::Codex(args),
+    } = &cli.command
+    {
         let error = codex_launch(args);
         return write_error(
             &error,
@@ -368,6 +371,9 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
                 Ok(ExitCode::SUCCESS)
             }
             HarnessCommand::Hook(_) => unreachable!("hooks are dispatched before budgets"),
+            HarnessCommand::Codex(_) => {
+                unreachable!("the Codex launcher is dispatched before budgets")
+            }
             HarnessCommand::Log(args) => {
                 let report = harness_log_report(args)?;
                 write_success(&report, cli.pretty, ctx)?;
@@ -587,7 +593,6 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
             write_success(&delta, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::Codex(_) => unreachable!("the Codex launcher is dispatched before budgets"),
         Command::Shim { command } => {
             let report = match command {
                 ShimCommand::Install(args) => shim_install(args)?,
