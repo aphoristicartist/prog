@@ -280,6 +280,145 @@ pub fn compare_workspace(
     }
 }
 
+/// Whether any file's content differs between a captured workspace and the
+/// current one, ignoring changes that leave every file as it was: staging
+/// (`git add`), committing, or a status letter changing. This is the question
+/// "did anything a test run could see change?", not "is the Git state the
+/// same?", so it is weaker than [`compare_workspace`] and must not replace it
+/// where a comparison proves absence. It reports `Unknown` whenever it cannot
+/// read a file or a commit, or more than the dirty-file cap of paths differ.
+pub fn compare_workspace_content(
+    captured: &WorkspaceState,
+    current: &WorkspaceState,
+) -> WorkspaceComparison {
+    let strict = compare_workspace(captured, current);
+    if strict.validity != WorkspaceValidity::Changed {
+        return strict;
+    }
+    let changed = |reason: &str| WorkspaceComparison {
+        validity: WorkspaceValidity::Changed,
+        reasons: vec![reason.to_string()],
+        extra: Extra::new(),
+    };
+    let unknown = |reason: String| WorkspaceComparison {
+        validity: WorkspaceValidity::Unknown,
+        reasons: vec![reason],
+        extra: Extra::new(),
+    };
+    if captured.root != current.root
+        || captured.git_dir != current.git_dir
+        || captured.sparse_checkout != current.sparse_checkout
+        || captured.algorithm != current.algorithm
+    {
+        return changed("worktree identity changed");
+    }
+    if captured.submodules != current.submodules {
+        return changed("submodule state changed");
+    }
+    let Some(root) = current.root.as_deref().map(Path::new) else {
+        return unknown("workspace root is unknown".to_string());
+    };
+    // Content per path: `Some(digest)` for a file, `None` for a deletion.
+    let content_map = |state: &WorkspaceState| {
+        let mut map = std::collections::BTreeMap::new();
+        for entry in &state.dirty {
+            if let Some(from) = entry
+                .extra
+                .get("rename_from")
+                .and_then(|value| value.as_str())
+            {
+                map.insert(from.to_string(), None);
+            }
+            map.insert(entry.path.clone(), entry.sha256.clone());
+        }
+        map
+    };
+    let before = content_map(captured);
+    let after = content_map(current);
+    let mut paths = before
+        .keys()
+        .chain(after.keys())
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    if captured.head != current.head || captured.unborn_head != current.unborn_head {
+        let (Some(old), Some(new)) = (captured.head.as_deref(), current.head.as_deref()) else {
+            return changed("HEAD changed to or from an unborn branch");
+        };
+        match git_bytes(
+            root,
+            ["diff", "--name-only", "-z", "--no-renames", old, new],
+        ) {
+            Ok(names) => paths.extend(
+                names
+                    .split(|byte| *byte == 0)
+                    .filter(|name| !name.is_empty())
+                    .map(|name| String::from_utf8_lossy(name).into_owned()),
+            ),
+            Err(reason) => return unknown(format!("cannot diff HEAD commits: {reason}")),
+        }
+    }
+    if paths.len() > DEFAULT_DIRTY_FILE_CAP {
+        return unknown("more changed paths than the dirty-file cap".to_string());
+    }
+    for path in &paths {
+        if !workspace_relative_path_is_safe(path) {
+            return unknown(format!("unsafe path {path:?}"));
+        }
+        let was = match before.get(path) {
+            Some(content) => content.clone(),
+            None => match committed_content(root, captured.head.as_deref(), path) {
+                Ok(content) => content,
+                Err(reason) => return unknown(reason),
+            },
+        };
+        let now = match after.get(path) {
+            Some(content) => content.clone(),
+            None => match committed_content(root, current.head.as_deref(), path) {
+                Ok(content) => content,
+                Err(reason) => return unknown(reason),
+            },
+        };
+        if was != now {
+            return changed("file content changed");
+        }
+    }
+    WorkspaceComparison {
+        validity: WorkspaceValidity::Unchanged,
+        reasons: vec!["only Git metadata changed; every file has the same content".to_string()],
+        extra: Extra::new(),
+    }
+}
+
+/// The digest of `path` as committed at `head`, in the same format as dirty
+/// entries; `None` when the commit has no such file.
+fn committed_content(
+    root: &Path,
+    head: Option<&str>,
+    path: &str,
+) -> std::result::Result<Option<String>, String> {
+    let Some(head) = head else {
+        return Ok(None);
+    };
+    let object = format!("{head}:{path}");
+    let kind = match git(root, ["cat-file", "-t", object.as_str()]) {
+        Ok(kind) => kind,
+        // The commit exists (diff succeeded or HEAD is current) but has no
+        // such path: the file was absent.
+        Err(_) => return Ok(None),
+    };
+    if kind != "blob" {
+        return Err(format!("{path} is a {kind} at {head}"));
+    }
+    let size = git(root, ["cat-file", "-s", object.as_str()])?
+        .parse::<u64>()
+        .map_err(|error| error.to_string())?;
+    if size > MAX_HASH_BYTES {
+        return Err(format!("{path} exceeds the hash cap at {head}"));
+    }
+    let bytes = git_bytes(root, ["cat-file", "blob", object.as_str()])?;
+    Ok(Some(format!("sha256:{:x}", Sha256::digest(bytes))))
+}
+
 fn workspace_equivalent(captured: &WorkspaceState, current: &WorkspaceState) -> bool {
     captured.applicable == current.applicable
         && captured.algorithm == current.algorithm

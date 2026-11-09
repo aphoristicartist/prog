@@ -49,7 +49,8 @@ Related scenarios are covered where their machinery lives:
 |---|---|
 | Rerun a narrower selection | `crates/prog-cli/tests/cli.rs::verification_treats_targeted_incomplete_reruns_as_not_observed` |
 | Truncated or incomplete capture | `crates/prog-core/src/delta.rs::tests::incomplete_or_different_invocations_never_resolve`; timeouts and cancellation in `crates/prog-cli/tests/capture_lifecycle.rs` |
-| Edit files after the green run, or change files without testing | `crates/prog-cli/tests/claude_code_hook.rs::{stop_gate_blocks_until_the_fix_is_proven_and_the_workspace_is_unchanged,stop_gate_blocks_changed_files_that_were_never_tested}` |
+| Edit files after the green run | `crates/prog-cli/tests/claude_code_hook.rs::stop_gate_blocks_until_the_fix_is_proven_and_the_workspace_is_unchanged`; content-only staleness and build runs as non-evidence in `crates/prog-cli/tests/stop_gate_replay.rs::{staging_and_committing_after_a_pass_do_not_block,content_changes_through_git_still_block,a_build_after_an_edit_is_not_test_evidence}` |
+| Rerun the same command after `NOT PROVEN` | `crates/prog-cli/tests/stop_gate_replay.rs::not_proven_survives_an_identical_rerun_until_a_run_proves_the_fix` |
 
 ## Live trials
 

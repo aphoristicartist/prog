@@ -30,6 +30,17 @@ pub struct ReceiptBaseline<'a> {
     pub observation: &'a ObservationRecord,
     pub payload: &'a Value,
     pub delta: &'a ObservationDelta,
+    /// The baseline is an older failing run of the same invocation whose
+    /// failure no later run proved fixed, not the run just before the subject.
+    /// A passing rerun after `NOT PROVEN` is still compared with that failure,
+    /// so repeating a command cannot turn an unproven fix into `clean`.
+    pub earlier_failure: bool,
+}
+
+/// Whether a persisted run payload reports a failure: the command failed,
+/// timed out, or was cancelled, or a parsed test failed or errored.
+pub fn payload_reports_failure(payload: &Value) -> bool {
+    run_failed(payload) || !failing(TestPopulation::from_payload(payload).as_ref()).is_empty()
 }
 
 pub fn build_receipt(
@@ -61,7 +72,11 @@ pub fn build_receipt(
         let before = TestPopulation::from_payload(baseline.payload);
         let failed_before = run_failed(baseline.payload) || !failing(before.as_ref()).is_empty();
         if let Some(line) = comparison(baseline.delta, before.as_ref(), tests.as_ref()) {
-            lines.push(line);
+            lines.push(if baseline.earlier_failure {
+                line.replacen("vs previous run", "vs earlier failing run", 1)
+            } else {
+                line
+            });
         }
         if !failing_now && failed_before {
             verdict = if baseline.delta.assessment.can_prove_absence {

@@ -62,6 +62,22 @@
   `prog harness doctor` names those tools, because their runs are never
   captured.
 
+- Stop gate (opt-in): a replay of 1,306 real Claude Code and Codex turn ends
+  found about 1% of its blocks useful (#311). It now judges only the newest
+  test run (a later broader pass supersedes an older narrow failure), never
+  blocks on missing evidence ("files changed but no test run was captured"
+  fired whenever tests ran outside the shims and led agents to claim a project
+  had no tests), compares file content instead of Git status and HEAD (`git
+  add` and `git commit` of tested work no longer block), no longer accepts a
+  passing `cargo check`, `build`, or `clippy` as test evidence, says "build"
+  or "lint" when that is what failed, and stands aside when the final message
+  already says the tests are failing, unproven, or were not run.
+
+- Receipts: a passing rerun after `NOT PROVEN` is compared with the earlier
+  failure, not with the unproven run before it, so repeating a command can no
+  longer turn an unproven fix into a clean result (`vs earlier failing run:
+  NOT PROVEN`) (#311).
+
 - Prove fixes for `python -m unittest -v`, `go test -v` or `-json`, and Jest
   or Vitest JSON reports (`jest --json`, `vitest run --reporter=json
   --outputFile=/dev/stdout`), not only pytest and Cargo. Each provider names
