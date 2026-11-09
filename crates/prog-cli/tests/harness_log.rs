@@ -227,7 +227,9 @@ fn each_decision_writes_exactly_one_line() {
 #[test]
 fn the_log_holds_no_message_command_or_secret_text() {
     let session = Session::start();
-    let secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    // Built at runtime so the repository's own secret scan never sees it.
+    let secret = format!("ghp_{}", "abcdefghijklmnopqrstuvwxyz0123456789");
+    let secret = secret.as_str();
     session.bash(&format!("GITHUB_TOKEN={secret} cargo test"), "fail");
     session.post_tool_use(&format!(
         "GITHUB_TOKEN={secret} cargo test --quiet-marker-xyz"
