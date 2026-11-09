@@ -60,7 +60,7 @@ prog-cli  ──depends on──>  prog-adapters  ──depends on──>  prog-
 
 ## Non-negotiable invariants
 
-[`INVARIANTS.md`](INVARIANTS.md) maps fifteen invariants (I1–I15) to the exact
+[`INVARIANTS.md`](INVARIANTS.md) maps sixteen invariants (I1–I16) to the exact
 tests that execute them. **Read it before changing anything in `prog-core`.**
 The ones that most often catch people:
 

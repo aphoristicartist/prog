@@ -1,0 +1,11 @@
+
+<--- Last few GCs --->
+
+[4242:0x130008000]     1503 ms: Mark-Compact 2040.1 (2083.4) -> 2039.8 (2083.4) MB, 1201.33 / 0.00 ms  (average mu = 0.112, current mu = 0.004) allocation failure; scavenge might not succeed
+
+<--- JS stacktrace --->
+
+FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
+----- Native stack trace -----
+
+ 1: 0x100a1b2c3 node::OOMErrorHandler(char const*, v8::OOMDetails const&) [/usr/bin/node]

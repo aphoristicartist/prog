@@ -295,6 +295,7 @@
       "complete": true,
       "selection": {"scopes": ["cargo:test:lib"], "exhaustive": false},
       "normalized": {
+        "harnesses": {"started": 0, "reports": 1, "finished": 1, "unfinished": []},
         "counts": {"passed": 0, "failed": 1, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "diagnostics": [],
         "tests": [{"node_id": "module::case", "status": "failed", "evidence_stream": "stdout", "evidence_line": 2}],
@@ -319,6 +320,7 @@
       "complete": true,
       "selection": {"scopes": ["cargo:test:lib", "cargo:test:package=fixture"], "exhaustive": true},
       "normalized": {
+        "harnesses": {"started": 0, "reports": 1, "finished": 1, "unfinished": []},
         "counts": {"passed": 0, "failed": 1, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "diagnostics": [],
         "tests": [{"node_id": "module::case", "status": "failed", "evidence_stream": "stdout", "evidence_line": 2}],
@@ -343,6 +345,7 @@
       "complete": false,
       "selection": {"scopes": ["cargo:test:lib"], "exhaustive": false},
       "normalized": {
+        "harnesses": {"started": 0, "reports": 0, "finished": 0, "unfinished": []},
         "counts": {"passed": 0, "failed": 1, "error": 0, "skipped": 0, "xfailed": 0, "xpassed": 0, "executed": 1},
         "diagnostics": [],
         "tests": [{"node_id": "module::case", "status": "failed", "evidence_stream": "stdout", "evidence_line": 2}],
