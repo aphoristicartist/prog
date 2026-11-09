@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
-enum Completion {
+pub(super) enum Completion {
     Consistent,
     /// Consistent, except that the runner reported skipped or ignored tests.
     Skipped(&'static str),
@@ -34,8 +34,23 @@ pub(super) fn constrain_completion(
         Some(ProviderKind::CargoRust { program, args }) => {
             cargo_rust(result, program, args, stdout, stderr, exit_code)
         }
-        None => return,
+        // These providers decide completion while they normalize.
+        Some(
+            ProviderKind::Unittest { .. }
+            | ProviderKind::GoTest { .. }
+            | ProviderKind::JsTest { .. },
+        )
+        | None => return,
     };
+    apply_completion(result, completion);
+}
+
+/// Narrow a complete provider result by its completion check. Incomplete
+/// results are already unable to prove anything.
+pub(super) fn apply_completion(result: &mut CodingProviderResult, completion: Completion) {
+    if !result.complete {
+        return;
+    }
     match completion {
         Completion::Consistent => {}
         Completion::Skipped(reason) => {

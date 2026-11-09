@@ -488,3 +488,285 @@ fn receipts_are_small_and_never_claim_an_unproven_fix() {
         assert!(evidence.status.success(), "{}", stdout(&evidence));
     }
 }
+
+/// A fake `python3` for `python3 -m unittest` (#302). Output goes to stderr,
+/// as the real runner's does; `-v` names every test.
+const FAKE_UNITTEST: &str = r#"#!/usr/bin/env python3
+import sys
+from pathlib import Path
+state = Path(__file__).with_name("state").read_text().strip()
+verbose = "-v" in sys.argv
+SEP1, SEP2 = "=" * 70, "-" * 70
+def report(tests, summary, code, ran=None):
+    for name, status in tests:
+        if verbose:
+            print("%s (test_calc.TestCalc.%s) ... %s" % (name, name, status), file=sys.stderr)
+        else:
+            print({"ok": ".", "FAIL": "F", "ERROR": "E"}.get(status, "s"), end="", file=sys.stderr)
+    print(file=sys.stderr)
+    for name, status in tests:
+        if status in ("FAIL", "ERROR"):
+            print("%s\n%s: %s (test_calc.TestCalc.%s)\n%s\nAssertionError: 0 != 4\n" % (SEP1, status, name, name, SEP2), file=sys.stderr)
+    if summary is not None:
+        print("%s\nRan %d tests in 0.001s\n\n%s" % (SEP2, len(tests) if ran is None else ran, summary), file=sys.stderr)
+    sys.exit(code)
+states = {
+    "baseline": ([("test_add", "FAIL"), ("test_zero", "ok")], "FAILED (failures=1)", 1),
+    "fixed": ([("test_add", "ok"), ("test_zero", "ok")], "OK", 0),
+    "deleted": ([("test_zero", "ok")], "OK", 0),
+    "ignored": ([("test_add", "skipped 'later'"), ("test_zero", "ok")], "OK (skipped=1)", 0),
+    "swapped": ([("test_other", "ok"), ("test_zero", "ok")], "OK", 0),
+    "lying": ([("test_add", "ok"), ("test_zero", "ok")], "FAILED (failures=1)", 0),
+    "cut": ([("test_add", "ok"), ("test_zero", "ok")], None, 0),
+    "failfast-other": ([("test_aaa", "FAIL")], "FAILED (failures=1)", 1),
+}
+if state == "loadfail":
+    print("test_calc (unittest.loader._FailedTest.test_calc) ... ERROR\ntest_zero (test_calc.TestCalc.test_zero) ... ok\n\n%s\nRan 2 tests in 0.001s\n\nFAILED (errors=1)" % SEP2, file=sys.stderr)
+    sys.exit(1)
+report(*states[state])
+"#;
+
+/// A fake `go` for `go test` (#302): `-v` text, or `-json` events.
+const FAKE_GO: &str = r##"#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+state = Path(__file__).with_name("state").read_text().strip()
+as_json = "-json" in sys.argv
+verbose = "-v" in sys.argv or as_json
+PKG = "example.com/m/calc"
+def run(tests, package, code):
+    for name, status in tests:
+        if as_json:
+            print(json.dumps({"Action": "run", "Package": PKG, "Test": name}))
+            if status == "FAIL":
+                print(json.dumps({"Action": "output", "Package": PKG, "Test": name, "Output": "    calc_test.go:7: Add(2, 2) = 0, want 4\n"}))
+            print(json.dumps({"Action": {"PASS": "pass", "FAIL": "fail", "SKIP": "skip"}[status], "Package": PKG, "Test": name}))
+        else:
+            if verbose:
+                print("=== RUN   %s" % name)
+            if verbose or status == "FAIL":
+                print("--- %s: %s (0.00s)" % (status, name))
+            if status == "FAIL":
+                print("    calc_test.go:7: Add(2, 2) = 0, want 4")
+    if package is not None:
+        if as_json:
+            print(json.dumps({"Action": "pass" if package == "ok" else "fail", "Package": PKG}))
+        elif package == "ok":
+            print("PASS\nok  \t%s\t0.01s" % PKG)
+        else:
+            print("FAIL\nFAIL\t%s\t0.01s\nFAIL" % PKG)
+    sys.exit(code)
+states = {
+    "baseline": ([("TestAdd", "FAIL"), ("TestZero", "PASS")], "FAIL", 1),
+    "fixed": ([("TestAdd", "PASS"), ("TestZero", "PASS")], "ok", 0),
+    "deleted": ([("TestZero", "PASS")], "ok", 0),
+    "ignored": ([("TestAdd", "SKIP"), ("TestZero", "PASS")], "ok", 0),
+    "swapped": ([("TestOther", "PASS"), ("TestZero", "PASS")], "ok", 0),
+    "lying": ([("TestAdd", "PASS"), ("TestZero", "PASS")], "FAIL", 0),
+    "cut": ([("TestAdd", "PASS"), ("TestZero", "PASS")], None, 0),
+    "failfast-other": ([("TestAaa", "FAIL")], "FAIL", 1),
+}
+if state == "buildfail" and as_json:
+    # Go 1.24+ reports build failures as events (captured from Go 1.27).
+    target = "%s [%s.test]" % (PKG, PKG)
+    for event in [{"ImportPath": target, "Action": "build-output", "Output": "calc/calc.go:3:37: syntax error\n"},
+                  {"ImportPath": target, "Action": "build-fail"},
+                  {"Action": "start", "Package": PKG},
+                  {"Action": "output", "Package": PKG, "Output": "FAIL\t%s [build failed]\n" % PKG},
+                  {"Action": "fail", "Package": PKG, "FailedBuild": target}]:
+        print(json.dumps(event))
+    sys.exit(1)
+if state == "buildfail":
+    print("# %s\ncalc/calc.go:3:37: syntax error\nFAIL\t%s [build failed]\nFAIL" % (PKG, PKG))
+    sys.exit(1)
+run(*states[state])
+"##;
+
+/// A fake `jest` (#302): `--json` prints Jest 30's report; otherwise the
+/// failures-only text Jest prints in an agent session.
+const FAKE_JEST: &str = r#"#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+state = Path(__file__).with_name("state").read_text().strip()
+FILE = "/repo/src/calc.test.js"
+def report(tests, success, code, extra_files=(), prefix=""):
+    results = [{"ancestorTitles": ["calc"], "title": t, "fullName": "calc " + t, "status": s,
+                "failureMessages": ["Error: expect(received).toBe(expected)"] if s == "failed" else []} for t, s in tests]
+    count = lambda wanted: sum(1 for _, s in tests if s == wanted)
+    files = [{"name": FILE, "status": "failed" if count("failed") else "passed", "message": "", "assertionResults": results}]
+    files += list(extra_files)
+    if "--json" in sys.argv:
+        print(prefix + json.dumps({"numFailedTests": count("failed"), "numPassedTests": count("passed"),
+            "numPendingTests": count("pending"), "numTodoTests": 0, "numTotalTests": len(tests),
+            "numRuntimeErrorTestSuites": len(extra_files), "success": success, "wasInterrupted": False,
+            "testResults": files}))
+    else:
+        for t, s in tests:
+            if s == "failed":
+                print("FAIL src/calc.test.js\n  ● calc › %s\n" % t, file=sys.stderr)
+        print("Tests:       %d failed, %d passed, %d total" % (count("failed"), count("passed"), len(tests)), file=sys.stderr)
+    sys.exit(code)
+broken = {"name": "/repo/src/broken.test.js", "status": "failed", "assertionResults": [],
+          "message": "  ● Test suite failed to run\n\n    Cannot find module './nope'"}
+states = {
+    "baseline": ([("adds", "failed"), ("zero", "passed")], False, 1),
+    "fixed": ([("adds", "passed"), ("zero", "passed")], True, 0),
+    "deleted": ([("zero", "passed")], True, 0),
+    "ignored": ([("adds", "pending"), ("zero", "passed")], True, 0),
+    "swapped": ([("other", "passed"), ("zero", "passed")], True, 0),
+    "lying": ([("adds", "failed"), ("zero", "passed")], True, 0),
+    "loadfail": ([("adds", "passed"), ("zero", "passed")], False, 1, [broken]),
+    "embedded": ([("adds", "passed"), ("zero", "passed")], True, 0, (), "console.log from a test\n"),
+    "bail-other": ([("aaa", "failed")], False, 1),
+}
+if state == "cut":
+    print('{"numFailedTests": 0, "numPassedTests": 2, "testResults": [{"name": "/repo/src/calc.te')
+    sys.exit(0)
+report(*states[state])
+"#;
+
+/// #302: each new runner proves a real fix by name, and every way of making
+/// the output clean without fixing the code stays unproven.
+fn runner_matrix(tool: &Tool, argv: &[&str], fixed_name: &str, refusals: &[(&str, &str)]) {
+    let (_store, delta) = scenario(tool, argv, "fixed");
+    assert_real_fix_is_provable(&delta);
+    let store = tempfile::tempdir().unwrap();
+    let dir = store.path().to_str().unwrap();
+    tool.set_state("baseline");
+    run(dir, argv);
+    tool.set_state("fixed");
+    run(dir, argv);
+    let latest = receipt(dir, None);
+    assert_eq!(latest["verdict"], "fixed", "{latest:#}");
+    let text = latest["text"].as_str().unwrap();
+    assert!(text.contains(&format!("fixed: {fixed_name}")), "{text}");
+    for (state, reason) in refusals {
+        let (_store, delta) = scenario(tool, argv, state);
+        assert_eq!(
+            delta["assessment"]["can_prove_absence"], false,
+            "{state}: {delta:#}"
+        );
+        assert_eq!(count(&delta, "resolved"), 0, "{state}: {delta:#}");
+        assert!(
+            reasons(&delta).contains(reason),
+            "{state}: missing reason {reason:?}: {}",
+            reasons(&delta)
+        );
+    }
+}
+
+#[test]
+fn unittest_proves_a_real_fix_and_refuses_every_false_one() {
+    let python = Tool::new("python3", FAKE_UNITTEST);
+    let argv = [python.executable.as_str(), "-m", "unittest", "-v"];
+    runner_matrix(
+        &python,
+        &argv,
+        "test_calc.TestCalc.test_add",
+        &[
+            ("deleted", "test population shrank"),
+            ("ignored", "test_calc.TestCalc.test_add (skipped)"),
+            ("swapped", "test_calc.TestCalc.test_add (missing)"),
+            ("lying", "disagrees with the observed process exit"),
+            ("cut", "one unambiguous completion summary"),
+            ("loadfail", "could not import or set up some tests"),
+            ("failfast-other", "test population shrank"),
+        ],
+    );
+    // Quiet output and a filtered run never prove a fix.
+    let quiet = [python.executable.as_str(), "-m", "unittest"];
+    let (_store, delta) = scenario(&python, &quiet, "fixed");
+    assert_fake_fix_is_not_provable(&delta, "python -m unittest -v");
+    let filtered = [
+        python.executable.as_str(),
+        "-m",
+        "unittest",
+        "-v",
+        "-k",
+        "test_add",
+    ];
+    let (_store, delta) = scenario(&python, &filtered, "fixed");
+    assert_fake_fix_is_not_provable(&delta, "-k runs a subset");
+}
+
+#[test]
+fn go_test_proves_a_real_fix_and_refuses_every_false_one() {
+    let go = Tool::new("go", FAKE_GO);
+    let refusals = [
+        ("deleted", "test population shrank"),
+        ("ignored", "example.com/m/calc.TestAdd (skipped)"),
+        ("swapped", "example.com/m/calc.TestAdd (missing)"),
+        ("lying", "despite a successful process exit"),
+        ("cut", "ended before every package"),
+        ("buildfail", "could not build or set up"),
+    ];
+    for argv in [
+        [go.executable.as_str(), "test", "-v", "./..."],
+        [go.executable.as_str(), "test", "-json", "./..."],
+    ] {
+        runner_matrix(&go, &argv, "example.com/m/calc.TestAdd", &refusals);
+    }
+    let quiet = [go.executable.as_str(), "test", "./..."];
+    let (_store, delta) = scenario(&go, &quiet, "fixed");
+    assert_fake_fix_is_not_provable(&delta, "rerun with -v");
+    let filtered = [
+        go.executable.as_str(),
+        "test",
+        "-v",
+        "-run",
+        "TestAdd",
+        "./...",
+    ];
+    let (_store, delta) = scenario(&go, &filtered, "fixed");
+    assert_fake_fix_is_not_provable(&delta, "-run does not run every selected test");
+    // A fail-fast rerun that stopped at another failure never ran TestAdd.
+    let failfast = [go.executable.as_str(), "test", "-v", "-failfast", "./..."];
+    let (_store, delta) = scenario(&go, &failfast, "failfast-other");
+    assert_fake_fix_is_not_provable(&delta, "-failfast stops at the first failure");
+}
+
+#[test]
+fn jest_json_proves_a_real_fix_and_refuses_every_false_one() {
+    let jest = Tool::new("jest", FAKE_JEST);
+    let argv = [jest.executable.as_str(), "--json"];
+    runner_matrix(
+        &jest,
+        &argv,
+        "/repo/src/calc.test.js > calc > adds",
+        &[
+            ("deleted", "test population shrank"),
+            ("ignored", "/repo/src/calc.test.js > calc > adds (skipped)"),
+            ("swapped", "/repo/src/calc.test.js > calc > adds (missing)"),
+            ("lying", "reports success despite failing tests"),
+            ("cut", "summary was not observed"),
+            ("loadfail", "failed to load or run"),
+            ("embedded", "shares stdout with other output"),
+        ],
+    );
+    // Jest's agent-mode text names only failures.
+    let text = [jest.executable.as_str()];
+    let (_store, delta) = scenario(&jest, &text, "fixed");
+    assert_fake_fix_is_not_provable(&delta, "rerun with `--json`");
+    let filtered = [jest.executable.as_str(), "--json", "-t", "adds"];
+    let (_store, delta) = scenario(&jest, &filtered, "fixed");
+    assert_fake_fix_is_not_provable(&delta, "-t runs a subset");
+    // A `--bail` rerun that stopped at another failing file.
+    let bail = [jest.executable.as_str(), "--json", "--bail"];
+    let (_store, delta) = scenario(&jest, &bail, "bail-other");
+    assert_fake_fix_is_not_provable(&delta, "--bail stops after the first failing test file");
+}
+
+/// #299: `pytest -x` stops only at a failure, so a green `-x` rerun covered
+/// every test and proves the fix; a swapped test still never does.
+#[test]
+fn pytest_exitfirst_failure_is_proven_fixed_by_a_green_rerun() {
+    let pytest = Tool::new("pytest", FAKE_PYTEST);
+    let argv = [pytest.executable.as_str(), "-x", "-v"];
+    let (_store, delta) = scenario(&pytest, &argv, "fixed");
+    assert_real_fix_is_provable(&delta);
+    let (_store, delta) = scenario(&pytest, &argv, "swapped");
+    assert_fake_fix_is_not_provable(&delta, "tests/test_math.py::test_add (missing)");
+    let argv = [pytest.executable.as_str(), "--lf", "-v"];
+    let (_store, delta) = scenario(&pytest, &argv, "fixed");
+    assert_fake_fix_is_not_provable(&delta, "selection coverage is unknown or not exhaustive");
+}

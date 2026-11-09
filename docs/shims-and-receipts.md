@@ -74,9 +74,14 @@ possible follow-up.
 
 - Tools started by absolute path, or found earlier on `PATH` than the shim
   directory (for example `.venv/bin/pytest` under `uv run`, or
-  `node_modules/.bin/vitest` under `npx`), bypass their own shim. `uv` and
-  `npx` themselves are captured when their argv is progressive (`uv run ...`);
-  `python -m pytest` is not shimmed.
+  `node_modules/.bin/vitest` under `npx`), bypass their own shim. `uv` itself
+  is captured when its argv is progressive (`uv run ...`).
+- `python`, `python3`, and `npx` are not shimmed by default: a shim adds about
+  18 ms to every call (measured: `python3 -c pass` 14.7 ms direct, 32.7 ms
+  shimmed), including shebang scripts and test-suite subprocesses.
+  `prog shim install --tool python3 --tool npx` opts in; then only
+  `python -m pytest`, `python -m unittest`, and `npx jest|vitest` are
+  captured, and every other call is `exec`ed unchanged.
 - `rustc` and `git` are not shimmed by default: Cargo invokes `rustc` per
   crate, and agents call `git` constantly.
 - When stdout and stderr share a target, the capture cannot separate them and

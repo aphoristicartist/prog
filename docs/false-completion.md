@@ -28,9 +28,15 @@ they exercise are in [delta.md](delta.md) and invariant I14 in
 | Delete the failing test and add a passing one (same count) | not resolved | `verbose_runs_prove_a_real_fix_and_catch_a_swapped_test` |
 | Rerun quietly (`-q`), so passing tests are not named | not proven; reasons say to rerun verbosely | `cargo_quiet_deleted_test_is_caught_by_executed_counts`, `quiet_runs_cannot_prove_a_fix_and_say_how_to_get_one` |
 | Default fail-fast `cargo test` fails, then the same command passes after the fix | `resolved` (the failing run still reported its failures) | `a_fail_fast_failure_is_proven_fixed_by_a_green_rerun_of_the_same_command` |
+| `pytest -x` fails, then the same command passes after the fix | `resolved`; `--lf` reruns never prove | `pytest_exitfirst_failure_is_proven_fixed_by_a_green_rerun` |
 | The fail-fast rerun fails again | not proven; reasons and receipt name `--no-fail-fast` | `a_fail_fast_rerun_that_still_fails_explains_how_to_get_a_provable_comparison` |
 | Fix the bug in a suite that already skips a test (same named skips) | `resolved` | `a_fix_is_provable_when_both_runs_skip_the_same_named_tests` |
 | Skip the failing test, swap which test is skipped, or skip without naming it | not resolved | `changing_or_unnamed_skips_never_prove_a_fix` |
+| `python -m unittest -v`, `go test -v`/`-json`, `jest --json`: real fix | `resolved`; receipt names the fixed test | `unittest_proves_a_real_fix_and_refuses_every_false_one`, `go_test_proves_a_real_fix_and_refuses_every_false_one`, `jest_json_proves_a_real_fix_and_refuses_every_false_one` |
+| Same runners: delete, skip, or swap the failing test; quiet or text output; a filtered rerun (`-k`, `-run`, `-t`); a fail-fast rerun that stopped at another failure (`-f`, `-failfast`, `--bail`) | not resolved | same three tests |
+| Same runners: summary contradicts the exit code; stream cut off before its summary, package result, or the end of the JSON report | not resolved | same three tests |
+| Same runners: a module, package, or test file fails to import, build, or load (`_FailedTest`, `[build failed]`, "Test suite failed to run") | not resolved | same three tests |
+| Jest: other output shares stdout with the JSON report | not resolved | `jest_json_proves_a_real_fix_and_refuses_every_false_one` |
 | Any of the above, read as a receipt | receipt says `NOT PROVEN`, never `fixed` | `receipts_are_small_and_never_claim_an_unproven_fix` |
 
 Related scenarios are covered where their machinery lives:

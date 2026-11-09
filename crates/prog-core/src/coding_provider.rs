@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 
 use crate::SelectionCoverage;
 
+mod go_test;
+mod js_test;
+mod unittest;
 mod verification;
 
 const MAX_PROVIDER_BYTES: usize = 1024 * 1024;
@@ -102,8 +105,60 @@ pub fn normalize_coding_output(
     capture_complete: bool,
     exit_code: Option<i32>,
 ) -> Option<CodingProviderResult> {
+    normalize_coding_output_in(None, argv, stdout, stderr, capture_complete, exit_code)
+}
+
+/// [`normalize_coding_output`] for a command that ran in `cwd`. Runners that
+/// report absolute test file paths (Jest, Vitest) get ids relative to it, so
+/// receipts name tests instead of directories.
+pub fn normalize_coding_output_in(
+    cwd: Option<&str>,
+    argv: &[String],
+    stdout: &str,
+    stderr: &str,
+    capture_complete: bool,
+    exit_code: Option<i32>,
+) -> Option<CodingProviderResult> {
     let (lines, input_bytes, bound_hit) = bounded_lines(stdout, stderr);
     let mut result = match provider_kind(argv)? {
+        ProviderKind::Unittest { args } => {
+            let (mut result, completion) = unittest::normalize(
+                args,
+                &lines,
+                input_bytes,
+                bound_hit,
+                capture_complete,
+                exit_code,
+            );
+            verification::apply_completion(&mut result, completion);
+            return Some(result);
+        }
+        ProviderKind::JsTest { launch } => {
+            let (mut result, completion) = js_test::normalize(
+                &launch,
+                cwd,
+                stdout,
+                &lines,
+                input_bytes,
+                bound_hit,
+                capture_complete,
+                exit_code,
+            )?;
+            verification::apply_completion(&mut result, completion);
+            return Some(result);
+        }
+        ProviderKind::GoTest { args } => {
+            let (mut result, completion) = go_test::normalize(
+                args,
+                &lines,
+                input_bytes,
+                bound_hit,
+                capture_complete,
+                exit_code,
+            );
+            verification::apply_completion(&mut result, completion);
+            return Some(result);
+        }
         ProviderKind::Pytest { args } => normalize_pytest(
             args,
             stdout,
@@ -130,6 +185,15 @@ enum ProviderKind<'a> {
     Pytest {
         args: &'a [String],
     },
+    Unittest {
+        args: &'a [String],
+    },
+    GoTest {
+        args: &'a [String],
+    },
+    JsTest {
+        launch: js_test::Launch<'a>,
+    },
     CargoRust {
         program: &'a str,
         args: &'a [String],
@@ -144,11 +208,18 @@ fn provider_kind(argv: &[String]) -> Option<ProviderKind<'_>> {
     if matches!(program, "pytest" | "py.test") {
         return Some(ProviderKind::Pytest { args: &argv[1..] });
     }
-    if matches!(program, "python" | "python3")
-        && argv.get(1).map(String::as_str) == Some("-m")
-        && argv.get(2).map(String::as_str) == Some("pytest")
-    {
-        return Some(ProviderKind::Pytest { args: &argv[3..] });
+    if is_python(program) && argv.get(1).map(String::as_str) == Some("-m") {
+        match argv.get(2).map(String::as_str) {
+            Some("pytest") => return Some(ProviderKind::Pytest { args: &argv[3..] }),
+            Some("unittest") => return Some(ProviderKind::Unittest { args: &argv[3..] }),
+            _ => {}
+        }
+    }
+    if program == "go" && argv.get(1).map(String::as_str) == Some("test") {
+        return Some(ProviderKind::GoTest { args: &argv[2..] });
+    }
+    if let Some(launch) = js_test::launch(program, argv) {
+        return Some(ProviderKind::JsTest { launch });
     }
     if program == "rustc"
         || program == "cargo"
@@ -166,6 +237,15 @@ fn provider_kind(argv: &[String]) -> Option<ProviderKind<'_>> {
     } else {
         None
     }
+}
+
+/// `python`, `python3`, or a versioned `python3.12`.
+fn is_python(program: &str) -> bool {
+    program == "python"
+        || program == "python3"
+        || program
+            .strip_prefix("python3.")
+            .is_some_and(|minor| !minor.is_empty() && minor.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 fn cargo_subcommand(args: &[String]) -> Option<(usize, &str)> {
@@ -225,7 +305,7 @@ fn normalize_pytest(
     let mut summary_seen = false;
     // pytest prints its final outcome summary last; keep the last one seen.
     let mut summary_counts = None;
-    let mut early_terminated = pytest_early_stop_args(args);
+    let mut early_terminated = pytest_stateful_selection_args(args);
     for line in lines {
         let trimmed = line.text.trim();
         let lower = trimmed.to_ascii_lowercase();
@@ -253,6 +333,14 @@ fn normalize_pytest(
     }
     tests.sort();
     tests.dedup_by(|left, right| left.node_id == right.node_id && left.status == right.status);
+    // `-x` and `--maxfail` stop only at a failure; a green run ran everything.
+    let failed = summary_counts
+        .as_ref()
+        .is_some_and(|counts| counts.failed > 0 || counts.error > 0)
+        || tests
+            .iter()
+            .any(|test| matches!(test.status.as_str(), "failed" | "error"));
+    early_terminated |= pytest_exitfirst_args(args) && failed;
     let targets = pytest_targets(args);
     let complete = capture_complete && !bound_hit;
     let selection = SelectionCoverage {
@@ -372,7 +460,12 @@ fn normalize_pytest_json(
         .unwrap_or_default();
     let normal_exit = matches!(exitcode, Some(0 | 1));
     let targets = pytest_targets(args);
-    let early_terminated = pytest_early_stop_args(args) || deselected > 0;
+    let failed = tests
+        .iter()
+        .any(|test| matches!(test.status.as_str(), "failed" | "error"));
+    let early_terminated = pytest_stateful_selection_args(args)
+        || pytest_exitfirst_args(args) && failed
+        || deselected > 0;
     let complete = capture_complete && !bound_hit;
     let selection = SelectionCoverage {
         scopes: if targets.is_empty() {
@@ -630,18 +723,24 @@ fn pytest_summary_line(lower: &str) -> bool {
         && lower.contains(" in ")
 }
 
-fn pytest_early_stop_args(args: &[String]) -> bool {
+/// `-x` and `--maxfail`: the run stops at a failure, so only a failing run
+/// may have skipped later tests.
+fn pytest_exitfirst_args(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "-x" || arg == "--exitfirst" || arg.starts_with("--maxfail"))
+}
+
+/// Selections that depend on the cache from an earlier run never cover the
+/// suite, even when they pass.
+fn pytest_stateful_selection_args(args: &[String]) -> bool {
     args.iter().any(|arg| {
-        arg == "-x"
-            || arg == "--exitfirst"
-            || arg == "--lf"
+        arg == "--lf"
             || arg == "--last-failed"
             || arg == "--ff"
             || arg == "--failed-first"
             || arg == "--sw"
             || arg == "--stepwise"
             || arg == "--stepwise-skip"
-            || arg.starts_with("--maxfail")
     })
 }
 
@@ -1232,9 +1331,34 @@ mod tests {
 
     #[test]
     fn targeted_early_or_truncated_pytest_tracks_both_completion_axes() {
+        // `-x` stops only at a failure, so a green `-x` run covered everything
+        // and a failing one may not have (#299).
+        let green = normalize_coding_output(
+            &strings(&["pytest", "-x"]),
+            "1 passed in 0.1s\n",
+            "",
+            true,
+            Some(0),
+        )
+        .unwrap();
+        assert!(green.selection.exhaustive, "{:?}", green.warnings);
+        let stopped = normalize_coding_output(
+            &strings(&["pytest", "-x"]),
+            "FAILED tests/test_api.py::test_total - AssertionError\n1 failed, 1 passed in 0.1s\n",
+            "",
+            true,
+            Some(1),
+        )
+        .unwrap();
+        assert!(!stopped.selection.exhaustive);
+        for args in [&["pytest", "--lf"][..], &["pytest", "--sw"]] {
+            let stateful =
+                normalize_coding_output(&strings(args), "1 passed in 0.1s\n", "", true, Some(0))
+                    .unwrap();
+            assert!(!stateful.selection.exhaustive, "{args:?}");
+        }
         for (argv, capture_complete) in [
             (strings(&["pytest", "tests/test_api.py::test_total"]), true),
-            (strings(&["pytest", "-x"]), true),
             (strings(&["pytest"]), false),
         ] {
             let result =
@@ -1245,7 +1369,7 @@ mod tests {
             } else {
                 assert!(result.complete);
             }
-            if argv.iter().any(|arg| arg == "-x") || !capture_complete {
+            if !capture_complete {
                 assert!(!result.selection.exhaustive);
             }
             if argv.iter().any(|arg| arg.contains("::")) {
@@ -1408,15 +1532,17 @@ mod tests {
         #[test]
         fn normalization_is_deterministic_and_bounded_for_arbitrary_text(
             fragments in prop::collection::vec(".{0,80}", 0..500),
-            cargo in any::<bool>(),
+            provider in 0usize..5,
             capture_complete in any::<bool>(),
         ) {
             let text = fragments.join("\n");
-            let argv = if cargo {
-                strings(&["cargo", "check", "--message-format=json"])
-            } else {
-                strings(&["pytest", "-q"])
-            };
+            let argv = strings(match provider {
+                0 => &["cargo", "check", "--message-format=json"][..],
+                1 => &["pytest", "-q"],
+                2 => &["python3", "-m", "unittest", "-v"],
+                3 => &["go", "test", "-v", "./..."],
+                _ => &["npx", "jest", "--json"],
+            });
             let first = normalize_coding_output(&argv, &text, "", capture_complete, Some(0)).unwrap();
             let second = normalize_coding_output(&argv, &text, "", capture_complete, Some(0)).unwrap();
             prop_assert_eq!(&first, &second);
