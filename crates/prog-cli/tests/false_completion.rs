@@ -916,7 +916,6 @@ fn skips_the_baseline_may_have_run_never_prove_a_fix() {
     }
 }
 
-
 /// #312: `uv run pytest` is judged as the pytest run it is. uv's own
 /// environment lines on stderr change nothing, every false fix still
 /// refuses, and an option whose arity prog does not know is never guessed.
