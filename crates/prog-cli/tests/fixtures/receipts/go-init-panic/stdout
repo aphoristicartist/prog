@@ -1,0 +1,7 @@
+panic: init boom
+
+goroutine 1 [running]:
+example.com/m.init.0()
+	/repo/m.go:3 +0x2c
+FAIL	example.com/m	0.364s
+FAIL

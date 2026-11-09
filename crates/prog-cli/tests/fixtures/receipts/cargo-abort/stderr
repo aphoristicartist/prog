@@ -1,0 +1,6 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running unittests src/lib.rs (/repo/target/debug/deps/abort1-4361944218f57c0c)
+error: test failed, to rerun pass `--lib`
+
+Caused by:
+  process didn't exit successfully: `/repo/target/debug/deps/abort1-4361944218f57c0c` (signal: 6, SIGABRT: process abort signal)

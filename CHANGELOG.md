@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Receipts no longer understate failures (#313). A run that fails without a
+  failing test (a crashed test binary, a compile or lint error, a pytest
+  collection or internal error, a Go `init` panic) reads `failure not
+  attributed to a test` instead of `0 failed`, and names a Cargo harness that
+  started but never reported. The first-failure line now names the real
+  error: a located compiler or lint diagnostic, the crashed target and its
+  signal, a doctest's assertion, or a Python exception, never a `Compiling`,
+  `Checking`, `Running`, or `rootdir:` line. Build and lint runs say `first
+  error`. New invariant I16; the Cargo provider records `harnesses` (started,
+  reported, and unfinished test binaries).
+
 - Prove fixes for `python -m unittest -v`, `go test -v` or `-json`, and Jest
   or Vitest JSON reports (`jest --json`, `vitest run --reporter=json
   --outputFile=/dev/stdout`), not only pytest and Cargo. Each provider names

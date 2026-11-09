@@ -112,6 +112,23 @@ vs previous run: fixed: tests::adds
 evidence: prog evidence pc1_… --path /stdout
 ```
 
+A run can fail without any failing test: a test binary crashes, the build or
+a lint fails, or the runner errors before it reports. The receipt never reads
+as `0 failed` then (invariant I16). It says the failure was not attributed to
+a test, names a Cargo harness that started but never reported, and its first
+line names the real error with its location. Build and lint runs say
+`first error`:
+
+```text
+prog: `cargo test --no-fail-fast` · exit 101 · 2 passed, failure not attributed to a test (tests/a.rs did not finish) · full output kept (30 lines)
+first failure: `--test a` crashed (signal: 6, SIGABRT: process abort signal)
+```
+
+```text
+prog: `cargo clippy -- -D warnings` · exit 101 · full output kept (17 lines)
+first error: src/lib.rs:1:20: error: writing `&Vec` instead of `&[_]` involves a new object where a slice wi…
+```
+
 `verdict` is `failing`, `fixed`, `not_proven`, or `clean`. `fixed` requires the
 delta's absence proof, including the test-population rule in
 [delta.md](delta.md): a clean rerun after deleting, skipping, or ignoring the
