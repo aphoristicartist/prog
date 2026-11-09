@@ -18,7 +18,9 @@ eval "$(prog shim env --project "$PWD" --shell)"
 
 `prog shim install` writes a two-line `sh` script per tool (`cargo`, `pytest`,
 `py.test`, `go`, `npm`, `pnpm`, `yarn`, `bun`, `deno`, `jest`, `vitest`,
-`playwright`, `tsc`, `ruff`, `biome`, `uv`; `--tool` picks others):
+`playwright`, `tsc`, `ruff`, `biome`, `uv`, and `npx`, `python3`, `python`
+when the real tool exists; `--tool` picks others, and
+`PROG_SHIM_SKIP=python,python3` leaves defaults out and removes their shims):
 
 ```sh
 #!/bin/sh
@@ -72,16 +74,28 @@ possible follow-up.
 
 ### Limits
 
-- Tools started by absolute path, or found earlier on `PATH` than the shim
-  directory (for example `.venv/bin/pytest` under `uv run`, or
-  `node_modules/.bin/vitest` under `npx`), bypass their own shim. `uv` itself
-  is captured when its argv is progressive (`uv run ...`).
-- `python`, `python3`, and `npx` are not shimmed by default: a shim adds about
-  18 ms to every call (measured: `python3 -c pass` 14.7 ms direct, 32.7 ms
-  shimmed), including shebang scripts and test-suite subprocesses.
-  `prog shim install --tool python3 --tool npx` opts in; then only
-  `python -m pytest`, `python -m unittest`, and `npx jest|vitest` are
-  captured, and every other call is `exec`ed unchanged.
+- Runners started through another tool are captured as that tool's run:
+  `uv run pytest` (judged as the `pytest` it runs), `npx vitest run`,
+  `npx playwright test`, `pnpm exec vitest`, `npm x jest`, `pnpm vitest`,
+  `yarn jest`, and `python3 -m pytest|unittest`. Their nested runner never
+  sees its own shim.
+- `python`, `python3`, and `npx` are shimmed by default only when the real
+  tool exists, so `command -v python` still fails where there is no
+  `python`. A shim adds a fixed cost to every call, including shebang scripts
+  and test-suite subprocesses: on an Apple Silicon Mac under load, a shimmed
+  `/usr/bin/true` took 19.2 ms against 2.0 ms direct (about 7 ms of it is
+  starting `/bin/sh`), and `python3 -c pass` 38.0 ms against 29.6 ms
+  (hyperfine, 300 runs). Only `python -m pytest`, `python -m unittest`, and
+  `npx jest|vitest|playwright test` are captured; every other call is
+  `exec`ed unchanged. `PROG_SHIM_SKIP=python,python3,npx` opts out.
+- Some runs can never reach a PATH shim: a command that sets its own `PATH`
+  (`PATH=/opt/node/bin:$PATH npm test`), a tool started by absolute or
+  relative path (`.venv/bin/pytest`, `./node_modules/.bin/vitest`), and a
+  login shell whose profile prepends other directories after the shims were
+  activated (Codex runs commands with `zsh -lc` by default, so Homebrew tools
+  resolve first; Codex's `-c allow_login_shell=false` avoids it, and the
+  `prog codex` launcher planned in #304 sets it). `prog harness doctor` names
+  each installed shim that `PATH` resolves past, and what runs instead.
 - `rustc` and `git` are not shimmed by default: Cargo invokes `rustc` per
   crate, and agents call `git` constantly.
 - When stdout and stderr share a target, the capture cannot separate them and

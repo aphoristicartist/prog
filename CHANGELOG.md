@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Capture more of the test runs agents actually make (#312). Runners
+  started through a package manager are now test runs:
+  - `pnpm exec`, `npm exec`/`npm x`, and `bun x` with `vitest`, `jest`, or
+    `playwright test`;
+  - `pnpm vitest` and `yarn jest`;
+  - `npx playwright test`.
+
+  `uv run [options] <command>` is judged as the command it runs, so
+  `uv run pytest -v` and `uv run -m pytest` prove fixes like `pytest -v`.
+  An option whose arity prog does not know leaves the run unjudged. `npx`,
+  `python3`, and `python` are now shimmed by default when the real tool
+  exists; a shimmed call that is not captured costs about 8–17 ms, and
+  `PROG_SHIM_SKIP=python,python3,npx` opts out and removes those shims.
+  `prog shim list` reports what `PATH` runs instead of a shadowed shim, and
+  `prog harness doctor` names those tools, because their runs are never
+  captured.
+
 - Prove fixes for `python -m unittest -v`, `go test -v` or `-json`, and Jest
   or Vitest JSON reports (`jest --json`, `vitest run --reporter=json
   --outputFile=/dev/stdout`), not only pytest and Cargo. Each provider names
