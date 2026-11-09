@@ -33,6 +33,18 @@
   error`. New invariant I16; the Cargo provider records `harnesses` (started,
   reported, and unfinished test binaries).
 
+- Judge Playwright and `bun test` runs (#312). `playwright test
+  --reporter=json` (directly, through `npx`, `pnpm exec`, or a package
+  script) names every test and proves fixes like Jest JSON; a `test.fail()`
+  test, a test that passed only on retry, and a run stopped by
+  `-x`/`--max-failures` never prove one. The `list`, `line`, and `dot`
+  reporters give failures with their error and counts. `bun test` gives the
+  failing tests, their errors, and counts, but never proves a fix: Bun 1.3
+  names only failures in agent sessions. Package scripts that are not Jest
+  or Vitest (`npm test`, `npm run e2e`) are judged when their output is
+  recognizably Playwright's or Bun's. Checked against Playwright 1.65.0 and
+  Bun 1.3.14.
+
 - Capture more of the test runs agents actually make (#312). Runners
   started through a package manager are now test runs:
   - `pnpm exec`, `npm exec`/`npm x`, and `bun x` with `vitest`, `jest`, or

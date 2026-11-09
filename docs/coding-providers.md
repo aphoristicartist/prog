@@ -38,11 +38,22 @@ missing test means it did not run:
 | Go | `go test -v`, `go test -json` | `go test` without `-v` or `-json`, `-run`, `-skip`, `-list` |
 | Jest | `jest --json` (also through `npx` or `npm test -- --json`) | any text output, `-t`, `--onlyChanged`, `--shard` |
 | Vitest | `vitest run --reporter=json --outputFile=/dev/stdout` | any text output, `--reporter=json` without `--outputFile=/dev/stdout`, `-t`, `--changed` |
+| Playwright | `playwright test --reporter=json` (also through `npx`, `pnpm exec`, or a package script) | the `list`, `line`, and `dot` reporters, `--grep`, `--project`, `file:line`, `--last-failed`, `--only-changed`, `--shard`, a flaky test that passed only on retry, a `test.fail()` test, a failing `-x` run |
+| Bun | never: `bun test` names only failures in agent sessions and has no stdout report | every `bun test` run gives failures and counts only |
+
+`uv run [options] <command>` is judged as the command it runs, so
+`uv run pytest -v` and `uv run -m pytest -v` prove a fix exactly like
+`pytest -v`. A package script (`npm test`, `npm run e2e`) is judged by the
+runner its output shows: Jest or Vitest, then Playwright, then Bun.
 
 Jest 30 and Vitest 5 switch to a failures-only reporter when they detect an AI
 agent (`CLAUDECODE`, `CODEX_THREAD_ID`, `AI_AGENT`, ...). Their text output then
 never names passing tests, even with `--verbose`, so only the JSON report can
-prove a fix. Vitest 5 writes `--reporter=json` to `.vitest/json/output.json`
+prove a fix. Bun 1.3 does the same for `bun test` and has no report on stdout.
+Playwright's `list` reporter names passing tests, but `line` and `dot` do not,
+and their summary counts a `test.fail()` test that failed as passed, so only
+`--reporter=json` proves a fix (checked against Playwright 1.65.0 and Bun
+1.3.14). Vitest 5 writes `--reporter=json` to `.vitest/json/output.json`
 unless `--outputFile=/dev/stdout` is given; prog never reads report files.
 
 Runs that stop at the first failure (`cargo test` without `--no-fail-fast`,
