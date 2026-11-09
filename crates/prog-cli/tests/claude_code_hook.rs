@@ -357,12 +357,16 @@ fn plugin_script_fails_open_with_an_older_or_broken_prog() {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child
+        // A fake prog that exits without reading stdin (`exit 2`) may close
+        // the pipe before this write; the script's own result is what counts.
+        let written = child
             .stdin
             .take()
             .unwrap()
-            .write_all(br#"{"hook_event_name":"Stop"}"#)
-            .unwrap();
+            .write_all(br#"{"hook_event_name":"Stop"}"#);
+        if let Err(error) = written {
+            assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{fake_prog}");
+        }
         let output = child.wait_with_output().unwrap();
         assert!(output.status.success(), "{fake_prog}: {:?}", output.status);
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{fake_prog}");
