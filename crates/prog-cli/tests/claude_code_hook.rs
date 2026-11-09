@@ -250,25 +250,26 @@ fn stop_gate_blocks_until_the_fix_is_proven_and_the_workspace_is_unchanged() {
     );
 }
 
+/// Changed files with no captured test run are missing evidence, not a
+/// contradiction: tests may have run outside the shims (#311).
 #[test]
-fn stop_gate_blocks_changed_files_that_were_never_tested() {
+fn stop_gate_never_blocks_changed_files_without_a_captured_run() {
     let session = Session::start();
-    // Nothing changed and nothing ran: nothing to gate.
     assert_eq!(session.stop(false), None);
     fs::write(session.project.path().join("lib.rs"), "fn main() { 1; }\n").unwrap();
-    let blocked = session.stop(false).unwrap();
-    assert_eq!(blocked["decision"], "block");
-    assert!(
-        blocked["reason"]
-            .as_str()
-            .unwrap()
-            .contains("files changed this session but no test run was captured"),
-        "{blocked:#}"
-    );
-    assert_eq!(session.stop(true), None, "blocks at most once in a row");
-    // A passing run after the change satisfies the gate.
+    assert_eq!(session.stop(false), None);
+    // Once a run is captured, a later change is judged against it.
     session.bash("cargo test --no-fail-fast 2>&1 | tail -1", "fixed");
     assert_eq!(session.stop(false), None);
+    fs::write(session.project.path().join("lib.rs"), "fn main() { 2; }\n").unwrap();
+    let stale = session.stop(false).unwrap();
+    assert!(
+        stale["reason"]
+            .as_str()
+            .unwrap()
+            .contains("files changed after the last passing test run"),
+        "{stale:#}"
+    );
 }
 
 /// A test run that no provider parses (`npm test`) still means tests ran: the

@@ -159,7 +159,7 @@ input on stdin:
 |---|---|
 | `SessionStart` | Installs shims, appends `PATH` and a per-project `PROG_DIR` to `CLAUDE_ENV_FILE`, records when the session first started (resume and compaction keep that time, so earlier runs stay gated). The store lives under `~/.local/state/prog/projects/`, outside the project, so captures never count as workspace changes. |
 | `PostToolUse` / `PostToolUseFailure` (Bash) | Adds pending receipts as `additionalContext`. The tool output itself is never changed. |
-| `Stop` (opt-in) | When the `stop_gate` plugin setting is on, blocks once if the head of any test-run chain from this session is failing or not proven, or if files changed after the last passing run. `stop_hook_active` lets the next stop through, so the agent can always explain and finish. |
+| `Stop` (opt-in) | When the `stop_gate` plugin setting is on, blocks once if this session's newest test run is failing or not proven, if a file's content changed after that run passed, or if the newest lint run (or a build run newer than every test run) is failing. Only the newest run of each kind counts, so a later broader pass supersedes an older narrow failure. It never blocks on missing evidence (files changed, no run captured), because tests may have run outside the shims, and staging or committing what was tested is not a change. It stands aside when the final message already says the tests are failing, unproven, or were not run. `stop_hook_active` lets the next stop through, so the agent can always explain and finish. |
 
 Every unexpected condition produces no output and exit status 0. The plugin is
 covered end to end by `crates/prog-cli/tests/claude_code_hook.rs`, which feeds

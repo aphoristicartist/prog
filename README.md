@@ -110,9 +110,10 @@ deleted, skipped, ignored, swapped, and quiet-mode tests never come out as
 fixed for each of them, and that real fixes still do.
 
 The optional **stop gate** (Claude Code plugin setting `stop_gate`) blocks the
-end of a turn once when the latest test run is failing or unproven, when files
-changed after the last passing run, or when files changed and no test ran. It
-never blocks twice in a row, so the agent can always explain and stop.
+end of a turn once when the newest test run is failing or unproven, or when
+files changed after it passed. It never blocks on missing evidence or twice in
+a row, and stands aside when the final message says the tests are still open,
+so the agent can always explain and stop.
 
 For scripted loops, `prog delta <before> <after>` classifies every finding as
 `new`, `persisting`, `resolved`, `not_observed`, or `unknown`, and reports

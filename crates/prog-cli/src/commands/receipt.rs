@@ -4,8 +4,8 @@ use std::fs;
 
 use crate::*;
 use prog_core::{
-    ObservationRecord, RECEIPT_SCHEMA, Receipt, ReceiptBaseline, ReceiptList, ReceiptSubject,
-    ReceiptVerdict, build_receipt,
+    ObservationDelta, ObservationRecord, PersistedPayload, RECEIPT_SCHEMA, Receipt,
+    ReceiptBaseline, ReceiptList, ReceiptSubject, ReceiptVerdict, build_receipt,
 };
 
 /// Newest observations a single `--since`/`--pending` receipt request covers.
@@ -123,40 +123,110 @@ fn receipt_for(store: &Store, observation: &ObservationRecord) -> Result<Receipt
         });
     };
     let cursor = receipt_cursor(store, observation)?;
-    // The store links each capture to the previous capture of the same
-    // canonical invocation; that is the only automatic comparison partner.
-    let previous = match &observation.lineage.supersedes_id {
-        Some(id) => store.get_observation(id)?,
-        None => None,
-    };
-    let previous = match previous {
-        Some(previous) => match store.get_payload(&previous.payload_hash)? {
-            Some(previous_payload) => {
-                let delta = compare_observation_ids(
-                    store,
-                    &previous.observation_id,
-                    &observation.observation_id,
-                )?;
-                Some((previous, previous_payload, delta))
-            }
-            None => None,
-        },
-        None => None,
-    };
+    let baseline = comparison_baseline(store, observation)?;
     Ok(build_receipt(
         ReceiptSubject {
             observation,
             payload: payload.as_value(),
             cursor: cursor.as_deref(),
         },
-        previous
-            .as_ref()
-            .map(|(previous, previous_payload, delta)| ReceiptBaseline {
-                observation: previous,
-                payload: previous_payload.as_value(),
-                delta,
-            }),
+        baseline.as_ref().map(Baseline::as_receipt_baseline),
     ))
+}
+
+/// What a run is compared with in its receipt and in the stop gate.
+pub(crate) struct Baseline {
+    observation: ObservationRecord,
+    payload: PersistedPayload,
+    delta: ObservationDelta,
+    earlier_failure: bool,
+}
+
+impl Baseline {
+    pub(crate) fn as_receipt_baseline(&self) -> ReceiptBaseline<'_> {
+        ReceiptBaseline {
+            observation: &self.observation,
+            payload: self.payload.as_value(),
+            delta: &self.delta,
+            earlier_failure: self.earlier_failure,
+        }
+    }
+}
+
+/// How far back a chain is searched for a failure no run has proven fixed.
+const MAX_UNRESOLVED_HOPS: usize = 8;
+
+/// The store links each capture to the previous capture of the same canonical
+/// invocation; that is the only automatic comparison partner. When that
+/// previous run passed without proving an earlier failure fixed (`NOT
+/// PROVEN`), the comparison partner is that earlier failure instead, so an
+/// identical rerun cannot turn an unproven fix into a clean result.
+pub(crate) fn comparison_baseline(
+    store: &Store,
+    observation: &ObservationRecord,
+) -> Result<Option<Baseline>> {
+    let Some((previous, previous_payload)) = previous_run(store, observation)? else {
+        return Ok(None);
+    };
+    let (baseline, payload, earlier_failure) =
+        if prog_core::payload_reports_failure(previous_payload.as_value()) {
+            (previous, previous_payload, false)
+        } else {
+            match unresolved_failure(store, &previous, MAX_UNRESOLVED_HOPS)? {
+                Some((failure, failure_payload)) => (failure, failure_payload, true),
+                None => (previous, previous_payload, false),
+            }
+        };
+    let delta =
+        compare_observation_ids(store, &baseline.observation_id, &observation.observation_id)?;
+    Ok(Some(Baseline {
+        observation: baseline,
+        payload,
+        delta,
+        earlier_failure,
+    }))
+}
+
+fn previous_run(
+    store: &Store,
+    observation: &ObservationRecord,
+) -> Result<Option<(ObservationRecord, PersistedPayload)>> {
+    let Some(id) = &observation.lineage.supersedes_id else {
+        return Ok(None);
+    };
+    let Some(previous) = store.get_observation(id)? else {
+        return Ok(None);
+    };
+    Ok(store
+        .get_payload(&previous.payload_hash)?
+        .map(|payload| (previous, payload)))
+}
+
+/// The failing run that the passing `run` was compared with, when that
+/// comparison could not prove the failure fixed.
+fn unresolved_failure(
+    store: &Store,
+    run: &ObservationRecord,
+    hops: usize,
+) -> Result<Option<(ObservationRecord, PersistedPayload)>> {
+    if hops == 0 {
+        return Ok(None);
+    }
+    let Some((previous, previous_payload)) = previous_run(store, run)? else {
+        return Ok(None);
+    };
+    let failure = if prog_core::payload_reports_failure(previous_payload.as_value()) {
+        Some((previous, previous_payload))
+    } else {
+        unresolved_failure(store, &previous, hops - 1)?
+    };
+    let Some((failure, failure_payload)) = failure else {
+        return Ok(None);
+    };
+    let proven = compare_observation_ids(store, &failure.observation_id, &run.observation_id)?
+        .assessment
+        .can_prove_absence;
+    Ok((!proven).then_some((failure, failure_payload)))
 }
 
 /// Mint a cursor only when the observation still owns its cache entry, so the

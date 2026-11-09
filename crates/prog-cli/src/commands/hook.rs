@@ -3,9 +3,10 @@
 //!
 //! It never modifies a tool's output. It activates PATH shims, injects the
 //! compact receipt of new captures as `additionalContext`, and, only when the
-//! user enables it, blocks the end of a turn once while this session's latest
-//! test run is failing, unproven, or older than the workspace, or while the
-//! session has changed files without running any test.
+//! user enables it, blocks the end of a turn once while this session's newest
+//! test run is failing, unproven, or older than the files it tested, or its
+//! newest build or lint run is failing. It never blocks on missing evidence,
+//! and stands aside when the final message already says verification is open.
 //!
 //! Every unexpected condition fails open: no output, exit 0.
 
@@ -15,11 +16,11 @@ use std::{
 };
 
 use crate::commands::{
-    receipt::receipt_report,
+    receipt::{Baseline, comparison_baseline, receipt_report},
     shim::{PENDING_RECEIPTS_DIR, default_shim_dir, project_store_dir, shim_env, shim_install},
 };
 use crate::*;
-use prog_core::{ReceiptBaseline, ReceiptSubject, ReceiptVerdict, TestPopulation, build_receipt};
+use prog_core::{ReceiptSubject, ReceiptVerdict, TestPopulation, build_receipt};
 
 const MAX_HOOK_INPUT_BYTES: u64 = 1024 * 1024;
 const SESSIONS_DIR: &str = "claude-sessions";
@@ -153,11 +154,26 @@ fn stop_gate_enabled() -> bool {
         .any(|value| matches!(value.to_str(), Some("1" | "true")))
 }
 
-/// The reason to keep working, or `None` to let the turn end. Considers only
-/// test runs captured during this session, and blocks at most once in a row
-/// (`stop_hook_active`), so the agent can always explain and finish.
+/// The reason to keep working, or `None` to let the turn end.
+///
+/// Only test, build, and lint runs captured during this session count, and
+/// only the newest of them decides: an older run of a different invocation
+/// (`cargo test -p a adds`) is superseded by a later broader one (`cargo
+/// test`) even though the store keeps them in separate chains. The gate never
+/// blocks on missing evidence (no run captured): that misfires whenever tests
+/// ran outside prog's shims. A failing build or lint run blocks while it is
+/// the newest of its kind. It blocks at most once in a row
+/// (`stop_hook_active`), and not at all when the final message already tells
+/// the user the tests are failing, unproven, or were not run.
 fn stop_gate(input: &Value, store_dir: &Path) -> Option<String> {
     if input["stop_hook_active"].as_bool() == Some(true) {
+        return None;
+    }
+    if input
+        .get("last_assistant_message")
+        .and_then(Value::as_str)
+        .is_some_and(discloses_open_verification)
+    {
         return None;
     }
     let session = input.get("session_id")?.as_str()?;
@@ -165,11 +181,9 @@ fn stop_gate(input: &Value, store_dir: &Path) -> Option<String> {
         return None;
     }
     let marker = fs::read_to_string(store_dir.join(SESSIONS_DIR).join(session)).ok()?;
-    let (started, session_workspace) = parse_session_marker(&marker)?;
+    let (started, _) = parse_session_marker(&marker)?;
     let store = Store::open_silently(store_dir).ok()?;
-    // Test runs captured this session; each command's reruns form a lineage
-    // chain, and only the head of every chain says where things stand now.
-    let session_captures = store
+    let mut runs = store
         .list_observations(100)
         .ok()?
         .observations
@@ -178,57 +192,58 @@ fn stop_gate(input: &Value, store_dir: &Path) -> Option<String> {
             chrono::DateTime::parse_from_rfc3339(&observation.captured_at)
                 .is_ok_and(|captured| captured >= started)
         })
-        .collect::<Vec<_>>();
-    // A test, build, or lint run whose output no provider parses (`npm test`,
-    // `go test`) still means tests ran; it only cannot be judged here.
-    let unjudged_verification_run = session_captures.iter().any(is_verification_run);
-    let runs = session_captures
-        .into_iter()
         .filter_map(|observation| {
             let payload = store.get_payload(&observation.payload_hash).ok()??;
             TestPopulation::from_payload(payload.as_value())?;
-            Some((observation, payload))
+            let kind = RunKind::of(payload.as_value());
+            Some((observation, payload, kind))
         })
         .collect::<Vec<_>>();
-    let superseded = runs
-        .iter()
-        .filter_map(|(observation, _)| observation.lineage.supersedes_id.clone())
-        .collect::<std::collections::BTreeSet<_>>();
-    let heads = runs
-        .iter()
-        .filter(|(observation, _)| !superseded.contains(&observation.observation_id))
-        .collect::<Vec<_>>();
-    for (observation, payload) in &heads {
-        let receipt = receipt_for_head(&store, observation, payload.as_value());
-        let lead = match receipt.verdict {
-            ReceiptVerdict::Failing => "the latest test run is failing",
-            ReceiptVerdict::NotProven => {
-                "the latest test run does not prove the earlier failure fixed"
-            }
-            ReceiptVerdict::Fixed | ReceiptVerdict::Clean => continue,
+    // `captured_at` has one-second resolution; the run's own end time orders
+    // runs that finished within the same second.
+    runs.sort_by(|(left, left_payload, _), (right, right_payload, _)| {
+        run_end(right, right_payload.as_value()).cmp(&run_end(left, left_payload.as_value()))
+    });
+
+    // The newest run of each kind is what stands now. A lint run is
+    // superseded only by a newer lint run; a build run also by a newer test
+    // run, which compiles the same code.
+    let newest = |kind: RunKind| runs.iter().position(|(_, _, run_kind)| *run_kind == kind);
+    let newest_test = newest(RunKind::Test);
+    for (kind, label) in [(RunKind::Lint, "lint"), (RunKind::Build, "build")] {
+        let Some(index) = newest(kind) else {
+            continue;
         };
+        if kind == RunKind::Build && newest_test.is_some_and(|test| test < index) {
+            continue;
+        }
+        let (observation, payload, _) = &runs[index];
+        let receipt = receipt_for(&store, observation, payload.as_value());
+        if receipt.verdict == ReceiptVerdict::Failing {
+            return Some(format!(
+                "prog stop gate: the latest {label} run is failing. Fix it, or tell the user plainly why it is still open.\n{}",
+                receipt.text
+            ));
+        }
+    }
+    let (observation, payload, _) = &runs[newest_test?];
+    let receipt = receipt_for(&store, observation, payload.as_value());
+    let lead = match receipt.verdict {
+        ReceiptVerdict::Failing => Some("the latest test run is failing"),
+        ReceiptVerdict::NotProven => {
+            Some("the latest test run does not prove the earlier failure fixed")
+        }
+        ReceiptVerdict::Fixed | ReceiptVerdict::Clean => None,
+    };
+    if let Some(lead) = lead {
         return Some(format!(
             "prog stop gate: {lead}. Fix it, or tell the user plainly why it is still open.\n{}",
             receipt.text
         ));
     }
-    // No test ran this session: block only if the session changed files.
-    let Some((newest, _)) = heads.first() else {
-        if unjudged_verification_run {
-            return None;
-        }
-        let workspace = session_workspace?;
-        let current = workspace
-            .root
-            .as_deref()
-            .map(prog_core::capture_workspace)?;
-        let comparison = prog_core::compare_workspace(&workspace, &current);
-        return (comparison.validity == prog_core::WorkspaceValidity::Changed).then(|| {
-            "prog stop gate: files changed this session but no test run was captured; run the tests, or tell the user plainly that they were not run.".to_string()
-        });
-    };
-    // Every chain is green: make sure nothing changed after the newest run.
-    let captured_workspace = newest.workspace_state.as_ref()?;
+    // The newest test run passed: block only if a file's content changed
+    // after it. Staging or committing what was tested changes no content.
+    let captured_workspace = observation.workspace_state.as_ref()?;
     if !captured_workspace.applicable {
         return None;
     }
@@ -236,30 +251,112 @@ fn stop_gate(input: &Value, store_dir: &Path) -> Option<String> {
         .root
         .as_deref()
         .map(prog_core::capture_workspace)?;
-    let comparison = prog_core::compare_workspace(captured_workspace, &current);
+    let comparison = prog_core::compare_workspace_content(captured_workspace, &current);
     (comparison.validity == prog_core::WorkspaceValidity::Changed).then(|| {
         "prog stop gate: files changed after the last passing test run; rerun the tests (or tell the user they were not rerun) before finishing.".to_string()
     })
 }
 
-/// Whether an observation is a `run` of a test, build, or lint command,
-/// judged from its recorded (redacted) argv.
-fn is_verification_run(observation: &prog_core::ObservationRecord) -> bool {
-    observation.source_id == "run"
-        && observation
-            .provenance
-            .as_ref()
-            .and_then(|provenance| provenance.extra.get("run"))
-            .and_then(|run| run.get("argv"))
+/// Whether a captured run executes tests, or only builds or lints code.
+/// A passing build or lint run is no evidence that tests pass, so it never
+/// satisfies the gate's staleness check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunKind {
+    Test,
+    Build,
+    Lint,
+}
+
+impl RunKind {
+    fn of(payload: &Value) -> Self {
+        let argv = payload
+            .pointer("/command/argv")
             .and_then(Value::as_array)
-            .is_some_and(|argv| {
-                let argv = argv
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect::<Vec<_>>();
-                prog_core::is_verification_command(&argv)
-            })
+            .map(|argv| argv.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let program = argv
+            .first()
+            .and_then(|program| Path::new(program).file_name())
+            .and_then(|name| name.to_str());
+        let subcommand = argv
+            .iter()
+            .skip(1)
+            .find(|arg| !arg.starts_with('+'))
+            .copied();
+        match (program, subcommand) {
+            (Some("rustc"), _) | (Some("cargo"), Some("build" | "check" | "rustc")) => Self::Build,
+            (Some("cargo"), Some("clippy")) => Self::Lint,
+            _ => Self::Test,
+        }
+    }
+}
+
+/// When a run ended, for ordering runs captured within the same second.
+fn run_end(observation: &prog_core::ObservationRecord, payload: &Value) -> (String, String) {
+    let ended = payload
+        .pointer("/command/ended_at")
+        .and_then(Value::as_str)
+        .and_then(|ended| chrono::DateTime::parse_from_rfc3339(ended).ok())
+        .or_else(|| chrono::DateTime::parse_from_rfc3339(&observation.captured_at).ok())
+        .map(|time| {
+            time.with_timezone(&Utc)
+                .to_rfc3339_opts(SecondsFormat::Nanos, true)
+        })
+        .unwrap_or_default();
+    (ended, observation.observation_id.clone())
+}
+
+/// Phrases with which a final message tells the user that verification is
+/// still open. Matched case-insensitively as plain substrings; a match makes
+/// the gate stand aside, because the user has already been told.
+const OPEN_VERIFICATION_PHRASES: &[&str] = &[
+    "still fail",
+    "still broken",
+    "still red",
+    "not fixed",
+    "isn't fixed",
+    "is not fixed",
+    "remain failing",
+    "remains failing",
+    "failures remain",
+    "not proven",
+    "unproven",
+    "could not verify",
+    "couldn't verify",
+    "cannot verify",
+    "can't verify",
+    "not verified",
+    "unverified",
+    "did not run",
+    "didn't run",
+    "have not run",
+    "haven't run",
+    "has not been run",
+    "have not been run",
+    "were not run",
+    "was not run",
+    "wasn't run",
+    "weren't run",
+    "not rerun",
+    "did not rerun",
+    "didn't rerun",
+    "without running",
+    "not run the tests",
+    "not run any tests",
+];
+
+/// Phrases are kept narrow so that a claim of success cannot match one: no
+/// bare "tests are failing" (it also matches "no tests are failing") and no
+/// "tests fail" (it also matches "the tests failed before the fix").
+fn discloses_open_verification(message: &str) -> bool {
+    let message = message
+        .to_lowercase()
+        .replace('\u{2019}', "'")
+        // "did not run into problems" is not "did not run".
+        .replace(" run into", " ran-into");
+    OPEN_VERIFICATION_PHRASES
+        .iter()
+        .any(|phrase| message.contains(phrase))
 }
 
 /// Session start time and, when the project is a Git worktree, the
@@ -284,39 +381,20 @@ fn parse_session_marker(
     Some((started, workspace))
 }
 
-fn receipt_for_head(
+/// The receipt for a run, compared the same way its PostToolUse receipt was.
+fn receipt_for(
     store: &Store,
     observation: &prog_core::ObservationRecord,
     payload: &Value,
 ) -> prog_core::Receipt {
-    let previous = observation
-        .lineage
-        .supersedes_id
-        .as_deref()
-        .and_then(|id| store.get_observation(id).ok().flatten())
-        .and_then(|previous| {
-            let previous_payload = store.get_payload(&previous.payload_hash).ok()??;
-            let delta = compare_observation_ids(
-                store,
-                &previous.observation_id,
-                &observation.observation_id,
-            )
-            .ok()?;
-            Some((previous, previous_payload, delta))
-        });
+    let baseline = comparison_baseline(store, observation).ok().flatten();
     build_receipt(
         ReceiptSubject {
             observation,
             payload,
             cursor: None,
         },
-        previous
-            .as_ref()
-            .map(|(previous, previous_payload, delta)| ReceiptBaseline {
-                observation: previous,
-                payload: previous_payload.as_value(),
-                delta,
-            }),
+        baseline.as_ref().map(Baseline::as_receipt_baseline),
     )
 }
 
