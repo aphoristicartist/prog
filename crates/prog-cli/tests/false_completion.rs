@@ -390,19 +390,52 @@ fn readiness_is_not_ready_when_the_failing_test_was_deleted() {
     }
 }
 
-/// #287: a default fail-fast baseline cannot prove absence, and the delta now
-/// says how to fix that instead of only "selection is not exhaustive". Scopes
-/// that completed normally are no longer reported as stops.
+/// #299: a failing default (fail-fast) `cargo test` stops early, but it still
+/// reports the failures it saw, so a green rerun of the same command proves
+/// the fix: the agent loop `cargo test`, fix, `cargo test`. That includes a
+/// suite with an ignored test (#297), the exact case from the first live
+/// Claude Code session. Deleting the failing test is still caught.
 #[test]
-fn fail_fast_baseline_explains_how_to_get_a_provable_comparison() {
+fn a_fail_fast_failure_is_proven_fixed_by_a_green_rerun_of_the_same_command() {
     let cargo = Tool::new("cargo", FAKE_CARGO);
     let argv = [cargo.executable.as_str(), "test"];
     let (_store, delta) = scenario(&cargo, &argv, "fixed");
+    assert_real_fix_is_provable(&delta);
+    assert!(
+        reasons(&delta).contains("baseline selection is not exhaustive"),
+        "{}",
+        reasons(&delta)
+    );
+    let (_store, delta) = scenario_from(&cargo, &argv, "skip-baseline", "skip-fixed");
+    assert_real_fix_is_provable(&delta);
+    let (_store, delta) = scenario(&cargo, &argv, "deleted");
+    assert_fake_fix_is_not_provable(&delta, "tests::adds (missing)");
+}
+
+/// #287: when the rerun itself fails fast, it may have skipped later
+/// harnesses, so the delta cannot prove absence and says how to fix that
+/// instead of only "selection is not exhaustive". Scopes that completed
+/// normally are not reported as stops.
+#[test]
+fn a_fail_fast_rerun_that_still_fails_explains_how_to_get_a_provable_comparison() {
+    let cargo = Tool::new("cargo", FAKE_CARGO);
+    let argv = [cargo.executable.as_str(), "test"];
+    let (store, delta) = scenario(&cargo, &argv, "baseline");
     assert_eq!(delta["assessment"]["can_prove_absence"], false, "{delta:#}");
     assert_eq!(count(&delta, "resolved"), 0, "{delta:#}");
     let reasons = reasons(&delta);
+    assert!(reasons.contains("subject provider:"), "{reasons}");
     assert!(reasons.contains("--no-fail-fast"), "{reasons}");
     assert!(!reasons.contains("stopped: complete"), "{reasons}");
+    // The bounded receipt keeps the advice, not a truncated explanation.
+    let text = receipt(store.path().to_str().unwrap(), None)["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        text.contains("NOT PROVEN (use one exact package+harness target or --no-fail-fast"),
+        "{text}"
+    );
 }
 
 fn receipt(dir: &str, observation: Option<&str>) -> Value {

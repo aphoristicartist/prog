@@ -203,29 +203,26 @@ pub fn compare_observations(
     )
 }
 
-/// How many tests both runs skipped, when skips are the only gap in either
-/// selection and both runs name exactly the same skipped tests (with the
-/// same repeats) as their own summaries count.
+/// How many tests both runs skipped, when skips are the only gap in the
+/// subject's selection and both runs name exactly the same skipped tests
+/// (with the same repeats) as their own summaries count.
 ///
 /// A test skipped in both runs ran in neither, so it cannot hide a baseline
 /// finding. Anything else stays unproven: a test skipped in only one run, a
 /// skip the output does not name (`pytest -q`), a filter, or an early stop.
 fn shared_skipped_tests(
-    baseline: &ObservationRecord,
     subject: &ObservationRecord,
     baseline_tests: Option<&TestPopulation>,
     subject_tests: Option<&TestPopulation>,
 ) -> Option<u64> {
-    if !(baseline.selection.excludes_only_skipped_tests()
-        && subject.selection.excludes_only_skipped_tests())
-    {
+    if !subject.selection.excludes_only_skipped_tests() {
         return None;
     }
     let (before, after) = (baseline_tests?, subject_tests?);
-    let skipped = before.skipped?;
+    let skipped = after.skipped?;
     (skipped > 0
-        && after.skipped == Some(skipped)
-        && before.skipped_tests.len() as u64 == skipped
+        && before.skipped == Some(skipped)
+        && after.skipped_tests.len() as u64 == skipped
         && before.skipped_tests == after.skipped_tests)
         .then_some(skipped)
 }
@@ -240,7 +237,7 @@ pub fn compare_observations_with_tests(
     baseline_tests: Option<&TestPopulation>,
     subject_tests: Option<&TestPopulation>,
 ) -> ObservationDelta {
-    let shared_skips = shared_skipped_tests(baseline, subject, baseline_tests, subject_tests);
+    let shared_skips = shared_skipped_tests(subject, baseline_tests, subject_tests);
     let mut assessment = assess(baseline, subject, shared_skips);
     let population_reasons = test_population_reasons(baseline_tests, subject_tests);
     if !population_reasons.is_empty() {
@@ -362,8 +359,11 @@ pub fn compare_observations_with_tests(
     }
 }
 
-/// `shared_skips` is [`shared_skipped_tests`]: when set, both selections
-/// count as exhaustive for the tests that ran.
+/// Absence is judged from the subject: it must cover the whole selection.
+/// The baseline need not, because a run that stopped early or skipped tests
+/// can only miss findings it never reported, and only reported findings can
+/// be resolved. `shared_skips` is [`shared_skipped_tests`]: when set, the
+/// subject counts as exhaustive for the tests that ran.
 fn assess(
     baseline: &ObservationRecord,
     subject: &ObservationRecord,
@@ -429,8 +429,7 @@ fn assess(
     if !payloads_available {
         reasons.push("one or both redacted payloads are no longer available".to_string());
     }
-    let selection_covers_absence = selection_exhaustive(baseline)
-        && selection_exhaustive(subject)
+    let selection_covers_absence = selection_exhaustive(subject)
         && !normalized_scopes(baseline).is_empty()
         && !normalized_scopes(subject).is_empty();
     if !selection_covers_absence {
@@ -874,23 +873,25 @@ mod tests {
             stop_reason: crate::CaptureStopReason::Complete,
             extra: Extra::new(),
         });
-        baseline.selection.exhaustive = false;
-        let mut baseline_tests = population(&[("t::a", "failed")], Some(1));
-        baseline_tests.warnings =
+        let mut subject = observation("b", "same", true);
+        subject.selection.exhaustive = false;
+        let baseline_tests = population(&[("t::a", "failed")], Some(1));
+        let mut subject_tests = population(&[("t::a", "failed")], Some(1));
+        subject_tests.warnings =
             vec!["use --no-fail-fast to prove selection exhaustion".to_string()];
-        let subject_tests = population(&[("t::a", "passed")], Some(1));
         let delta = compare_observations_with_tests(
             &baseline,
-            &observation("b", "same", true),
+            &subject,
             &[finding("dup"), finding("dup")],
             &[],
             Some(&baseline_tests),
             Some(&subject_tests),
         );
+        assert!(!delta.assessment.can_prove_absence);
         let reasons = delta.assessment.reasons.join("; ");
         assert!(!reasons.contains("stopped: complete"), "{reasons}");
         assert!(
-            reasons.contains("baseline provider: use --no-fail-fast"),
+            reasons.contains("subject provider: use --no-fail-fast"),
             "{reasons}"
         );
         assert!(
@@ -1018,13 +1019,74 @@ mod tests {
             Some(3),
         );
         refused(&full_baseline, &fixed, &observation("a", "same", true), &b);
-        // Skips plus another gap (an early stop, a filter) on either side.
+        // Skips plus another gap (an early stop, a filter) in the subject.
         let mut early = observation("b", "same", true);
         early.selection.exhaustive = false;
         refused(&failing, &fixed, &a, &early);
         // Without test populations nothing can be matched.
         let delta = compare_observations(&a, &b, &[finding("panic")], &[]);
         assert!(!delta.assessment.can_prove_absence);
+    }
+
+    /// #299: a failing fail-fast or early-stopped baseline still reports the
+    /// failures it saw. Absence is judged from the subject, which must cover
+    /// the whole selection; the population rules still apply.
+    #[test]
+    fn a_non_exhaustive_baseline_resolves_only_what_an_exhaustive_subject_proves() {
+        let mut stopped = observation("a", "same", true);
+        stopped.selection.exhaustive = false;
+        let failing = population(&[("t::a", "failed"), ("t::b", "passed")], Some(2));
+        let compare = |subject: &ObservationRecord, after: &TestPopulation| {
+            compare_observations_with_tests(
+                &stopped,
+                subject,
+                &[finding("panic")],
+                &[],
+                Some(&failing),
+                Some(after),
+            )
+        };
+        let fixed = population(
+            &[
+                ("t::a", "passed"),
+                ("t::b", "passed"),
+                ("t::later", "passed"),
+            ],
+            Some(3),
+        );
+        let delta = compare(&observation("b", "same", true), &fixed);
+        assert!(delta.assessment.can_prove_absence, "{:?}", delta.assessment);
+        assert_eq!(delta.findings[0].status, DeltaFindingStatus::Resolved);
+        assert!(
+            delta
+                .assessment
+                .reasons
+                .iter()
+                .any(|reason| reason == "baseline selection is not exhaustive"),
+            "{:?}",
+            delta.assessment.reasons
+        );
+
+        // The subject must still cover everything.
+        let mut also_stopped = observation("b", "same", true);
+        also_stopped.selection.exhaustive = false;
+        assert!(!compare(&also_stopped, &fixed).assessment.can_prove_absence);
+        // A deleted failing test is still a narrowed population.
+        let deleted = population(&[("t::b", "passed"), ("t::later", "passed")], Some(2));
+        let delta = compare(&observation("b", "same", true), &deleted);
+        assert!(!delta.assessment.can_prove_absence);
+        assert_ne!(delta.findings[0].status, DeltaFindingStatus::Resolved);
+        // An incomplete subject capture or a different command never proves.
+        assert!(
+            !compare(&observation("b", "same", false), &fixed)
+                .assessment
+                .can_prove_absence
+        );
+        assert!(
+            !compare(&observation("b", "other", true), &fixed)
+                .assessment
+                .can_prove_absence
+        );
     }
 
     #[test]

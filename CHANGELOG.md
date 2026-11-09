@@ -13,6 +13,15 @@
   (RUSTSEC-2024-0449); every bundled lens parses to the same manifest under
   both parsers (#295).
 
+- `cargo test` fails, fix, `cargo test` now proves the fix. A failing
+  default (fail-fast) run stops early, so it was recorded as non-exhaustive
+  and no later run could prove anything against it; the advice to use
+  `--no-fail-fast` arrived after the failing run was gone. Absence is now
+  judged from the rerun, which must still cover the whole selection; the
+  failing run only has to report the failures it saw. A rerun that stops
+  early proves nothing, and the receipt shows the provider's advice instead
+  of a truncated explanation (#299).
+
 - A real fix in a suite that skips tests is provable again. One `#[ignore]`
   or pytest skip made every delta unprovable, so receipts said `NOT PROVEN`
   and the stop gate blocked after every real fix. A comparison now counts the
