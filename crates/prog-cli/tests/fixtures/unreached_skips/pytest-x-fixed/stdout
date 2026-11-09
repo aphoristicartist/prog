@@ -1,0 +1,10 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.0, pytest-9.1.1, pluggy-1.7.0 -- /usr/local/bin/python3
+rootdir: /repo
+collecting ... collected 3 items
+
+test_calc.py::test_add PASSED                                            [ 33%]
+test_calc.py::test_net SKIPPED (needs network)                           [ 66%]
+test_calc.py::test_zero PASSED                                           [100%]
+
+========================= 2 passed, 1 skipped in 0.01s =========================

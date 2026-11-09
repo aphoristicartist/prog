@@ -770,3 +770,148 @@ fn pytest_exitfirst_failure_is_proven_fixed_by_a_green_rerun() {
     let (_store, delta) = scenario(&pytest, &argv, "fixed");
     assert_fake_fix_is_not_provable(&delta, "selection coverage is unknown or not exhaustive");
 }
+
+/// Replays `tests/fixtures/unreached_skips/<state>/{stdout,stderr,exit_code}`,
+/// where `<state>` is the content of the `state` file beside the tool and the
+/// fixture root is in the `root` file. Each
+/// fixture is the real output of one run (cargo 1.98, Go 1.27, Python 3.15,
+/// pytest 9.1), with paths rewritten to `/repo`.
+const REPLAY: &str = r#"#!/usr/bin/env python3
+import sys
+from pathlib import Path
+state = Path(__file__).with_name("state").read_text().strip()
+fixture = Path(Path(__file__).with_name("root").read_text().strip()) / state
+sys.stdout.write((fixture / "stdout").read_text())
+sys.stdout.flush()
+sys.stderr.write((fixture / "stderr").read_text())
+sys.exit(int((fixture / "exit_code").read_text().strip()))
+"#;
+
+fn unreached_skip_fixtures() -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/unreached_skips")
+        .to_str()
+        .unwrap()
+        .to_string()
+}
+
+/// Run `baseline` then `subject` through a replaying `program` with the same
+/// argv; return the delta and the subject's receipt.
+fn replayed(program: &str, args: &[&str], baseline: &str, subject: &str) -> (Value, Value) {
+    let tool = Tool::new(program, REPLAY);
+    fs::write(
+        Path::new(&tool.executable).with_file_name("root"),
+        unreached_skip_fixtures(),
+    )
+    .unwrap();
+    let mut argv = vec![tool.executable.as_str()];
+    argv.extend_from_slice(args);
+    let store = tempfile::tempdir().unwrap();
+    let dir = store.path().to_str().unwrap();
+    tool.set_state(baseline);
+    let first = run(dir, &argv);
+    tool.set_state(subject);
+    let second = run(dir, &argv);
+    let delta = delta(dir, &observation_id(&first), &observation_id(&second));
+    let receipt = receipt(dir, Some(&observation_id(&second)));
+    (delta, receipt)
+}
+
+/// #308: a failing run that stopped early (fail-fast) or never built names
+/// every test it ran. A test the rerun skips that the baseline never reached
+/// cannot hide a baseline failure, so a real fix is proven.
+#[test]
+fn a_fix_is_provable_when_the_rerun_skips_a_test_the_baseline_never_reached() {
+    for (program, args, scenario) in [
+        // Cargo stops after the failing lib harness; tests/integration.rs
+        // with its #[ignore] test never started.
+        ("cargo", &["test"][..], "cargo-failfast"),
+        // go test -failfast stops after TestAdd; TestNet (t.Skip) never ran.
+        (
+            "go",
+            &["test", "-v", "-failfast", "./..."][..],
+            "go-failfast",
+        ),
+        (
+            "go",
+            &["test", "-json", "-failfast", "./..."][..],
+            "go-json-failfast",
+        ),
+        // Go says the package never built, so none of its tests ran.
+        ("go", &["test", "-v", "./..."][..], "go-buildfail"),
+        (
+            "python3",
+            &["-m", "unittest", "-v", "-f"][..],
+            "unittest-failfast",
+        ),
+        (
+            "pytest",
+            &["-v", "-x", "-p", "no:cacheprovider"][..],
+            "pytest-x",
+        ),
+    ] {
+        let (delta, receipt) = replayed(
+            program,
+            args,
+            &format!("{scenario}-baseline"),
+            &format!("{scenario}-fixed"),
+        );
+        assert_real_fix_is_provable(&delta);
+        assert!(
+            reasons(&delta).contains("the baseline never reached"),
+            "{scenario}: {}",
+            reasons(&delta)
+        );
+        assert_eq!(receipt["verdict"], "fixed", "{scenario}: {receipt:#}");
+    }
+}
+
+/// #308 counterexamples: every case where a skipped test could hide a
+/// baseline failure still refuses.
+#[test]
+fn skips_the_baseline_may_have_run_never_prove_a_fix() {
+    for (program, args, baseline, subject, why) in [
+        // Quiet output names no passing test, so an unnamed test may have run.
+        (
+            "cargo",
+            &["test", "-q"][..],
+            "cargo-failfast-quiet-baseline",
+            "cargo-failfast-quiet-fixed",
+            "quiet baseline",
+        ),
+        // slow_network ran (and passed) in the baseline, then was ignored.
+        (
+            "cargo",
+            &["test", "--no-fail-fast"][..],
+            "cargo-ran-baseline",
+            "cargo-ran-fixed",
+            "test ran in the baseline",
+        ),
+        // The test binary aborted before printing any test: the crashing test
+        // is unnamed, and ignoring it must not count as a fix.
+        (
+            "cargo",
+            &["test"][..],
+            "cargo-crash-baseline",
+            "cargo-crash-ignored",
+            "crash before output",
+        ),
+        // Under --no-fail-fast tests/a.rs aborted silently while the other
+        // harnesses finished; its crashing test is then ignored.
+        (
+            "cargo",
+            &["test", "--no-fail-fast"][..],
+            "cargo-nff-crash-baseline",
+            "cargo-nff-crash-ignored",
+            "silently crashed harness",
+        ),
+    ] {
+        let (delta, receipt) = replayed(program, args, baseline, subject);
+        assert_eq!(
+            delta["assessment"]["can_prove_absence"], false,
+            "{why}: {delta:#}"
+        );
+        assert_eq!(count(&delta, "resolved"), 0, "{why}: {delta:#}");
+        assert_eq!(receipt["verdict"], "not_proven", "{why}: {receipt:#}");
+    }
+}

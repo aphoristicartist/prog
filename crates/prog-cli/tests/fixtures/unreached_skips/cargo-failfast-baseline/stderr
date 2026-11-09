@@ -1,0 +1,4 @@
+   Compiling calc v0.1.0 (/repo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running unittests src/lib.rs (/repo/target/debug/deps/calc-91c35161cd6d5719)
+error: test failed, to rerun pass `--lib`

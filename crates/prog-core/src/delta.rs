@@ -31,6 +31,10 @@ pub struct TestPopulation {
     /// repeats kept (two harnesses can each skip a `tests::slow`).
     pub skipped_tests: Vec<String>,
     pub warnings: Vec<String>,
+    /// The provider's `names_every_test_that_ran` marker (#308): every
+    /// harness, package, or file that started also finished and named its
+    /// tests, so a test absent from `tests` never ran in this run.
+    pub names_every_test_that_ran: bool,
 }
 
 impl TestPopulation {
@@ -77,6 +81,10 @@ impl TestPopulation {
                     .collect()
             })
             .unwrap_or_default();
+        let names_every_test_that_ran = normalized
+            .get(crate::NAMES_EVERY_TEST_THAT_RAN)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         Some(Self {
             tests,
             executed,
@@ -84,6 +92,7 @@ impl TestPopulation {
             skipped,
             skipped_tests,
             warnings,
+            names_every_test_that_ran,
         })
     }
 
@@ -203,28 +212,68 @@ pub fn compare_observations(
     )
 }
 
-/// How many tests both runs skipped, when skips are the only gap in the
-/// subject's selection and both runs name exactly the same skipped tests
-/// (with the same repeats) as their own summaries count.
+/// Tests the subject skipped that cannot hide a baseline finding, when skips
+/// are the only gap in the subject's selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CoveredSkips {
+    /// Skipped in both runs, matched by name with repeats.
+    shared: u64,
+    /// Skipped in the subject and provably never reached by the baseline.
+    unreached: u64,
+}
+
+/// Every test the subject skipped is covered when it consumes a baseline
+/// skip of the same name (a test skipped in both ran in neither), or when
+/// the baseline names every test it ran (`names_every_test_that_ran`) and
+/// the name appears in none of its records: an early stop or a build
+/// failure never reached it, so it cannot have produced a finding (#308).
 ///
-/// A test skipped in both runs ran in neither, so it cannot hide a baseline
-/// finding. Anything else stays unproven: a test skipped in only one run, a
-/// skip the output does not name (`pytest -q`), a filter, or an early stop.
-fn shared_skipped_tests(
+/// Anything else stays unproven: a test that ran in the baseline and is
+/// skipped now, a skip the output does not name (`pytest -q`), a baseline
+/// skip the subject did not repeat, a filter, or an early stop in the subject.
+fn covered_skipped_tests(
     subject: &ObservationRecord,
     baseline_tests: Option<&TestPopulation>,
     subject_tests: Option<&TestPopulation>,
-) -> Option<u64> {
+) -> Option<CoveredSkips> {
     if !subject.selection.excludes_only_skipped_tests() {
         return None;
     }
     let (before, after) = (baseline_tests?, subject_tests?);
     let skipped = after.skipped?;
-    (skipped > 0
-        && before.skipped == Some(skipped)
-        && after.skipped_tests.len() as u64 == skipped
-        && before.skipped_tests == after.skipped_tests)
-        .then_some(skipped)
+    let skipped_before = before.skipped?;
+    if skipped == 0
+        || after.skipped_tests.len() as u64 != skipped
+        || before.skipped_tests.len() as u64 != skipped_before
+    {
+        return None;
+    }
+    let mut baseline_skips = BTreeMap::<&str, u64>::new();
+    for test in &before.skipped_tests {
+        *baseline_skips.entry(test.as_str()).or_default() += 1;
+    }
+    let mut covered = CoveredSkips {
+        shared: 0,
+        unreached: 0,
+    };
+    for test in &after.skipped_tests {
+        match baseline_skips.get_mut(test.as_str()) {
+            Some(remaining) if *remaining > 0 => {
+                *remaining -= 1;
+                covered.shared += 1;
+            }
+            _ if before.names_every_test_that_ran && !before.tests.contains_key(test) => {
+                covered.unreached += 1;
+            }
+            _ => return None,
+        }
+    }
+    // A baseline skip the subject ran is not a gap, but the rule stays the
+    // one I14 states: shared skips must match exactly.
+    baseline_skips
+        .values()
+        .all(|remaining| *remaining == 0)
+        .then_some(covered)
 }
 
 /// [`compare_observations`] plus the test-population check: absence is only
@@ -237,8 +286,8 @@ pub fn compare_observations_with_tests(
     baseline_tests: Option<&TestPopulation>,
     subject_tests: Option<&TestPopulation>,
 ) -> ObservationDelta {
-    let shared_skips = shared_skipped_tests(subject, baseline_tests, subject_tests);
-    let mut assessment = assess(baseline, subject, shared_skips);
+    let covered_skips = covered_skipped_tests(subject, baseline_tests, subject_tests);
+    let mut assessment = assess(baseline, subject, covered_skips);
     let population_reasons = test_population_reasons(baseline_tests, subject_tests);
     if !population_reasons.is_empty() {
         assessment.can_prove_absence = false;
@@ -362,16 +411,16 @@ pub fn compare_observations_with_tests(
 /// Absence is judged from the subject: it must cover the whole selection.
 /// The baseline need not, because a run that stopped early or skipped tests
 /// can only miss findings it never reported, and only reported findings can
-/// be resolved. `shared_skips` is [`shared_skipped_tests`]: when set, the
+/// be resolved. `covered_skips` is [`covered_skipped_tests`]: when set, the
 /// subject counts as exhaustive for the tests that ran.
 fn assess(
     baseline: &ObservationRecord,
     subject: &ObservationRecord,
-    shared_skips: Option<u64>,
+    covered_skips: Option<CoveredSkips>,
 ) -> ComparabilityAssessment {
     let selection_exhaustive = |observation: &ObservationRecord| {
         observation.selection.exhaustive
-            || shared_skips.is_some() && observation.selection.excludes_only_skipped_tests()
+            || covered_skips.is_some() && observation.selection.excludes_only_skipped_tests()
     };
     let invocation_match = baseline.invocation_fingerprint == subject.invocation_fingerprint;
     let comparison_family_match = baseline.comparison_family == subject.comparison_family;
@@ -434,10 +483,19 @@ fn assess(
         && !normalized_scopes(subject).is_empty();
     if !selection_covers_absence {
         reasons.push("selection coverage is unknown or not exhaustive".to_string());
-    } else if let Some(skipped) = shared_skips {
-        reasons.push(format!(
-            "both runs skipped the same {skipped} named tests; absence is proven only for the tests that ran"
-        ));
+    } else if let Some(covered) = covered_skips {
+        if covered.shared > 0 {
+            reasons.push(format!(
+                "both runs skipped the same {} named tests; absence is proven only for the tests that ran",
+                covered.shared
+            ));
+        }
+        if covered.unreached > 0 {
+            reasons.push(format!(
+                "the subject skipped {} named tests the baseline never reached (it named every test it ran); absence is proven only for the tests that ran",
+                covered.unreached
+            ));
+        }
     }
     let can_prove_absence = invocation_match
         && comparison_family_match
@@ -767,6 +825,7 @@ mod tests {
             skipped: None,
             skipped_tests: Vec::new(),
             warnings: Vec::new(),
+            names_every_test_that_ran: false,
         }
     }
 
@@ -1026,6 +1085,97 @@ mod tests {
         // Without test populations nothing can be matched.
         let delta = compare_observations(&a, &b, &[finding("panic")], &[]);
         assert!(!delta.assessment.can_prove_absence);
+    }
+
+    /// #308: a rerun's skip is covered when the baseline skipped it by name
+    /// too, or when the baseline named every test it ran and never reached
+    /// it (an early stop or a build failure). Every other skip stays unproven.
+    #[test]
+    fn unreached_skips_prove_a_fix_only_when_the_baseline_names_every_test() {
+        let compare = |before: &TestPopulation, after: &TestPopulation| {
+            let mut stopped = observation("a", "same", true);
+            stopped.selection.exhaustive = false;
+            compare_observations_with_tests(
+                &stopped,
+                &skipping_run("b"),
+                &[finding("panic")],
+                &[],
+                Some(before),
+                Some(after),
+            )
+        };
+        // Fail-fast baseline: t::a failed and the run stopped, so the later
+        // harness with its ignored t::net never started.
+        let mut stopped = with_skips(population(&[("t::a", "failed")], Some(1)), 0, &[]);
+        stopped.names_every_test_that_ran = true;
+        let fixed = with_skips(
+            population(&[("t::a", "passed"), ("t::b", "passed")], Some(2)),
+            1,
+            &["t::net"],
+        );
+        let delta = compare(&stopped, &fixed);
+        assert!(delta.assessment.can_prove_absence, "{:?}", delta.assessment);
+        assert_eq!(delta.findings[0].status, DeltaFindingStatus::Resolved);
+        let reasons = delta.assessment.reasons.join("; ");
+        assert!(
+            reasons.contains("skipped 1 named tests the baseline never reached"),
+            "{reasons}"
+        );
+
+        let refused = |before: &TestPopulation, after: &TestPopulation, why: &str| {
+            let delta = compare(before, after);
+            assert!(
+                !delta.assessment.can_prove_absence,
+                "{why}: {:?}",
+                delta.assessment
+            );
+            assert_ne!(
+                delta.findings[0].status,
+                DeltaFindingStatus::Resolved,
+                "{why}"
+            );
+        };
+        // Without the marker (quiet output, a crashed or unfinished harness)
+        // an unnamed test may have run.
+        let mut unmarked = stopped.clone();
+        unmarked.names_every_test_that_ran = false;
+        refused(&unmarked, &fixed, "baseline lacks the marker");
+        // A test that ran in the baseline, passed, and is skipped now.
+        let mut ran = stopped.clone();
+        ran.tests.insert("t::net".to_string(), "passed".to_string());
+        refused(&ran, &fixed, "skipped test ran in the baseline");
+        // The failing test itself skipped in the subject.
+        let hidden = with_skips(population(&[("t::b", "passed")], Some(1)), 1, &["t::a"]);
+        refused(&stopped, &hidden, "baseline failure skipped");
+        // A skip the subject counts but does not name.
+        let mut unnamed = fixed.clone();
+        unnamed.skipped = Some(2);
+        refused(&stopped, &unnamed, "unnamed skip");
+        // Repeats: two harnesses each skip t::slow; the baseline skipped it
+        // once, so the second skip must match a name the baseline never had.
+        let mut once = with_skips(population(&[("t::a", "failed")], Some(1)), 1, &["t::slow"]);
+        once.names_every_test_that_ran = true;
+        let twice = with_skips(
+            population(&[("t::a", "passed"), ("t::b", "passed")], Some(2)),
+            2,
+            &["t::slow", "t::slow"],
+        );
+        refused(&once, &twice, "repeated skip of a name the baseline has");
+        // A baseline skip the subject ran instead: shared skips match exactly.
+        let ran_instead = population(
+            &[
+                ("t::a", "passed"),
+                ("t::b", "passed"),
+                ("t::slow", "passed"),
+            ],
+            Some(3),
+        );
+        let ran_instead = with_skips(ran_instead, 1, &["t::net"]);
+        refused(&once, &ran_instead, "baseline skip not repeated");
+        // A skip count the baseline does not report at all.
+        let mut uncounted = stopped.clone();
+        uncounted.skipped = None;
+        refused(&uncounted, &fixed, "baseline skip count unknown");
     }
 
     /// #299: a failing fail-fast or early-stopped baseline still reports the

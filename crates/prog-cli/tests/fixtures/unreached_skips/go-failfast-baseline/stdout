@@ -1,0 +1,6 @@
+=== RUN   TestAdd
+    calc_test.go:7: Add(2, 2) = 0, want 4
+--- FAIL: TestAdd (0.00s)
+FAIL
+FAIL	example.com/calc	0.183s
+FAIL

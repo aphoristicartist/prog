@@ -1,0 +1,6 @@
+   Compiling nff v0.1.0 (/repo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (/repo/target/debug/deps/nff-7c4eb23bac9b648c)
+     Running tests/a.rs (/repo/target/debug/deps/a-7c1c85b1797f517a)
+     Running tests/b.rs (/repo/target/debug/deps/b-4bc7015006488a54)
+   Doc-tests nff

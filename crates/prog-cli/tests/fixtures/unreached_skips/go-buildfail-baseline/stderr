@@ -1,0 +1,2 @@
+# example.com/calc [example.com/calc.test]
+./calc.go:3:37: syntax error: unexpected }, expected expression

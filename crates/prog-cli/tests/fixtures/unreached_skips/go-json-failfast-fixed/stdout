@@ -1,0 +1,17 @@
+{"Time":"2026-11-09T13:19:13.140159-05:00","Action":"start","Package":"example.com/calc"}
+{"Time":"2026-11-09T13:19:13.277528-05:00","Action":"run","Package":"example.com/calc","Test":"TestAdd"}
+{"Time":"2026-11-09T13:19:13.277586-05:00","Action":"output","Package":"example.com/calc","Test":"TestAdd","Output":"=== RUN   TestAdd\n","OutputType":"frame"}
+{"Time":"2026-11-09T13:19:13.277631-05:00","Action":"output","Package":"example.com/calc","Test":"TestAdd","Output":"--- PASS: TestAdd (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-11-09T13:19:13.277643-05:00","Action":"pass","Package":"example.com/calc","Test":"TestAdd","Elapsed":0}
+{"Time":"2026-11-09T13:19:13.277663-05:00","Action":"run","Package":"example.com/calc","Test":"TestNet"}
+{"Time":"2026-11-09T13:19:13.277667-05:00","Action":"output","Package":"example.com/calc","Test":"TestNet","Output":"=== RUN   TestNet\n","OutputType":"frame"}
+{"Time":"2026-11-09T13:19:13.277671-05:00","Action":"output","Package":"example.com/calc","Test":"TestNet","Output":"    calc_test.go:11: needs network\n"}
+{"Time":"2026-11-09T13:19:13.277676-05:00","Action":"output","Package":"example.com/calc","Test":"TestNet","Output":"--- SKIP: TestNet (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-11-09T13:19:13.27768-05:00","Action":"skip","Package":"example.com/calc","Test":"TestNet","Elapsed":0}
+{"Time":"2026-11-09T13:19:13.277683-05:00","Action":"run","Package":"example.com/calc","Test":"TestZero"}
+{"Time":"2026-11-09T13:19:13.277686-05:00","Action":"output","Package":"example.com/calc","Test":"TestZero","Output":"=== RUN   TestZero\n","OutputType":"frame"}
+{"Time":"2026-11-09T13:19:13.27769-05:00","Action":"output","Package":"example.com/calc","Test":"TestZero","Output":"--- PASS: TestZero (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-11-09T13:19:13.277693-05:00","Action":"pass","Package":"example.com/calc","Test":"TestZero","Elapsed":0}
+{"Time":"2026-11-09T13:19:13.277696-05:00","Action":"output","Package":"example.com/calc","Output":"PASS\n","OutputType":"frame"}
+{"Time":"2026-11-09T13:19:13.278174-05:00","Action":"output","Package":"example.com/calc","Output":"ok  \texample.com/calc\t0.138s\n"}
+{"Time":"2026-11-09T13:19:13.278814-05:00","Action":"pass","Package":"example.com/calc","Elapsed":0.139}

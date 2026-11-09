@@ -623,6 +623,12 @@ pub(super) fn normalize(
             "ran": summary.map(|(ran, _, _)| ran),
             "verbose": verbose,
             "accounted": accounted,
+            // #308: `-v`, every distinct test id accounted for by `Ran N`,
+            // and no loader or fixture error that could hide a module's tests.
+            "names_every_test_that_ran": complete
+                && accounted
+                && fixture_errors.is_empty()
+                && matches!(completion, Completion::Consistent | Completion::Skipped(_)),
             "failfast": invocation.failfast,
             "filtered": invocation.filtered,
             "fixture_errors": fixture_errors,

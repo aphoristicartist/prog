@@ -1,0 +1,9 @@
+=== RUN   TestAdd
+--- PASS: TestAdd (0.00s)
+=== RUN   TestNet
+    calc_test.go:11: needs network
+--- SKIP: TestNet (0.00s)
+=== RUN   TestZero
+--- PASS: TestZero (0.00s)
+PASS
+ok  	example.com/calc	0.161s
