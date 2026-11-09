@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Security: `cargo deny` flagged `rmcp` 2.1.0 for RUSTSEC-2026-0457 (OAuth
+  client SSRF filter) and RUSTSEC-2026-0462 (unbounded Streamable HTTP client
+  responses). prog compiles neither: it uses only rmcp's child-process client,
+  now with `default-features = false`, which also drops rmcp's server and
+  macro code from the build. Both advisories are ignored with that reason, and
+  CI fails if rmcp's version changes or an affected feature is enabled
+  (`.github/scripts/check-rmcp-features.sh`) (#310).
+
 - Prove fixes for `python -m unittest -v`, `go test -v` or `-json`, and Jest
   or Vitest JSON reports (`jest --json`, `vitest run --reporter=json
   --outputFile=/dev/stdout`), not only pytest and Cargo. Each provider names
