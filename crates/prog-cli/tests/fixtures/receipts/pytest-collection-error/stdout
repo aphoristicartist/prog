@@ -1,0 +1,21 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.0, pytest-9.1.1, pluggy-1.7.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /repo
+collecting ... collected 1 item / 1 error
+
+==================================== ERRORS ====================================
+_____________________ ERROR collecting tests/test_coll.py ______________________
+ImportError while importing test module '/repo/tests/test_coll.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.14/importlib/__init__.py:88: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_coll.py:1: in <module>
+    import nope
+E   ModuleNotFoundError: No module named 'nope'
+=========================== short test summary info ============================
+ERROR tests/test_coll.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+=============================== 1 error in 0.10s ===============================

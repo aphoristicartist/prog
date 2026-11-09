@@ -770,11 +770,34 @@ fn normalize_cargo_rust(
     let mut test_summary_seen = false;
     let mut test_failure_seen = false;
     let mut test_counts = SummaryCounts::default();
+    let test_invocation = program == "cargo"
+        && cargo_subcommand(args).is_some_and(|(_, subcommand)| subcommand == "test");
+    // Harness accounting (#313): Cargo announces each test binary on stderr
+    // (`Running tests/a.rs (…)`, `Doc-tests crate`) and libtest opens and
+    // closes its report on stdout (`running N tests` … `test result:`). A
+    // harness that opened but never closed crashed or was killed.
+    let mut harness_names = Vec::new();
+    let mut harness_reports: Vec<bool> = Vec::new();
     // libtest lists failing tests under a closing `failures:` header even in
     // quiet mode, where no `test <name> ... FAILED` line is printed.
     let mut in_failure_list = false;
     for (index, line) in lines.iter().enumerate() {
         let trimmed = line.text.trim();
+        if test_invocation {
+            if let Some(name) = cargo_harness_start(trimmed) {
+                if harness_names.len() < MAX_PROVIDER_ITEMS {
+                    harness_names.push(bounded_text(&name));
+                } else {
+                    bound_hit = true;
+                }
+            } else if is_libtest_report_start(trimmed) {
+                harness_reports.push(false);
+            } else if trimmed.starts_with("test result:")
+                && let Some(open) = harness_reports.last_mut().filter(|finished| !**finished)
+            {
+                *open = true;
+            }
+        }
         if trimmed == "failures:" {
             in_failure_list = true;
             continue;
@@ -860,8 +883,6 @@ fn normalize_cargo_rust(
     tests.sort();
     tests.dedup_by(|left, right| left.node_id == right.node_id && left.status == right.status);
 
-    let test_invocation = program == "cargo"
-        && cargo_subcommand(args).is_some_and(|(_, subcommand)| subcommand == "test");
     let exact_harness = test_invocation && cargo_exact_test_harness(args);
     let no_fail_fast = test_invocation && cargo_no_fail_fast(args);
     let parser_recognized = program == "rustc"
@@ -903,7 +924,7 @@ fn normalize_cargo_rust(
                 .to_string(),
         );
     }
-    provider_result(
+    let mut result = provider_result(
         "cargo_rustc.v1",
         input_format,
         if structured_seen { 0.99 } else { 0.9 },
@@ -924,7 +945,59 @@ fn normalize_cargo_rust(
             "no_fail_fast": no_fail_fast
         }),
         warnings,
-    )
+    );
+    if test_invocation && let Some(normalized) = result.normalized.as_object_mut() {
+        normalized.insert(
+            "harnesses".to_string(),
+            harness_accounting(&harness_names, &harness_reports),
+        );
+    }
+    result
+}
+
+/// The test binary a `Running …` or `Doc-tests …` progress line announces:
+/// `Running tests/a.rs (target/debug/deps/a-1f2e)` is `tests/a.rs`.
+fn cargo_harness_start(line: &str) -> Option<String> {
+    if let Some(rest) = line.strip_prefix("Running ") {
+        let name = rest.rsplit_once(" (").map_or(rest, |(name, _)| name).trim();
+        return (!name.is_empty() && !name.starts_with('`')).then(|| name.to_string());
+    }
+    let krate = line.strip_prefix("Doc-tests ")?.trim();
+    (!krate.is_empty() && !krate.contains(char::is_whitespace))
+        .then(|| format!("Doc-tests {krate}"))
+}
+
+/// libtest's `running 3 tests` / `running 1 test` report header.
+fn is_libtest_report_start(line: &str) -> bool {
+    line.strip_prefix("running ")
+        .and_then(|rest| {
+            rest.strip_suffix(" tests")
+                .or_else(|| rest.strip_suffix(" test"))
+        })
+        .is_some_and(|count| !count.is_empty() && count.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+/// How many harnesses Cargo started and how many libtest reports finished.
+/// A harness is named as unfinished only when every start has exactly one
+/// report to pair with; otherwise only the counts are kept.
+fn harness_accounting(names: &[String], reports: &[bool]) -> Value {
+    let finished = reports.iter().filter(|finished| **finished).count();
+    let unfinished = if names.len() == reports.len() {
+        names
+            .iter()
+            .zip(reports)
+            .filter(|(_, finished)| !**finished)
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    json!({
+        "started": names.len(),
+        "reports": reports.len(),
+        "finished": finished,
+        "unfinished": unfinished,
+    })
 }
 
 fn cargo_exact_test_harness(args: &[String]) -> bool {
@@ -1430,6 +1503,43 @@ mod tests {
         .unwrap();
         assert!(success.selection.exhaustive);
         assert_eq!(success.normalized["test_failure_seen"], false);
+    }
+
+    /// #313: real cargo 1.98 `--no-fail-fast` output where `tests/a.rs`
+    /// aborted before reporting. Starts are on stderr, reports on stdout.
+    #[test]
+    fn cargo_harness_accounting_names_the_harness_that_never_reported() {
+        let stdout = "\nrunning 1 test\ntest tests::lib_ok ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\n\nrunning 1 test\ntest b_ok ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n";
+        let stderr = "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s\n     Running unittests src/lib.rs (target/debug/deps/nff-7c4eb23bac9b648c)\n     Running tests/a.rs (target/debug/deps/a-7c1c85b1797f517a)\nerror: test failed, to rerun pass `--test a`\n\nCaused by:\n  process didn't exit successfully: `target/debug/deps/a-7c1c85b1797f517a` (signal: 6, SIGABRT: process abort signal)\n     Running tests/b.rs (target/debug/deps/b-4bc7015006488a54)\n   Doc-tests nff\nerror: 1 target failed:\n    `--test a`\n";
+        let result = normalize_coding_output(
+            &strings(&["cargo", "test", "--no-fail-fast"]),
+            stdout,
+            stderr,
+            true,
+            Some(101),
+        )
+        .unwrap();
+        assert_eq!(
+            result.normalized["harnesses"],
+            json!({"started": 4, "reports": 4, "finished": 3, "unfinished": ["tests/a.rs"]})
+        );
+        // A crash before the report header leaves nothing to pair: counts only.
+        let crashed = normalize_coding_output(
+            &strings(&["cargo", "test"]),
+            "",
+            "     Running unittests src/lib.rs (target/debug/deps/a-1)\nerror: test failed, to rerun pass `--lib`\n",
+            true,
+            Some(101),
+        )
+        .unwrap();
+        assert_eq!(
+            crashed.normalized["harnesses"],
+            json!({"started": 1, "reports": 0, "finished": 0, "unfinished": []})
+        );
+        // Not a test invocation: no harness accounting at all.
+        let check =
+            normalize_coding_output(&strings(&["cargo", "check"]), "", "", true, Some(0)).unwrap();
+        assert!(check.normalized.get("harnesses").is_none());
     }
 
     #[test]

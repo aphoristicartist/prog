@@ -44,7 +44,7 @@ overview and quickstart; contributors and coding agents should read
 | [metadata.md](metadata.md) | Observation metadata fields. |
 | [lenses.md](lenses.md) | Lens manifests. Lenses are data and cannot execute code. |
 | [lens-packs.md](lens-packs.md) | Distributing lenses as packs. |
-| [../INVARIANTS.md](../INVARIANTS.md) | The fourteen invariants and their executable tests. |
+| [../INVARIANTS.md](../INVARIANTS.md) | The sixteen invariants and their executable tests. |
 
 ## Evaluation and positioning
 

@@ -1,0 +1,4 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running unittests src/lib.rs (/repo/target/debug/deps/doct-32f6bce455f519f1)
+   Doc-tests doct
+error: doctest failed, to rerun pass `--doc`
