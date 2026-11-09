@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-11-09
+
+Upgrading from 0.1.1:
+
+- The local store resets automatically on first use, with a notice: 0.2.0
+  records evidence that 0.1.1 stores cannot hold. Earlier captures and
+  cursors are gone; rerun to observe again.
+- The Claude Code plugin and the Codex hooks need `prog` 0.2.0 or newer; an
+  older `prog` on `PATH` makes them do nothing (they fail open).
+- The stop gate stays opt-in. It never blocks on missing evidence and judges
+  only the newest run; `prog harness log --summary` shows how often it would
+  have blocked in your sessions before you turn it on.
 
 - Security: `cargo deny` flagged `rmcp` 2.1.0 for RUSTSEC-2026-0457 (OAuth
   client SSRF filter) and RUSTSEC-2026-0462 (unbounded Streamable HTTP client
