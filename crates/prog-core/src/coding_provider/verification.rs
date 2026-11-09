@@ -25,11 +25,16 @@ pub(super) fn constrain_completion(
     }
     let completion = match provider_kind(argv) {
         Some(ProviderKind::Pytest { .. }) => {
-            if result.input_format == "pytest_json_report" {
+            let completion = if result.input_format == "pytest_json_report" {
                 pytest_json(stdout, stderr, exit_code)
             } else {
                 pytest_text(result, stdout, stderr, exit_code)
+            };
+            let names = pytest_names_every_test_that_ran(result, &completion);
+            if let Some(normalized) = result.normalized.as_object_mut() {
+                normalized.insert(NAMES_EVERY_TEST_THAT_RAN.to_string(), Value::Bool(names));
             }
+            completion
         }
         Some(ProviderKind::CargoRust { program, args }) => {
             cargo_rust(result, program, args, stdout, stderr, exit_code)
@@ -43,6 +48,36 @@ pub(super) fn constrain_completion(
         | None => return,
     };
     apply_completion(result, completion);
+}
+
+/// #308: a consistent pytest run (no internal or collection error, one
+/// summary agreeing with the exit) that names as many executed tests as its
+/// summary counts. A JSON report lists every test it ran.
+fn pytest_names_every_test_that_ran(
+    result: &CodingProviderResult,
+    completion: &Completion,
+) -> bool {
+    if !result.complete || !matches!(completion, Completion::Consistent | Completion::Skipped(_)) {
+        return false;
+    }
+    if result.input_format == "pytest_json_report" {
+        return true;
+    }
+    let executed = result.normalized["counts"]["executed"]
+        .as_u64()
+        .unwrap_or(0);
+    let named = result.normalized["tests"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|test| {
+            matches!(
+                test["status"].as_str(),
+                Some("passed" | "failed" | "error" | "xfail" | "xpass")
+            )
+        })
+        .count() as u64;
+    executed > 0 && named == executed
 }
 
 /// Narrow a complete provider result by its completion check. Incomplete

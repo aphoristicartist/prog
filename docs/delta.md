@@ -81,11 +81,20 @@ following hold:
   and both runs name exactly the same skipped tests, each as many times as
   their own summaries count, the subject counts as covered for the tests
   that ran: a test skipped in both runs ran in neither, so it cannot hide a
-  baseline finding. The reasons say so. A skip in only one run, a different
-  skipped set, a skip that quiet output does not name, a filter
-  (`cargo test name`), or a deselection (`pytest -k`) keeps the comparison
-  unproven; the provider's advice (`-- --include-ignored`, `pytest -v`)
-  appears in the reasons.
+  baseline finding. The reasons say so. A skip the baseline never reached is
+  covered too: when the failing run stopped early (`cargo test` fail-fast,
+  `go test -failfast`, `python -m unittest -f`, `pytest -x`) or Go reported
+  `[build failed]`, and its provider marks it `names_every_test_that_ran`
+  (every harness, package, or file that started also finished and named its
+  tests), a skipped test absent from all of its records never ran in it, so
+  `cargo test` fails in the lib harness, fix, `cargo test` with an
+  `#[ignore]` test in a later harness proves the fix. Cargo's compile
+  failures, a test binary that crashed before reporting, a harness that died
+  silently under `--no-fail-fast`, and quiet output never set the marker.
+  A test that ran in the baseline and is skipped now, a skip that quiet
+  output does not name, a filter (`cargo test name`), or a deselection
+  (`pytest -k`) keeps the comparison unproven; the provider's advice
+  (`-- --include-ignored`, `pytest -v`) appears in the reasons.
 - **The same tests ran again** — when the Cargo/Rust or pytest coding provider
   recorded test results, the subject must have executed at least as many tests
   as the baseline (from the runner's own summary line), and every

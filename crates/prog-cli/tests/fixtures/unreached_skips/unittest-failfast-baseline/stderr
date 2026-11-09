@@ -1,0 +1,15 @@
+test_add (test_calc.TestCalc.test_add) ... FAIL
+
+======================================================================
+FAIL: test_add (test_calc.TestCalc.test_add)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/repo/test_calc.py", line 8, in test_add
+    self.assertEqual(add(2, 2), 4)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+AssertionError: 0 != 4
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (failures=1)

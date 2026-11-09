@@ -21,6 +21,11 @@ const MAX_PROVIDER_ITEMS: usize = 512;
 const MAX_PROVIDER_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_MESSAGE_CHARS: usize = 2_048;
 
+/// `/provider/normalized` marker (#308): the run named every test it ran and
+/// every harness, package, or file that started also finished. Only then is a
+/// test absent from its names provably never reached.
+pub const NAMES_EVERY_TEST_THAT_RAN: &str = "names_every_test_that_ran";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CodingProviderLimits {
@@ -778,6 +783,11 @@ fn normalize_cargo_rust(
     // harness that opened but never closed crashed or was killed.
     let mut harness_names = Vec::new();
     let mut harness_reports: Vec<bool> = Vec::new();
+    // #308: tests libtest announced (`running N tests`), tests it named, and
+    // whether a test binary died from a signal.
+    let mut announced_tests = 0u64;
+    let mut named_tests = 0u64;
+    let mut binary_crashed = false;
     // libtest lists failing tests under a closing `failures:` header even in
     // quiet mode, where no `test <name> ... FAILED` line is printed.
     let mut in_failure_list = false;
@@ -790,13 +800,16 @@ fn normalize_cargo_rust(
                 } else {
                     bound_hit = true;
                 }
-            } else if is_libtest_report_start(trimmed) {
+            } else if let Some(announced) = libtest_report_size(trimmed) {
                 harness_reports.push(false);
+                announced_tests = announced_tests.saturating_add(announced);
             } else if trimmed.starts_with("test result:")
                 && let Some(open) = harness_reports.last_mut().filter(|finished| !**finished)
             {
                 *open = true;
             }
+            binary_crashed |=
+                trimmed.contains("didn't exit successfully") && trimmed.contains("(signal: ");
         }
         if trimmed == "failures:" {
             in_failure_list = true;
@@ -856,6 +869,7 @@ fn normalize_cargo_rust(
             }
         }
         if let Some(test) = libtest_line(trimmed, line) {
+            named_tests = named_tests.saturating_add(1);
             test_failure_seen |= test.status == "failed";
             if tests.len() < MAX_PROVIDER_ITEMS {
                 tests.push(test);
@@ -946,10 +960,25 @@ fn normalize_cargo_rust(
         }),
         warnings,
     );
+    // #308: every harness Cargo started finished its report, and every test
+    // a report announced is named (`cargo test -q` names none), so a test
+    // absent from this run's names never ran in it. A compile failure starts
+    // no harness, so Cargo's text cannot say nothing was built: no marker.
+    let names_every_test_that_ran = test_invocation
+        && result.complete
+        && !binary_crashed
+        && !harness_names.is_empty()
+        && harness_names.len() == harness_reports.len()
+        && harness_reports.iter().all(|finished| *finished)
+        && named_tests == announced_tests;
     if test_invocation && let Some(normalized) = result.normalized.as_object_mut() {
         normalized.insert(
             "harnesses".to_string(),
             harness_accounting(&harness_names, &harness_reports),
+        );
+        normalized.insert(
+            NAMES_EVERY_TEST_THAT_RAN.to_string(),
+            Value::Bool(names_every_test_that_ran),
         );
     }
     result
@@ -967,14 +996,17 @@ fn cargo_harness_start(line: &str) -> Option<String> {
         .then(|| format!("Doc-tests {krate}"))
 }
 
-/// libtest's `running 3 tests` / `running 1 test` report header.
-fn is_libtest_report_start(line: &str) -> bool {
+/// The size libtest announces in its `running 3 tests` / `running 1 test`
+/// report header.
+fn libtest_report_size(line: &str) -> Option<u64> {
     line.strip_prefix("running ")
         .and_then(|rest| {
             rest.strip_suffix(" tests")
                 .or_else(|| rest.strip_suffix(" test"))
         })
-        .is_some_and(|count| !count.is_empty() && count.chars().all(|ch| ch.is_ascii_digit()))
+        .filter(|count| !count.is_empty() && count.chars().all(|ch| ch.is_ascii_digit()))?
+        .parse()
+        .ok()
 }
 
 /// How many harnesses Cargo started and how many libtest reports finished.
@@ -1540,6 +1572,120 @@ mod tests {
         let check =
             normalize_coding_output(&strings(&["cargo", "check"]), "", "", true, Some(0)).unwrap();
         assert!(check.normalized.get("harnesses").is_none());
+    }
+
+    /// #308: the marker is set only when every started harness, package,
+    /// or file finished and named its tests.
+    #[test]
+    fn names_every_test_that_ran_requires_finished_and_named_reports() {
+        let marker = |argv: &[&str], stdout: &str, stderr: &str, exit: i32| {
+            normalize_coding_output(&strings(argv), stdout, stderr, true, Some(exit))
+                .map(|result| result.normalized[NAMES_EVERY_TEST_THAT_RAN].clone())
+        };
+        let started = "     Running unittests src/lib.rs (target/debug/deps/calc-1)\nerror: test failed, to rerun pass `--lib`\n";
+        let failfast = "\nrunning 2 tests\ntest tests::zero ... ok\ntest tests::adds ... FAILED\n\nfailures:\n    tests::adds\n\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+        // A fail-fast cargo baseline names both tests of the harness it ran.
+        assert_eq!(
+            marker(&["cargo", "test"], failfast, started, 101),
+            Some(json!(true))
+        );
+        // Quiet output announces two tests and names only the failure.
+        let quiet = "\nrunning 2 tests\n.F\nfailures:\n    tests::adds\n\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+        assert_eq!(
+            marker(&["cargo", "test", "-q"], quiet, started, 101),
+            Some(json!(false))
+        );
+        // A binary that died before reporting.
+        let crashed = format!(
+            "{started}\nCaused by:\n  process didn't exit successfully: `target/debug/deps/calc-1` (signal: 6, SIGABRT: process abort signal)\n"
+        );
+        assert_eq!(
+            marker(&["cargo", "test"], "\nrunning 2 tests\n", &crashed, 101),
+            Some(json!(false))
+        );
+        // A signal after a finished report still refuses.
+        assert_eq!(
+            marker(&["cargo", "test"], failfast, &crashed, 101),
+            Some(json!(false))
+        );
+        // A compile failure starts no harness: Cargo's text cannot say nothing was built.
+        assert_eq!(
+            marker(
+                &["cargo", "test"],
+                "",
+                "error[E0425]: cannot find value `x`\n --> src/lib.rs:1:1\nerror: could not compile `calc` (lib test) due to 1 previous error\n",
+                101
+            ),
+            Some(json!(false))
+        );
+        // Go: an init panic fails the package with no failing test, so
+        // tests may have run unnamed; a build failure ran none.
+        assert_eq!(
+            marker(
+                &["go", "test", "-v", "./..."],
+                "panic: init boom\n\ngoroutine 1 [running]:\nFAIL\texample.com/m\t0.36s\nFAIL\n",
+                "",
+                1
+            ),
+            Some(json!(false))
+        );
+        assert_eq!(
+            marker(
+                &["go", "test", "-v", "./..."],
+                "FAIL\texample.com/calc [build failed]\nFAIL\n",
+                "# example.com/calc\n./calc.go:3:37: syntax error\n",
+                1
+            ),
+            Some(json!(true))
+        );
+        // Go without -v names failures only.
+        assert_eq!(
+            marker(
+                &["go", "test", "./..."],
+                "--- FAIL: TestAdd (0.00s)\nFAIL\nFAIL\texample.com/calc\t0.01s\nFAIL\n",
+                "",
+                1
+            ),
+            Some(json!(false))
+        );
+        // unittest: a loader failure hides a module's tests.
+        assert_eq!(
+            marker(
+                &["python3", "-m", "unittest", "-v"],
+                "",
+                "test_broken (unittest.loader._FailedTest.test_broken) ... ERROR\ntest_ok (test_ok.U.test_ok) ... ok\n\n----------------------------------------------------------------------\nRan 2 tests in 0.000s\n\nFAILED (errors=1)\n",
+                1
+            ),
+            Some(json!(false))
+        );
+        // pytest: verbose and consistent, versus an internal error.
+        assert_eq!(
+            marker(
+                &["pytest", "-v"],
+                "tests/test_a.py::test_a FAILED\ntests/test_a.py::test_b PASSED\n=== 1 failed, 1 passed in 0.01s ===\n",
+                "",
+                1
+            ),
+            Some(json!(true))
+        );
+        assert_eq!(
+            marker(
+                &["pytest", "-q"],
+                "F.\n=== 1 failed, 1 passed in 0.01s ===\n",
+                "",
+                1
+            ),
+            Some(json!(false))
+        );
+        assert_eq!(
+            marker(
+                &["pytest", "-v"],
+                "INTERNALERROR> RuntimeError: boom\n=== no tests ran in 0.01s ===\n",
+                "",
+                3
+            ),
+            Some(json!(false))
+        );
     }
 
     #[test]

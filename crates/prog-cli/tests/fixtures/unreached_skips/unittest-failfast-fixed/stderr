@@ -1,0 +1,8 @@
+test_add (test_calc.TestCalc.test_add) ... ok
+test_net (test_calc.TestCalc.test_net) ... skipped 'needs network'
+test_zero (test_calc.TestCalc.test_zero) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.000s
+
+OK (skipped=1)

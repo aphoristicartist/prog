@@ -1,0 +1,5 @@
+   Compiling calc v0.1.0 (/repo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (/repo/target/debug/deps/calc-91c35161cd6d5719)
+     Running tests/integration.rs (/repo/target/debug/deps/integration-6553693e19be01f8)
+   Doc-tests calc

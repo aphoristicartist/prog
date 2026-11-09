@@ -742,7 +742,12 @@ pub(super) fn normalize(
             }),
             "filters": invocation.filters,
             "bail": invocation.bail,
-            "targets": invocation.targets
+            "targets": invocation.targets,
+            // #308: only a consistent JSON report lists every test that ran;
+            // text output names failures only.
+            "names_every_test_that_ran": input_format == "js_test_json_report"
+                && complete
+                && matches!(completion, Completion::Consistent | Completion::Skipped(_))
         }),
         warnings,
     );

@@ -715,6 +715,7 @@ fn named(tests: &[String]) -> String {
 fn is_context(reason: &str) -> bool {
     [
         "both runs skipped the same",
+        "the subject skipped ",
         "baseline selection is not exhaustive",
         "baseline provider: ",
         "baseline has ",

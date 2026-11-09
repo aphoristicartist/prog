@@ -10,6 +10,18 @@
   CI fails if rmcp's version changes or an affected feature is enabled
   (`.github/scripts/check-rmcp-features.sh`) (#310).
 
+- A fail-fast or build-failure baseline now proves a fix when the rerun
+  skips a test the baseline never reached (#308). `cargo test` failing in
+  the lib harness, fix, `cargo test` with an `#[ignore]` test in a later
+  harness is `fixed`; so are `go test -failfast`, a Go `[build failed]`
+  baseline, `python -m unittest -f`, and `pytest -x`. This holds only when
+  the baseline's provider marks `names_every_test_that_ran` (every harness,
+  package, or file that started also finished and named its tests) and the
+  skipped name is in none of its records. A crash before any output, a
+  harness that died silently under `--no-fail-fast`, quiet output, Cargo
+  compile failures, and a test that ran before and is skipped now all stay
+  `not_proven`. I14 is updated.
+
 - Receipts no longer understate failures (#313). A run that fails without a
   failing test (a crashed test binary, a compile or lint error, a pytest
   collection or internal error, a Go `init` panic) reads `failure not

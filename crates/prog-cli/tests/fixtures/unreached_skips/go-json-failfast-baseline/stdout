@@ -1,0 +1,9 @@
+{"Time":"2026-11-09T13:19:12.870762-05:00","Action":"start","Package":"example.com/calc"}
+{"Time":"2026-11-09T13:19:13.007224-05:00","Action":"run","Package":"example.com/calc","Test":"TestAdd"}
+{"Time":"2026-11-09T13:19:13.007322-05:00","Action":"output","Package":"example.com/calc","Test":"TestAdd","Output":"=== RUN   TestAdd\n","OutputType":"frame"}
+{"Time":"2026-11-09T13:19:13.007364-05:00","Action":"output","Package":"example.com/calc","Test":"TestAdd","Output":"    calc_test.go:7: Add(2, 2) = 0, want 4\n","OutputType":"error"}
+{"Time":"2026-11-09T13:19:13.007377-05:00","Action":"output","Package":"example.com/calc","Test":"TestAdd","Output":"--- FAIL: TestAdd (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-11-09T13:19:13.007392-05:00","Action":"fail","Package":"example.com/calc","Test":"TestAdd","Elapsed":0}
+{"Time":"2026-11-09T13:19:13.007402-05:00","Action":"output","Package":"example.com/calc","Output":"FAIL\n","OutputType":"frame"}
+{"Time":"2026-11-09T13:19:13.007814-05:00","Action":"output","Package":"example.com/calc","Output":"FAIL\texample.com/calc\t0.137s\n","OutputType":"frame"}
+{"Time":"2026-11-09T13:19:13.007828-05:00","Action":"fail","Package":"example.com/calc","Elapsed":0.137}

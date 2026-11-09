@@ -185,6 +185,9 @@ struct Parsed {
     /// Tests that started (`=== RUN`, `run`) without a result.
     unfinished_tests: BTreeSet<String>,
     build_failed: bool,
+    /// Packages whose result says they never built (`[build failed]`,
+    /// `[setup failed]`, or a JSON `FailedBuild`), so none of their tests ran.
+    unbuilt_packages: BTreeSet<String>,
     panicked: bool,
     no_tests_to_run: bool,
     /// Test results seen after the last package result (text output).
@@ -215,6 +218,26 @@ impl Parsed {
             .values()
             .filter(|record| record.status == status)
             .count() as u64
+    }
+
+    /// #308: every package that reported a result named every test it ran.
+    /// A package that failed with no failing test either never built (Go
+    /// says so explicitly, and then no test ran) or died in `TestMain`,
+    /// `init`, or `os.Exit`, where tests may have run without being named.
+    fn names_every_test_that_ran(&self) -> bool {
+        !self.packages.is_empty()
+            && !self.malformed
+            && !self.trailing_results
+            && self.unfinished_packages.is_empty()
+            && self.unfinished_tests.is_empty()
+            && self.packages.iter().all(|(package, result)| {
+                *result != PackageResult::Failed
+                    || self.unbuilt_packages.contains(package)
+                    || self
+                        .records
+                        .values()
+                        .any(|record| record.status == Status::Failed && record.package == *package)
+            })
     }
 
     fn failed_packages_without_failed_tests(&self) -> bool {
@@ -320,6 +343,7 @@ fn parse_text(lines: &[InputLine<'_>]) -> Parsed {
             parsed.packages.insert(package.to_string(), result);
             if rest.contains("[build failed]") || rest.contains("[setup failed]") {
                 parsed.build_failed = true;
+                parsed.unbuilt_packages.insert(package.to_string());
             }
             if rest.contains("[no tests to run]") {
                 parsed.no_tests_to_run = true;
@@ -436,6 +460,7 @@ fn parse_json(stdout_lines: &[&InputLine<'_>]) -> Parsed {
                     };
                     if event.get("FailedBuild").is_some() {
                         parsed.build_failed = true;
+                        parsed.unbuilt_packages.insert(package.to_string());
                     }
                     parsed.packages.insert(package.to_string(), result);
                 }
@@ -596,6 +621,13 @@ pub(super) fn normalize(
                 }))
             }).collect::<serde_json::Map<_, _>>(),
             "verbose": verbose,
+            // #308: `-v` or `-json`, every started test and package finished,
+            // and the exit agrees with the reported results.
+            "names_every_test_that_ran": complete
+                && verbose
+                && matches!(exit_code, Some(0 | 1))
+                && !matches!(completion, Completion::Conflicting(_))
+                && parsed.names_every_test_that_ran(),
             "build_failed": parsed.build_failed,
             "panicked": parsed.panicked,
             "failfast": invocation.failfast,
