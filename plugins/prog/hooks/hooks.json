@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${PLUGIN_ROOT}\"/scripts/hook.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "\"${PLUGIN_ROOT}\"/scripts/hook.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${PLUGIN_ROOT}\"/scripts/hook.sh" }
+        ]
+      }
+    ]
+  }
+}

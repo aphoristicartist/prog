@@ -93,6 +93,22 @@ pub(crate) fn discloses_open_verification(message: &str) -> bool {
         .any(|phrase| message.contains(phrase))
 }
 
+/// Whether the message names one of `tests` (ids as prog's providers report
+/// them, such as `tests::adds` or `tests/test_api.py::test_login`): the full
+/// id, or its last `::` segment when that is distinctive (at least 8
+/// characters), so `test_login_rejects_expired_tokens` counts but `adds`
+/// does not.
+pub(crate) fn names_any_test(message: &str, tests: &[String]) -> bool {
+    tests.iter().any(|test| {
+        message.contains(test.as_str())
+            || test
+                .rsplit("::")
+                .next()
+                .filter(|name| name.len() >= 8 && name.len() < test.len())
+                .is_some_and(|name| message.contains(name))
+    })
+}
+
 /// The first sentence that claims tests pass or a failure is fixed, ignoring
 /// code, quotes, hedged or conditional sentences, CI claims, and tallies of
 /// anything other than local tests.
@@ -291,6 +307,24 @@ mod tests {
         ] {
             assert!(!discloses_open_verification(claim), "{claim}");
         }
+    }
+
+    #[test]
+    fn naming_a_failing_test_needs_a_distinctive_name() {
+        let tests = [
+            "tests::adds".to_string(),
+            "tests/test_api.py::test_login_rejects_expired".to_string(),
+        ];
+        assert!(names_any_test(
+            "One failed: `tests::adds` expected 4, got 0.",
+            &tests
+        ));
+        assert!(names_any_test(
+            "test_login_rejects_expired still errors.",
+            &tests
+        ));
+        assert!(!names_any_test("The function adds two numbers.", &tests));
+        assert!(!names_any_test("Nothing failed.", &[]));
     }
 
     #[test]

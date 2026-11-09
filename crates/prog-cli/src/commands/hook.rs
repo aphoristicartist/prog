@@ -29,11 +29,46 @@ const SESSIONS_DIR: &str = "claude-sessions";
 /// Run one Claude Code hook event read from stdin. Returns the JSON to print,
 /// if any.
 pub(crate) fn claude_code_hook(input: &str) -> Option<Value> {
+    host_hook(input, Host::ClaudeCode)
+}
+
+/// Run one Codex hook event read from stdin (#304). Codex speaks the same
+/// event model and JSON shape; it has no `CLAUDE_ENV_FILE`, so the `prog
+/// codex` launcher, not SessionStart, puts the shims on `PATH`.
+pub(crate) fn codex_hook(input: &str) -> Option<Value> {
+    host_hook(input, Host::Codex)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Host {
+    ClaudeCode,
+    Codex,
+}
+
+impl Host {
+    fn name(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex",
+        }
+    }
+
+    fn agent(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "Claude",
+            Self::Codex => "Codex",
+        }
+    }
+}
+
+fn host_hook(input: &str, host: Host) -> Option<Value> {
     let input: Value = serde_json::from_str(input).ok()?;
     let event = input.get("hook_event_name")?.as_str()?;
-    let project = std::env::var_os("CLAUDE_PROJECT_DIR")
-        .map(PathBuf::from)
-        .or_else(|| input.get("cwd").and_then(Value::as_str).map(PathBuf::from))?;
+    let project = match host {
+        Host::ClaudeCode => std::env::var_os("CLAUDE_PROJECT_DIR").map(PathBuf::from),
+        Host::Codex => None,
+    }
+    .or_else(|| input.get("cwd").and_then(Value::as_str).map(PathBuf::from))?;
     // An explicit PROG_DIR wins; otherwise each project gets a store outside
     // its tree so captures never count as workspace changes.
     let explicit_store = std::env::var_os("PROG_DIR").filter(|dir| !dir.is_empty());
@@ -43,11 +78,11 @@ pub(crate) fn claude_code_hook(input: &str) -> Option<Value> {
         .unwrap_or_else(|| project_store_dir(&project));
     match event {
         "SessionStart" => {
-            session_start(&input, &project, &store_dir, explicit_store.is_some());
+            session_start(&input, &project, &store_dir, explicit_store.is_some(), host);
             None
         }
         "PostToolUse" | "PostToolUseFailure" if input["tool_name"] == "Bash" => {
-            post_tool_use(&input, &store_dir, HOST).map(|text| {
+            post_tool_use(&input, &store_dir, host).map(|text| {
                 json!({
                     "hookSpecificOutput": {
                         "hookEventName": event,
@@ -56,12 +91,10 @@ pub(crate) fn claude_code_hook(input: &str) -> Option<Value> {
                 })
             })
         }
-        "Stop" => stop_event(&input, &store_dir, HOST),
+        "Stop" => stop_event(&input, &store_dir, host),
         _ => None,
     }
 }
-
-const HOST: &str = "claude-code";
 
 pub(crate) fn read_hook_input() -> String {
     let mut input = String::new();
@@ -71,7 +104,13 @@ pub(crate) fn read_hook_input() -> String {
     input
 }
 
-fn session_start(input: &Value, project: &Path, store_dir: &Path, explicit_store: bool) {
+fn session_start(
+    input: &Value,
+    project: &Path,
+    store_dir: &Path,
+    explicit_store: bool,
+    host: Host,
+) {
     let shims = default_shim_dir();
     if shim_install(&ShimInstallArgs {
         dir: Some(shims.clone()),
@@ -81,7 +120,8 @@ fn session_start(input: &Value, project: &Path, store_dir: &Path, explicit_store
     {
         return;
     }
-    if let Some(env_file) = std::env::var_os("CLAUDE_ENV_FILE") {
+    if let Some(env_file) = std::env::var_os("CLAUDE_ENV_FILE").filter(|_| host == Host::ClaudeCode)
+    {
         let env = shim_env(&ShimEnvArgs {
             dir: Some(shims),
             // Keep a user's explicit PROG_DIR; otherwise point shims at the
@@ -129,7 +169,7 @@ fn session_start(input: &Value, project: &Path, store_dir: &Path, explicit_store
 
 /// Receipts for runs the shims captured during this tool call, or a notice
 /// that a test command ran without a capture. Logged either way.
-fn post_tool_use(input: &Value, store_dir: &Path, host: &str) -> Option<String> {
+fn post_tool_use(input: &Value, store_dir: &Path, host: Host) -> Option<String> {
     let receipts = pending_receipts(store_dir);
     let session = input.get("session_id").and_then(Value::as_str);
     let command = input
@@ -161,7 +201,7 @@ fn post_tool_use(input: &Value, store_dir: &Path, host: &str) -> Option<String> 
     if receipts.is_some() || uncaptured.is_some() {
         harness_log::append(
             store_dir,
-            host,
+            host.name(),
             "post_tool_use",
             json!({
                 "session": session.map(harness_log::short_hash),
@@ -353,6 +393,8 @@ struct Evidence {
     newest_test: Option<Value>,
     /// Captured test, build, and lint runs this session.
     runs: usize,
+    /// Tests the newest test run reports failing or erroring.
+    failing_tests: Vec<String>,
 }
 
 /// Handle a Stop event: evaluate the evidence, decide, log, and answer.
@@ -369,7 +411,7 @@ struct Evidence {
 /// run. When the final message claims success that the evidence contradicts,
 /// the block quotes the claim, and a second stop shows the user a warning
 /// instead of blocking again (#305).
-fn stop_event(input: &Value, store_dir: &Path, host: &str) -> Option<Value> {
+fn stop_event(input: &Value, store_dir: &Path, host: Host) -> Option<Value> {
     let enabled = stop_gate_enabled();
     if !enabled && !harness_log::logging_enabled() {
         return None;
@@ -383,9 +425,12 @@ fn stop_event(input: &Value, store_dir: &Path, host: &str) -> Option<Value> {
         .get("last_assistant_message")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let discloses = final_message::discloses_open_verification(message);
     let claim = final_message::success_claim(message);
     let evidence = assess_stop(store_dir, session);
+    // A message that names a test prog saw failing, and claims nothing, is
+    // telling the user about that failure.
+    let discloses = final_message::discloses_open_verification(message)
+        || (claim.is_none() && final_message::names_any_test(message, &evidence.failing_tests));
     let contradiction = match (&claim, &evidence.finding) {
         (Some(claim), Some((rule, _))) if !discloses => match *rule {
             "test_failing" | "test_stale" => Some(claim),
@@ -403,7 +448,7 @@ fn stop_event(input: &Value, store_dir: &Path, host: &str) -> Option<Value> {
     };
     harness_log::append(
         store_dir,
-        host,
+        host.name(),
         "stop",
         json!({
             "session": harness_log::short_hash(session),
@@ -437,7 +482,7 @@ fn stop_event(input: &Value, store_dir: &Path, host: &str) -> Option<Value> {
         "skip_stop_hook_active" => contradiction.map(|claim| {
             // The agent was already blocked once and still claims success:
             // tell the user directly instead of blocking again.
-            let who = if host == HOST { "Claude" } else { "The agent" };
+            let who = host.agent();
             let lead = text.split(". ").next().unwrap_or_default();
             let headline = text.lines().nth(1).unwrap_or_default();
             json!({
@@ -457,6 +502,7 @@ fn assess_stop(store_dir: &Path, session: &str) -> Evidence {
         finding: None,
         newest_test: None,
         runs,
+        failing_tests: Vec::new(),
     };
     let Some(started) = fs::read_to_string(store_dir.join(SESSIONS_DIR).join(session))
         .ok()
@@ -516,6 +562,17 @@ fn assess_stop(store_dir: &Path, session: &str) -> Evidence {
     // run, which compiles the same code.
     let newest = |kind: RunKind| runs.iter().position(|(_, _, run_kind)| *run_kind == kind);
     let newest_test = newest(RunKind::Test);
+    let failing_tests = newest_test
+        .and_then(|index| TestPopulation::from_payload(runs[index].1.as_value()))
+        .map(|population| {
+            population
+                .tests
+                .into_iter()
+                .filter(|(_, status)| matches!(status.as_str(), "failed" | "error"))
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let newest_test_record = newest_test.map(|index| {
         let (observation, payload, _) = &runs[index];
         let receipt = receipt_for(&store, observation, payload.as_value());
@@ -529,6 +586,7 @@ fn assess_stop(store_dir: &Path, session: &str) -> Evidence {
     });
     let evidence = |finding| Evidence {
         finding,
+        failing_tests: failing_tests.clone(),
         newest_test: newest_test_record
             .as_ref()
             .map(|(_, record)| record.clone()),
