@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Prove fixes for `python -m unittest -v`, `go test -v` or `-json`, and Jest
+  or Vitest JSON reports (`jest --json`, `vitest run --reporter=json
+  --outputFile=/dev/stdout`), not only pytest and Cargo. Each provider names
+  every test that ran and refuses deleted, skipped, swapped, quiet, filtered,
+  fail-fast, cut-off, and exit-contradicting runs, and runs where a module,
+  package, or test file failed to import, build, or load. Jest 30 and Vitest
+  5 print only failures in agent sessions, so their text output gives counts
+  and failing tests but never proves a fix. `python3.N -m pytest` is now
+  recognized, and `python -m pytest|unittest` and `npx jest|vitest` are
+  routed as test runs; `python`, `python3`, and `npx` shims stay opt-in
+  (`prog shim install --tool python3 --tool npx`) (#302).
+
+- `pytest -x` fails, fix, `pytest -x` now proves the fix: `-x` and
+  `--maxfail` stop only at a failure, so a passing run covered every test.
+  A failing `-x` run still proves nothing, and cache-driven selections
+  (`--lf`, `--ff`, `--sw`) never cover the suite (#299).
+
+- Receipts quote what blocks a proof (a narrowed population, then the
+  rerun's own advice) instead of context such as shared skips, print no
+  `0 passed, 0 failed` tally for runs without test counts, and point at
+  `/stderr` when that is where the output went (#302).
+
 - Security: update `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.11
   (RUSTSEC-2026-0382 and RUSTSEC-2026-0381: certificate verification could
   trust distrusted intermediates), and `tokio` to 1.54.1 (RUSTSEC-2026-0386:

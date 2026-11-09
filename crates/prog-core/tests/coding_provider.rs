@@ -306,6 +306,23 @@ fn runner_reported_skips_are_marked_only_when_they_are_the_only_gap() {
         (
             "pytest skipped after an early stop",
             vec!["pytest", "-x", "-v"],
+            "t.py::test_a FAILED\nt.py::test_b SKIPPED (linux only)\n!!! stopping after 1 failures !!!\n1 failed, 1 skipped in 0.01s\n"
+                .to_string(),
+            Some(1),
+            false,
+        ),
+        (
+            // `-x` stops only at a failure; this run never stopped (#299).
+            "pytest -x that never stopped",
+            vec!["pytest", "-x", "-v"],
+            "t.py::test_a PASSED\nt.py::test_b SKIPPED (linux only)\n1 passed, 1 skipped in 0.01s\n"
+                .to_string(),
+            Some(0),
+            true,
+        ),
+        (
+            "pytest last-failed selection",
+            vec!["pytest", "--lf", "-v"],
             "t.py::test_a PASSED\nt.py::test_b SKIPPED (linux only)\n1 passed, 1 skipped in 0.01s\n"
                 .to_string(),
             Some(0),

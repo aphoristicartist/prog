@@ -214,7 +214,11 @@ delta unknown      -> unknown
 
 So an obligation inherits every guarantee from `prog delta`: it can only pass
 when absence is provable. See [`delta.md`](delta.md) for the full precondition
-list.
+list. Absence of a failing test is provable only for runs whose output names
+every test that ran: Cargo, pytest `-v` or a JSON report,
+`python -m unittest -v`, `go test -v` or `-json`, and Jest or Vitest JSON
+reports. [Coding providers](coding-providers.md#which-runs-can-prove-a-fix)
+lists the exact flags and the runs that never prove a fix.
 
 When an obligation names neither, evaluation falls back to the evidence
 command's exit status at `/command/success`.

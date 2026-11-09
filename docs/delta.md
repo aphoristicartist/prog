@@ -72,7 +72,10 @@ following hold:
   need not: a failing fail-fast `cargo test` stops early, but it still
   reports the failures it saw, and only reported failures can be resolved,
   so `cargo test`, fix, `cargo test` proves the fix. A subject that itself
-  stops early (`cargo test` that fails again, `pytest -x`) proves nothing.
+  stops early (`cargo test` or `pytest -x` that fails again) proves nothing;
+  one that passed never stopped, so `pytest -x`, fix, `pytest -x` proves the
+  fix too. Cache-driven selections (`pytest --lf`, `--sw`) never cover the
+  suite.
   A suite that skips tests (`#[ignore]`, pytest `skip`/`skipif`) is never
   exhaustive on its own, but when the skips are the only gap in the subject
   and both runs name exactly the same skipped tests, each as many times as
@@ -94,8 +97,9 @@ following hold:
   (`pytest -q`, `cargo test -q`) names only failures. "The failing test now
   passes" and "the failing test was deleted and a new passing test took its
   place in the count" print the same thing, so a quiet subject cannot prove a
-  fix; the reason says to rerun verbosely (`pytest -v`, `cargo test` without
-  `-q`). Likewise a baseline whose summary counts more failures than it names
+  fix; the reason says to rerun verbosely (`pytest -v`,
+  `python -m unittest -v`, `go test -v`, `cargo test` without `-q`), or with
+  `--json` for Jest and Vitest, whose agent-mode text names only failures. Likewise a baseline whose summary counts more failures than it names
   cannot match the unnamed ones to a later pass. libtest's closing `failures:`
   list names failing tests even in quiet mode, and is read for that.
 

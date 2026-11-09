@@ -95,16 +95,19 @@ only when all of these hold:
 
 - the same command ran the same tests again, and at least as many executed;
 - every test that failed before ran again and passed **by name**. Quiet output
-  (`pytest -q`, `cargo test -q`) names only failures, so prog asks for a
-  verbose rerun instead of guessing;
+  (`pytest -q`, `cargo test -q`, `go test` without `-v`) names only failures,
+  so prog asks for a verbose rerun instead of guessing;
 - any skipped or ignored tests are the same, by name, in both runs: a test
   skipped in both ran in neither, so it cannot hide the failure;
 - neither capture was cut short, and each run's own summary agrees with its
   exit code.
 
-A [seeded suite](docs/false-completion.md) checks that deleted, skipped,
-ignored, swapped, and quiet-mode tests never come out as fixed, and that real
-fixes still do.
+Fixes are provable for Cargo, pytest, `python -m unittest -v`, `go test -v`
+or `-json`, and Jest or Vitest JSON reports;
+[coding providers](docs/coding-providers.md#which-runs-can-prove-a-fix) lists
+the exact flags. A [seeded suite](docs/false-completion.md) checks that
+deleted, skipped, ignored, swapped, and quiet-mode tests never come out as
+fixed for each of them, and that real fixes still do.
 
 The optional **stop gate** (Claude Code plugin setting `stop_gate`) blocks the
 end of a turn once when the latest test run is failing or unproven, when files

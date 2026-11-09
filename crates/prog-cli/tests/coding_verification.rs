@@ -16,10 +16,13 @@ fn run_json(args: &[&str]) -> Value {
 #[test]
 fn coding_readiness_requires_consistent_and_exhaustive_evidence() {
     let mut cases = vec![
+        // A stepwise run resumes after the last failure, so even a passing
+        // one may have skipped earlier tests. (`-x` stops only at a failure:
+        // a passing `-x` run covered the suite, see `valid-pytest-exitfirst`.)
         (
             "early-stop",
             "pytest",
-            vec!["-x"],
+            vec!["--sw"],
             "1 passed in 0.01s\n".to_string(),
         ),
         (
@@ -70,10 +73,12 @@ fn coding_readiness_requires_consistent_and_exhaustive_evidence() {
         ("json-skipped", "pytest", vec![], json!({"exitcode": 0, "summary": {"skipped": 1, "total": 1}, "tests": [{"nodeid": "test_api.py::test_skip", "outcome": "skipped"}]}).to_string()),
         ("deselected", "pytest", vec![], "1 passed, 2 deselected in 0.01s\n".to_string()),
         ("duplicate-summary", "pytest", vec![], "1 passed in 0.01s\n1 passed in 0.02s\n".to_string()),
-        ("early-stop-override", "pytest", vec!["-x"], "1 passed in 0.01s\n".to_string()),
+        ("early-stop-override", "pytest", vec!["--sw"], "1 passed in 0.01s\n".to_string()),
+        ("exitfirst-stopped", "pytest", vec!["-x"], "FAILED test_api.py::test_bad - AssertionError\n!!! stopping after 1 failures !!!\n1 failed in 0.01s\n".to_string()),
         ("cargo-conflict", "cargo", vec!["test"], "test module::bad ... FAILED\ntest result: ok. 1 passed; 0 failed\n".to_string()),
         ("cargo-malformed-summary", "cargo", vec!["test"], "test result: ok. unknown passed; 0 failed\n".to_string()),
         ("valid-pytest-text", "pytest", vec![], "test_api.py::test_ok PASSED\n1 passed in 0.01s\n".to_string()),
+        ("valid-pytest-exitfirst", "pytest", vec!["-x"], "test_api.py::test_ok PASSED\n1 passed in 0.01s\n".to_string()),
         ("valid-pytest-json", "pytest", vec![], green.to_string()),
         ("valid-cargo", "cargo", vec!["test"], "test module::good ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n".to_string()),
     ]);

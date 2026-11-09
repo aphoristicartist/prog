@@ -170,6 +170,22 @@ fn noisy_command(program: &str, args: &[String]) -> bool {
         "docker" | "podman" => first == Some("logs"),
         "kubectl" => first.is_some_and(|arg| matches!(arg, "get" | "logs" | "describe")),
         "vitest" => first == Some("run"),
+        // Test runners reached through an interpreter or package runner.
+        "python" | "python3" => {
+            first == Some("-m")
+                && matches!(args.get(1).map(String::as_str), Some("pytest" | "unittest"))
+        }
+        _ if program.strip_prefix("python3.").is_some_and(|minor| {
+            !minor.is_empty() && minor.chars().all(|ch| ch.is_ascii_digit())
+        }) =>
+        {
+            first == Some("-m")
+                && matches!(args.get(1).map(String::as_str), Some("pytest" | "unittest"))
+        }
+        "npx" | "bunx" | "pnpx" => args
+            .iter()
+            .find(|arg| !arg.starts_with('-'))
+            .is_some_and(|package| matches!(package.as_str(), "jest" | "vitest")),
         "playwright" => first == Some("test"),
         "uv" => first == Some("run"),
         "ruff" => first == Some("check"),
@@ -298,6 +314,27 @@ mod tests {
             (argv(&["biome", "check", "."]), RouteGuidance::Progressive),
             (argv(&["tsc", "--noEmit"]), RouteGuidance::Progressive),
             (argv(&["jest", "--ci"]), RouteGuidance::Progressive),
+            (
+                argv(&["python3", "-m", "unittest", "-v"]),
+                RouteGuidance::Progressive,
+            ),
+            (
+                argv(&["python3.12", "-m", "pytest"]),
+                RouteGuidance::Progressive,
+            ),
+            (argv(&["python3", "script.py"]), RouteGuidance::Unknown),
+            (
+                argv(&["python", "-m", "http.server"]),
+                RouteGuidance::Unknown,
+            ),
+            (
+                argv(&["npx", "--yes", "jest", "--json"]),
+                RouteGuidance::Progressive,
+            ),
+            (
+                argv(&["npx", "prettier", "--check"]),
+                RouteGuidance::Unknown,
+            ),
             (argv(&["terraform", "plan"]), RouteGuidance::Progressive),
             (
                 argv(&["tofu", "show", "plan.out"]),

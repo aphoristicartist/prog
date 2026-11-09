@@ -147,7 +147,10 @@ fn headline(payload: &Value, failing_tests: &[String]) -> String {
     } else if let Some(code) = field("exit_code").and_then(Value::as_i64) {
         parts.push(format!("exit {code}"));
     }
-    if let Some(counts) = payload.pointer("/provider/normalized/counts") {
+    if let Some(counts) = payload
+        .pointer("/provider/normalized/counts")
+        .filter(|counts| counts.is_object())
+    {
         let count = |name: &str| counts.get(name).and_then(Value::as_u64).unwrap_or(0);
         let failed = count("failed") + count("error");
         let mut tally = format!("{} passed, {failed} failed", count("passed"));
@@ -232,11 +235,36 @@ fn comparison(
     after: Option<&TestPopulation>,
 ) -> Option<String> {
     if !delta.assessment.can_prove_absence {
-        let reason = delta
+        // Quote what blocks the proof, not context such as shared skips or
+        // why the earlier run stopped (a baseline need not be exhaustive).
+        let blocking = delta
             .assessment
             .reasons
             .iter()
-            .find(|reason| reason.contains("test"))
+            .filter(|reason| !is_context(reason))
+            .collect::<Vec<_>>();
+        // A narrowed population is the strongest evidence; then the rerun's
+        // own advice for a provable run (`go test -v`, `jest --json`).
+        let narrowed = |reason: &&&String| {
+            [
+                "did not run again",
+                "population shrank",
+                "cannot be matched",
+                "recorded none",
+            ]
+            .iter()
+            .any(|marker| reason.contains(marker))
+        };
+        let subject_advice = |reason: &&&String| {
+            reason.starts_with("subject provider: ") && !reason.contains("skipped some tests")
+        };
+        let reason = blocking
+            .iter()
+            .find(narrowed)
+            .or_else(|| blocking.iter().find(subject_advice))
+            .or_else(|| blocking.iter().find(|reason| reason.contains("test")))
+            .or_else(|| blocking.first())
+            .copied()
             .or_else(|| delta.assessment.reasons.first())
             .map(|reason| truncate(&actionable(reason), MAX_DETAIL_CHARS))
             .unwrap_or_else(|| "comparison is not provable".to_string());
@@ -305,6 +333,17 @@ fn evidence_path(payload: &Value) -> &'static str {
         .is_some_and(|section| !section.is_null())
     {
         "/failure_sections/0"
+    } else if payload
+        .pointer("/stdout/line_count")
+        .and_then(Value::as_u64)
+        == Some(0)
+        && payload
+            .pointer("/stderr/line_count")
+            .and_then(Value::as_u64)
+            .is_some_and(|lines| lines > 0)
+    {
+        // `python -m unittest` writes its whole report to stderr.
+        "/stderr"
     } else if payload.get("stdout").is_some() {
         "/stdout"
     } else {
@@ -323,6 +362,18 @@ fn named(tests: &[String]) -> String {
         0 => shown,
         more => format!("{shown} +{more} more"),
     }
+}
+
+fn is_context(reason: &str) -> bool {
+    [
+        "both runs skipped the same",
+        "baseline selection is not exhaustive",
+        "baseline provider: ",
+        "baseline has ",
+        "subject has ",
+    ]
+    .iter()
+    .any(|prefix| reason.starts_with(prefix))
 }
 
 /// A provider reason (`baseline provider: <why>; <what to do>`) is shown as

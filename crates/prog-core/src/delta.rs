@@ -159,7 +159,7 @@ pub fn test_population_reasons(
             .join(", ");
         let more = unnamed.len().saturating_sub(MAX_NAMED_TESTS);
         reasons.push(format!(
-            "quiet output does not name passing tests, so {shown}{} cannot be shown to have passed; rerun verbosely (pytest -v, cargo test without -q, go test -v)",
+            "rerun verbosely (pytest -v, python -m unittest -v, go test -v, cargo test without -q): quiet output does not name passing tests, so {shown}{} cannot be shown to have passed",
             if more > 0 {
                 format!(" and {more} more")
             } else {

@@ -4,7 +4,7 @@ use crate::*;
 use prog_adapters::process::{
     CaptureInterruption, ProcessCapture, capture_process, configure_capture_process,
 };
-use prog_core::normalize_coding_output;
+use prog_core::normalize_coding_output_in;
 
 pub(crate) struct RunProcessResult {
     stdout: RunCapture,
@@ -167,7 +167,8 @@ pub(crate) async fn run_command_with(
         );
     let combined = redact_run_chunks(&run.combined);
     let failure_sections = detect_run_failure_sections(&run.status, &stdout_text, &stderr_text);
-    let provider = normalize_coding_output(
+    let provider = normalize_coding_output_in(
+        cwd.to_str(),
         &args.command,
         &stdout_text.text,
         &stderr_text.text,
