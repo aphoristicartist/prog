@@ -4,6 +4,14 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+# rmcp 2.1.0 is pinned without default features. Both advisories are in code
+# behind features prog never enables, and `.github/scripts/check-rmcp-features.sh`
+# fails CI if either feature, or any other rmcp version, ever appears. Remove
+# these entries when rmcp moves to >= 3.9.0.
+ignore = [
+    { id = "RUSTSEC-2026-0457", reason = "OAuth client SSRF: rmcp `auth` feature is not enabled (guarded by check-rmcp-features.sh)" },
+    { id = "RUSTSEC-2026-0462", reason = "Streamable HTTP client body buffering: rmcp `transport-streamable-http-client*` features are not enabled (guarded by check-rmcp-features.sh)" },
+]
 
 [licenses]
 version = 2
