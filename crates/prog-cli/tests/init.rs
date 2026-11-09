@@ -847,6 +847,25 @@ fn harness_doctor_reports_shim_and_claude_plugin_state() {
     assert_eq!(status(&report, "shims").as_deref(), Some("inactive"));
     let report = doctor(&format!("{}:{base_path}", shims.display()));
     assert_eq!(status(&report, "shims").as_deref(), Some("ok"));
+    // #312: an earlier PATH entry that shadows a shim means its runs are
+    // never captured; doctor names the tool and what runs instead.
+    let shadow = home.path().join("shadow");
+    fs::create_dir_all(&shadow).unwrap();
+    let shadowing = shadow.join("cargo");
+    fs::write(&shadowing, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&shadowing, fs::Permissions::from_mode(0o755)).unwrap();
+    let report = doctor(&format!(
+        "{}:{}:{base_path}",
+        shadow.display(),
+        shims.display()
+    ));
+    assert_eq!(status(&report, "shims").as_deref(), Some("partial"));
+    let warnings = report["warnings"].to_string();
+    assert!(
+        warnings.contains("before prog's shims")
+            && warnings.contains(&format!("cargo ({})", shadowing.display())),
+        "{report:#}"
+    );
 
     let registry = claude.join("plugins/installed_plugins.json");
     fs::create_dir_all(registry.parent().unwrap()).unwrap();

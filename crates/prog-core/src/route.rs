@@ -97,17 +97,28 @@ pub fn is_verification_command(argv: &[String]) -> bool {
         "deno" => first.is_some_and(|arg| matches!(arg, "test" | "lint" | "check")),
         "npm" | "pnpm" | "yarn" | "bun" => {
             first.is_some_and(|arg| matches!(arg, "test" | "run" | "exec" | "x"))
+                || (matches!(program, "pnpm" | "yarn") && launches_test_runner(&argv[1..]))
         }
-        "npx" | "bunx" | "uv" | "uvx" | "poetry" | "python" | "python3" => argv
-            .iter()
-            .skip(1)
-            .filter_map(|arg| program_name(arg))
-            .any(|arg| {
-                matches!(
-                    arg,
-                    "pytest" | "jest" | "vitest" | "mypy" | "ruff" | "eslint" | "tsc" | "unittest"
-                )
-            }),
+        "npx" | "bunx" | "pnpx" | "uv" | "uvx" | "poetry" | "python" | "python3" => {
+            launches_test_runner(&argv[1..])
+                || argv
+                    .iter()
+                    .skip(1)
+                    .filter_map(|arg| program_name(arg))
+                    .any(|arg| {
+                        matches!(
+                            arg,
+                            "pytest"
+                                | "jest"
+                                | "vitest"
+                                | "mypy"
+                                | "ruff"
+                                | "eslint"
+                                | "tsc"
+                                | "unittest"
+                        )
+                    })
+        }
         "playwright" => first == Some("test"),
         "dotnet" => first.is_some_and(|arg| matches!(arg, "test" | "build")),
         _ => false,
@@ -116,6 +127,18 @@ pub fn is_verification_command(argv: &[String]) -> bool {
 
 fn program_name(value: &str) -> Option<&str> {
     Path::new(value).file_name()?.to_str()
+}
+
+/// Whether `args` (what follows `npx`, `pnpm exec`, or `pnpm` itself) starts
+/// a known test runner: Jest, Vitest, or `playwright test`. Only the first
+/// non-flag argument names the package, so `npx -p jest other` is not one.
+fn launches_test_runner(args: &[String]) -> bool {
+    let mut rest = args.iter().filter(|arg| !arg.starts_with('-'));
+    match rest.next().map(String::as_str) {
+        Some("jest" | "vitest") => true,
+        Some("playwright") => rest.next().is_some_and(|arg| arg == "test"),
+        _ => false,
+    }
 }
 
 fn shell_structure_is_opaque(program: &str, args: &[String]) -> bool {
@@ -163,8 +186,12 @@ fn noisy_command(program: &str, args: &[String]) -> bool {
         }),
         "go" => first == Some("test"),
         "deno" => first.is_some_and(|arg| matches!(arg, "test" | "lint" | "check")),
+        // Package scripts, and test runners started through the manager:
+        // `pnpm exec vitest`, `npm x jest`, `pnpm vitest`, `yarn jest`.
         "npm" | "pnpm" | "yarn" | "bun" => {
             first.is_some_and(|arg| matches!(arg, "test" | "run" | "audit"))
+                || (matches!(first, Some("exec" | "x")) && launches_test_runner(&args[1..]))
+                || (matches!(program, "pnpm" | "yarn") && launches_test_runner(args))
         }
         "git" => first.is_some_and(|arg| matches!(arg, "diff" | "log" | "show")),
         "docker" | "podman" => first == Some("logs"),
@@ -182,10 +209,7 @@ fn noisy_command(program: &str, args: &[String]) -> bool {
             first == Some("-m")
                 && matches!(args.get(1).map(String::as_str), Some("pytest" | "unittest"))
         }
-        "npx" | "bunx" | "pnpx" => args
-            .iter()
-            .find(|arg| !arg.starts_with('-'))
-            .is_some_and(|package| matches!(package.as_str(), "jest" | "vitest")),
+        "npx" | "bunx" | "pnpx" => launches_test_runner(args),
         "playwright" => first == Some("test"),
         "uv" => first == Some("run"),
         "ruff" => first == Some("check"),
@@ -246,6 +270,10 @@ mod verification_command_tests {
             &["python3", "-m", "pytest"],
             &["npm", "test"],
             &["jest", "--json"],
+            &["pnpm", "exec", "vitest", "run"],
+            &["pnpm", "vitest"],
+            &["npx", "playwright", "test"],
+            &["uv", "run", "python", "-m", "unittest"],
         ] {
             assert!(is_verification_command(&argv(command)), "{command:?}");
         }
@@ -255,6 +283,8 @@ mod verification_command_tests {
             &["curl", "-s", "https://example.com"],
             &["go", "list", "-json"],
             &["python3", "export.py"],
+            &["npx", "playwright", "install"],
+            &["pnpm", "install"],
             &[],
         ] {
             assert!(!is_verification_command(&argv(command)), "{command:?}");
@@ -335,6 +365,35 @@ mod tests {
                 argv(&["npx", "prettier", "--check"]),
                 RouteGuidance::Unknown,
             ),
+            // Runners started through a package manager (#312).
+            (
+                argv(&["pnpm", "exec", "vitest", "run"]),
+                RouteGuidance::Progressive,
+            ),
+            (argv(&["npm", "exec", "jest"]), RouteGuidance::Progressive),
+            (argv(&["npm", "x", "vitest"]), RouteGuidance::Progressive),
+            (argv(&["bun", "x", "jest"]), RouteGuidance::Progressive),
+            (argv(&["pnpm", "vitest", "run"]), RouteGuidance::Progressive),
+            (argv(&["yarn", "jest", "--ci"]), RouteGuidance::Progressive),
+            (
+                argv(&["pnpm", "exec", "playwright", "test"]),
+                RouteGuidance::Progressive,
+            ),
+            (
+                argv(&["npx", "playwright", "test", "--reporter=line"]),
+                RouteGuidance::Progressive,
+            ),
+            (
+                argv(&["npx", "playwright", "install"]),
+                RouteGuidance::Unknown,
+            ),
+            (
+                argv(&["pnpm", "exec", "eslint", "."]),
+                RouteGuidance::Unknown,
+            ),
+            (argv(&["npm", "exec", "prettier"]), RouteGuidance::Unknown),
+            (argv(&["pnpm", "lint"]), RouteGuidance::Unknown),
+            (argv(&["npm", "vitest"]), RouteGuidance::Unknown),
             (argv(&["terraform", "plan"]), RouteGuidance::Progressive),
             (
                 argv(&["tofu", "show", "plan.out"]),

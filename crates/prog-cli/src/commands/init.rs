@@ -266,7 +266,35 @@ fn shim_doctor_check(warnings: &mut Vec<String>) -> HarnessDoctorCheck {
     if let Some(list) = listing["warnings"].as_array() {
         warnings.extend(list.iter().filter_map(Value::as_str).map(str::to_string));
     }
+    // Tools whose shim exists but an earlier PATH entry wins: their runs are
+    // never captured, which the receipts cannot show by themselves.
+    let shadowed = listing["shims"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|shim| shim["active"] == false && !shim["wraps"].is_null())
+        .filter_map(|shim| {
+            let tool = shim["tool"].as_str()?;
+            Some(match shim["resolves_to"].as_str() {
+                Some(path) => format!("{tool} ({path})"),
+                None => tool.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if on_path && !shadowed.is_empty() {
+        warnings.push(format!(
+            "PATH finds these tools before prog's shims, so their runs are not captured: {}",
+            shadowed.join(", ")
+        ));
+    }
     let (status, detail) = match (installed, on_path) {
+        (true, true) if !shadowed.is_empty() => (
+            "partial",
+            format!(
+                "PATH shims capture test and build runs, except {} (shadowed earlier on PATH)",
+                shadowed.len()
+            ),
+        ),
         (true, true) => ("ok", "PATH shims capture test and build runs".to_string()),
         (true, false) => (
             "inactive",

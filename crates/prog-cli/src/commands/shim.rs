@@ -45,6 +45,41 @@ pub(crate) const DEFAULT_SHIM_TOOLS: &[&str] = &[
     "uv",
 ];
 
+/// Interpreters and package runners agents call constantly, shimmed by
+/// default only when the real tool exists on `PATH`, so a shim never makes
+/// `command -v python` succeed on a machine without `python`. Only
+/// `python -m pytest|unittest` and `npx jest|vitest|playwright test` are
+/// captured; every other call is `exec`ed unchanged (about 10–20 ms).
+pub(crate) const CONDITIONAL_SHIM_TOOLS: &[&str] = &["npx", "python3", "python"];
+
+/// Comma-separated default shims to leave out (and remove, if prog generated
+/// them), for example `PROG_SHIM_SKIP=python,python3`.
+pub(crate) const SHIM_SKIP_ENV: &str = "PROG_SHIM_SKIP";
+
+/// The default shim set for `dir`: every [`DEFAULT_SHIM_TOOLS`] entry plus
+/// each [`CONDITIONAL_SHIM_TOOLS`] entry whose real tool exists, minus
+/// `PROG_SHIM_SKIP`. Returns the tools to install and the ones skipped.
+fn default_shim_tools(dir: &Path) -> (Vec<String>, Vec<String>) {
+    let skip = std::env::var(SHIM_SKIP_ENV)
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|tool| !tool.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    let mut tools = Vec::new();
+    let mut skipped = Vec::new();
+    for tool in DEFAULT_SHIM_TOOLS.iter().chain(CONDITIONAL_SHIM_TOOLS) {
+        let conditional = CONDITIONAL_SHIM_TOOLS.contains(tool);
+        if skip.contains(*tool) || (conditional && resolve_real_tool(tool, dir).is_none()) {
+            skipped.push((*tool).to_string());
+        } else {
+            tools.push((*tool).to_string());
+        }
+    }
+    (tools, skipped)
+}
+
 pub(crate) fn default_shim_dir() -> PathBuf {
     xdg_dir("XDG_DATA_HOME", ".local/share").join("prog/shims")
 }
@@ -89,15 +124,21 @@ pub(crate) fn shim_install(args: &ShimInstallArgs) -> Result<Value> {
     let dir = args.dir.clone().unwrap_or_else(default_shim_dir);
     fs::create_dir_all(&dir)?;
     let prog = std::env::current_exe()?;
-    let tools = if args.tools.is_empty() {
-        DEFAULT_SHIM_TOOLS
-            .iter()
-            .map(|tool| (*tool).to_string())
-            .collect()
+    let (tools, skipped) = if args.tools.is_empty() {
+        default_shim_tools(&dir)
     } else {
-        args.tools.clone()
+        (args.tools.clone(), Vec::new())
     };
     let mut installed = Vec::new();
+    // A default shim that is now skipped (opted out, or its tool is gone) is
+    // removed when prog generated it; anything else is left alone.
+    for tool in &skipped {
+        let path = dir.join(tool);
+        if is_prog_shim(&path) {
+            fs::remove_file(&path)?;
+            installed.push(json!({"tool": tool, "path": path, "action": "removed"}));
+        }
+    }
     for tool in &tools {
         validate_tool_name(tool)?;
         let path = dir.join(tool);
@@ -191,14 +232,22 @@ pub(crate) fn shim_list(args: &ShimDirArgs) -> Result<Value> {
             .filter(|entry| !entry.as_os_str().is_empty())
             .map(|entry| entry.join(&tool))
             .find(|candidate| is_executable(candidate));
-        let active = first.and_then(|first| first.canonicalize().ok()) == path.canonicalize().ok();
+        let active =
+            first.as_ref().and_then(|first| first.canonicalize().ok()) == path.canonicalize().ok();
         let wraps = resolve_real_tool(&tool, &dir);
         if wraps.is_none() {
             warnings.push(format!(
                 "no real `{tool}` found on PATH outside the shim directory"
             ));
         }
-        shims.push(json!({"tool": tool, "active": active, "wraps": wraps}));
+        // What `PATH` runs instead when an earlier entry shadows the shim.
+        let resolves_to = (!active).then_some(first).flatten();
+        shims.push(json!({
+            "tool": tool,
+            "active": active,
+            "wraps": wraps,
+            "resolves_to": resolves_to,
+        }));
     }
     let marker = fs::read(dir.join(SHIM_MARKER))
         .ok()
