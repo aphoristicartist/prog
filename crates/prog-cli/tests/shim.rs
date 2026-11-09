@@ -390,6 +390,78 @@ fn install_never_overwrites_foreign_files_and_uninstall_removes_only_shims() {
     assert!(!dir.join("cargo").exists());
 }
 
+/// #312: `npx`, `python3`, and `python` are shimmed by default only when the
+/// real tool exists, so `command -v python` never starts succeeding on a
+/// machine without `python`; `PROG_SHIM_SKIP` opts out and removes the shim.
+#[test]
+fn default_install_shims_interpreters_only_when_they_exist() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("shims");
+    let tools = root.path().join("tools");
+    fs::create_dir_all(&tools).unwrap();
+    for tool in ["python3", "npx"] {
+        let path = tools.join(tool);
+        fs::write(&path, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let install = |skip: Option<&str>| -> Value {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_prog"));
+        command
+            .args(["shim", "install", "--dir", dir.to_str().unwrap()])
+            .env("PATH", &tools)
+            .env_remove("PROG_SHIM_SKIP");
+        if let Some(skip) = skip {
+            command.env("PROG_SHIM_SKIP", skip);
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{}", stdout(&output));
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let action = |report: &Value, tool: &str| {
+        report["shims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|shim| shim["tool"] == tool)
+            .map(|shim| shim["action"].as_str().unwrap().to_string())
+    };
+    let first = install(None);
+    assert_eq!(action(&first, "python3").as_deref(), Some("created"));
+    assert_eq!(action(&first, "npx").as_deref(), Some("created"));
+    assert_eq!(action(&first, "cargo").as_deref(), Some("created"));
+    assert_eq!(action(&first, "python"), None, "{first:#}");
+    assert!(!dir.join("python").exists());
+
+    let skipped = install(Some("npx, python3"));
+    assert_eq!(action(&skipped, "python3").as_deref(), Some("removed"));
+    assert_eq!(action(&skipped, "npx").as_deref(), Some("removed"));
+    assert_eq!(action(&skipped, "cargo").as_deref(), Some("unchanged"));
+    assert!(!dir.join("python3").exists() && !dir.join("npx").exists());
+    // A foreign file with a skipped tool's name is never removed.
+    fs::write(dir.join("npx"), "#!/bin/sh\necho mine\n").unwrap();
+    let again = install(Some("npx"));
+    assert_eq!(action(&again, "npx"), None, "{again:#}");
+    assert_eq!(
+        fs::read_to_string(dir.join("npx")).unwrap(),
+        "#!/bin/sh\necho mine\n"
+    );
+    // An explicit `--tool` is installed whether or not the tool exists.
+    let output = Command::new(env!("CARGO_BIN_EXE_prog"))
+        .args([
+            "shim",
+            "install",
+            "--dir",
+            dir.to_str().unwrap(),
+            "--tool",
+            "python",
+        ])
+        .env("PATH", &tools)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stdout(&output));
+    assert!(dir.join("python").is_file());
+}
+
 #[test]
 fn shim_list_reports_generated_shims_their_activity_and_real_tools() {
     let root = tempfile::tempdir().unwrap();

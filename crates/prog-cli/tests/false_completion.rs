@@ -915,3 +915,61 @@ fn skips_the_baseline_may_have_run_never_prove_a_fix() {
         assert_eq!(receipt["verdict"], "not_proven", "{why}: {receipt:#}");
     }
 }
+
+
+/// #312: `uv run pytest` is judged as the pytest run it is. uv's own
+/// environment lines on stderr change nothing, every false fix still
+/// refuses, and an option whose arity prog does not know is never guessed.
+#[test]
+fn uv_run_pytest_is_judged_as_pytest_and_refuses_every_false_fix() {
+    let script = FAKE_PYTEST.replacen(
+        "import sys\n",
+        "import sys\nprint('Installed 5 packages in 41ms', file=sys.stderr)\n",
+        1,
+    );
+    let uv = Tool::new("uv", &script);
+    let uv_path = uv.executable.as_str();
+    for argv in [
+        &[uv_path, "run", "pytest", "-v"][..],
+        &[
+            uv_path,
+            "run",
+            "--frozen",
+            "--with",
+            "pytest-xdist",
+            "pytest",
+            "-v",
+        ],
+        &[uv_path, "run", "-m", "pytest", "-v"],
+    ] {
+        let (_store, delta) = scenario(&uv, argv, "fixed");
+        assert_real_fix_is_provable(&delta);
+        for (state, reason) in [
+            ("deleted", "test population shrank"),
+            ("ignored", "tests/test_math.py::test_add (skipped)"),
+            ("swapped", "tests/test_math.py::test_add (missing)"),
+        ] {
+            let (_store, delta) = scenario(&uv, argv, state);
+            assert_fake_fix_is_not_provable(&delta, reason);
+        }
+    }
+    // Quiet pytest under uv names no passing test, exactly as without uv.
+    let (_store, delta) = scenario(&uv, &[uv_path, "run", "pytest", "-q"], "fixed");
+    assert_fake_fix_is_not_provable(&delta, "tests/test_math.py::test_add cannot be shown");
+    // An unknown option might take a value: the run stays unjudged.
+    let unknown = [uv_path, "run", "--future-option", "pytest", "-v"];
+    let store = tempfile::tempdir().unwrap();
+    let dir = store.path().to_str().unwrap();
+    uv.set_state("baseline");
+    let envelope = run(dir, &unknown);
+    assert!(
+        envelope.pointer("/data_preview/provider").is_none()
+            || envelope
+                .pointer("/data_preview/provider")
+                .unwrap()
+                .is_null(),
+        "{envelope:#}"
+    );
+    let (_store, delta) = scenario(&uv, &unknown, "fixed");
+    assert_eq!(count(&delta, "resolved"), 0, "{delta:#}");
+}

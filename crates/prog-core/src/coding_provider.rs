@@ -210,6 +210,23 @@ fn provider_kind(argv: &[String]) -> Option<ProviderKind<'_>> {
         .first()
         .and_then(|value| Path::new(value).file_name())?
         .to_str()?;
+    // `uv run [options] <command>` runs the command in the project's
+    // environment; its output is the command's own, so judge that command.
+    if program == "uv" && argv.get(1).map(String::as_str) == Some("run") {
+        return match uv_run_command(argv)? {
+            UvRun::Command(start) => provider_kind(&argv[start..]),
+            // `uv run -m pytest` is `python -m pytest`.
+            UvRun::Module(start) => match argv.get(start).map(String::as_str) {
+                Some("pytest") => Some(ProviderKind::Pytest {
+                    args: &argv[start + 1..],
+                }),
+                Some("unittest") => Some(ProviderKind::Unittest {
+                    args: &argv[start + 1..],
+                }),
+                _ => None,
+            },
+        };
+    }
     if matches!(program, "pytest" | "py.test") {
         return Some(ProviderKind::Pytest { args: &argv[1..] });
     }
@@ -242,6 +259,146 @@ fn provider_kind(argv: &[String]) -> Option<ProviderKind<'_>> {
     } else {
         None
     }
+}
+
+enum UvRun {
+    /// Index in argv of the command `uv run` starts.
+    Command(usize),
+    /// Index in argv of the module name after `-m`/`--module`.
+    Module(usize),
+}
+
+/// `uv run` options that take a value (uv 0.11). Any other option that does
+/// not use `--name=value` makes the command's position a guess, so the run is
+/// left unjudged rather than parsed from the wrong argument.
+const UV_RUN_VALUE_OPTIONS: &[&str] = &[
+    "--extra",
+    "--no-extra",
+    "--group",
+    "--no-group",
+    "--only-group",
+    "--no-editable-package",
+    "--env-file",
+    "--with",
+    "-w",
+    "--with-editable",
+    "--with-requirements",
+    "--package",
+    "--python-platform",
+    "--index",
+    "--default-index",
+    "--index-url",
+    "-i",
+    "--extra-index-url",
+    "--find-links",
+    "-f",
+    "--index-strategy",
+    "--keyring-provider",
+    "--upgrade-package",
+    "-P",
+    "--upgrade-group",
+    "--resolution",
+    "--prerelease",
+    "--fork-strategy",
+    "--exclude-newer",
+    "--exclude-newer-package",
+    "--no-sources-package",
+    "--reinstall-package",
+    "--link-mode",
+    "--config-setting",
+    "-C",
+    "--config-settings-package",
+    "--no-build-isolation-package",
+    "--no-build-package",
+    "--no-binary-package",
+    "--cache-dir",
+    "--refresh-package",
+    "--python",
+    "-p",
+    "--color",
+    "--allow-insecure-host",
+    "--directory",
+    "--project",
+    "--config-file",
+];
+
+const UV_RUN_FLAGS: &[&str] = &[
+    "--all-extras",
+    "--no-dev",
+    "--no-default-groups",
+    "--all-groups",
+    "--only-dev",
+    "--no-editable",
+    "--exact",
+    "--no-env-file",
+    "--isolated",
+    "--active",
+    "--no-sync",
+    "--locked",
+    "--frozen",
+    "--all-packages",
+    "--no-project",
+    "--no-index",
+    "--upgrade",
+    "-U",
+    "--no-sources",
+    "--reinstall",
+    "--compile-bytecode",
+    "--no-build-isolation",
+    "--no-build",
+    "--no-binary",
+    "--no-cache",
+    "-n",
+    "--refresh",
+    "--managed-python",
+    "--no-managed-python",
+    "--no-python-downloads",
+    "--quiet",
+    "--verbose",
+    "--system-certs",
+    "--offline",
+    "--no-progress",
+    "--no-config",
+];
+
+/// Where the command of `uv run [options] <command>` starts. `None` for a
+/// script (`--script`, `--gui-script`), a missing command, or an option this
+/// table does not know.
+fn uv_run_command(argv: &[String]) -> Option<UvRun> {
+    let mut index = 2;
+    let mut module = false;
+    while let Some(arg) = argv.get(index).map(String::as_str) {
+        if arg == "--" {
+            index += 1;
+            break;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            break;
+        }
+        if matches!(arg, "-m" | "--module") {
+            module = true;
+        } else if matches!(arg, "-s" | "--script" | "--gui-script") {
+            return None;
+        } else if UV_RUN_VALUE_OPTIONS.contains(&arg) {
+            index += 1;
+        } else if arg.starts_with("--") && arg.contains('=') {
+            let name = arg.split_once('=').map_or(arg, |(name, _)| name);
+            if !UV_RUN_VALUE_OPTIONS.contains(&name) {
+                return None;
+            }
+        } else if !UV_RUN_FLAGS.contains(&arg)
+            && !(arg.len() > 1 && arg[1..].chars().all(|ch| matches!(ch, 'q' | 'v')))
+        {
+            return None;
+        }
+        index += 1;
+    }
+    argv.get(index)?;
+    Some(if module {
+        UvRun::Module(index)
+    } else {
+        UvRun::Command(index)
+    })
 }
 
 /// `python`, `python3`, or a versioned `python3.12`.
@@ -1399,6 +1556,72 @@ mod tests {
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    /// #312: `uv run` is judged by the command it runs; an option whose
+    /// arity prog does not know leaves the run unjudged instead of guessing.
+    #[test]
+    fn uv_run_is_judged_by_the_command_it_runs() {
+        let pytest_out = "tests/test_a.py::test_x PASSED\n1 passed in 0.01s\n";
+        let provider = |argv: &[&str], out: &str| {
+            normalize_coding_output(&strings(argv), out, "", true, Some(0))
+                .map(|result| result.provider)
+        };
+        for argv in [
+            &["uv", "run", "pytest", "-v"][..],
+            &["/usr/local/bin/uv", "run", "pytest", "-v"],
+            &["uv", "run", "--frozen", "-q", "pytest", "-v"],
+            &["uv", "run", "--with", "pytest-xdist", "pytest", "-v"],
+            &["uv", "run", "-w", "pytest-xdist", "pytest", "-v"],
+            &["uv", "run", "--python=3.12", "--no-sync", "pytest", "-v"],
+            &["uv", "run", "--package", "core", "--", "pytest", "-v"],
+            &["uv", "run", "python", "-m", "pytest", "-v"],
+            &["uv", "run", "-m", "pytest", "-v"],
+            &["uv", "run", "--module", "pytest", "-v"],
+        ] {
+            assert_eq!(
+                provider(argv, pytest_out).as_deref(),
+                Some("pytest.v1"),
+                "{argv:?}"
+            );
+        }
+        let unittest_out = "test_a (t.T.test_a) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.001s\n\nOK\n";
+        for argv in [
+            &["uv", "run", "python3", "-m", "unittest", "-v"][..],
+            &["uv", "run", "-m", "unittest", "-v"],
+        ] {
+            assert_eq!(
+                provider(argv, unittest_out).as_deref(),
+                Some("unittest.v1"),
+                "{argv:?}"
+            );
+        }
+        // The inner command keeps its own arguments: `-q` belongs to pytest.
+        let quiet = normalize_coding_output(
+            &strings(&["uv", "run", "--frozen", "pytest", "-q"]),
+            "1 passed in 0.01s\n",
+            "",
+            true,
+            Some(0),
+        )
+        .unwrap();
+        assert_eq!(quiet.provider, "pytest.v1");
+        assert!(quiet.normalized["tests"].as_array().unwrap().is_empty());
+        for argv in [
+            // Unknown arity, scripts, missing commands, and other subcommands.
+            &["uv", "run", "--some-future-option", "pytest", "-v"][..],
+            &["uv", "run", "--some-future-option=1", "pytest", "-v"],
+            &["uv", "run", "-x", "pytest", "-v"],
+            &["uv", "run", "--script", "check.py"],
+            &["uv", "run", "-m", "http.server"],
+            &["uv", "run", "python", "script.py"],
+            &["uv", "run"],
+            &["uv", "run", "--frozen"],
+            &["uv", "sync"],
+            &["uv", "pip", "install", "pytest"],
+        ] {
+            assert_eq!(provider(argv, pytest_out), None, "{argv:?}");
+        }
     }
 
     #[test]
