@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Security: update `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.11
+  (RUSTSEC-2026-0382 and RUSTSEC-2026-0381: certificate verification could
+  trust distrusted intermediates), and `tokio` to 1.54.1 (RUSTSEC-2026-0386:
+  `AsyncFd` constructors violated I/O safety) (#301).
+
+- Security: update `rustls` to 0.23.46 (RUSTSEC-2026-0346 to -0349). Lens
+  manifests are now read with `serde-saphyr` (safe Rust, deserialize only)
+  instead of `serde_yaml_ng`, whose `unsafe-libyaml` dependency is unmaintained
+  (RUSTSEC-2024-0449); every bundled lens parses to the same manifest under
+  both parsers (#295).
+
 - A real fix in a suite that skips tests is provable again. One `#[ignore]`
   or pytest skip made every delta unprovable, so receipts said `NOT PROVEN`
   and the stop gate blocked after every real fix. A comparison now counts the
