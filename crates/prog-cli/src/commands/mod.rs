@@ -6,6 +6,8 @@ pub(crate) mod delta;
 pub(crate) mod discover;
 pub(crate) mod envelope;
 pub(crate) mod expand;
+pub(crate) mod final_message;
+pub(crate) mod harness_log;
 pub(crate) mod hints;
 pub(crate) mod hook;
 pub(crate) mod init;

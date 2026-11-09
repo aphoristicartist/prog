@@ -159,6 +159,27 @@ pub(crate) enum HarnessCommand {
     Doctor(HarnessDoctorArgs),
     /// Handle one host hook event from stdin (used by the Claude Code plugin); never fails the host.
     Hook(HarnessHookArgs),
+    /// Show the local log of hook decisions (stop-gate blocks, receipts, uncaptured test commands), or summarize it.
+    Log(HarnessLogArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct HarnessLogArgs {
+    /// Aggregate instead of listing entries: blocks per turn end, by rule, repeats, and what the agent did after a block.
+    #[arg(long)]
+    pub(crate) summary: bool,
+
+    /// Only entries newer than this: `<N>d` or an RFC 3339 timestamp (default 30d).
+    #[arg(long)]
+    pub(crate) since: Option<String>,
+
+    /// Project whose store holds the log (default: the current directory); `PROG_DIR` wins when set.
+    #[arg(long, default_value = ".")]
+    pub(crate) project: PathBuf,
+
+    /// Read the logs of every per-project store instead of one project.
+    #[arg(long)]
+    pub(crate) all_projects: bool,
 }
 
 #[derive(Debug, Args)]

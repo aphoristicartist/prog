@@ -16,6 +16,7 @@ use std::{
 };
 
 use crate::commands::{
+    final_message, harness_log,
     receipt::{Baseline, comparison_baseline, receipt_report},
     shim::{PENDING_RECEIPTS_DIR, default_shim_dir, project_store_dir, shim_env, shim_install},
 };
@@ -46,7 +47,7 @@ pub(crate) fn claude_code_hook(input: &str) -> Option<Value> {
             None
         }
         "PostToolUse" | "PostToolUseFailure" if input["tool_name"] == "Bash" => {
-            pending_receipts(&store_dir).map(|text| {
+            post_tool_use(&input, &store_dir, HOST).map(|text| {
                 json!({
                     "hookSpecificOutput": {
                         "hookEventName": event,
@@ -55,11 +56,12 @@ pub(crate) fn claude_code_hook(input: &str) -> Option<Value> {
                 })
             })
         }
-        "Stop" if stop_gate_enabled() => stop_gate(&input, &store_dir)
-            .map(|reason| json!({"decision": "block", "reason": reason})),
+        "Stop" => stop_event(&input, &store_dir, HOST),
         _ => None,
     }
 }
+
+const HOST: &str = "claude-code";
 
 pub(crate) fn read_hook_input() -> String {
     let mut input = String::new();
@@ -125,7 +127,101 @@ fn session_start(input: &Value, project: &Path, store_dir: &Path, explicit_store
     }
 }
 
-fn pending_receipts(store_dir: &Path) -> Option<String> {
+/// Receipts for runs the shims captured during this tool call, or a notice
+/// that a test command ran without a capture. Logged either way.
+fn post_tool_use(input: &Value, store_dir: &Path, host: &str) -> Option<String> {
+    let receipts = pending_receipts(store_dir);
+    let session = input.get("session_id").and_then(Value::as_str);
+    let command = input
+        .pointer("/tool_input/command")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    // Claude Code can run more than one hook for one tool call (PostToolUse
+    // and PostToolUseFailure); the first consumes the receipts, and the
+    // others must not then report the command as uncaptured.
+    let sibling = session
+        .filter(|session| is_safe_name(session))
+        .is_some_and(|session| repeated_tool_call(store_dir, session, input, command));
+    let uncaptured = (receipts.is_none() && !sibling)
+        .then(|| test_route(command))
+        .flatten();
+    if let (Some(_), Some(session)) = (&uncaptured, session.filter(|session| is_safe_name(session)))
+    {
+        // Lets the stop gate tell that its newest captured run is not the
+        // newest test run.
+        let sessions = store_dir.join(SESSIONS_DIR);
+        if fs::create_dir_all(&sessions).is_ok() {
+            let _ = fs::write(
+                sessions.join(format!("{session}{UNCAPTURED_SUFFIX}")),
+                Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true),
+            );
+        }
+    }
+    // Only test-relevant tool calls are logged, which keeps the log small.
+    if receipts.is_some() || uncaptured.is_some() {
+        harness_log::append(
+            store_dir,
+            host,
+            "post_tool_use",
+            json!({
+                "session": session.map(harness_log::short_hash),
+                "captured": receipts.as_ref().map(|(receipts, _)| receipts.clone()).unwrap_or_default(),
+                "uncaptured_runner": uncaptured,
+            }),
+        );
+    }
+    match (receipts, uncaptured) {
+        (Some((_, text)), _) => Some(text),
+        (None, Some(route)) => Some(format!(
+            "prog: no capture for this test command (`{route}`): it ran outside prog's shims, or the run could not be recorded, so there is no verdict"
+        )),
+        (None, None) => None,
+    }
+}
+
+const UNCAPTURED_SUFFIX: &str = ".uncaptured";
+const LAST_TOOL_SUFFIX: &str = ".last-tool";
+/// Without a `tool_use_id`, hooks for the same command this close together
+/// are taken to be for one tool call.
+const SIBLING_HOOK_WINDOW_MS: i64 = 10_000;
+
+/// Whether an earlier hook already handled this tool call, recording this
+/// one either way. Keyed by `tool_use_id` (sent by Claude Code and Codex),
+/// else by the command within a short window.
+fn repeated_tool_call(store_dir: &Path, session: &str, input: &Value, command: &str) -> bool {
+    let sessions = store_dir.join(SESSIONS_DIR);
+    let path = sessions.join(format!("{session}{LAST_TOOL_SUFFIX}"));
+    let id = input.get("tool_use_id").and_then(Value::as_str);
+    let key = match id {
+        Some(id) => format!("id:{id}"),
+        None => format!("command:{}", harness_log::short_hash(command)),
+    };
+    let now = Utc::now();
+    let previous = fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+    let repeated = previous.is_some_and(|previous| {
+        previous["key"].as_str() == Some(key.as_str())
+            && (id.is_some()
+                || previous["at"]
+                    .as_str()
+                    .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                    .is_some_and(|at| {
+                        (now - at.with_timezone(&Utc)).num_milliseconds() <= SIBLING_HOOK_WINDOW_MS
+                    }))
+    });
+    if fs::create_dir_all(&sessions).is_ok() {
+        let _ = fs::write(
+            &path,
+            json!({"key": key, "at": now.to_rfc3339_opts(SecondsFormat::Millis, true)}).to_string(),
+        );
+    }
+    repeated
+}
+
+/// Pending receipts as log records (verdict, provider, invocation hash) and
+/// their joined text.
+fn pending_receipts(store_dir: &Path) -> Option<(Vec<Value>, String)> {
     // Do not create a store just to find out nothing is pending.
     let has_pending = fs::read_dir(store_dir.join(PENDING_RECEIPTS_DIR))
         .ok()?
@@ -144,7 +240,101 @@ fn pending_receipts(store_dir: &Path) -> Option<String> {
         },
     )
     .ok()?;
-    (!report.text.is_empty()).then_some(report.text)
+    if report.text.is_empty() {
+        return None;
+    }
+    let records = report
+        .receipts
+        .iter()
+        .map(|receipt| {
+            let observation = store.get_observation(&receipt.observation_id).ok().flatten();
+            json!({
+                "verdict": receipt.verdict,
+                "provider": observation.as_ref().and_then(|observation| observation.provider.clone()),
+                "invocation": observation
+                    .as_ref()
+                    .map(|observation| harness_log::short_hash(&observation.invocation_fingerprint)),
+            })
+        })
+        .collect();
+    Some((records, report.text))
+}
+
+/// The test runner a shell command invokes, read from its words: used only
+/// to say that no capture happened, never to produce a verdict, so a miss
+/// costs nothing and a false match only adds a notice.
+fn test_route(command: &str) -> Option<String> {
+    command
+        .split(['\n', ';', '|', '&', '(', ')'])
+        .find_map(|segment| route_of_words(&segment.split_whitespace().collect::<Vec<_>>()))
+}
+
+fn route_of_words(words: &[&str]) -> Option<String> {
+    let mut words = words
+        .iter()
+        .map(|word| word.trim_matches(|ch| matches!(ch, '"' | '\'')))
+        .skip_while(|word| {
+            (word.contains('=') && !word.starts_with('-'))
+                || matches!(
+                    *word,
+                    "env" | "time" | "command" | "exec" | "nohup" | "caffeinate"
+                )
+        });
+    let program = Path::new(words.next()?).file_name()?.to_str()?.to_string();
+    let rest = words.collect::<Vec<_>>();
+    let first = rest
+        .iter()
+        .find(|word| !word.starts_with(['-', '+']))
+        .copied();
+    let runner = |word: &str| matches!(word, "jest" | "vitest" | "playwright" | "mocha");
+    let python = program == "python"
+        || program
+            .strip_prefix("python3")
+            .is_some_and(|minor| minor.is_empty() || minor.starts_with('.'));
+    match program.as_str() {
+        "pytest" | "py.test" | "jest" | "vitest" | "mocha" | "ctest" => Some(program),
+        "playwright" if first == Some("test") => Some("playwright test".into()),
+        "cargo" if matches!(first, Some("test" | "nextest" | "bench")) => {
+            Some(format!("cargo {}", first?))
+        }
+        "go" | "deno" | "bun" if first == Some("test") => Some(format!("{program} test")),
+        "npm" | "pnpm" | "yarn" | "bun" => match first {
+            Some("test" | "t") => Some(format!("{program} test")),
+            Some("run" | "run-script") => rest
+                .iter()
+                .find(|word| !word.starts_with('-') && **word != "run" && **word != "run-script")
+                .filter(|script| script.starts_with("test") || script.contains("e2e"))
+                .map(|script| format!("{program} run {script}")),
+            Some("exec" | "x" | "dlx") => rest
+                .iter()
+                .find(|word| !matches!(**word, "exec" | "x" | "dlx") && !word.starts_with('-'))
+                .filter(|tool| runner(tool))
+                .map(|tool| format!("{program} exec {tool}")),
+            Some(tool) if program != "npm" && runner(tool) => Some(format!("{program} {tool}")),
+            _ => None,
+        },
+        "npx" | "bunx" | "pnpx" => first
+            .filter(|tool| runner(tool))
+            .map(|tool| format!("{program} {tool}")),
+        "uv" | "poetry" if first == Some("run") => {
+            let index = rest.iter().position(|word| *word == "run")?;
+            route_of_words(
+                &rest[index + 1..]
+                    .iter()
+                    .copied()
+                    .filter(|word| !word.starts_with("--"))
+                    .collect::<Vec<_>>(),
+            )
+        }
+        "node" if rest.contains(&"--test") => Some("node --test".into()),
+        _ if python => {
+            let index = rest.iter().position(|word| *word == "-m")?;
+            rest.get(index + 1)
+                .filter(|module| matches!(**module, "pytest" | "unittest"))
+                .map(|module| format!("{program} -m {module}"))
+        }
+        _ => None,
+    }
 }
 
 fn stop_gate_enabled() -> bool {
@@ -154,38 +344,134 @@ fn stop_gate_enabled() -> bool {
         .any(|value| matches!(value.to_str(), Some("1" | "true")))
 }
 
-/// The reason to keep working, or `None` to let the turn end.
+/// What the newest captured evidence says when a turn ends, independent of
+/// whether the gate is enabled (the decision log records it either way).
+struct Evidence {
+    /// The rule that would block, and the block's text.
+    finding: Option<(&'static str, String)>,
+    /// The newest test run's verdict and identity, for the log.
+    newest_test: Option<Value>,
+    /// Captured test, build, and lint runs this session.
+    runs: usize,
+}
+
+/// Handle a Stop event: evaluate the evidence, decide, log, and answer.
 ///
 /// Only test, build, and lint runs captured during this session count, and
-/// only the newest of them decides: an older run of a different invocation
-/// (`cargo test -p a adds`) is superseded by a later broader one (`cargo
-/// test`) even though the store keeps them in separate chains. The gate never
-/// blocks on missing evidence (no run captured): that misfires whenever tests
-/// ran outside prog's shims. A failing build or lint run blocks while it is
-/// the newest of its kind. It blocks at most once in a row
-/// (`stop_hook_active`), and not at all when the final message already tells
-/// the user the tests are failing, unproven, or were not run.
-fn stop_gate(input: &Value, store_dir: &Path) -> Option<String> {
-    if input["stop_hook_active"].as_bool() == Some(true) {
+/// only the newest of each kind decides: an older run of a different
+/// invocation (`cargo test -p a adds`) is superseded by a later broader one
+/// (`cargo test`) even though the store keeps them in separate chains. The
+/// gate never blocks on missing evidence (no run captured), and stands aside
+/// when a test command ran outside the shims after the newest captured run:
+/// both misfire whenever tests run where prog cannot see them. It blocks at
+/// most once in a row (`stop_hook_active`), and not at all when the final
+/// message already tells the user the tests are failing, unproven, or were not
+/// run. When the final message claims success that the evidence contradicts,
+/// the block quotes the claim, and a second stop shows the user a warning
+/// instead of blocking again (#305).
+fn stop_event(input: &Value, store_dir: &Path, host: &str) -> Option<Value> {
+    let enabled = stop_gate_enabled();
+    if !enabled && !harness_log::logging_enabled() {
         return None;
     }
-    if input
+    let session = input
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|session| is_safe_name(session))?;
+    let repeat = input["stop_hook_active"].as_bool() == Some(true);
+    let message = input
         .get("last_assistant_message")
         .and_then(Value::as_str)
-        .is_some_and(discloses_open_verification)
-    {
+        .unwrap_or_default();
+    let discloses = final_message::discloses_open_verification(message);
+    let claim = final_message::success_claim(message);
+    let evidence = assess_stop(store_dir, session);
+    let contradiction = match (&claim, &evidence.finding) {
+        (Some(claim), Some((rule, _))) if !discloses => match *rule {
+            "test_failing" | "test_stale" => Some(claim),
+            "test_not_proven" if claim.kind == final_message::ClaimKind::Fixed => Some(claim),
+            _ => None,
+        },
+        _ => None,
+    };
+    let decision = match (&evidence.finding, repeat, discloses) {
+        (_, true, _) => "skip_stop_hook_active",
+        (Some(_), false, true) => "stand_aside",
+        (Some(_), false, false) if enabled => "block",
+        (Some(_), false, false) => "would_block",
+        (None, false, _) => "pass",
+    };
+    harness_log::append(
+        store_dir,
+        host,
+        "stop",
+        json!({
+            "session": harness_log::short_hash(session),
+            "gate_enabled": enabled,
+            "decision": decision,
+            "rule": evidence.finding.as_ref().map(|(rule, _)| *rule),
+            "newest_test": evidence.newest_test,
+            "runs": evidence.runs,
+            "message": {
+                "claims_success": claim.is_some(),
+                "claim_kind": claim.as_ref().map(|claim| match claim.kind {
+                    final_message::ClaimKind::Fixed => "fixed",
+                    final_message::ClaimKind::Passing => "passing",
+                }),
+                "discloses_gap": discloses,
+            },
+            "contradiction": contradiction.is_some(),
+        }),
+    );
+    if !enabled {
         return None;
     }
-    let session = input.get("session_id")?.as_str()?;
-    if !is_safe_name(session) {
-        return None;
+    let (rule, text) = evidence.finding?;
+    match decision {
+        "block" => {
+            let said = contradiction
+                .map(|claim| format!("prog stop gate: you said \"{}\", but", claim.quote))
+                .unwrap_or_else(|| "prog stop gate:".to_string());
+            Some(json!({"decision": "block", "reason": format!("{said} {text}")}))
+        }
+        "skip_stop_hook_active" => contradiction.map(|claim| {
+            // The agent was already blocked once and still claims success:
+            // tell the user directly instead of blocking again.
+            let who = if host == HOST { "Claude" } else { "The agent" };
+            let lead = text.split(". ").next().unwrap_or_default();
+            let headline = text.lines().nth(1).unwrap_or_default();
+            json!({
+                "systemMessage": format!(
+                    "prog: {who} said \"{}\", but {lead} ({rule}). {headline}",
+                    claim.quote
+                )
+            })
+        }),
+        _ => None,
     }
-    let marker = fs::read_to_string(store_dir.join(SESSIONS_DIR).join(session)).ok()?;
-    let (started, _) = parse_session_marker(&marker)?;
-    let store = Store::open_silently(store_dir).ok()?;
-    let mut runs = store
-        .list_observations(100)
-        .ok()?
+}
+
+/// The newest captured runs of this session, judged.
+fn assess_stop(store_dir: &Path, session: &str) -> Evidence {
+    let none = |runs| Evidence {
+        finding: None,
+        newest_test: None,
+        runs,
+    };
+    let Some(started) = fs::read_to_string(store_dir.join(SESSIONS_DIR).join(session))
+        .ok()
+        .and_then(|marker| parse_session_marker(&marker))
+        .map(|(started, _)| started)
+    else {
+        return none(0);
+    };
+    let Ok(store) = Store::open_silently(store_dir) else {
+        return none(0);
+    };
+    let Ok(list) = store.list_observations(100) else {
+        return none(0);
+    };
+    let mut runs = list
         .observations
         .into_iter()
         .filter(|observation| {
@@ -204,57 +490,115 @@ fn stop_gate(input: &Value, store_dir: &Path) -> Option<String> {
     runs.sort_by(|(left, left_payload, _), (right, right_payload, _)| {
         run_end(right, right_payload.as_value()).cmp(&run_end(left, left_payload.as_value()))
     });
+    let count = runs.len();
+    // A test command that ran outside the shims after a captured run may have
+    // changed what stands; prog cannot know, so that run no longer decides.
+    let uncaptured_at = fs::read_to_string(
+        store_dir
+            .join(SESSIONS_DIR)
+            .join(format!("{session}{UNCAPTURED_SUFFIX}")),
+    )
+    .ok()
+    .and_then(|at| chrono::DateTime::parse_from_rfc3339(at.trim()).ok())
+    .map(|at| {
+        at.with_timezone(&Utc)
+            .to_rfc3339_opts(SecondsFormat::Nanos, true)
+    });
+    let superseded_by_uncaptured = |index: usize| {
+        let (observation, payload, _) = &runs[index];
+        uncaptured_at
+            .as_deref()
+            .is_some_and(|at| at > run_end(observation, payload.as_value()).0.as_str())
+    };
 
     // The newest run of each kind is what stands now. A lint run is
     // superseded only by a newer lint run; a build run also by a newer test
     // run, which compiles the same code.
     let newest = |kind: RunKind| runs.iter().position(|(_, _, run_kind)| *run_kind == kind);
     let newest_test = newest(RunKind::Test);
-    for (kind, label) in [(RunKind::Lint, "lint"), (RunKind::Build, "build")] {
+    let newest_test_record = newest_test.map(|index| {
+        let (observation, payload, _) = &runs[index];
+        let receipt = receipt_for(&store, observation, payload.as_value());
+        let record = json!({
+            "verdict": receipt.verdict,
+            "provider": observation.provider,
+            "invocation": harness_log::short_hash(&observation.invocation_fingerprint),
+            "superseded_by_uncaptured_run": superseded_by_uncaptured(index),
+        });
+        (receipt, record)
+    });
+    let evidence = |finding| Evidence {
+        finding,
+        newest_test: newest_test_record
+            .as_ref()
+            .map(|(_, record)| record.clone()),
+        runs: count,
+    };
+    for (kind, label, rule) in [
+        (RunKind::Lint, "lint", "lint_failing"),
+        (RunKind::Build, "build", "build_failing"),
+    ] {
         let Some(index) = newest(kind) else {
             continue;
         };
-        if kind == RunKind::Build && newest_test.is_some_and(|test| test < index) {
+        if kind == RunKind::Build
+            && (newest_test.is_some_and(|test| test < index) || superseded_by_uncaptured(index))
+        {
             continue;
         }
         let (observation, payload, _) = &runs[index];
         let receipt = receipt_for(&store, observation, payload.as_value());
         if receipt.verdict == ReceiptVerdict::Failing {
-            return Some(format!(
-                "prog stop gate: the latest {label} run is failing. Fix it, or tell the user plainly why it is still open.\n{}",
-                receipt.text
-            ));
+            return evidence(Some((
+                rule,
+                format!(
+                    "the latest {label} run is failing. Fix it, or tell the user plainly why it is still open.\n{}",
+                    receipt.text
+                ),
+            )));
         }
     }
-    let (observation, payload, _) = &runs[newest_test?];
-    let receipt = receipt_for(&store, observation, payload.as_value());
+    let (Some(index), Some((receipt, _))) = (newest_test, &newest_test_record) else {
+        return evidence(None);
+    };
+    if superseded_by_uncaptured(index) {
+        return evidence(None);
+    }
     let lead = match receipt.verdict {
-        ReceiptVerdict::Failing => Some("the latest test run is failing"),
-        ReceiptVerdict::NotProven => {
-            Some("the latest test run does not prove the earlier failure fixed")
-        }
+        ReceiptVerdict::Failing => Some(("test_failing", "the latest test run is failing")),
+        ReceiptVerdict::NotProven => Some((
+            "test_not_proven",
+            "the latest test run does not prove the earlier failure fixed",
+        )),
         ReceiptVerdict::Fixed | ReceiptVerdict::Clean => None,
     };
-    if let Some(lead) = lead {
-        return Some(format!(
-            "prog stop gate: {lead}. Fix it, or tell the user plainly why it is still open.\n{}",
-            receipt.text
-        ));
+    if let Some((rule, lead)) = lead {
+        return evidence(Some((
+            rule,
+            format!(
+                "{lead}. Fix it, or tell the user plainly why it is still open.\n{}",
+                receipt.text
+            ),
+        )));
     }
     // The newest test run passed: block only if a file's content changed
     // after it. Staging or committing what was tested changes no content.
-    let captured_workspace = observation.workspace_state.as_ref()?;
-    if !captured_workspace.applicable {
-        return None;
-    }
-    let current = captured_workspace
-        .root
-        .as_deref()
-        .map(prog_core::capture_workspace)?;
-    let comparison = prog_core::compare_workspace_content(captured_workspace, &current);
-    (comparison.validity == prog_core::WorkspaceValidity::Changed).then(|| {
-        "prog stop gate: files changed after the last passing test run; rerun the tests (or tell the user they were not rerun) before finishing.".to_string()
-    })
+    let (observation, _, _) = &runs[index];
+    let changed = observation
+        .workspace_state
+        .as_ref()
+        .filter(|captured| captured.applicable)
+        .and_then(|captured| {
+            let current = prog_core::capture_workspace(captured.root.as_deref()?);
+            Some(prog_core::compare_workspace_content(captured, &current).validity)
+        })
+        == Some(prog_core::WorkspaceValidity::Changed);
+    evidence(changed.then(|| {
+        (
+            "test_stale",
+            "files changed after the last passing test run; rerun the tests (or tell the user they were not rerun) before finishing.".to_string(),
+        )
+    }))
 }
 
 /// Whether a captured run executes tests, or only builds or lints code.
@@ -304,59 +648,6 @@ fn run_end(observation: &prog_core::ObservationRecord, payload: &Value) -> (Stri
         })
         .unwrap_or_default();
     (ended, observation.observation_id.clone())
-}
-
-/// Phrases with which a final message tells the user that verification is
-/// still open. Matched case-insensitively as plain substrings; a match makes
-/// the gate stand aside, because the user has already been told.
-const OPEN_VERIFICATION_PHRASES: &[&str] = &[
-    "still fail",
-    "still broken",
-    "still red",
-    "not fixed",
-    "isn't fixed",
-    "is not fixed",
-    "remain failing",
-    "remains failing",
-    "failures remain",
-    "not proven",
-    "unproven",
-    "could not verify",
-    "couldn't verify",
-    "cannot verify",
-    "can't verify",
-    "not verified",
-    "unverified",
-    "did not run",
-    "didn't run",
-    "have not run",
-    "haven't run",
-    "has not been run",
-    "have not been run",
-    "were not run",
-    "was not run",
-    "wasn't run",
-    "weren't run",
-    "not rerun",
-    "did not rerun",
-    "didn't rerun",
-    "without running",
-    "not run the tests",
-    "not run any tests",
-];
-
-/// Phrases are kept narrow so that a claim of success cannot match one: no
-/// bare "tests are failing" (it also matches "no tests are failing") and no
-/// "tests fail" (it also matches "the tests failed before the fix").
-fn discloses_open_verification(message: &str) -> bool {
-    let message = message
-        .to_lowercase()
-        .replace('\u{2019}', "'")
-        // "did not run into problems" is not "did not run".
-        .replace(" run into", " ran-into");
-    OPEN_VERIFICATION_PHRASES
-        .iter()
-        .any(|phrase| message.contains(phrase))
 }
 
 /// Session start time and, when the project is a Git worktree, the

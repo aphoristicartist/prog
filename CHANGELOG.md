@@ -62,6 +62,23 @@
   `prog harness doctor` names those tools, because their runs are never
   captured.
 
+- Hook decision log: every Stop and test-related PostToolUse is recorded
+  locally (no message or command text; hashed ids; `PROG_HARNESS_LOG=0` turns
+  it off), with the gate's decision even while the gate is off.
+  `prog harness log --summary` reports blocks per turn end, by rule, repeats,
+  and what the agent did after a block (#314).
+
+- Stop gate: a claim of success that the newest evidence contradicts is quoted
+  in the block, and if the agent repeats it at the next stop the user sees a
+  warning (`systemMessage`). `NOT PROVEN` contradicts only "fixed" claims,
+  never pass counts. CI claims, hedged sentences, quoted text, and tallies with
+  failures never count (#305).
+
+- A test command that no shim captured now says so in the receipt slot
+  (`prog: no capture for this test command (pytest) …`) instead of staying
+  silent, and the stop gate stands aside when such a command ran after its
+  newest captured run (#312, #304).
+
 - Stop gate (opt-in): a replay of 1,306 real Claude Code and Codex turn ends
   found about 1% of its blocks useful (#311). It now judges only the newest
   test run (a later broader pass supersedes an older narrow failure), never

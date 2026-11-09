@@ -158,8 +158,32 @@ input on stdin:
 | Event | What happens |
 |---|---|
 | `SessionStart` | Installs shims, appends `PATH` and a per-project `PROG_DIR` to `CLAUDE_ENV_FILE`, records when the session first started (resume and compaction keep that time, so earlier runs stay gated). The store lives under `~/.local/state/prog/projects/`, outside the project, so captures never count as workspace changes. |
-| `PostToolUse` / `PostToolUseFailure` (Bash) | Adds pending receipts as `additionalContext`. The tool output itself is never changed. |
-| `Stop` (opt-in) | When the `stop_gate` plugin setting is on, blocks once if this session's newest test run is failing or not proven, if a file's content changed after that run passed, or if the newest lint run (or a build run newer than every test run) is failing. Only the newest run of each kind counts, so a later broader pass supersedes an older narrow failure. It never blocks on missing evidence (files changed, no run captured), because tests may have run outside the shims, and staging or committing what was tested is not a change. It stands aside when the final message already says the tests are failing, unproven, or were not run. `stop_hook_active` lets the next stop through, so the agent can always explain and finish. |
+| `PostToolUse` / `PostToolUseFailure` (Bash) | Adds pending receipts as `additionalContext`. When the command ran a known test runner but no shim captured it (an explicit `.venv/bin/…` path, a `PATH` the command set itself, `npx`/`python -m` without those shims, or a store that could not be written), it says so instead: `prog: no capture for this test command (…)`, so there is no verdict. The runner is recognized from the command's words only to word that notice, never for a verdict. Several hooks for one tool call (`tool_use_id`) report once. The tool output itself is never changed. |
+| `Stop` (opt-in) | When the `stop_gate` plugin setting is on, blocks once if this session's newest test run is failing or not proven, if a file's content changed after that run passed, or if the newest lint run (or a build run newer than every test run) is failing. Only the newest run of each kind counts, so a later broader pass supersedes an older narrow failure. It never blocks on missing evidence (files changed, no run captured), because tests may have run outside the shims, and staging or committing what was tested is not a change. It stands aside when the final message already says the tests are failing, unproven, or were not run, and when a test command ran outside the shims after the newest captured run. When the final message claims success that the evidence contradicts (tests pass or fixed over a failing or stale run; *fixed* over `NOT PROVEN`), the block quotes the claim; `stop_hook_active` lets the next stop through, and if the agent still makes the claim, the user sees a `systemMessage` warning instead. Claim matching is a deterministic phrase list that ignores code, quotes, hedges, CI claims, and tallies with failures or of non-tests. |
+
+### Decision log
+
+Every Stop and every test-related PostToolUse is recorded as one JSON line in
+the project's store, under `harness-log/<yyyy-mm>.jsonl` (5 MiB per month,
+three months kept). Stop lines record the decision (`block`, `pass`,
+`stand_aside`, `skip_stop_hook_active`, or `would_block` while the gate is
+off), the rule, the newest test run's verdict, and whether the final message
+claimed success or disclosed a gap. PostToolUse lines record captured verdicts
+or the uncaptured runner's name. No message text, no command text beyond a
+runner name, and only hashes of session ids and invocations are stored;
+nothing is transmitted. `PROG_HARNESS_LOG=0` turns it off.
+
+```sh
+prog harness log --summary            # this project, last 30 days
+prog harness log --summary --all-projects --since 14d
+prog harness log --since 1d           # the entries themselves
+```
+
+The summary reports blocks per turn end, blocks by rule, repeated blocks,
+sessions with more than three blocks, how often the agent was told it was
+contradicting evidence, the share of test commands that were captured, and
+what followed each block (the same invocation rerun, a different one, an
+uncaptured test command, or nothing).
 
 Every unexpected condition produces no output and exit status 0. The plugin is
 covered end to end by `crates/prog-cli/tests/claude_code_hook.rs`, which feeds
