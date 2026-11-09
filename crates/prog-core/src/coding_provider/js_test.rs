@@ -198,7 +198,7 @@ fn invocation(launch: &Launch<'_>) -> Invocation {
     }
 }
 
-fn strip_ansi(text: &str) -> String {
+pub(super) fn strip_ansi(text: &str) -> String {
     let mut output = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(ch) = chars.next() {

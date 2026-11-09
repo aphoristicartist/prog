@@ -103,7 +103,7 @@ only when all of these hold:
   exit code.
 
 Fixes are provable for Cargo, pytest, `python -m unittest -v`, `go test -v`
-or `-json`, and Jest or Vitest JSON reports;
+or `-json`, and Jest, Vitest, or Playwright JSON reports;
 [coding providers](docs/coding-providers.md#which-runs-can-prove-a-fix) lists
 the exact flags. A [seeded suite](docs/false-completion.md) checks that
 deleted, skipped, ignored, swapped, and quiet-mode tests never come out as

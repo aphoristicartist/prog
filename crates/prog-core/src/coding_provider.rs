@@ -10,8 +10,10 @@ use serde_json::{Value, json};
 
 use crate::SelectionCoverage;
 
+mod bun_test;
 mod go_test;
 mod js_test;
+mod playwright;
 mod unittest;
 mod verification;
 
@@ -139,10 +141,65 @@ pub fn normalize_coding_output_in(
             return Some(result);
         }
         ProviderKind::JsTest { launch } => {
-            let (mut result, completion) = js_test::normalize(
+            let normalized = js_test::normalize(
                 &launch,
                 cwd,
                 stdout,
+                &lines,
+                input_bytes,
+                bound_hit,
+                capture_complete,
+                exit_code,
+            );
+            // A `test` script that is not Jest or Vitest may be Playwright or
+            // Bun; each claims the run only when it recognizes the output.
+            let (mut result, completion) = match (normalized, &launch) {
+                (Some(normalized), _) => normalized,
+                (None, js_test::Launch::Script(program, args)) => script_runner(
+                    program,
+                    args,
+                    stdout,
+                    &lines,
+                    input_bytes,
+                    bound_hit,
+                    capture_complete,
+                    exit_code,
+                )?,
+                (None, js_test::Launch::Direct(..)) => return None,
+            };
+            verification::apply_completion(&mut result, completion);
+            return Some(result);
+        }
+        ProviderKind::PackageScript { program, args } => {
+            let (mut result, completion) = script_runner(
+                program,
+                args,
+                stdout,
+                &lines,
+                input_bytes,
+                bound_hit,
+                capture_complete,
+                exit_code,
+            )?;
+            verification::apply_completion(&mut result, completion);
+            return Some(result);
+        }
+        ProviderKind::Playwright { args } => {
+            let (mut result, completion) = playwright::normalize(
+                &playwright::Launch::Direct(args),
+                stdout,
+                &lines,
+                input_bytes,
+                bound_hit,
+                capture_complete,
+                exit_code,
+            )?;
+            verification::apply_completion(&mut result, completion);
+            return Some(result);
+        }
+        ProviderKind::BunTest { args } => {
+            let (mut result, completion) = bun_test::normalize(
+                &bun_test::Launch::Direct(args),
                 &lines,
                 input_bytes,
                 bound_hit,
@@ -186,7 +243,52 @@ pub fn normalize_coding_output_in(
     Some(result)
 }
 
+/// A package script (`npm test`, `npm run e2e`) whose runner only its output
+/// reveals: Playwright first, then Bun. `None` when neither recognizes it.
+#[allow(clippy::too_many_arguments)]
+fn script_runner(
+    program: &str,
+    args: &[String],
+    stdout: &str,
+    lines: &[InputLine<'_>],
+    input_bytes: usize,
+    bound_hit: bool,
+    capture_complete: bool,
+    exit_code: Option<i32>,
+) -> Option<(CodingProviderResult, verification::Completion)> {
+    playwright::normalize(
+        &playwright::Launch::Script(program, args),
+        stdout,
+        lines,
+        input_bytes,
+        bound_hit,
+        capture_complete,
+        exit_code,
+    )
+    .or_else(|| {
+        bun_test::normalize(
+            &bun_test::Launch::Script(program, args),
+            lines,
+            input_bytes,
+            bound_hit,
+            capture_complete,
+            exit_code,
+        )
+    })
+}
+
 enum ProviderKind<'a> {
+    Playwright {
+        args: &'a [String],
+    },
+    BunTest {
+        args: &'a [String],
+    },
+    /// `npm|pnpm|yarn|bun run <script>` for a script other than `test`.
+    PackageScript {
+        program: &'a str,
+        args: &'a [String],
+    },
     Pytest {
         args: &'a [String],
     },
@@ -240,8 +342,23 @@ fn provider_kind(argv: &[String]) -> Option<ProviderKind<'_>> {
     if program == "go" && argv.get(1).map(String::as_str) == Some("test") {
         return Some(ProviderKind::GoTest { args: &argv[2..] });
     }
+    if let Some(args) = playwright::launch(program, argv) {
+        return Some(ProviderKind::Playwright { args });
+    }
+    if program == "bun" && argv.get(1).map(String::as_str) == Some("test") {
+        return Some(ProviderKind::BunTest { args: &argv[2..] });
+    }
     if let Some(launch) = js_test::launch(program, argv) {
         return Some(ProviderKind::JsTest { launch });
+    }
+    if matches!(program, "npm" | "pnpm" | "yarn" | "bun")
+        && matches!(argv.get(1).map(String::as_str), Some("run" | "run-script"))
+        && argv.get(2).is_some_and(|script| !script.starts_with('-'))
+    {
+        return Some(ProviderKind::PackageScript {
+            program,
+            args: &argv[3..],
+        });
     }
     if program == "rustc"
         || program == "cargo"

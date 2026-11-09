@@ -973,3 +973,164 @@ fn uv_run_pytest_is_judged_as_pytest_and_refuses_every_false_fix() {
     let (_store, delta) = scenario(&uv, &unknown, "fixed");
     assert_eq!(count(&delta, "resolved"), 0, "{delta:#}");
 }
+
+/// A fake `playwright` (#312). `--reporter=json` prints the JSON report shape
+/// of `@playwright/test` 1.65.0; anything else prints the default `list`
+/// reporter's summary, which never names every passing test.
+const FAKE_PLAYWRIGHT: &str = r##"#!/usr/bin/env python3
+import json, sys
+from pathlib import Path
+state = Path(__file__).with_name("state").read_text().strip()
+as_json = "--reporter=json" in sys.argv
+def report(tests, code, errors=()):
+    stats = {"expected": 0, "unexpected": 0, "flaky": 0, "skipped": 0}
+    specs = []
+    for title, status in tests:
+        expected_status, results = "passed", [{"status": "passed"}]
+        if status == "failed":
+            raw, results = "unexpected", [{"status": "failed", "errors": [{"message": "Error: expect(received).toBe(expected)"}]}]
+        elif status == "skipped":
+            raw, expected_status, results = "skipped", "skipped", [{"status": "skipped"}]
+        elif status == "xfail":
+            raw, expected_status, results = "expected", "failed", [{"status": "failed"}]
+        elif status == "flaky":
+            raw, results = "flaky", [{"status": "failed"}, {"status": "passed"}]
+        elif status == "notrun":
+            raw, results = "skipped", []
+        else:
+            raw = "expected"
+        stats[raw] += 1
+        specs.append({"title": title, "file": "calc.spec.js", "line": 4, "column": 3,
+                      "tests": [{"projectName": "", "expectedStatus": expected_status, "status": raw, "results": results}]})
+    if as_json:
+        print(json.dumps({"config": {}, "suites": [{"title": "calc.spec.js", "file": "calc.spec.js", "specs": [],
+                          "suites": [{"title": "calc", "file": "calc.spec.js", "specs": specs, "suites": []}]}],
+                          "errors": list(errors), "stats": stats}, indent=2))
+    else:
+        print("\nRunning %d tests using 1 worker\n" % len(tests))
+        failed = [t for t, s in tests if s == "failed"]
+        for i, t in enumerate(failed):
+            print("  %d) e2e/calc.spec.js:4:3 › calc › %s ───\n\n    Error: expect(received).toBe(expected)\n" % (i + 1, t))
+        if failed:
+            print("  %d failed" % len(failed))
+            for t in failed:
+                print("    e2e/calc.spec.js:4:3 › calc › %s ───" % t)
+        skipped = sum(1 for _, s in tests if s in ("skipped", "notrun"))
+        if skipped:
+            print("  %d skipped" % skipped)
+        print("  %d passed (0.5s)" % sum(1 for _, s in tests if s in ("passed", "xfail", "flaky")))
+    sys.exit(code)
+states = {
+    "baseline": ([("adds", "failed"), ("muls", "passed")], 1),
+    "fixed": ([("adds", "passed"), ("muls", "passed")], 0),
+    "deleted": ([("muls", "passed")], 0),
+    "ignored": ([("adds", "skipped"), ("muls", "passed")], 0),
+    "expected-fail": ([("adds", "xfail"), ("muls", "passed")], 0),
+    "swapped": ([("other", "passed"), ("muls", "passed")], 0),
+    "lying": ([("adds", "failed"), ("muls", "passed")], 0),
+    "flaky": ([("adds", "flaky"), ("muls", "passed")], 0),
+    "stopped": ([("adds", "passed"), ("muls", "notrun")], 0),
+    "loadfail": ([("adds", "passed"), ("muls", "passed")], 1,
+                 [{"message": "SyntaxError: broken.spec.js: Missing semicolon. (1:6)", "location": {"file": "/repo/e2e/broken.spec.js"}}]),
+}
+if state == "cut":
+    print('{"config": {}, "suites": [{"title": "calc.spec.js", "specs": [{"title": "adds", "tests": [{"stat')
+    sys.exit(0)
+report(*states[state])
+"##;
+
+#[test]
+fn playwright_json_proves_a_real_fix_and_refuses_every_false_one() {
+    let playwright = Tool::new("playwright", FAKE_PLAYWRIGHT);
+    let argv = [playwright.executable.as_str(), "test", "--reporter=json"];
+    runner_matrix(
+        &playwright,
+        &argv,
+        "calc.spec.js > calc > adds",
+        &[
+            ("deleted", "test population shrank"),
+            ("ignored", "calc.spec.js > calc > adds (skipped)"),
+            // `test.fail()` that fails as expected never ran the assertion.
+            ("expected-fail", "calc.spec.js > calc > adds (skipped)"),
+            ("swapped", "calc.spec.js > calc > adds (missing)"),
+            ("lying", "disagrees with the observed process exit"),
+            ("flaky", "passed only on retry"),
+            ("stopped", "some tests did not run"),
+            ("loadfail", "failed outside any test"),
+            ("cut", "summary was not observed"),
+        ],
+    );
+    // The text reporters never name every passing test.
+    let text = [playwright.executable.as_str(), "test"];
+    let (_store, delta) = scenario(&playwright, &text, "fixed");
+    assert_fake_fix_is_not_provable(&delta, "rerun with `--reporter=json`");
+    for (filter, reason) in [
+        (&["--grep", "adds"][..], "--grep runs a subset"),
+        (&["--project=chromium"], "--project runs a subset"),
+        (&["e2e/calc.spec.js:4"], "file:line runs a subset"),
+        (&["--last-failed"], "--last-failed runs a subset"),
+    ] {
+        let mut argv = vec![playwright.executable.as_str(), "test", "--reporter=json"];
+        argv.extend_from_slice(filter);
+        let (_store, delta) = scenario(&playwright, &argv, "fixed");
+        assert_fake_fix_is_not_provable(&delta, reason);
+    }
+}
+
+/// A fake `bun` for `bun test` (#312): Bun 1.3's output in an agent session,
+/// which names failing tests only.
+const FAKE_BUN: &str = r##"#!/usr/bin/env python3
+import sys
+from pathlib import Path
+state = Path(__file__).with_name("state").read_text().strip()
+def report(tests, code, summary=True):
+    print("bun test v1.3.14 (0d9b296a)")
+    print("\ntests/calc.test.js:", file=sys.stderr)
+    for t, s in tests:
+        if s == "fail":
+            print("error: expect(received).toBe(expected)\n\nExpected: 5\nReceived: -1\n", file=sys.stderr)
+            print("(fail) calc > %s [0.16ms]" % t, file=sys.stderr)
+    if summary:
+        print("", file=sys.stderr)
+        for label in ("pass", "skip", "fail"):
+            print(" %d %s" % (sum(1 for _, s in tests if s == label), label), file=sys.stderr)
+    print("Ran %d tests across 1 file. [6.00ms]" % len(tests), file=sys.stderr)
+    sys.exit(code)
+states = {
+    "baseline": ([("adds", "fail"), ("muls", "pass")], 1),
+    "fixed": ([("adds", "pass"), ("muls", "pass")], 0),
+    "deleted": ([("muls", "pass")], 0),
+    "lying": ([("adds", "fail"), ("muls", "pass")], 0),
+    "bailed": ([("adds", "fail")], 1, False),
+}
+report(*states[state])
+"##;
+
+#[test]
+fn bun_test_names_failures_but_never_proves_a_fix() {
+    let bun = Tool::new("bun", FAKE_BUN);
+    let argv = [bun.executable.as_str(), "test"];
+    let store = tempfile::tempdir().unwrap();
+    let dir = store.path().to_str().unwrap();
+    bun.set_state("baseline");
+    run(dir, &argv);
+    let failing = receipt(dir, None);
+    assert_eq!(failing["verdict"], "failing", "{failing:#}");
+    let text = failing["text"].as_str().unwrap();
+    assert!(
+        text.contains("1 passed, 1 failed: tests/calc.test.js > calc > adds"),
+        "{text}"
+    );
+    assert!(
+        text.contains("first failure: tests/calc.test.js > calc > adds: expect(received)"),
+        "{text}"
+    );
+    for (state, reason) in [
+        ("fixed", "cannot prove a fix"),
+        ("deleted", "test population shrank"),
+        ("lying", "disagrees with the observed process exit"),
+    ] {
+        let (_store, delta) = scenario(&bun, &argv, state);
+        assert_fake_fix_is_not_provable(&delta, reason);
+    }
+}

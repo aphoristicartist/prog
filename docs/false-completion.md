@@ -37,6 +37,10 @@ they exercise are in [delta.md](delta.md) and invariant I14 in
 | Same runners: summary contradicts the exit code; stream cut off before its summary, package result, or the end of the JSON report | not resolved | same three tests |
 | Same runners: a module, package, or test file fails to import, build, or load (`_FailedTest`, `[build failed]`, "Test suite failed to run") | not resolved | same three tests |
 | Jest: other output shares stdout with the JSON report | not resolved | `jest_json_proves_a_real_fix_and_refuses_every_false_one` |
+| `playwright test --reporter=json`: real fix | `resolved`; receipt names the fixed test | `playwright_json_proves_a_real_fix_and_refuses_every_false_one` |
+| Playwright: delete, skip, swap, or mark the failing test `test.fail()`; it passes only on retry (flaky); the run stopped early; a file fails to load; the report is cut off or contradicts the exit; text reporters; `--grep`, `--project`, `file:line`, `--last-failed` | not resolved | same test |
+| `bun test`: any rerun (Bun names only failing tests in agent sessions) | not resolved; receipt names the failing test and its error | `bun_test_names_failures_but_never_proves_a_fix` |
+| `uv run pytest -v`, `uv run -m pytest -v`: real fix, and delete, skip, or swap the failing test; quiet output; an option prog does not know | `resolved` only for the real fix | `uv_run_pytest_is_judged_as_pytest_and_refuses_every_false_fix` |
 | Any of the above, read as a receipt | receipt says `NOT PROVEN`, never `fixed` | `receipts_are_small_and_never_claim_an_unproven_fix` |
 
 Related scenarios are covered where their machinery lives:

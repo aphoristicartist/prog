@@ -43,7 +43,10 @@ pub(super) fn constrain_completion(
         Some(
             ProviderKind::Unittest { .. }
             | ProviderKind::GoTest { .. }
-            | ProviderKind::JsTest { .. },
+            | ProviderKind::JsTest { .. }
+            | ProviderKind::Playwright { .. }
+            | ProviderKind::BunTest { .. }
+            | ProviderKind::PackageScript { .. },
         )
         | None => return,
     };
