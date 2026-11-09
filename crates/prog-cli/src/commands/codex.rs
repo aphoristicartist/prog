@@ -1,4 +1,4 @@
-//! `prog codex`: launch Codex so that prog's PATH shims, receipts, and stop
+//! `prog harness codex`: launch Codex so that prog's PATH shims, receipts, and stop
 //! gate work in it (#304).
 //!
 //! Codex has no `CLAUDE_ENV_FILE`, and a live check of Codex 0.167 found two

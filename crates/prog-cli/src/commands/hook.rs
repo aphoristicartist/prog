@@ -33,7 +33,7 @@ pub(crate) fn claude_code_hook(input: &str) -> Option<Value> {
 }
 
 /// Run one Codex hook event read from stdin (#304). Codex speaks the same
-/// event model and JSON shape; it has no `CLAUDE_ENV_FILE`, so the `prog
+/// event model and JSON shape; it has no `CLAUDE_ENV_FILE`, so the `prog harness
 /// codex` launcher, not SessionStart, puts the shims on `PATH`.
 pub(crate) fn codex_hook(input: &str) -> Option<Value> {
     host_hook(input, Host::Codex)
