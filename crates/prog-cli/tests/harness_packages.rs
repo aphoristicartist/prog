@@ -52,7 +52,25 @@ fn codex_plugin_and_marketplace_are_self_consistent() {
         fs::read_to_string(root.join("LICENSE")).unwrap()
     );
 
-    for relative in ["scripts/prog-run.sh", "scripts/doctor.sh"] {
+    let hooks = read_json(&plugin_root.join("hooks/hooks.json"));
+    for event in ["SessionStart", "PostToolUse", "Stop"] {
+        let command = hooks["hooks"][event][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap_or_else(|| panic!("Codex {event} hook"));
+        assert_eq!(command, "\"${PLUGIN_ROOT}\"/scripts/hook.sh", "{event}");
+    }
+    assert_eq!(hooks["hooks"]["PostToolUse"][0]["matcher"], "Bash");
+    assert!(
+        fs::read_to_string(plugin_root.join("scripts/hook.sh"))
+            .unwrap()
+            .contains("harness hook codex")
+    );
+
+    for relative in [
+        "scripts/prog-run.sh",
+        "scripts/doctor.sh",
+        "scripts/hook.sh",
+    ] {
         let path = plugin_root.join(relative);
         assert!(path.is_file(), "missing {}", path.display());
         #[cfg(unix)]

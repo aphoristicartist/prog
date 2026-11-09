@@ -1,6 +1,7 @@
 pub(crate) mod adapters;
 pub(crate) mod cache;
 pub(crate) mod call;
+pub(crate) mod codex;
 pub(crate) mod cost;
 pub(crate) mod delta;
 pub(crate) mod discover;

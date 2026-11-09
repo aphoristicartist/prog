@@ -58,6 +58,7 @@ use commands::{
     adapters::*,
     cache::cache_command,
     call::call_source,
+    codex::codex_launch,
     cost::cost_report,
     delta::{
         bound_delta_response, compare_observation_ids, delta_observations, record_delta_between,
@@ -72,7 +73,7 @@ use commands::{
     expand::expand_cursor,
     harness_log::harness_log_report,
     hints::hints_source,
-    hook::{claude_code_hook, read_hook_input},
+    hook::{claude_code_hook, codex_hook, read_hook_input},
     init::{doctor_harness, init_integration, install_harness, print_skill_content},
     lenses::{
         load_lens, parse_json_argument, parse_view, validate_lens_matches_call,
@@ -240,12 +241,26 @@ async fn main() -> ExitCode {
         command: HarnessCommand::Hook(args),
     } = &cli.command
     {
-        if args.host == "claude-code"
-            && let Some(output) = claude_code_hook(&read_hook_input())
-        {
+        let output = match args.host.as_str() {
+            "claude-code" => claude_code_hook(&read_hook_input()),
+            "codex" => codex_hook(&read_hook_input()),
+            _ => None,
+        };
+        if let Some(output) = output {
             println!("{output}");
         }
         return ExitCode::SUCCESS;
+    }
+
+    // The Codex launcher replaces this process with `codex`; it only returns
+    // on failure.
+    if let Command::Codex(args) = &cli.command {
+        let error = codex_launch(args);
+        return write_error(
+            &error,
+            cli.pretty,
+            &InvocationContext::for_unresolved_budget().with_view(cli.format.into()),
+        );
     }
 
     let mut ctx = match resolve_disclosure_budget(&cli) {
@@ -572,6 +587,7 @@ async fn run(cli: &Cli, ctx: &mut InvocationContext) -> Result<ExitCode> {
             write_success(&delta, cli.pretty, ctx)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::Codex(_) => unreachable!("the Codex launcher is dispatched before budgets"),
         Command::Shim { command } => {
             let report = match command {
                 ShimCommand::Install(args) => shim_install(args)?,

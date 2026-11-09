@@ -62,6 +62,16 @@
   `prog harness doctor` names those tools, because their runs are never
   captured.
 
+- Codex support (#304): the Codex plugin now registers `SessionStart`,
+  `PostToolUse`, and `Stop` hooks (`prog harness hook codex`), and `prog codex`
+  launches Codex with the shims first on `PATH`, `PROG_DIR` set, a non-login
+  shell (`-c allow_login_shell=false`; a login profile put Homebrew tools ahead
+  of the shims), and prog's store as a sandbox writable root (the
+  `workspace-write` sandbox denied the shims' writes). `--stop-gate` enables
+  the stop gate. `prog harness doctor` reports untrusted Codex hooks, which
+  `codex exec` skips silently. The stop gate also stands aside when the final
+  message names a test prog saw failing and claims nothing.
+
 - Hook decision log: every Stop and test-related PostToolUse is recorded
   locally (no message or command text; hashed ids; `PROG_HARNESS_LOG=0` turns
   it off), with the gate's decision even while the gate is off.

@@ -24,7 +24,7 @@ measured three-operation facade; an MCP-only host is unsupported today.
 | Harness readiness | implemented | `prog harness doctor` | nothing |
 | Claude Code plugin (shims, receipts, opt-in stop gate) | implemented | `/plugin marketplace add aphoristicartist/prog`, then `/plugin install prog@prog` | Claude Code plugin cache; shims under `~/.local/share/prog/shims`; store under `~/.local/state/prog/projects/` |
 | PATH shims for any shell-based harness | implemented | `prog shim install` and `eval "$(prog shim env --project . --shell)"` | shim scripts only |
-| Codex marketplace plugin | implemented | `codex plugin add prog@personal` after adding this checkout as a marketplace | Codex plugin cache |
+| Codex marketplace plugin (skill, receipts, uncaptured-test notice, opt-in stop gate) | implemented | `codex plugin add prog@personal` after adding this checkout as a marketplace; trust its hooks in `/hooks`; launch with `prog codex [--stop-gate]` | Codex plugin cache; shims under `~/.local/share/prog/shims`; store under `~/.local/state/prog/projects/` |
 | DeepSeek Harness result plugin | implemented | `dsh plugin --profile web add ./extensions/deepseek-harness` | profile dependency and bundle layer |
 | Portable Agent Skills target | implemented | `prog harness install --host agent-skills` | `.agents/skills/prog/SKILL.md`, `.agents/prog-hooks/*` |
 | Codex project skill and hooks | implemented | `prog init --agent codex --project` | `.agents/skills/prog/SKILL.md`, `.codex/prog-hooks/*` |
@@ -37,6 +37,42 @@ measured three-operation facade; an MCP-only host is unsupported today.
 | External target manifest | implemented | `prog init --agent NAME --manifest-dir DIR --project` | manifest-declared project-relative paths |
 | Global shell aliases | planned | not enabled | nothing |
 | `prog` as an MCP server | deferred by #216 pending #120 measurements | not enabled | nothing |
+
+## Codex hooks
+
+The Codex plugin registers `SessionStart`, `PostToolUse` (`Bash`), and `Stop`
+hooks that run `prog harness hook codex` (`plugins/prog/hooks/`). Codex 0.167
+reports shell commands run from its JavaScript `exec` tool as `Bash` with the
+raw command string, fires `PostToolUse` for failing commands too (without an
+exit code; receipts take it from the shim capture), and passes
+`last_assistant_message` and `stop_hook_active` to `Stop`, so receipts, the
+uncaptured-test notice, the decision log, and the stop gate work as they do in
+Claude Code. Three Codex specifics:
+
+- **Trust.** Codex runs a non-managed hook only after you trust it in `/hooks`
+  (or Settings > Hooks in the desktop app), and `codex exec` skips untrusted
+  hooks without a warning. `prog harness doctor` reports `codex_hooks` as
+  `absent`, `untrusted`, or `ok` (a trust entry exists; Codex verifies its
+  hash).
+- **Launch with `prog codex`.** Codex has no `CLAUDE_ENV_FILE`. The launcher
+  installs the shims, puts them first on `PATH`, points `PROG_DIR` at the
+  project's store, and passes `-c allow_login_shell=false` (a login shell
+  re-runs your profile, which can put Homebrew and `~/.local/bin` ahead of the
+  shims) and `-c sandbox_workspace_write.writable_roots=[<store directory>]`
+  (the `workspace-write` sandbox otherwise denies the shims' writes; the
+  override replaces any `writable_roots` you configured, so use
+  `--keep-codex-config` and add the store directory yourself if you have
+  some). Everything after the launcher's own flags goes to `codex` unchanged:
+  `prog codex --stop-gate exec "fix the failing test"`.
+- **The stop gate is enabled by `PROG_STOP_GATE=1`**, which `--stop-gate` sets
+  for the session.
+
+A live check with Codex 0.167 (`gpt-6-luna`, low effort, a crate with one
+failing test, "run cargo test once and report"): the command ran as
+`zsh -c 'cargo test'`, the shim captured it under the sandbox, the receipt
+reached the model, and the agent's report named the failing test, so the gate
+stood aside; with an earlier rule set the same report was blocked once and the
+second stop let through. The decision log recorded each step.
 
 ## Generated Files
 

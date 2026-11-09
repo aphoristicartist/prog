@@ -120,6 +120,8 @@ pub(crate) enum Command {
     Status(StatusArgs),
     /// Summarize the latest run as a compact verdict compared with the previous identical run.
     Receipt(ReceiptArgs),
+    /// Launch Codex with prog's PATH shims, a sandbox-writable store, and optionally the stop gate; arguments after it go to `codex` unchanged.
+    Codex(CodexArgs),
     /// Manage PATH shims that capture test and build runs without changing their output.
     Shim {
         #[command(subcommand)]
@@ -164,6 +166,21 @@ pub(crate) enum HarnessCommand {
 }
 
 #[derive(Debug, Args)]
+pub(crate) struct CodexArgs {
+    /// Enable the stop gate for this Codex session (sets `PROG_STOP_GATE=1` for its hooks).
+    #[arg(long)]
+    pub(crate) stop_gate: bool,
+
+    /// Do not pass `-c allow_login_shell=false` and the sandbox `writable_roots` override; configure both yourself.
+    #[arg(long)]
+    pub(crate) keep_codex_config: bool,
+
+    /// Arguments for `codex`, passed through unchanged (for example `exec "fix the failing test"`).
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub(crate) args: Vec<String>,
+}
+
+#[derive(Debug, Args)]
 pub(crate) struct HarnessLogArgs {
     /// Aggregate instead of listing entries: blocks per turn end, by rule, repeats, and what the agent did after a block.
     #[arg(long)]
@@ -184,7 +201,7 @@ pub(crate) struct HarnessLogArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct HarnessHookArgs {
-    /// Host whose hook protocol is spoken on stdin/stdout; currently `claude-code`.
+    /// Host whose hook protocol is spoken on stdin/stdout: `claude-code` or `codex`.
     pub(crate) host: String,
 }
 

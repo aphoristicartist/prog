@@ -245,6 +245,9 @@ pub(crate) fn doctor_harness(args: &HarnessDoctorArgs) -> Result<HarnessDoctorRe
     if let Some(check) = claude_plugin_doctor_check() {
         checks.push(check);
     }
+    if let Some(check) = codex_hooks_doctor_check() {
+        checks.push(check);
+    }
 
     Ok(HarnessDoctorReport {
         schema: "prog.harness.doctor",
@@ -311,6 +314,96 @@ fn shim_doctor_check(warnings: &mut Vec<String>) -> HarnessDoctorCheck {
         status,
         detail,
     }
+}
+
+/// Whether prog's Codex hooks are configured and trusted (#304). Codex skips
+/// untrusted hooks silently in `codex exec`, so an installed but untrusted
+/// hook looks exactly like a working one that never fires. Trust is recorded
+/// per hook in `config.toml` (`[hooks.state."<key>"] trusted_hash`); prog
+/// reports whether such an entry exists but cannot verify its hash, which
+/// only Codex computes. `None` when no Codex home exists.
+fn codex_hooks_doctor_check() -> Option<HarnessDoctorCheck> {
+    let home = std::env::var_os("CODEX_HOME")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))?;
+    if !home.is_dir() {
+        return None;
+    }
+    let config = std::fs::read_to_string(home.join("config.toml")).unwrap_or_default();
+    let hooks = std::fs::read_to_string(home.join("hooks.json")).unwrap_or_default();
+    let plugin_enabled = codex_plugin_enabled(&config);
+    let configured = plugin_enabled
+        || config.contains("harness hook codex")
+        || hooks.contains("harness hook codex");
+    let trusted = codex_prog_hook_trust_entries(&config);
+    let (status, detail) = match (configured, trusted) {
+        (false, _) => (
+            "absent",
+            "optional: install the prog Codex plugin (plugins/prog) and launch with `prog codex`".to_string(),
+        ),
+        (true, 0) => (
+            "untrusted",
+            "prog's Codex hooks are configured but not trusted; Codex skips untrusted hooks silently (no receipts, no stop gate). Trust them with /hooks in Codex".to_string(),
+        ),
+        (true, count) => (
+            "ok",
+            format!(
+                "prog's Codex hooks are configured, with {count} trust entr{} in config.toml (Codex verifies the hashes; rerun /hooks after updating prog). Launch with `prog codex` so shims and the store work under the sandbox",
+                if count == 1 { "y" } else { "ies" }
+            ),
+        ),
+    };
+    Some(HarnessDoctorCheck {
+        name: "codex_hooks".to_string(),
+        status,
+        detail,
+    })
+}
+
+/// `[plugins."prog@…"]` with `enabled = true` (or no `enabled` key).
+fn codex_plugin_enabled(config: &str) -> bool {
+    toml_sections(config).any(|(header, body)| {
+        header.starts_with("[plugins.\"prog@")
+            && !body.lines().any(|line| {
+                let line = line.trim().replace(' ', "");
+                line == "enabled=false"
+            })
+    })
+}
+
+/// `[hooks.state."<key>"]` sections whose key names prog and that carry a
+/// `trusted_hash`.
+fn codex_prog_hook_trust_entries(config: &str) -> usize {
+    toml_sections(config)
+        .filter(|(header, body)| {
+            header.starts_with("[hooks.state.")
+                && header.contains("prog")
+                && body
+                    .lines()
+                    .any(|line| line.trim_start().starts_with("trusted_hash"))
+        })
+        .count()
+}
+
+/// `(header, body)` pairs of a TOML document's tables, read line by line.
+fn toml_sections(config: &str) -> impl Iterator<Item = (&str, String)> {
+    let mut sections = Vec::new();
+    let mut current: Option<(&str, String)> = None;
+    for line in config.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            if let Some(section) = current.take() {
+                sections.push(section);
+            }
+            current = Some((trimmed, String::new()));
+        } else if let Some((_, body)) = current.as_mut() {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    sections.extend(current);
+    sections.into_iter()
 }
 
 /// Whether the prog Claude Code plugin is installed, read from Claude Code's
