@@ -42,6 +42,8 @@ src/commands/delta.rs
 src/commands/discover.rs
 src/commands/envelope.rs
 src/commands/expand.rs
+src/commands/final_message.rs
+src/commands/harness_log.rs
 src/commands/hints.rs
 src/commands/hook.rs
 src/commands/init.rs
