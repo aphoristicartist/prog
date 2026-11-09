@@ -37,6 +37,7 @@ src/cli_args.rs
 src/commands/adapters.rs
 src/commands/cache.rs
 src/commands/call.rs
+src/commands/codex.rs
 src/commands/cost.rs
 src/commands/delta.rs
 src/commands/discover.rs
