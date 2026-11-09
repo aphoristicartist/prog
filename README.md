@@ -208,7 +208,7 @@ Requires Rust 1.89 or newer.
   opt-in stop gate. It never changes what a command prints.
 - **Codex:** from a checkout, `codex plugin marketplace add /path/to/prog`, then
   `codex plugin add prog@personal`, and trust its hooks in `/hooks` (Codex
-  skips untrusted hooks silently). Launch with `prog codex` (add `--stop-gate`
+  skips untrusted hooks silently). Launch with `prog harness codex` (add `--stop-gate`
   for the gate) so the shims and prog's store work under Codex's login shell
   and sandbox; see [Codex hooks](docs/integrations.md#codex-hooks).
 - **Any agent that reads skills or project instructions:**
