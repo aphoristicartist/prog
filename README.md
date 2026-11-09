@@ -30,14 +30,11 @@ prog does not summarize or compress with a model, and it is not an agent or an
 MCP server. Every value it returns is copied from the captured output (with
 secrets replaced and long strings visibly cut) or counted from it.
 
-> **Status: pre-1.0.** The latest release, v0.1.1 (August 2026), predates
-> `select`, `coverage`, compact output, receipts, PATH shims, and the Claude
-> Code plugin. Until the next release, [install from `main`](#install) to use
-> everything below.
+> **Status: pre-1.0.** Everything below ships in v0.2.0 (November 2026).
 
 ## Quickstart
 
-Uses `prog` built from `main` and `python3` (only to read the cursor out of
+Uses `prog` 0.2.0 or newer and `python3` (only to read the cursor out of
 the JSON). CI runs this block exactly as written.
 
 ```sh
@@ -175,18 +172,7 @@ the response says so. See [record deltas](docs/delta.md#record-deltas).
 
 ## Install
 
-### From `main` (everything in this README)
-
-```sh
-cargo install --locked --git https://github.com/aphoristicartist/prog prog-cli
-```
-
-Requires Rust 1.89 or newer. Until the next release, a build from `main` still
-reports version 0.1.1. Linux (x86_64) and macOS (Apple Silicon and Intel) are
-supported and tested in CI; Windows is not
-([#140](https://github.com/aphoristicartist/prog/issues/140)).
-
-### From the latest release (v0.1.1)
+### From the latest release
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/releases/latest/download/install.sh | sh
@@ -195,14 +181,22 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/r
 The installer checks `SHA256SUMS` and the GitHub build-provenance attestation
 (it needs [`gh`](https://cli.github.com/)) before it places `prog` in
 `~/.local/bin`. Later, `prog update --yes` replaces a curl-installed binary
-with the newest verified release. v0.1.1 has capture, navigation, findings,
-delta, and the Agent Skill, but none of the newer features listed above. Exact
-versions, manual verification, and the release container image are in
-[`docs/install.md`](docs/install.md).
+with the newest verified release. Exact versions, manual verification, and the
+release container image are in [`docs/install.md`](docs/install.md). Linux
+(x86_64) and macOS (Apple Silicon and Intel) are supported and tested in CI;
+Windows is not ([#140](https://github.com/aphoristicartist/prog/issues/140)).
+
+### From source
+
+```sh
+cargo install --locked --git https://github.com/aphoristicartist/prog prog-cli
+```
+
+Requires Rust 1.89 or newer.
 
 ### Connect your agent
 
-- **Claude Code** (needs `prog` from `main`):
+- **Claude Code:**
 
   ```text
   /plugin marketplace add aphoristicartist/prog
@@ -213,7 +207,10 @@ versions, manual verification, and the release container image are in
   each captured test run, switches prog to compact output, and offers the
   opt-in stop gate. It never changes what a command prints.
 - **Codex:** from a checkout, `codex plugin marketplace add /path/to/prog`, then
-  `codex plugin add prog@personal`.
+  `codex plugin add prog@personal`, and trust its hooks in `/hooks` (Codex
+  skips untrusted hooks silently). Launch with `prog codex` (add `--stop-gate`
+  for the gate) so the shims and prog's store work under Codex's login shell
+  and sandbox; see [Codex hooks](docs/integrations.md#codex-hooks).
 - **Any agent that reads skills or project instructions:**
   `prog harness install --root <project>` adds the Agent Skill, plus adapters
   for Codex, Claude Code, Cursor, and Gemini CLI when it detects them. The

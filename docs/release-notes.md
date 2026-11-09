@@ -64,7 +64,7 @@ and will be called out in the CHANGELOG.
 The local observation store carries a **schema identity** — not a compatibility
 version — at:
 
-- `crates/prog-core/src/store.rs:39`
+- `crates/prog-core/src/store.rs:47`
 - `const STORE_SCHEMA: &str = "prog.store.coding_completion_evidence";`
 
 On open, if the persisted `store_schema` key does not equal `STORE_SCHEMA`,
