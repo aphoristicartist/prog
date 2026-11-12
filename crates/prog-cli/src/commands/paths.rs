@@ -402,10 +402,7 @@ fn path_matches_filters(path: &PathEntry, filters: &PathFilters) -> bool {
     {
         return false;
     }
-    if !filters.fields.is_empty() && !path_has_any_field(&path.path, &filters.fields) {
-        return false;
-    }
-    true
+    filters.fields.is_empty() || path_has_any_field(&path.path, &filters.fields)
 }
 
 fn omitted_matches_filters(region: &OmittedRegion, filters: &PathFilters) -> bool {
@@ -414,10 +411,7 @@ fn omitted_matches_filters(region: &OmittedRegion, filters: &PathFilters) -> boo
     {
         return false;
     }
-    if !filters.fields.is_empty() && !path_has_any_field(&region.path, &filters.fields) {
-        return false;
-    }
-    true
+    filters.fields.is_empty() || path_has_any_field(&region.path, &filters.fields)
 }
 
 fn path_has_any_field(path: &str, fields: &BTreeSet<String>) -> bool {
