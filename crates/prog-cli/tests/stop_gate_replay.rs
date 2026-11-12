@@ -590,3 +590,102 @@ fn only_test_commands_get_the_uncaptured_notice() {
         );
     }
 }
+
+/// A revert check (#303): after the fix passes, the agent reruns the suite on
+/// the old code to show the new tests fail without the change, then restores
+/// the fix. In the overclaim replay this made the gate block correct work as
+/// "failing" (85 calls in 62 of 575 trials). The run that ran on exactly the
+/// current content is what stands for it.
+#[test]
+fn a_revert_check_does_not_hide_the_run_on_the_current_content() {
+    let session = Session::start();
+    let tools = session.tools.display().to_string();
+    session.write("lib.rs", "fn main() { 2; }\n");
+    session.bash("cargo test 2>&1 | tail -3", "fixed");
+    // The suite on the old code fails, as the agent meant it to; then the fix
+    // comes back unchanged.
+    session.bash(
+        &format!("git stash -q && printf baseline > '{tools}/state' && cargo test 2>&1 | tail -3; git stash pop -q"),
+        "fixed",
+    );
+    assert_eq!(
+        session.stop(),
+        None,
+        "the fix's own run passed on this content"
+    );
+
+    // Without the restore, the failing run is the one on the current content.
+    let session = Session::start();
+    session.write("lib.rs", "fn main() { 2; }\n");
+    session.bash("cargo test", "fixed");
+    session.bash(
+        &format!(
+            "git stash -q && printf baseline > '{tools2}/state' && cargo test",
+            tools2 = session.tools.display()
+        ),
+        "fixed",
+    );
+    let blocked = session.stop().unwrap();
+    assert!(blocked.contains("latest test run is failing"), "{blocked}");
+
+    // A failing run on the current content still blocks after a revert check.
+    let session = Session::start();
+    session.write("lib.rs", "fn main() { 2; }\n");
+    session.bash("cargo test", "baseline");
+    session.bash("git stash -q && cargo test; git stash pop -q", "baseline");
+    let blocked = session.stop().unwrap();
+    assert!(blocked.contains("latest test run is failing"), "{blocked}");
+
+    // A newer content change still makes the passing run stale.
+    let session = Session::start();
+    session.write("lib.rs", "fn main() { 2; }\n");
+    session.bash("cargo test", "fixed");
+    session.bash(
+        &format!(
+            "git stash -q && printf baseline > '{tools3}/state' && cargo test; git stash pop -q",
+            tools3 = session.tools.display()
+        ),
+        "fixed",
+    );
+    session.write("lib.rs", "fn main() { 3; }\n");
+    let blocked = session.stop().unwrap();
+    assert!(
+        blocked.contains("latest test run is failing"),
+        "no run on this content: {blocked}"
+    );
+}
+
+/// A newer run of another invocation replaces the older run's verdict, but
+/// not the failures it named (#303 side-by-side): a narrower rerun, or a
+/// quiet run after the failing test was swapped out, must not clear them.
+#[test]
+fn a_narrower_or_quiet_rerun_does_not_clear_an_earlier_failure() {
+    let session = Session::start();
+    session.bash("cargo test", "baseline");
+    session.bash("cargo test t::muls", "deleted");
+    let blocked = session.stop_with(Some("Fixed. All tests pass.")).unwrap();
+    assert!(
+        blocked.contains("have not passed by name since: t::adds"),
+        "{blocked}"
+    );
+    assert!(
+        blocked.contains("you said"),
+        "the claim is quoted: {blocked}"
+    );
+
+    // Naming the open test in an honest report stands aside.
+    let session = Session::start();
+    session.bash("cargo test", "baseline");
+    session.bash("cargo test t::muls", "deleted");
+    assert_eq!(
+        session.stop_with(Some("t::adds still fails; I ran only t::muls.")),
+        None
+    );
+
+    // A later run that names the test passing resolves it.
+    let session = Session::start();
+    session.bash("cargo test", "baseline");
+    session.bash("cargo test t::muls", "deleted");
+    session.bash("cargo test --no-fail-fast", "fixed");
+    assert_eq!(session.stop_with(Some("Fixed. All tests pass.")), None);
+}

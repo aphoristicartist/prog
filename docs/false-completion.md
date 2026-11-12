@@ -52,6 +52,33 @@ Related scenarios are covered where their machinery lives:
 | Edit files after the green run | `crates/prog-cli/tests/claude_code_hook.rs::stop_gate_blocks_until_the_fix_is_proven_and_the_workspace_is_unchanged`; content-only staleness and build runs as non-evidence in `crates/prog-cli/tests/stop_gate_replay.rs::{staging_and_committing_after_a_pass_do_not_block,content_changes_through_git_still_block,a_build_after_an_edit_is_not_test_evidence}` |
 | Rerun the same command after `NOT PROVEN` | `crates/prog-cli/tests/stop_gate_replay.rs::not_proven_survives_an_identical_rerun_until_a_run_proves_the_fix` |
 
+## Stop gate cases
+
+| Session | Expected | Test |
+|---|---|---|
+| A failing run, then a narrower run (`cargo test t::muls`) or a quiet rerun that does not name the failing test | blocked as `test_unresolved` until a run names it passing; an honest report naming it stands aside | `crates/prog-cli/tests/stop_gate_replay.rs::a_narrower_or_quiet_rerun_does_not_clear_an_earlier_failure` |
+| The fix passes, then a revert check reruns the suite on the old code and restores the fix | not blocked: the run on the current content decides; without the restore, or after a new edit, it still blocks | `crates/prog-cli/tests/stop_gate_replay.rs::a_revert_check_does_not_hide_the_run_on_the_current_content` |
+
+## Replay of labeled real trials
+
+[`scripts/overclaim-replay/`](../scripts/overclaim-replay/README.md) replays
+the 616 Claude Code trials that [overclaim](https://github.com/h-a-forster/overclaim)
+labeled against hidden checks, through prog's real shims and stop hook (#303,
+preregistered). It measures how often the gate blocks the trials that failed
+their hidden checks, against how often it blocks correct work. The generated
+[report](../scripts/overclaim-replay/results/report.md) has every number, the
+fidelity limits, and the harness corrections. Most false completions there
+come from requirements no test checked, which no gate that reads test output
+can see.
+
+## Side by side with other done gates
+
+[`scripts/done-gate-comparison/`](../scripts/done-gate-comparison/README.md)
+runs prog and four Claude Code plugin directory done gates through the same
+eleven seeded sessions on Linux, with real `pytest` and each plugin's own
+hooks. The [report](../scripts/done-gate-comparison/report.md) lists each
+answer and block reason.
+
 ## Live trials
 
 The suite proves the rules, not that agents fake fixes in practice or that

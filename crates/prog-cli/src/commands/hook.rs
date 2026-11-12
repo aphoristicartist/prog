@@ -11,6 +11,7 @@
 //! Every unexpected condition fails open: no output, exit 0.
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
 };
@@ -433,7 +434,7 @@ fn stop_event(input: &Value, store_dir: &Path, host: Host) -> Option<Value> {
         || (claim.is_none() && final_message::names_any_test(message, &evidence.failing_tests));
     let contradiction = match (&claim, &evidence.finding) {
         (Some(claim), Some((rule, _))) if !discloses => match *rule {
-            "test_failing" | "test_stale" => Some(claim),
+            "test_failing" | "test_stale" | "test_unresolved" => Some(claim),
             "test_not_proven" if claim.kind == final_message::ClaimKind::Fixed => Some(claim),
             _ => None,
         },
@@ -562,7 +563,67 @@ fn assess_stop(store_dir: &Path, session: &str) -> Evidence {
     // run, which compiles the same code.
     let newest = |kind: RunKind| runs.iter().position(|(_, _, run_kind)| *run_kind == kind);
     let newest_test = newest(RunKind::Test);
-    let failing_tests = newest_test
+    // Whether a run's captured content equals the current content: Some(true)
+    // only when every file a test run could see is unchanged since it ran.
+    let mut current_workspace = None;
+    let mut ran_on_current_content = |index: usize| {
+        let captured = runs[index]
+            .0
+            .workspace_state
+            .as_ref()
+            .filter(|captured| captured.applicable)?;
+        let root = captured.root.as_deref()?;
+        let current = current_workspace.get_or_insert_with(|| prog_core::capture_workspace(root));
+        match prog_core::compare_workspace_content(captured, current).validity {
+            prog_core::WorkspaceValidity::Unchanged => Some(true),
+            prog_core::WorkspaceValidity::Changed => Some(false),
+            _ => None,
+        }
+    };
+    // A revert check runs the suite on other content (`git stash`, then the
+    // tests, then `git stash pop`). When the newest test run saw content that
+    // is gone again, the newest run on exactly the current content is what
+    // stands for that content; without one, the newest run decides as before.
+    let current_content_run = match newest_test {
+        Some(index) if ran_on_current_content(index) == Some(false) => (index + 1..runs.len())
+            .filter(|later| runs[*later].2 == RunKind::Test)
+            .find(|later| ran_on_current_content(*later) == Some(true)),
+        _ => None,
+    };
+    let judged_test = current_content_run.or(newest_test);
+    // Tests that failed in this session and were not named passing since, up
+    // to the judged run. A newer run of another invocation (fewer tests, a
+    // quiet run) replaces the older run's verdict, never the failures it
+    // named: otherwise a narrower rerun would clear them (#303).
+    let open_failures = judged_test
+        .map(|judged| {
+            let mut failing = BTreeMap::new();
+            for (_, payload, kind) in runs[judged..].iter().rev() {
+                if *kind != RunKind::Test {
+                    continue;
+                }
+                let Some(population) = TestPopulation::from_payload(payload.as_value()) else {
+                    continue;
+                };
+                for (id, status) in population.tests {
+                    match status.as_str() {
+                        "failed" | "error" => {
+                            failing.insert(id, true);
+                        }
+                        "passed" => {
+                            failing.insert(id, false);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            failing
+                .into_iter()
+                .filter_map(|(id, open)| open.then_some(id))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let failing_tests = judged_test
         .and_then(|index| TestPopulation::from_payload(runs[index].1.as_value()))
         .map(|population| {
             population
@@ -570,10 +631,13 @@ fn assess_stop(store_dir: &Path, session: &str) -> Evidence {
                 .into_iter()
                 .filter(|(_, status)| matches!(status.as_str(), "failed" | "error"))
                 .map(|(id, _)| id)
+                .chain(open_failures.iter().cloned())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_default();
-    let newest_test_record = newest_test.map(|index| {
+        .unwrap_or_else(|| open_failures.clone());
+    let newest_test_record = judged_test.map(|index| {
         let (observation, payload, _) = &runs[index];
         let receipt = receipt_for(&store, observation, payload.as_value());
         let record = json!({
@@ -581,6 +645,7 @@ fn assess_stop(store_dir: &Path, session: &str) -> Evidence {
             "provider": observation.provider,
             "invocation": harness_log::short_hash(&observation.invocation_fingerprint),
             "superseded_by_uncaptured_run": superseded_by_uncaptured(index),
+            "older_run_on_current_content": current_content_run.is_some(),
         });
         (receipt, record)
     });
@@ -616,7 +681,7 @@ fn assess_stop(store_dir: &Path, session: &str) -> Evidence {
             )));
         }
     }
-    let (Some(index), Some((receipt, _))) = (newest_test, &newest_test_record) else {
+    let (Some(index), Some((receipt, _))) = (judged_test, &newest_test_record) else {
         return evidence(None);
     };
     if superseded_by_uncaptured(index) {
@@ -635,6 +700,25 @@ fn assess_stop(store_dir: &Path, session: &str) -> Evidence {
             rule,
             format!(
                 "{lead}. Fix it, or tell the user plainly why it is still open.\n{}",
+                receipt.text
+            ),
+        )));
+    }
+    if !open_failures.is_empty() {
+        let shown = open_failures
+            .iter()
+            .take(3)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = match open_failures.len() {
+            0..=3 => String::new(),
+            count => format!(" and {} more", count - 3),
+        };
+        return evidence(Some((
+            "test_unresolved",
+            format!(
+                "tests that failed earlier in this session have not passed by name since: {shown}{more}. Rerun them (verbosely, so each test is named), or tell the user plainly why they are still open.\n{}",
                 receipt.text
             ),
         )));

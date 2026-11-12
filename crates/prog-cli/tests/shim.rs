@@ -547,3 +547,68 @@ fn shim_env_is_idempotent_and_keeps_the_store_outside_the_project() {
         "/opt/prog \"shims\" $HOME:/usr/bin:/bin"
     );
 }
+
+/// A virtualenv's interpreter finds its environment from the path it runs
+/// as. With only the bare name as argv[0], Linux CPython looks itself up on
+/// `PATH`, finds the shim first, and loses the venv: `python -m pytest` then
+/// fails with "No module named pytest" in every activated venv. Found by the
+/// done-gate side-by-side on Debian (#303).
+#[test]
+fn a_shimmed_virtualenv_python_keeps_its_environment() {
+    let root = tempfile::tempdir().unwrap();
+    let venv = root.path().join("venv");
+    let made = Command::new("python3")
+        .args(["-m", "venv", "--without-pip"])
+        .arg(&venv)
+        .output()
+        .expect("python3 is needed to create a virtualenv");
+    assert!(made.status.success(), "{made:?}");
+    let shims = root.path().join("shims");
+    let installed = prog(&[
+        "shim",
+        "install",
+        "--dir",
+        shims.to_str().unwrap(),
+        "--tool",
+        "python",
+        "--tool",
+        "python3",
+    ]);
+    assert!(installed.status.success(), "{}", stdout(&installed));
+    fs::write(
+        root.path().join("test_prefix.py"),
+        "import sys, unittest\n\nclass T(unittest.TestCase):\n    def test_prefix(self):\n        print('prefix=' + sys.prefix)\n",
+    )
+    .unwrap();
+    let expected = venv.canonicalize().unwrap();
+    for script in [
+        // Passed straight through (not a test run).
+        "python -c 'import sys; print(\"prefix=\" + sys.prefix)'",
+        "python3 -c 'import sys; print(\"prefix=\" + sys.prefix)'",
+        // Captured as a test run.
+        "python -m unittest test_prefix 2>/dev/null",
+        "python3 -m unittest test_prefix 2>/dev/null",
+    ] {
+        let output = Command::new("bash")
+            .arg("-c")
+            .arg(script)
+            .current_dir(root.path())
+            .env(
+                "PATH",
+                format!("{}:{}/bin:/usr/bin:/bin", shims.display(), venv.display()),
+            )
+            .env("PROG_DIR", root.path().join("store"))
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&output.stdout);
+        let prefix = text
+            .lines()
+            .find_map(|line| line.strip_prefix("prefix="))
+            .unwrap_or_else(|| panic!("{script}: {output:?}"));
+        assert_eq!(
+            Path::new(prefix).canonicalize().unwrap(),
+            expected,
+            "{script} ran outside the venv"
+        );
+    }
+}

@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+- Fix: the `python` and `python3` shims broke virtualenvs on Linux. A shim
+  ran the venv's interpreter with only the bare name as argv[0]. Linux
+  CPython then looks itself up on `PATH`, finds the shim first, and drops
+  the venv, so `python -m pytest` failed with "No module named pytest". A
+  Python interpreter now gets the real tool's own path as argv[0], which is
+  what that lookup finds when no shim is installed. Other tools keep the
+  name the caller typed, because multi-call tools such as rustup's `cargo`
+  dispatch on it. 0.2.0 shims `python` and `python3` by default, so every
+  Linux user with an activated venv was affected. `PROG_SHIM_SKIP=python,python3`
+  works around it on 0.2.0. Found by the done-gate side-by-side on Debian.
+
+- The stop gate no longer lets a narrower or quieter rerun clear a failure
+  (#303). It still judges only the newest run of each kind. But a test that
+  failed earlier in the session now stays open until a later run names it
+  passing. The new `test_unresolved` rule catches `pytest -v` fails, then
+  `pytest -v test_x.py::test_other` passes, then "Fixed". It also catches
+  a failing test swapped for a passing one and rerun with `-q`. The block
+  quotes a contradicted claim. A final message that names the open test
+  stands aside.
+
+- The stop gate judges the run on the current content after a revert check
+  (#303). Agents rerun the suite on the old code (`git stash`, test,
+  `git stash pop`) to show the new tests fail without the fix. When the
+  newest test run saw content that is gone again, the newest run on exactly
+  the current content now decides. Before, the gate blocked correct work as
+  "failing".
+
+- `scripts/overclaim-replay/` replays overclaim's 616 labeled Claude Code
+  trials through the real shims and stop hook, offline (#303, preregistered).
+  The replay includes the 144-trial rerun. Result on 0.2.0: the gate flags
+  failed runs no more often than correct ones (H1 not supported). Most false
+  alarms are `NOT PROVEN` after quiet `unittest` runs. The full report:
+  [scripts/overclaim-replay/results/report.md](scripts/overclaim-replay/results/report.md).
+
+- `scripts/done-gate-comparison/` runs prog and four Claude Code plugin
+  directory done gates through the same eleven seeded sessions with real
+  pytest on Linux. The gates are done-needs-proof, show-me-the-work,
+  llm-dark-patterns and dod-guard. Report:
+  [scripts/done-gate-comparison/report.md](scripts/done-gate-comparison/report.md).
+
 ## 0.2.0 - 2026-11-09
 
 Upgrading from 0.1.1:
