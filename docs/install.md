@@ -56,8 +56,8 @@ printed.
 Use the installer attached to that release and bind the expected version:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/releases/download/v0.2.0/install.sh \
-  | PROG_VERSION=v0.2.0 sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aphoristicartist/prog/releases/download/v0.2.1/install.sh \
+  | PROG_VERSION=v0.2.1 sh
 ```
 
 The installation fails unless the archive's embedded `VERSION` and `TARGET`
@@ -97,7 +97,7 @@ installer verifies the archive checksum and build attestation before an atomic
 replacement. To install a specific version:
 
 ```sh
-prog update --yes --target-version v0.2.0
+prog update --yes --target-version v0.2.1
 ```
 
 There is deliberately no hidden background update. A self-update is a networked
@@ -147,6 +147,6 @@ Developers with Rust 1.89 or newer can install from a checkout:
 cargo install --path crates/prog-cli
 ```
 
-There is no crates.io publication in v0.2.0. The package name is `prog-cli`
+There is no crates.io publication in v0.2.1. The package name is `prog-cli`
 while the installed binary name is `prog`; publishing that package remains an
 explicit future owner decision rather than an automated release side effect.

@@ -1,6 +1,6 @@
 {
   "name": "@aphoristicartist/dsh-prog",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "prog tool-result disclosure plugin for DeepSeek Harness",
   "type": "module",
   "engines": {

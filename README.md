@@ -30,7 +30,7 @@ prog does not summarize or compress with a model, and it is not an agent or an
 MCP server. Every value it returns is copied from the captured output (with
 secrets replaced and long strings visibly cut) or counted from it.
 
-> **Status: pre-1.0.** Everything below ships in v0.2.0 (November 2026).
+> **Status: pre-1.0.** Everything below ships in v0.2.1 (November 2026).
 
 ## Quickstart
 
