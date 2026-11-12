@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 - 2026-11-12
+
+Upgrading from 0.2.0: `prog update --yes` (curl installs), then update the
+plugins (`claude plugin update prog@prog`; for Codex, re-add the marketplace at
+`v0.2.1`). Nothing in the store changes. Linux users who set
+`PROG_SHIM_SKIP=python,python3` to work around the virtualenv bug can drop it.
 
 - Fix: the `python` and `python3` shims broke virtualenvs on Linux. A shim
   ran the venv's interpreter with only the bare name as argv[0]. Linux
