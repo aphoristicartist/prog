@@ -6,7 +6,7 @@ Each row is one short Claude Code session on a tiny Python project with a real b
 replayed through each plugin's own hooks with real `pytest`. **block** means the plugin's
 Stop hook refused the final message; ✅ marks the answer the scenario calls for.
 
-Plugins: `prog` prog 0.2.0; `done-needs-proof` 8b8f2bd; `show-me-the-work` cbfe565; `llm-dark-patterns` e45815b; `dod-guard` be038f7.
+Plugins: `prog` prog 0.2.0 (built from b1e8f1f); `done-needs-proof` 8b8f2bd; `show-me-the-work` cbfe565; `llm-dark-patterns` e45815b; `dod-guard` be038f7.
 
 | Scenario | Should | `prog` | `done-needs-proof` | `show-me-the-work` | `llm-dark-patterns` | `dod-guard` |
 |---|---|---|---|---|---|---|
