@@ -379,6 +379,27 @@ fn is_prog_shim(path: &Path) -> bool {
         })
 }
 
+/// What the real tool sees as argv[0]: the name the caller typed, which
+/// multi-call proxies (rustup's `cargo`) dispatch on. A Python interpreter
+/// gets the real tool's own path instead: CPython finds its virtualenv from
+/// the path it runs as, and from a bare name Linux CPython looks itself up on
+/// `PATH`, finds this shim, and loses the venv ("No module named pytest").
+/// The real path is what that lookup finds when no shim is installed.
+fn shim_arg0(tool: &str, real: &Path) -> std::ffi::OsString {
+    let python = tool == "python"
+        || tool.strip_prefix("python3").is_some_and(|rest| {
+            rest.is_empty()
+                || rest.strip_prefix('.').is_some_and(|minor| {
+                    !minor.is_empty() && minor.bytes().all(|b| b.is_ascii_digit())
+                })
+        });
+    if python {
+        real.as_os_str().to_owned()
+    } else {
+        tool.into()
+    }
+}
+
 /// Run one tool for a shim script. Never prints anything of its own: the
 /// caller sees exactly the tool's bytes and exit status.
 pub(crate) async fn shim_exec(
@@ -395,9 +416,10 @@ pub(crate) async fn shim_exec(
     let progressive = prog_core::classify_route(&args.command, &prog_core::RoutePolicy::default())
         .guidance
         == prog_core::RouteGuidance::Progressive;
+    let arg0 = shim_arg0(tool, &real);
     if nested || !progressive {
         let error = std::process::Command::new(&real)
-            .arg0(tool)
+            .arg0(&arg0)
             .args(&args.command[1..])
             .exec();
         eprintln!("{tool}: {error}");
@@ -411,6 +433,7 @@ pub(crate) async fn shim_exec(
     let captured = tokio::task::spawn_blocking(move || {
         capture_passthrough(
             &real_for_capture,
+            &arg0,
             &argv,
             SHIM_CAPTURE_BYTES,
             SHIM_CAPTURE_BYTES,

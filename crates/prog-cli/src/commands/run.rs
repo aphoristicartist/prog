@@ -1642,6 +1642,7 @@ fn stdout_and_stderr_share_target() -> bool {
 /// marked truncated rather than complete.
 pub(crate) fn capture_passthrough(
     program: &Path,
+    arg0: &std::ffi::OsStr,
     argv: &[String],
     max_stdout_bytes: usize,
     max_stderr_bytes: usize,
@@ -1653,10 +1654,10 @@ pub(crate) fn capture_passthrough(
 
     let merged = stdout_and_stderr_share_target();
     let mut command = std::process::Command::new(program);
-    // Keep the name the caller typed: multi-call proxies (rustup's `cargo`)
-    // dispatch on argv[0].
+    // argv[0] is chosen by the caller (`shim_arg0`): multi-call proxies
+    // (rustup's `cargo`) dispatch on it, and Python finds its venv from it.
     command
-        .arg0(&argv[0])
+        .arg0(arg0)
         .args(&argv[1..])
         .stdin(Stdio::inherit())
         .env(SHIM_ACTIVE_ENV, "1");
